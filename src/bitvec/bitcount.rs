@@ -52,7 +52,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_count_ones() {
+    fn test_bitcount() {
         let mut bv = BitVector::new(128, Some(0));
         assert_eq!(bv.count_ones(), 0);
         bv.set(0);

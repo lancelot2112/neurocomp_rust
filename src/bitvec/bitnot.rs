@@ -28,7 +28,7 @@ mod tests {
     use std::ops::Not;
 
     #[test]
-    fn test_bitvector_not() {
+    fn test_bitnot() {
         //TODO: Plan what to do with extra bits? Currently they are just flipped as well.
         let mut bv = BitVector::from_bytes(&[0b10101010, 0b11110000], 16);
         bv.not_mut();

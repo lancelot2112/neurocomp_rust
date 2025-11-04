@@ -9,6 +9,7 @@ pub mod bitshift;
 pub mod bitrot;
 pub mod bits;
 pub mod bitcount;
+pub mod bitmask;
 
 pub use bitnot::*;
 pub use bitand::*;
@@ -18,3 +19,4 @@ pub use bitshift::*;
 pub use bitrot::*;
 pub use bits::*;
 pub use bitcount::*;
+pub use bitmask::*;

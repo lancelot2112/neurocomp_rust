@@ -156,7 +156,7 @@ mod tests {
     use crate::bitvec::BitVector;
 
     #[test]
-    fn test_bitvector_shl_shr() {
+    fn test_bitshift_mut() {
         let mut bv1 = BitVector::new(128, Some(0));
         bv1.set(1);
         bv1.set(5);
@@ -189,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bitvector_shifts() {
+    fn test_bitshift() {
         let mut bv = BitVector::new(128, Some(0));
         bv.set(5);
         bv.set(70);
@@ -226,7 +226,7 @@ mod tests {
     }
 
     #[test]
-    fn test_shift_time() 
+    fn test_bitshift_exec_time() 
     {
         use std::time::Instant;
         let mut bv = BitVector::new(1_000_000, Some(123456));
@@ -235,13 +235,13 @@ mod tests {
             bv <<= 13;
         }
         let duration = start.elapsed();
-        println!("Time taken for <<= 13 on 1,000,000 bits: {:?}", duration);
+        println!("Time taken for 1000x shl_mut(13) on 1,000,000 bits: {:?}", duration);
 
         let start = Instant::now();
         for _ in 0..1000 {
             let _ = &bv << 13;
         }
         let duration = start.elapsed();
-        println!("Time taken for << 13 on 1,000,000 bits: {:?}", duration);
+        println!("Time taken for 1000x shl(13) on 1,000,000 bits: {:?}", duration);
     }
 }

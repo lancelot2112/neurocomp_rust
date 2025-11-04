@@ -11,7 +11,7 @@ impl BitVector {
     /// If init_val is provided, all bits are initialized to that value.
     pub fn new(num_bits: usize, init_val: Option<u64>) -> Self {
         assert!(num_bits > 0);
-        assert!(num_bits % 64 == 0, "num_bits must be a multiple of 64");
+        //assert!(num_bits % 64 == 0, "num_bits must be a multiple of 64");
         let num_words = (num_bits + 63) >> 6; // divide by 64, rounding up
 
         BitVector {
@@ -21,7 +21,7 @@ impl BitVector {
 
     pub fn from_bytes(bytes: &[u8], num_bits: usize) -> Self {
         assert!(num_bits > 0);
-        assert!(num_bits % 8 == 0, "num_bits must be a multiple of 8");
+        //assert!(num_bits % 8 == 0, "num_bits must be a multiple of 8");
         let num_bytes = (num_bits + 7) >> 3; // divide by 8, rounding up
         //assert!(bytes.len() >= num_bytes, "not enough bytes to fill BitVector");
 

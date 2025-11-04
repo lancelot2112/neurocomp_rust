@@ -1,7 +1,7 @@
 use crate::bitvec::BitVector;
 
 impl BitVector {
-    pub fn rotr(&mut self, shift: usize) -> &mut Self {
+    pub fn rotr_mut(&mut self, shift: usize) -> &mut Self {
         let num_bits = self.len();
         if num_bits == 0 { 
             return self; 
@@ -40,7 +40,7 @@ impl BitVector {
         self
     }
 
-    pub fn rotl(&mut self, shift: usize) -> &mut Self {
+    pub fn rotl_mut(&mut self, shift: usize) -> &mut Self {
         let num_bits = self.len();
         if num_bits == 0 
         { 
@@ -55,7 +55,7 @@ impl BitVector {
 
         // rotate-left by k is rotate-right by (num_bits - k)
         let complement = (num_bits - k) % num_bits;
-        self.rotr(complement);
+        self.rotr_mut(complement);
         self
     }
 }
@@ -65,7 +65,7 @@ mod tests {
     use crate::bitvec::BitVector;
 
     #[test]
-    fn test_bitvector_rotr_rotl() {
+    fn test_bitrotate_mut() {
         let mut bv1 = BitVector::new(64, Some(0));
         bv1.set(5);
         bv1.set(10);
@@ -73,7 +73,7 @@ mod tests {
         bv1.set(63);
 
         let mut bv_rotr = bv1.clone();
-        bv_rotr.rotr(3);
+        bv_rotr.rotr_mut(3);
         assert!(bv_rotr.get(2));
         assert!(!bv_rotr.get(5));
         assert!(!bv_rotr.get(63));
@@ -83,7 +83,7 @@ mod tests {
         assert!(bv_rotr.count_ones() == 4);
 
         let mut bv_rotl = bv1.clone();
-        bv_rotl.rotl(3);
+        bv_rotl.rotl_mut(3);
         assert!(bv_rotl.get(8));
         assert!(!bv_rotl.get(5));
         assert!(!bv_rotl.get(63));
@@ -94,7 +94,7 @@ mod tests {
     }
 
     #[test]
-    fn test_large_rotate()
+    fn test_bitrotate_large()
     {
         let mut bv = BitVector::new(256, Some(0));
         bv.set(0);
@@ -103,7 +103,7 @@ mod tests {
         //bv.set(9995);
 
         //bv.write_raw(128).unwrap();
-        bv.rotl(130);
+        bv.rotl_mut(130);
         //bv.write_raw(128).unwrap();
         assert!(!bv.get(0));
         assert!(bv.get(130)); // 0 + 130 = 130
@@ -113,10 +113,30 @@ mod tests {
         assert!(!bv.get(128));
         assert!(!bv.get(255));
 
-        bv.rotr(130); //Undoes left rotate
+        bv.rotr_mut(130); //Undoes left rotate
         assert!(bv.get(0));
         assert!(bv.get(128));
         assert!(bv.get(255));
         //assert!(bv.get(9995)); 
+    }
+
+    #[test]
+    fn test_bitrot_exec_time() 
+    {
+        use std::time::Instant;
+        let mut bv = BitVector::new(1_000_000, Some(123456));
+        let start = Instant::now();
+        for _ in 0..1000 {
+            bv.rotl_mut(13);
+        }
+        let duration = start.elapsed();
+        println!("Time taken for 1000x rotl_mut(13) on 1,000,000 bits: {:?}", duration);
+
+        let start = Instant::now();
+        for _ in 0..1000 {
+            bv.rotl_mut(10_000);
+        }
+        let duration = start.elapsed();
+        println!("Time taken for 1000x rotl_mut(10,000) on 1,000,000 bits: {:?}", duration);
     }
 }

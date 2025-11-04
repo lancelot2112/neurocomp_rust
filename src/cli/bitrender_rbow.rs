@@ -1,62 +1,51 @@
 use std::io::{self, Write};
 
-pub fn render_bits_rainbow<I, W>(
-    mut bits: I,
-    cell_bits: usize,
-    cols: usize,
-    out: &mut W,
-) -> io::Result<()>
+use crate::bitvec::bitdensity::BitDensity;
+
+pub fn render_density_rainbow<I, W>(densities: I, cols: usize, out: &mut W) -> io::Result<()>
+where
+    I: Iterator<Item = BitDensity>,
+    W: Write,
+{
+    let mut col = 0;
+    for density in densities {
+        write_cell_rainbow(out, density.density)?;
+        col += 1;
+        if col == cols {
+            writeln!(out)?;
+            col = 0;
+        }
+    }
+    if col != 0 {
+        writeln!(out)?;
+    }
+    Ok(())
+}
+
+pub fn render_bits_rainbow<I, W>(bits: I, cols: usize, out: &mut W) -> io::Result<()>
 where
     I: Iterator<Item = bool>,
     W: Write,
 {
-    assert!(cell_bits > 0, "cell_bits must be > 0");
     let mut col = 0;
-    let mut acc = 0usize;
-    let mut ones = 0usize;
-
-    while let Some(bit) = bits.next() {
-        acc += 1;
-        if bit {
-            ones += 1;
-        }
-
-        if acc == cell_bits {
-            write_cell(out, ones, acc)?;
-            acc = 0;
-            ones = 0;
-            col += 1;
-            if col == cols {
-                writeln!(out)?;
-                col = 0;
-            }
-        }
-    }
-
-    if acc > 0 {
-        write_cell(out, ones, acc)?;
+    for bit in bits {
+        let density = if bit { 255 } else { 0 };
+        write_cell_rainbow(out, density)?;
         col += 1;
+        if col == cols {
+            writeln!(out)?;
+            col = 0;
+        }
     }
-
     if col != 0 {
         writeln!(out)?;
     }
-
     Ok(())
 }
 
-pub fn render_words_rainbow<I, W>(iter: I, cols: usize, out: &mut W) -> io::Result<()>
-where
-    I: Iterator<Item = u64>,
-    W: Write,
-{
-    let bits = iter.flat_map(|word| (0..64).rev().map(move |b| (word >> b) & 1 == 1));
-    render_bits_rainbow(bits, 1, cols, out)
-}
-
-fn write_cell<W: Write>(out: &mut W, ones: usize, total: usize) -> io::Result<()> {
-    let density = ones as f64 / total as f64;
-    let (r, g, b) = rainbow_color(density);
+fn write_cell_rainbow<W: Write>(out: &mut W, density: u8) -> io::Result<()> {
+    let d = density as f64 / 255.0;
+    let (r, g, b) = rainbow_color(d);
     write!(out, "\x1b[48;2;{};{};{}m \x1b[0m", r, g, b)
 }
 

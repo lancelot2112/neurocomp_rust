@@ -4,9 +4,9 @@ use crate::bitvec::BitVector;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct BitDensity {
-    ones: usize,
-    bits_checked: usize,
-    density: u8, // 0-100% [0..255]
+    pub ones: usize,
+    pub bits_checked: usize,
+    pub density: u8, // 0-100% [0..255]
 }
 pub struct LsDensityIter<'a> {
     bv: &'a BitVector,
@@ -95,13 +95,13 @@ impl<'a> FusedIterator for MsDensityIter<'a> {}
 impl BitVector {
     /// Create a density iterator over least-significant bits (left to right, 0..len).
     /// Each item yields the count of set bits in a window of `bits_in_wndw` bits.
-    pub fn as_lscount(&self, bits_in_wndw: usize) -> impl Iterator<Item = BitDensity> + '_ {
+    pub fn as_lsdensity(&self, bits_in_wndw: usize) -> impl Iterator<Item = BitDensity> + '_ {
         LsDensityIter::new(self, bits_in_wndw)
     }
 
     /// Create a density iterator over most-significant bits (right to left, len..0).
     /// Each item yields the count of set bits in a window of `bits_in_wndw` bits.
-    pub fn as_mscount(&self, bits_in_wndw: usize) -> impl Iterator<Item = BitDensity> + '_ {
+    pub fn as_msdensity(&self, bits_in_wndw: usize) -> impl Iterator<Item = BitDensity> + '_ {
         MsDensityIter::new(self, bits_in_wndw)
     }
 }
@@ -112,34 +112,34 @@ mod tests {
     use super::BitDensity;
 
     #[test]
-    fn test_ls_count_iter_basic() {
+    fn test_ls_density_iter_basic() {
         let bv = BitVector::from_words(vec![u64::MAX, 0]);
-        let counts: Vec<BitDensity> = bv.as_lscount(16).collect();
-        assert_eq!(counts.iter().map(|c| c.ones).collect::<Vec<_>>(), 
+        let densities: Vec<BitDensity> = bv.as_lsdensity(16).collect();
+        assert_eq!(densities.iter().map(|c| c.ones).collect::<Vec<_>>(), 
                     vec![16,16,16,16,0,0,0,0]);
-        assert_eq!(counts.iter().map(|c| c.bits_checked).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|c| c.bits_checked).collect::<Vec<_>>(), 
                     vec![16, 16, 16, 16, 16, 16, 16, 16]);
-        assert_eq!(counts.iter().map(|c| c.density).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|c| c.density).collect::<Vec<_>>(), 
                     vec![255, 255, 255, 255, 0, 0, 0, 0]);
     }
 
     #[test]
-    fn test_ms_count_iter_basic() {
+    fn test_ms_density_iter_basic() {
         let bv = BitVector::from_words(vec![u64::MAX, 0]);
-        let counts: Vec<BitDensity> = bv.as_mscount(16).collect();
-        assert_eq!(counts.iter().map(|c| c.ones).collect::<Vec<_>>(),
+        let densities: Vec<BitDensity> = bv.as_msdensity(16).collect();
+        assert_eq!(densities.iter().map(|c| c.ones).collect::<Vec<_>>(),
                     vec![0,0,0,0,16,16,16,16]);
-        assert_eq!(counts.iter().map(|c| c.bits_checked).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|c| c.bits_checked).collect::<Vec<_>>(), 
                     vec![16, 16, 16, 16, 16, 16, 16, 16]);
-        assert_eq!(counts.iter().map(|c| c.density).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|c| c.density).collect::<Vec<_>>(), 
                     vec![0, 0, 0, 0, 255, 255, 255, 255]);
     }
 
     #[test]
-    fn test_ls_count_iter_partial_window() {
+    fn test_ls_density_iter_partial_window() {
         // 0xFFFF_FFFF_FFFF_0000 has 48 set bits in positions 16-63
         let bv = BitVector::from_words(vec![0xFFFF_FFFF_FFFF_0000]);
-        let counts: Vec<BitDensity> = bv.as_lscount(10).collect();
+        let densities: Vec<BitDensity> = bv.as_lsdensity(10).collect();
         // Window 0: bits 0-9 (all zero) → 0
         // Window 1: bits 10-19 (bits 16-19 set) → 4
         // Window 2: bits 20-29 (all set) → 10
@@ -147,18 +147,18 @@ mod tests {
         // Window 4: bits 40-49 (all set) → 10
         // Window 5: bits 50-59 (all set) → 10
         // Window 6: bits 60-63 (4 bits, all set) → 4
-        assert_eq!(counts.iter().map(|c| c.ones).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|c| c.ones).collect::<Vec<_>>(), 
                     vec![0, 4, 10, 10, 10, 10, 4]);
-        assert_eq!(counts.iter().map(|c| c.bits_checked).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|c| c.bits_checked).collect::<Vec<_>>(), 
                     vec![10, 10, 10, 10, 10, 10, 4]);
-        assert_eq!(counts.iter().map(|c| c.density).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|c| c.density).collect::<Vec<_>>(), 
                     vec![0, 102, 255, 255, 255, 255, 255]);
     }
 
     #[test]
-    fn test_ms_count_iter_partial_window() {
+    fn test_ms_density_iter_partial_window() {
         let bv = BitVector::from_words(vec![0xFFFF_FFFF_FFFF_0000]);
-        let counts: Vec<BitDensity> = bv.as_mscount(10).collect();
+        let densities: Vec<BitDensity> = bv.as_msdensity(10).collect();
         // Starting from bit 63 going down
         // Window 0: bits 54-63 (all set) → 10
         // Window 1: bits 44-53 (all set) → 10
@@ -167,11 +167,11 @@ mod tests {
         // Window 4: bits 14-23 (bits 16-23 set) → 8
         // Window 5: bits 4-13 (all zero) → 0
         // Window 6: bits 0-3 (4 bits, all zero) → 0
-        assert_eq!(counts.iter().map(|c| c.ones).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|d| d.ones).collect::<Vec<_>>(),
                     vec![10, 10, 10, 10, 8, 0, 0]);
-        assert_eq!(counts.iter().map(|c| c.bits_checked).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|d| d.bits_checked).collect::<Vec<_>>(),
                     vec![10, 10, 10, 10, 10, 10, 4]);
-        assert_eq!(counts.iter().map(|c| c.density).collect::<Vec<_>>(), 
+        assert_eq!(densities.iter().map(|d| d.density).collect::<Vec<_>>(),
                     vec![255, 255, 255, 255, 204, 0, 0]);
     }
 }

@@ -34,7 +34,7 @@ mod tests {
     use crate::bitvec::BitVector;
 
     #[test]
-    fn test_bitvector_bitor() {
+    fn test_bitor() {
         let mut bv1 = BitVector::new(64, Some(0));
         let mut bv2 = BitVector::new(64, Some(0));
         bv1.set(5);

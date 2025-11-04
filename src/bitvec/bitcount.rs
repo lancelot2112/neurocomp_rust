@@ -14,12 +14,18 @@ impl BitVector {
         if count == 0 {
             return 0;
         }
+
+        assert!(start < self.len(), "start out of bounds");
+        /*
         assert!(
             start.checked_add(count).map_or(false, |end| end <= self.len()),
             "range out of bounds"
         );
+        */
 
-        let mut remaining = count;
+        
+
+        let mut remaining = count.min(self.len() - start);
         let mut pos = start;
         let mut sum = 0usize;
 

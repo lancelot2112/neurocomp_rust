@@ -117,12 +117,12 @@ impl ByteRender for BitVector {
 }
 
 // changed: now returns io::Result so caller can handle errors and compose writers
-fn print_raw_bitvector(bv: &BitVector, term_width: usize) -> io::Result<()> {
+pub fn print_raw_bitvector(bv: &BitVector, term_width: usize) -> io::Result<()> {
     let mut out = io::stdout();
     bv.write_raw_to(&mut out, term_width)
 }
 
-fn print_rgb_bitvector(bv: &BitVector, use_truecolor: bool) -> io::Result<()> {
+pub fn print_rgb_bitvector(bv: &BitVector, use_truecolor: bool) -> io::Result<()> {
     let mut out = io::stdout();
     bv.write_rgb_to(&mut out, 32, use_truecolor)
 }

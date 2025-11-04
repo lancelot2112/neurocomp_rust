@@ -1,6 +1,21 @@
 use std::vec;
 use crate::common::{ByteVector};
 
+
+ /// A BitVector is a vector of bits stored in little-endian u64 words.
+ /// The length of the vector is always a multiple of 64 bits (i.e., whole u64 words).
+ /// 
+ /// Within each u64 word: Bit 0 is the least significant bit (LSB), and bit 63 is the most significant bit (MSB). 
+ /// For example, when loading from bytes in from_bytes, byte 0 (bits 0-7) is placed at the LSB end of the word, 
+ /// with bit 0 of the byte becoming bit 0 of the word.
+ /// 
+ /// Across words: Word 0 contains bits 0-63, word 1 contains bits 64-127, and so on. The overall bit 0 of the vector 
+ /// is the LSB of word 0, and the highest bit (e.g., bit 127 for a 128-bit vector) is the MSB of the last word.
+ /// 
+ /// This means the vector's bit 0 is the least significant bit of the entire data, and bit (len-1) is the most 
+ /// significant bit. Your as_msbits() iterator yields bits from MSB to LSB (high index to low), while as_lsbits() 
+ /// yields LSB to MSB (low index to high). If you need big-endian storage, you could reverse the words or 
+ /// bits during construction.
 pub struct BitVector {
     words: Vec<u64>,
 }
@@ -100,6 +115,16 @@ impl BitVector {
     }
 
     #[inline]
+    pub fn word_len(&self) -> usize {
+        self.words.len()
+    }
+
+    #[inline]
+    pub fn word(&self, index: usize) -> u64 {
+        self.words[index]
+    }
+
+    #[inline]
     pub fn as_words(&self) -> &[u64] {
         &self.words
     }
@@ -119,6 +144,7 @@ impl BitVector {
         self.words.iter_mut()
     }
 }
+
 
 impl Clone for BitVector {
     fn clone(&self) -> Self {

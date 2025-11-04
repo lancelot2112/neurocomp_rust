@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 use crate::bitvec::BitVector;
-use crate::common::bytes::{ByteRender, ByteVector};
+use crate::common::byte_views::{ByteRender, ByteVector};
 
 // existing helper kept but changed to accept a writer
 fn rgb_to_xterm256(r: u8, g: u8, b: u8) -> u8 {

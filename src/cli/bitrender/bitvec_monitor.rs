@@ -4,7 +4,7 @@ use std::io::{self, stdout, Write};
 use std::time::{Duration, Instant};
 
 use crate::bitvec::BitVector;
-use crate::cli::bitrender_bitvec_router::{render_bitvector_to, BitOrder, RenderConfig};
+use crate::cli::bitrender::bitvec_router::{render_bitvector_to, BitOrder, RenderConfig};
 
 /// Configuration for monitoring/redrawing a BitVector over time.
 #[derive(Clone, Debug)]
@@ -140,6 +140,7 @@ where
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+    use crate::cli::bitrender::bitvec_router::RenderMode;
     use std::thread;
 
     // NOTE: This is an integration-like test that runs briefly and renders to a TTY.
@@ -171,7 +172,7 @@ mod tests {
 
         let render_cfg = RenderConfig {
             // Try other modes: HexDump, Braille, Rainbow, Grayscale, etc.
-            mode: crate::cli::bitrender_bitvec_router::RenderMode::Rainbow,
+            mode: RenderMode::Rainbow,
             cols: 64,
             cell_bits: 8,
             bit_order: BitOrder::LeastSignificantFirst,

@@ -2,10 +2,10 @@ use std::io::{self, stdout, Write};
 use either::Either;
 
 use crate::bitvec::BitVector;
-use crate::cli::bitrender_bw::{render_density_bw, render_density_bw_unicode};
-use crate::cli::bitrender_braille::{render_words_braille, render_words_braille_boxed};
-use crate::cli::bitrender_hex::{render_words_hexdump, render_words_hex};
-use crate::cli::bitrender_rbow::render_density_rainbow;
+use crate::cli::bitrender::blackwhite::{render_density_bw, render_density_bw_unicode};
+use crate::cli::bitrender::braille::{render_words_braille, render_words_braille_boxed};
+use crate::cli::bitrender::hexdump::{render_words_hexdump, render_words_hex};
+use crate::cli::bitrender::rainbow::render_density_rainbow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderMode {

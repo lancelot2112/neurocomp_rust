@@ -1,5 +1,15 @@
 use crate::bitvec::BitVector;
 use crate::common::config;
+
+/// How to combine the output mask into the output BitVector (word-aligned).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KernelOp {
+    Or,
+    And,
+    Xor,
+    Clear, // a & !b
+}
+
 pub struct KernelClassTemperature {
     pub max: i16,
     pub min: i16,

@@ -143,6 +143,23 @@ impl BitVector {
     pub fn words_mut(&mut self) -> std::slice::IterMut<'_,u64> {
         self.words.iter_mut()
     }
+
+    fn get_overlap_range(&self, idx: usize, len: usize) -> (usize, usize){
+        let n = self.word_len();
+        assert!(idx <= n, "mask idx out of range");
+        let max = std::cmp::min(n - idx, len);
+        assert!(max > 0, "mask length is zero at given index");
+        (idx, idx+max)
+    }
+
+    pub fn as_slice<'a>(&'a self, idx: usize, len: usize) -> &'a [u64] {
+        let (start, end) = self.get_overlap_range(idx, len);
+        &self.as_words()[start..end]
+    }
+    pub fn as_slice_mut<'a>(&'a mut self, idx: usize, len: usize) -> &'a mut [u64] {
+        let (start, end) = self.get_overlap_range(idx, len);
+        &mut self.as_words_mut()[start..end]
+    }
 }
 
 

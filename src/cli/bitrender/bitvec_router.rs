@@ -148,6 +148,7 @@ mod tests {
     }
 
      #[test]
+     #[ignore="Visual test"]
     fn test_visual_comparison() {
          use rand::Rng; // add this import
 

@@ -22,7 +22,7 @@ impl<'a> LsDensityIter<'a> {
             bv,
             pos: 0,
             bits_in_wndw,
-            total_bits: bv.len(),
+            total_bits: bv.bit_len(),
         }
     }
 }
@@ -61,7 +61,7 @@ impl<'a> MsDensityIter<'a> {
         assert!(bits_in_wndw > 0, "bits_in_wndw must be > 0");
         Self {
             bv,
-            pos: bv.len() as isize,
+            pos: bv.bit_len() as isize,
             bits_in_wndw,
         }
     }

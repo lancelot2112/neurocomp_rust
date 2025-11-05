@@ -43,7 +43,7 @@ impl BitVecHistory {
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.frames[self.head].len()
+        self.frames[self.head].bit_len()
     }
 
 
@@ -79,7 +79,7 @@ impl BitVecHistory {
             }
             AdvanceMode::Clear => {
                 // Reinitialize to zeros, preserving bit length.
-                self.frames[self.head].clear_all();
+                self.frames[self.head].bit_clear_all();
             }
             AdvanceMode::Stay => {}
         }
@@ -139,7 +139,7 @@ mod tests {
         // Clear then OR a mask so current frame equals `word`
         let mask = BitVector::from_words(vec![word]);
         let cur = hist.current_mut();
-        cur.clear_all();
+        cur.bit_clear_all();
         cur.mask_mut(0, &mask, |a, b| a | b);
     }
 

@@ -2,7 +2,7 @@ use crate::bitvec::BitVector;
 
 impl BitVector {
     pub fn rotr_mut(&mut self, shift: usize) -> &mut Self {
-        let num_bits = self.len();
+        let num_bits = self.bit_len();
         if num_bits == 0 { 
             return self; 
         }
@@ -41,7 +41,7 @@ impl BitVector {
     }
 
     pub fn rotl_mut(&mut self, shift: usize) -> &mut Self {
-        let num_bits = self.len();
+        let num_bits = self.bit_len();
         if num_bits == 0 
         { 
             return self; 
@@ -67,29 +67,29 @@ mod tests {
     #[test]
     fn test_bitrotate_mut() {
         let mut bv1 = BitVector::new(64, Some(0));
-        bv1.set(5);
-        bv1.set(10);
-        bv1.set(1);
-        bv1.set(63);
+        bv1.bit_set(5);
+        bv1.bit_set(10);
+        bv1.bit_set(1);
+        bv1.bit_set(63);
 
         let mut bv_rotr = bv1.clone();
         bv_rotr.rotr_mut(3);
-        assert!(bv_rotr.get(2));
-        assert!(!bv_rotr.get(5));
-        assert!(!bv_rotr.get(63));
-        assert!(bv_rotr.get(60));
-        assert!(!bv_rotr.get(1));
-        assert!(bv_rotr.get(62));
+        assert!(bv_rotr.bit_get(2));
+        assert!(!bv_rotr.bit_get(5));
+        assert!(!bv_rotr.bit_get(63));
+        assert!(bv_rotr.bit_get(60));
+        assert!(!bv_rotr.bit_get(1));
+        assert!(bv_rotr.bit_get(62));
         assert!(bv_rotr.count_ones() == 4);
 
         let mut bv_rotl = bv1.clone();
         bv_rotl.rotl_mut(3);
-        assert!(bv_rotl.get(8));
-        assert!(!bv_rotl.get(5));
-        assert!(!bv_rotl.get(63));
-        assert!(bv_rotl.get(2));
-        assert!(!bv_rotl.get(1));
-        assert!(bv_rotl.get(4));
+        assert!(bv_rotl.bit_get(8));
+        assert!(!bv_rotl.bit_get(5));
+        assert!(!bv_rotl.bit_get(63));
+        assert!(bv_rotl.bit_get(2));
+        assert!(!bv_rotl.bit_get(1));
+        assert!(bv_rotl.bit_get(4));
         assert!(bv_rotl.count_ones() == 4);
     }
 
@@ -97,26 +97,26 @@ mod tests {
     fn test_bitrotate_large()
     {
         let mut bv = BitVector::new(256, Some(0));
-        bv.set(0);
-        bv.set(128);
-        bv.set(255);
+        bv.bit_set(0);
+        bv.bit_set(128);
+        bv.bit_set(255);
         //bv.set(9995);
 
         //bv.write_raw(128).unwrap();
         bv.rotl_mut(130);
         //bv.write_raw(128).unwrap();
-        assert!(!bv.get(0));
-        assert!(bv.get(130)); // 0 + 130 = 130
-        assert!(bv.get(2)); // 128 + 130 - 256 = 2
-        assert!(bv.get(129)); // 255 + 130 - 256 = 129
+        assert!(!bv.bit_get(0));
+        assert!(bv.bit_get(130)); // 0 + 130 = 130
+        assert!(bv.bit_get(2)); // 128 + 130 - 256 = 2
+        assert!(bv.bit_get(129)); // 255 + 130 - 256 = 129
         //assert!(bv.get(78)); // 9995 + 130 - 10048 = 77
-        assert!(!bv.get(128));
-        assert!(!bv.get(255));
+        assert!(!bv.bit_get(128));
+        assert!(!bv.bit_get(255));
 
         bv.rotr_mut(130); //Undoes left rotate
-        assert!(bv.get(0));
-        assert!(bv.get(128));
-        assert!(bv.get(255));
+        assert!(bv.bit_get(0));
+        assert!(bv.bit_get(128));
+        assert!(bv.bit_get(255));
         //assert!(bv.get(9995)); 
     }
 

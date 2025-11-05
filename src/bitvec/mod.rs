@@ -13,7 +13,10 @@ pub mod bitmask;
 pub mod bititer;
 pub mod bitdensity;
 pub mod bithistory;
+pub mod bitgen;
 
+/*
+Implements new methods in bitvector so nothing to re-export here
 pub use bitnot::*;
 pub use bitand::*;
 pub use bitor::*;
@@ -23,6 +26,8 @@ pub use bitrot::*;
 pub use bits::*;
 pub use bitcount::*;
 pub use bitmask::*;
+*/
 pub use bititer::*;
 pub use bitdensity::*;
 pub use bithistory::*;
+pub use bitgen::*;

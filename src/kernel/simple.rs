@@ -106,14 +106,14 @@ mod tests {
 
         assert_eq!(output.as_words()[0] & 0xFF, 0x00);
 
-        input.set(4); // now 5 ones (fires >= threshold of 5)
+        input.bit_set(4); // now 5 ones (fires >= threshold of 5)
         assert_eq!(input.count_ones(), 5);
         k.process(&input, &mut output, &0, &0);
         assert_eq!(output.as_words()[0] & 0xFF, 0x0F);
 
-        output.clear_all();
+        output.bit_clear_all();
         assert_eq!(output.count_ones(), 0);
-        input.set(5); // now 6 ones
+        input.bit_set(5); // now 6 ones
         assert_eq!(input.count_ones(), 6);
         k.process(&input, &mut output, &0, &0);
         assert_eq!(output.as_words()[0] & 0xFF, 0x0F);

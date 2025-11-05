@@ -67,7 +67,7 @@ where
         // Hash the content to detect change (by words)
         let mut hasher = DefaultHasher::new();
         // Include bit length and both word orders to be robust to iter order choices.
-        bv.len().hash(&mut hasher);
+        bv.bit_len().hash(&mut hasher);
         for w in bv.as_lswords() {
             w.hash(&mut hasher);
         }
@@ -158,8 +158,8 @@ mod tests {
             for i in 0..200 {
                 let mut bv = st_clone.lock().unwrap().clone();
                 // Toggle a bit based on time
-                let bit_idx = (i % (bv.len().max(1))) as usize;
-                bv.toggle(bit_idx); // assume BitVector has toggle(idx); otherwise implement your update here
+                let bit_idx = (i % (bv.bit_len().max(1))) as usize;
+                bv.bit_toggle(bit_idx); // assume BitVector has toggle(idx); otherwise implement your update here
                 *st_clone.lock().unwrap() = bv;
                 thread::sleep(Duration::from_millis(50));
             }

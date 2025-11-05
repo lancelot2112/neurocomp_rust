@@ -17,7 +17,7 @@ impl Shl<usize> for &BitVector {
     type Output = BitVector;
 
     fn shl(self, rhs: usize) -> Self::Output {
-        let num_bits = self.len();
+        let num_bits = self.bit_len();
         assert!(rhs < num_bits);
         let num_words = self.as_words().len();
         let mut words = vec![0u64; num_words];
@@ -50,7 +50,7 @@ impl Shl<usize> for &BitVector {
 
 impl ShlAssign<usize> for BitVector {
     fn shl_assign(&mut self, rhs: usize) {
-        let num_bits = self.len();
+        let num_bits = self.bit_len();
         assert!(rhs < num_bits);
         let num_words = self.as_words().len();
         let word_shift = rhs >> 6;
@@ -86,7 +86,7 @@ impl Shr<usize> for &BitVector {
     type Output = BitVector;
 
     fn shr(self, rhs: usize) -> Self::Output {
-        let num_bits = self.len();
+        let num_bits = self.bit_len();
         assert!(rhs < num_bits);
         let num_words = self.as_words().len();
         let mut words = vec![0u64; num_words];
@@ -119,7 +119,7 @@ impl Shr<usize> for &BitVector {
 
 impl ShrAssign<usize> for BitVector {
     fn shr_assign(&mut self, rhs: usize) {
-        let num_bits = self.len();
+        let num_bits = self.bit_len();
         assert!(rhs < num_bits);
         let num_words = self.as_words().len();
         let word_shift = rhs >> 6;
@@ -158,71 +158,71 @@ mod tests {
     #[test]
     fn test_bitshift_mut() {
         let mut bv1 = BitVector::new(128, Some(0));
-        bv1.set(1);
-        bv1.set(5);
-        bv1.set(63);
+        bv1.bit_set(1);
+        bv1.bit_set(5);
+        bv1.bit_set(63);
         assert!(bv1.count_ones() == 3);
 
         let mut bv_shl = bv1.clone();
         bv_shl.shl_mut(3);
-        assert!(bv_shl.get(8));
-        assert!(!bv_shl.get(5));
-        assert!(!bv_shl.get(63));
-        assert!(!bv_shl.get(1));
-        assert!(!bv_shl.get(2));
-        assert!(bv_shl.get(4));
+        assert!(bv_shl.bit_get(8));
+        assert!(!bv_shl.bit_get(5));
+        assert!(!bv_shl.bit_get(63));
+        assert!(!bv_shl.bit_get(1));
+        assert!(!bv_shl.bit_get(2));
+        assert!(bv_shl.bit_get(4));
         assert!(bv_shl.count_ones() == 3);
 
         let mut bv_shr = bv1.clone();
         bv_shr.shr_mut(3);
-        assert!(bv_shr.get(2));
-        assert!(!bv_shr.get(5));
-        assert!(!bv_shr.get(63));
-        assert!(bv_shr.get(60));
-        assert!(!bv_shr.get(1));
+        assert!(bv_shr.bit_get(2));
+        assert!(!bv_shr.bit_get(5));
+        assert!(!bv_shr.bit_get(63));
+        assert!(bv_shr.bit_get(60));
+        assert!(!bv_shr.bit_get(1));
         assert!(bv_shr.count_ones() == 2);
 
         //Didn't mutate original
-        assert!(bv1.get(1));
-        assert!(bv1.get(5));
-        assert!(bv1.get(63));
+        assert!(bv1.bit_get(1));
+        assert!(bv1.bit_get(5));
+        assert!(bv1.bit_get(63));
     }
 
     #[test]
     fn test_bitshift() {
         let mut bv = BitVector::new(128, Some(0));
-        bv.set(5);
-        bv.set(70);
+        bv.bit_set(5);
+        bv.bit_set(70);
 
         let bv_shl = &bv << 3;
-        assert!(bv_shl.get(8));
-        assert!(bv_shl.get(73));
-        assert!(!bv_shl.get(5));
+        assert!(bv_shl.bit_get(8));
+        assert!(bv_shl.bit_get(73));
+        assert!(!bv_shl.bit_get(5));
 
         let bv_shr = &bv >> 3;
-        assert!(bv_shr.get(2));
-        assert!(bv_shr.get(67));
-        assert!(!bv_shr.get(70));
+        assert!(bv_shr.bit_get(2));
+        assert!(bv_shr.bit_get(67));
+        assert!(!bv_shr.bit_get(70));
 
         // In-place shifts
         bv <<= 2;
-        assert!(bv.get(7));
-        assert!(bv.get(72));
-        assert!(!bv.get(5));
+        assert!(bv.bit_get(7));
+        assert!(bv.bit_get(72));
+        assert!(!bv.bit_get(5));
 
         bv >>= 2;
-        assert!(bv.get(5));
-        assert!(bv.get(70));
-        assert!(!bv.get(7));
+        assert!(bv.bit_get(5));
+        assert!(bv.bit_get(70));
+        assert!(!bv.bit_get(7));
 
         //large shifts
         bv <<= 122;
-        assert!(bv.get(127));
-        assert!(!bv.get(70));
+        assert!(bv.bit_get(127));
+        assert!(!bv.bit_get(70));
 
         bv >>= 122;
-        assert!(bv.get(5));
-        assert!(!bv.get(127));
+        assert!(bv.bit_get(5));
+        assert!(!bv.bit_get(127));
     }
 
     #[test]

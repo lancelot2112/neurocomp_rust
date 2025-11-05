@@ -69,7 +69,7 @@ impl BitVector {
     pub fn clone_slice(&self, start: usize, count: usize) -> BitVector {
         assert!(count > 0, "count must be > 0");
         assert!(
-            start.checked_add(count).map_or(false, |end| end <= self.len()),
+            start.checked_add(count).map_or(false, |end| end <= self.bit_len()),
             "slice out of bounds"
         );
 
@@ -192,35 +192,35 @@ mod tests {
     #[test]
     fn test_bitvector_clone_slice() {
         let mut bv = BitVector::new(128, Some(0));
-        bv.set(5);
-        bv.set(70);
-        bv.set(127);
+        bv.bit_set(5);
+        bv.bit_set(70);
+        bv.bit_set(127);
 
         let bv_slice = bv.clone_slice(64, 64);
-        assert!(!bv_slice.get(5));
-        assert!(bv_slice.get(6));
-        assert!(bv_slice.get(63));
+        assert!(!bv_slice.bit_get(5));
+        assert!(bv_slice.bit_get(6));
+        assert!(bv_slice.bit_get(63));
 
         let bv_slice2 = bv.clone_slice(0, 128);
-        assert!(bv_slice2.get(5));
-        assert!(bv_slice2.get(70));
-        assert!(bv_slice2.get(127));
+        assert!(bv_slice2.bit_get(5));
+        assert!(bv_slice2.bit_get(70));
+        assert!(bv_slice2.bit_get(127));
 
         let bv_slice3 = bv.clone_slice(65, 10);
-        assert!(!bv_slice3.get(0));
-        assert!(bv_slice3.get(5));
-        assert!(!bv_slice3.get(9));
+        assert!(!bv_slice3.bit_get(0));
+        assert!(bv_slice3.bit_get(5));
+        assert!(!bv_slice3.bit_get(9));
     }
 
     #[test]
     fn test_bitvector_clone() {
         let mut bv = BitVector::new(128, Some(0));
-        bv.set(5);
-        bv.set(70);
+        bv.bit_set(5);
+        bv.bit_set(70);
 
         let bv_clone = bv.clone();
-        assert!(bv_clone.get(5));
-        assert!(bv_clone.get(70));
-        assert!(!bv_clone.get(10));
+        assert!(bv_clone.bit_get(5));
+        assert!(bv_clone.bit_get(70));
+        assert!(!bv_clone.bit_get(10));
     }
 }

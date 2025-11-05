@@ -55,7 +55,7 @@ pub struct MsBitIter<'a> {
 
 impl<'a> MsBitIter<'a> {
     pub fn new(bv: &'a BitVector) -> Self {
-        let total = bv.len();
+        let total = bv.bit_len();
         Self { bv, pos: total as isize - 1 }
     }
 }
@@ -69,7 +69,7 @@ impl<'a> Iterator for MsBitIter<'a> {
         }
         let idx = self.pos as usize;
         self.pos -= 1;
-        Some(self.bv.get(idx))
+        Some(self.bv.bit_get(idx))
     }
 }
 
@@ -88,12 +88,12 @@ impl<'a> Iterator for LsBitIter<'a> {
     type Item = bool;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.pos >= self.bv.len() {
+        if self.pos >= self.bv.bit_len() {
             return None;
         }
         let idx = self.pos;
         self.pos += 1;
-        Some(self.bv.get(idx))
+        Some(self.bv.bit_get(idx))
     }
 }
 
@@ -143,9 +143,9 @@ mod tests {
     #[test]
     fn test_as_msbits() {
         let mut bv = BitVector::new(128, Some(0));
-        bv.set(5);
-        bv.set(63);
-        bv.set(126);
+        bv.bit_set(5);
+        bv.bit_set(63);
+        bv.bit_set(126);
 
         let bits: Vec<bool> = bv.as_msbits().collect();
         assert_eq!(bits.len(), 128);
@@ -157,9 +157,9 @@ mod tests {
     #[test]
     fn test_as_lsbits() {
         let mut bv = BitVector::new(128, Some(0));
-        bv.set(5);
-        bv.set(63);
-        bv.set(126);
+        bv.bit_set(5);
+        bv.bit_set(63);
+        bv.bit_set(126);
 
         let bits: Vec<bool> = bv.as_lsbits().collect();
         assert_eq!(bits.len(), 128);

@@ -58,15 +58,15 @@ mod tests {
         let mask = BitVector::from_words(vec![0xFFFFFFFFFFFFFFFF; 2]);
         bv.mask_mut(0, &mask, |a, b| a | b);
 
-        assert!(bv.get(5));
-        assert!(bv.get(70));
+        assert!(bv.bit_get(5));
+        assert!(bv.bit_get(70));
         assert!(bv.count_ones() == 128);
 
         let mask = BitVector::from_words(vec![0x0F0F0F0F0F0F0F0F; 2]);
         bv.mask_mut(0, &mask, |a, b| a ^ b);
 
-        assert!(!bv.get(0));
-        assert!(bv.get(4));
+        assert!(!bv.bit_get(0));
+        assert!(bv.bit_get(4));
         assert!(bv.count_ones() == 64);
     }
 }

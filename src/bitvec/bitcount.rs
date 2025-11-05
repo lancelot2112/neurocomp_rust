@@ -15,7 +15,7 @@ impl BitVector {
             return 0;
         }
 
-        assert!(start < self.len(), "start out of bounds");
+        assert!(start < self.bit_len(), "start out of bounds");
         /*
         assert!(
             start.checked_add(count).map_or(false, |end| end <= self.len()),
@@ -25,7 +25,7 @@ impl BitVector {
 
         
 
-        let mut remaining = count.min(self.len() - start);
+        let mut remaining = count.min(self.bit_len() - start);
         let mut pos = start;
         let mut sum = 0usize;
 
@@ -61,10 +61,10 @@ mod tests {
     fn test_bitcount() {
         let mut bv = BitVector::new(128, Some(0));
         assert_eq!(bv.count_ones(), 0);
-        bv.set(0);
-        bv.set(63);
-        bv.set(64);
-        bv.set(127);
+        bv.bit_set(0);
+        bv.bit_set(63);
+        bv.bit_set(64);
+        bv.bit_set(127);
         assert_eq!(bv.count_ones(), 4);
         assert_eq!(bv.count_ones_in_range(0, 64), 2);
         assert_eq!(bv.count_ones_in_range(64, 64), 2);

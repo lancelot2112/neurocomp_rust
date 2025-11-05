@@ -37,35 +37,35 @@ mod tests {
     fn test_bitand() {
         let mut bv1 = BitVector::new(64, Some(0));
         let mut bv2 = BitVector::new(64, Some(0));
-        bv1.set(5);
-        bv1.set(10);
-        bv1.set(1);
-        bv1.set(63);
-        bv2.set(10);
-        bv2.set(15);
+        bv1.bit_set(5);
+        bv1.bit_set(10);
+        bv1.bit_set(1);
+        bv1.bit_set(63);
+        bv2.bit_set(10);
+        bv2.bit_set(15);
 
         let bv_and = &bv1 & &bv2;
-        assert!(!bv_and.get(5));
-        assert!(bv_and.get(10));
-        assert!(!bv_and.get(15));
+        assert!(!bv_and.bit_get(5));
+        assert!(bv_and.bit_get(10));
+        assert!(!bv_and.bit_get(15));
 
         let mut bv_and = bv1.clone();
         bv_and.and_mut(&bv2);
-        assert!(!bv_and.get(5));
-        assert!(bv_and.get(10));
-        assert!(!bv_and.get(15));
+        assert!(!bv_and.bit_get(5));
+        assert!(bv_and.bit_get(10));
+        assert!(!bv_and.bit_get(15));
 
         //Didn't mutate original
-        assert!(bv1.get(5));
-        assert!(bv1.get(10));
-        assert!(!bv1.get(15));
+        assert!(bv1.bit_get(5));
+        assert!(bv1.bit_get(10));
+        assert!(!bv1.bit_get(15));
 
         bv1 &= &bv2;
-        assert!(!bv1.get(1));
-        assert!(!bv1.get(5));
-        assert!(bv1.get(10));
-        assert!(!bv1.get(15));
-        assert!(!bv1.get(63));
+        assert!(!bv1.bit_get(1));
+        assert!(!bv1.bit_get(5));
+        assert!(bv1.bit_get(10));
+        assert!(!bv1.bit_get(15));
+        assert!(!bv1.bit_get(63));
         assert!(bv1.count_ones() == 1);
     }
 }

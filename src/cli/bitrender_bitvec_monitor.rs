@@ -171,7 +171,7 @@ mod tests {
 
         let render_cfg = RenderConfig {
             // Try other modes: HexDump, Braille, Rainbow, Grayscale, etc.
-            mode: crate::cli::bitrender_bitvec_router::RenderMode::HexDump,
+            mode: crate::cli::bitrender_bitvec_router::RenderMode::Rainbow,
             cols: 64,
             cell_bits: 8,
             bit_order: BitOrder::LeastSignificantFirst,

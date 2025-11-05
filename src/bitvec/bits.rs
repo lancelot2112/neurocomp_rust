@@ -31,6 +31,12 @@ impl BitVector {
         self.as_words_mut()[word_index] &= !(1u64 << bit_index);
     }
 
+    #[inline]
+    pub fn toggle(&mut self, index: usize) {
+        let word_index = index >> 6;
+        let bit_index = index & 0x3F;
+        self.as_words_mut()[word_index] ^= 1u64 << bit_index;
+    }
     /// Clears all bits in the vector to 0.
     /// This is more efficient than clearing bits one by one.
     pub fn clear_all(&mut self) -> &mut Self {

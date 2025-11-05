@@ -226,6 +226,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore="Performance test, not functional"]
     fn test_bitshift_exec_time() 
     {
         use std::time::Instant;

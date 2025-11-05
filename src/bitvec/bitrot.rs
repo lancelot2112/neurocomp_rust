@@ -121,6 +121,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore="Performance test, not functional"]
     fn test_bitrot_exec_time() 
     {
         use std::time::Instant;

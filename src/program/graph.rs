@@ -37,6 +37,10 @@ pub enum GraphInstruction {
     Swap(), // swap top two indices on stack
     Dup(), // duplicate top index on stack
     Nop(), // no operation... leaves potential site for future mutation while leaving the rest constant
+
+    // LOOP
+    Jump(), // jump back to the last loop instruction and disable this jump
+    Mark(), // mark the start of a loop section
 }
 
 /// Instructions for defining available kernel classes
@@ -125,6 +129,12 @@ impl GraphProgram {
     pub fn nop(self) -> Self {
         self.add_instr(GraphInstruction::Nop())
     }
+    pub fn mark(self) -> Self {
+        self.add_instr(GraphInstruction::Mark())
+    }
+    pub fn jump(self) -> Self {
+        self.add_instr(GraphInstruction::Jump())
+    }
 
 
     /// Build a petgraph from the program.
@@ -171,7 +181,13 @@ impl GraphProgram {
             history_depth: 1,
         });
 
-        for instr in &self.code {
+        //Execute with a manual program counter so we can do jumps and marks
+        let mut code = self.code.clone(); // so we can disable a jump after using it (replace with NOP in the clone)
+        let mut pc: usize = 0;
+        let mut last_mark: Option<usize> = None; // track last mark for jumps (all previous marks are superseded)
+
+        while pc < code.len() {
+            let instr = &code[pc];
             match instr {
                 GraphInstruction::Stay() => {
                     let n = graph.node_weight_mut(curr).expect("current node must exist");
@@ -262,8 +278,21 @@ impl GraphProgram {
                         stack.push(top);
                     }
                 }
+                GraphInstruction::Jump() => {
+                    // disable this jump for future iterations by replacing with NOP
+                    code[pc] = GraphInstruction::Nop();
+                    if let Some(mark_pos) = last_mark {
+                        // jump back to last mark
+                        pc = mark_pos;
+                    }
+                }
+                GraphInstruction::Mark() => {
+                    last_mark = Some(pc);
+                }
                 GraphInstruction::Nop() => {}
             }
+            pc += 1;
+
         }
 
         // As a final step connect the current node to the output node!
@@ -372,6 +401,40 @@ mod tests {
         let g = prog.build_graph(&ProgramDefaults::default());
         assert_eq!(g.node_count(), 5); // input, N0, N1, N2, output
         assert_eq!(g.edge_count(), 5); // input->N0, N0->N1, N1->N2, N2->N0, N0++ N0->output
+    }
 
+    #[test]
+    fn mark_jump_runs_block_twice_then_disables() {
+        // input -> N0 (implicit)
+        // create -> N1 (edge N0->N1)
+        // mark
+        // create -> N2 (edge N1->N2)
+        // jump  -> rewinds to after mark, disables jump
+        // create -> N3 (edge N2->N3)
+        // final -> N3 -> output
+        let prog = GraphProgram::new()
+            .create()
+            .mark()
+            .create()
+            .jump();
+
+        let g = prog.build_graph(&ProgramDefaults::default());
+        // Nodes: input, N0, N1, N2, N3, output
+        assert_eq!(g.node_count(), 6);
+        // Edges: input->N0, N0->N1, N1->N2, N2->N3, N3->output
+        assert_eq!(g.edge_count(), 5);
+    }
+
+    #[test]
+    fn jump_without_mark_is_noop() {
+        let prog = GraphProgram::new()
+            .jump()     // no mark yet -> no-op
+            .create();  // create one node
+
+        let g = prog.build_graph(&ProgramDefaults::default());
+        // input, N0, N1, output
+        assert_eq!(g.node_count(), 4);
+        // input->N0, N0->N1, N1->output
+        assert_eq!(g.edge_count(), 3);
     }
 }

@@ -126,6 +126,10 @@ impl RuntimeNetwork {
     }
 }
 
+fn ones_mask(bits: usize) -> BitVector {
+    BitVector::new(bits, Some(u64::MAX))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

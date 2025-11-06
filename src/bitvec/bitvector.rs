@@ -34,6 +34,14 @@ impl BitVector {
         }
     }
 
+    pub fn from_bits(indices: &[usize], len: usize) -> BitVector {
+        let mut bv = BitVector::new(len, Some(0));
+        for &idx in indices {
+            bv.bit_set(idx);
+        }
+        bv
+    }
+
     pub fn from_bytes(bytes: &[u8], num_bits: usize) -> Self {
         assert!(num_bits > 0);
         //assert!(num_bits % 8 == 0, "num_bits must be a multiple of 8");

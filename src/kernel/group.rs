@@ -1,8 +1,9 @@
 use crate::kernel::class::KernelClass;
+use crate::kernel::simple::SimpleKernel;
 
 /// A collection of different KernelClasses that can operate together on an edge.
 pub struct KernelGroup {
-    available_classes: Vec<KernelClass>,
+    available_classes: Vec<KernelClass<SimpleKernel>>,
 }
 
 impl KernelGroup {
@@ -10,7 +11,7 @@ impl KernelGroup {
         Self { available_classes: Vec::new() }
     }
 
-    pub fn add_class(&mut self, kc: KernelClass) {
+    pub fn add_class(&mut self, kc: KernelClass<SimpleKernel>) {
         self.available_classes.push(kc);
     }
 

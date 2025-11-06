@@ -11,6 +11,7 @@ pub mod bits;
 pub mod bitcount;
 pub mod bitmask;
 pub mod bititer;
+pub mod bitslice;
 pub mod bitdensity;
 pub mod bithistory;
 pub mod bitgen;
@@ -28,6 +29,7 @@ pub use bitcount::*;
 pub use bitmask::*;
 */
 pub use bititer::*;
+pub use bitslice::*;
 pub use bitdensity::*;
 pub use bithistory::*;
 pub use bitgen::*;

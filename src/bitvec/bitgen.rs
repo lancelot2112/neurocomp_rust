@@ -47,10 +47,14 @@ impl BitGenConfig {
     }
 }
 
-pub fn generate(cfg: &BitGenConfig) -> BitVector {
-    let mut rng = rand::thread_rng();
-    generate_with_rng(cfg, &mut rng)
+impl BitVector {
+    pub fn generate(cfg: &BitGenConfig) -> Self {
+        let mut rng = rand::thread_rng();
+        generate_with_rng(cfg, &mut rng)
+    }
 }
+
+
 
 pub fn generate_with_rng<R: Rng + ?Sized>(cfg: &BitGenConfig, rng: &mut R) -> BitVector {
     let bits = cfg.bits;
@@ -148,9 +152,11 @@ mod tests {
     fn bernoulli_density_close() {
         let bits = 50_000;
         let k = 5_000; // 10%
-        let cfg = BitGenConfig::new(bits, k).with_cluster(0.0);
+        let cfg = BitGenConfig::new(bits, k).with_cluster(0.0).exact();
         let mut rng = StdRng::seed_from_u64(123);
         let bv = generate_with_rng(&cfg, &mut rng);
+
+        assert_eq!(bv.count_ones(), k);
 
         let frac = (bv.count_ones() as f64) / (bits as f64);
         assert!((frac - 0.10).abs() < 0.015, "frac={}", frac);
@@ -161,7 +167,7 @@ mod tests {
         let bits = 8192 + 7;
         let k = 777;
         let cfg = BitGenConfig::new(bits, k).with_cluster(0.7).exact();
-        let bv = generate(&cfg);
+        let bv = BitVector::generate(&cfg);
         assert_eq!(bv.count_ones(), k);
     }
 

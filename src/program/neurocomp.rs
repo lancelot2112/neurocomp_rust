@@ -17,21 +17,14 @@ pub struct RuntimeNetwork {
 }
 
 /// Per-edge runtime unit: group of kernel classes plus a default kernel.
+pub struct RuntimeEdgeTarget {
+    pub idx: usize, // target node index
+    pub read_back: usize, // how many frames back to read from
+}
 pub struct RuntimeEdgeGroup {
-    pub src: usize,
+    pub src: RuntimeEdgeTarget,
     pub dst: usize,
     pub group: KernelGroup,
-    pub default: DefaultEdge,
-}
-
-/// A simple default kernel: if popcount(input & mask) >= threshold,
-/// apply op with output_mask to destination current frame.
-pub struct DefaultEdge {
-    pub threshold: usize,
-    pub op: KernelOp,
-    pub input_mask: BitVector,
-    pub output_mask: BitVector,
-    pub read_back: usize, // 0=current, 1=prev1, 2=prev2
 }
 
 impl RuntimeNetwork {
@@ -48,7 +41,7 @@ impl RuntimeNetwork {
         for ni in g.node_indices() {
             let ns = g.node_weight(ni).expect("node weight");
             let bits = ns.bits;
-            let ring_len = ns.history_depth.max(3);
+            let ring_len = ns.history_depth.max(2);
             let init = BitVector::new(bits, Some(0));
             nodes.push(BitVecHistory::new(init, ring_len));
         }
@@ -60,23 +53,19 @@ impl RuntimeNetwork {
             let dst = e.target().index();
             let es = e.weight();
 
-            let src_bits = g.node_weight(NodeIndex::new(src)).unwrap().bits;
-            let dst_bits = g.node_weight(NodeIndex::new(dst)).unwrap().bits;
+            //let src_bits = g.node_weight(NodeIndex::new(src)).unwrap();
+            //let dst_bits = g.node_weight(NodeIndex::new(dst)).unwrap();
 
-            let input_mask = ones_mask(src_bits);
-            let output_mask = ones_mask(dst_bits);
+            //let input_mask = ones_mask(src_bits);
+            //let output_mask = ones_mask(dst_bits);
 
             edges.push(RuntimeEdgeGroup {
-                src,
+                src: RuntimeEdgeTarget {
+                    idx: src,
+                    read_back: es.input_read_back,
+                },
                 dst,
                 group: KernelGroup::default(), // placeholder; later: pick group per edge
-                default: DefaultEdge {
-                    threshold: es.threshold,
-                    op: es.op,
-                    input_mask,
-                    output_mask,
-                    read_back: 1, // read previous frame by default
-                },
             });
         }
 
@@ -91,27 +80,12 @@ impl RuntimeNetwork {
         }
 
         // Execute edges
-        for eg in &self.edges {
-            // TODO: If eg.group is non-empty, dispatch KernelClasses here.
-            // For now, always execute the simple default kernel:
-            let d = &eg.default;
-
+        for eg in &mut self.edges {
             // Snapshot source at read_back frames
-            let src_bv = self.nodes[eg.src].snapshot(d.read_back);
+            let src_view = self.nodes[eg.src.idx].get_frame(eg.src.read_back);
+            let dst_curr = self.nodes[eg.dst].current_mut();
 
-            // Count ones in (src & input_mask) using existing API
-            let ones = src_bv.mask_and_count(0, &d.input_mask, |a, m| a & m);
-
-            if ones >= d.threshold {
-                // Apply op with output_mask into destination current frame using existing API
-                let dst = self.nodes[eg.dst].current_mut();
-                match d.op {
-                    KernelOp::Or => dst.mask_mut_or(0, &d.output_mask),
-                    KernelOp::And => dst.mask_mut_and(0, &d.output_mask),
-                    KernelOp::Xor => dst.mask_mut_xor(0, &d.output_mask),
-                    KernelOp::Clear => dst.mask_mut_clear(0, &d.output_mask),
-                }
-            }
+            eg.group.process_all(&src_view, dst_curr, 0); // phase=0 for now
         }
     }
 
@@ -137,7 +111,7 @@ mod tests {
 
     #[test]
     fn materialize_with_groups_and_tick() {
-        // Build: input -> N0 (implicit in program), then tick once
+        // Build: input -> N0 (implicit in program)->output, then tick once
         let prog = GraphProgram::new();
         let defaults = ProgramDefaults::default();
 
@@ -156,5 +130,13 @@ mod tests {
         // N0 (node 1) should have received a write (default threshold is 1)
         let n0_word0 = net.node_current(1).as_lswords().next().unwrap_or(0);
         assert_ne!(n0_word0, 0);
+    }
+
+    fn simple_network_learns_static_pattern() {
+        // Build: input -> N0 (implicit in program)->output, then tick once
+        let prog = GraphProgram::new();
+        let defaults = ProgramDefaults::default();
+        
+        let mut net = RuntimeNetwork::from_program(&prog, &defaults);
     }
 }

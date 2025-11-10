@@ -57,6 +57,7 @@ pub enum ClassInstruction {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EdgeSpec {
+    pub input_read_back: usize, // how many frames back to read from source node
     pub threshold: usize,
     pub op: KernelOp,
     // room for future kernel-class parameters (windows, remapping, etc.)
@@ -169,6 +170,7 @@ impl GraphProgram {
             input_node,
             curr,
             EdgeSpec {
+                input_read_back: 0,
                 threshold: defaults.default_threshold,
                 op: defaults.default_op,
             },
@@ -190,8 +192,19 @@ impl GraphProgram {
             let instr = &code[pc];
             match instr {
                 GraphInstruction::Stay() => {
-                    let n = graph.node_weight_mut(curr).expect("current node must exist");
-                    n.history_depth = n.history_depth.saturating_add(1);
+                    {
+                        let n = graph.node_weight_mut(curr).expect("current node must exist");
+                        n.history_depth = n.history_depth.saturating_add(1);
+                    }
+                    graph.add_edge(
+                        curr,
+                        curr,
+                        EdgeSpec {
+                            input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
+                            threshold: defaults.default_threshold,
+                            op: defaults.default_op,
+                        },
+                    );
                 }
                 GraphInstruction::Create() => {
                     let new_node = graph.add_node(NodeSpec {
@@ -203,6 +216,7 @@ impl GraphProgram {
                         curr,
                         new_node,
                         EdgeSpec {
+                            input_read_back: 0,
                             threshold: defaults.default_threshold,
                             op: defaults.default_op,
                         },
@@ -214,14 +228,26 @@ impl GraphProgram {
                     if let Some(target) = stack.pop() {
                         if target == curr {
                             // self-loop increases history depth
-                            let n = graph.node_weight_mut(curr).expect("current node must exist");
-                            n.history_depth = n.history_depth.saturating_add(1);
+                            {
+                                let n = graph.node_weight_mut(curr).expect("current node must exist");
+                                n.history_depth = n.history_depth.saturating_add(1);
+                            }
+                            graph.add_edge(
+                                curr,
+                                curr,
+                                EdgeSpec {
+                                    input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
+                                    threshold: defaults.default_threshold,
+                                    op: defaults.default_op,
+                                },
+                            );
                         } else {
                             // add edge: curr -> target
                             graph.add_edge(
                                 curr,
                                 target,
                                 EdgeSpec {
+                                    input_read_back: 0,
                                     threshold: defaults.default_threshold,
                                     op: defaults.default_op,
                                 },
@@ -237,6 +263,7 @@ impl GraphProgram {
                         input_node,
                         curr,
                         EdgeSpec {
+                            input_read_back: 0,
                             threshold: defaults.default_threshold,
                             op: defaults.default_op,
                         },
@@ -249,6 +276,7 @@ impl GraphProgram {
                         curr,
                         output_node,
                         EdgeSpec {
+                            input_read_back: 0,
                             threshold: defaults.default_threshold,
                             op: defaults.default_op,
                         },
@@ -301,6 +329,7 @@ impl GraphProgram {
             curr,
             output_node,
             EdgeSpec {
+                input_read_back: 0,
                 threshold: defaults.default_threshold,
                 op: defaults.default_op,
             },

@@ -44,14 +44,22 @@ impl KernelClassTemperature {
     }
 }
 
+// Light, borrow-based context passed to each spawned kernel
+pub struct KernelContext<'a> {
+    pub input: &'a BitVector,
+    pub inhibit: &'a BitVector,
+    pub temperature: i16,
+    pub phase: u16,
+}
+
 pub trait KernelTrait {
-    fn process(&self, input: &BitVector, output: &mut BitVector, temperature: &i16, phase: &u16);
+    fn try_fire<R: rand::Rng + ?Sized>(&mut self, ctx: &KernelContext, out: &mut BitVector, rng: &mut R) -> bool;
+    fn word_range(&self) -> (usize, usize);
 }
 
 pub struct KernelClass<K: KernelTrait> {
     active_kernels: Vec<K>,
     temperature: KernelClassTemperature,
-
 }
 
 impl<K: KernelTrait> KernelClass<K> {
@@ -68,9 +76,25 @@ impl<K: KernelTrait> KernelClass<K> {
     }
 
     /// Run all kernels; kernels may OR/XOR/AND/CLEAR into `output`.
-    pub fn process_all(&self, input: &BitVector, output: &mut BitVector, phase: u16) {
-        for k in &self.active_kernels {
-            k.process(input, output, &self.temperature.current, &phase);
+    pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16) {
+        let mut inhibit = BitVector::new(input.word_len(),Some(0));
+        let mut rng = rand::thread_rng();
+        for k in &mut self.active_kernels {
+            let ctx = KernelContext {
+                input,
+                inhibit: &inhibit,
+                temperature: self.temperature.current,
+                phase,
+            };
+
+            if k.try_fire(&ctx, output, &mut rng) {
+                // Kernel fired inhibit overlapping kernels
+                let (start,end) = k.word_range();
+                for i in start..end {
+                    inhibit.bit_set(i);
+                }
+
+            }
         }
     }
 

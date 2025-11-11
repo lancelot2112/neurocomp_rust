@@ -17,6 +17,26 @@ pub struct NodeSpec {
     pub history_depth: usize, // frames (conceptual) for this node
 }
 
+impl NodeSpec {
+    pub fn from_defaults(defaults: &ProgramDefaults) -> Self {
+        Self {
+            name: None,
+            bits: defaults.default_bits,
+            history_depth: defaults.default_history_depth,
+        }
+    }
+}
+
+impl Default for NodeSpec {
+    fn default() -> Self {
+        Self {
+            name: None,
+            bits: 128,
+            history_depth: 1,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphInstruction {
     // Explicit sequence prediction nodes (creates a class of kenrnels with two inputs (t and t-1) and output to current output)
@@ -63,11 +83,32 @@ pub struct EdgeSpec {
     // room for future kernel-class parameters (windows, remapping, etc.)
 }
 
+impl EdgeSpec {
+    pub fn from_defaults(defaults: &ProgramDefaults) -> Self {
+        Self {
+            input_read_back: 1, // default to reading snapshot of previous frame
+            threshold: defaults.default_threshold,
+            op: defaults.default_op,
+        }
+    }
+}
+
+impl Default for EdgeSpec {
+    fn default() -> Self {
+        Self {
+            input_read_back: 1, // default to reading snapshot of previous frame
+            threshold: 16,
+            op: KernelOp::Or,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProgramDefaults {
     pub default_bits: usize,      // starting bits for new nodes
     pub min_bits: usize,          // clamp Half() to this lower bound
     pub default_threshold: usize, // default threshold for edges
+    pub default_history_depth: usize, // default history depth for new nodes
     pub default_op: KernelOp,       // default op for edges
 }
 
@@ -76,7 +117,8 @@ impl Default for ProgramDefaults {
         Self {
             default_bits: 256,
             min_bits: 8,
-            default_threshold: 1,
+            default_threshold: 16,
+            default_history_depth: 1,
             default_op: KernelOp::Or,
         }
     }
@@ -151,37 +193,21 @@ impl GraphProgram {
     pub fn build_graph(&self, defaults: &ProgramDefaults) -> Graph<NodeSpec, EdgeSpec, Directed> {
         let mut graph: Graph<NodeSpec, EdgeSpec, Directed> = Graph::new();
         // Start with one implicit node so programs can begin with ops without Create().
-        let mut curr = graph.add_node(NodeSpec {
-            name: None,
-            bits: defaults.default_bits,
-            history_depth: 1,
-        });
+        let mut curr = graph.add_node(NodeSpec::from_defaults(&defaults));
         let mut stack: Vec<NodeIndex> = Vec::new();
 
         // Node 0 is always the "input" node. A bitvector with an edge is created off this
         // to start from.
         let input_node = curr;
-        curr = graph.add_node(NodeSpec {
-            name: None,
-            bits: defaults.default_bits,
-            history_depth: 1,
-        });
+        curr = graph.add_node(NodeSpec::from_defaults(&defaults));
         graph.add_edge(
             input_node,
             curr,
-            EdgeSpec {
-                input_read_back: 0,
-                threshold: defaults.default_threshold,
-                op: defaults.default_op,
-            },
+            EdgeSpec::from_defaults(&defaults),
         );
 
         // Create the output vector node to make it available to connect to
-        let output_node = graph.add_node(NodeSpec {
-            name: None,
-            bits: defaults.default_bits,
-            history_depth: 1,
-        });
+        let output_node = graph.add_node(NodeSpec::from_defaults(&defaults));
 
         //Execute with a manual program counter so we can do jumps and marks
         let mut code = self.code.clone(); // so we can disable a jump after using it (replace with NOP in the clone)
@@ -207,19 +233,11 @@ impl GraphProgram {
                     );
                 }
                 GraphInstruction::Create() => {
-                    let new_node = graph.add_node(NodeSpec {
-                        name: None,
-                        bits: defaults.default_bits,
-                        history_depth: 1,
-                    });
+                    let new_node = graph.add_node(NodeSpec::from_defaults(&defaults));
                     graph.add_edge(
                         curr,
                         new_node,
-                        EdgeSpec {
-                            input_read_back: 0,
-                            threshold: defaults.default_threshold,
-                            op: defaults.default_op,
-                        },
+                        EdgeSpec::from_defaults(&defaults),
                     );
                     // move cursor
                     curr = new_node;
@@ -246,11 +264,7 @@ impl GraphProgram {
                             graph.add_edge(
                                 curr,
                                 target,
-                                EdgeSpec {
-                                    input_read_back: 0,
-                                    threshold: defaults.default_threshold,
-                                    op: defaults.default_op,
-                                },
+                                EdgeSpec::from_defaults(&defaults),
                             );
                         }
                         // move cursor
@@ -262,11 +276,7 @@ impl GraphProgram {
                     graph.add_edge(
                         input_node,
                         curr,
-                        EdgeSpec {
-                            input_read_back: 0,
-                            threshold: defaults.default_threshold,
-                            op: defaults.default_op,
-                        },
+                        EdgeSpec::from_defaults(&defaults),
                     );
                     // do not move cursor
                 }
@@ -275,11 +285,7 @@ impl GraphProgram {
                     graph.add_edge(
                         curr,
                         output_node,
-                        EdgeSpec {
-                            input_read_back: 0,
-                            threshold: defaults.default_threshold,
-                            op: defaults.default_op,
-                        },
+                        EdgeSpec::from_defaults(&defaults),
                     );
                     // do not move cursor
                 }
@@ -328,11 +334,7 @@ impl GraphProgram {
         graph.add_edge(
             curr,
             output_node,
-            EdgeSpec {
-                input_read_back: 0,
-                threshold: defaults.default_threshold,
-                op: defaults.default_op,
-            },
+            EdgeSpec::from_defaults(&defaults),
         );
 
         graph
@@ -359,6 +361,7 @@ mod tests {
             default_bits: 128,
             min_bits: 16,
             default_threshold: 4,
+            default_history_depth: 1,
             default_op: KernelOp::Xor,
         };
         // Flow:
@@ -401,6 +404,7 @@ mod tests {
             default_bits: 64,
             min_bits: 32,
             default_threshold: 1,
+            default_history_depth: 1,
             default_op: KernelOp::Or,
         };
         let g = prog.build_graph(&defaults);

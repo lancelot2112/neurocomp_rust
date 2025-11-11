@@ -82,7 +82,7 @@ impl RuntimeNetwork {
         // Execute edges
         for eg in &mut self.edges {
             // Snapshot source at read_back frames
-            let src_view = self.nodes[eg.src.idx].get_frame(eg.src.read_back);
+            let src_view = self.nodes[eg.src.idx].snapshot(eg.src.read_back);
             let dst_curr = self.nodes[eg.dst].current_mut();
 
             eg.group.process_all(&src_view, dst_curr, 0); // phase=0 for now
@@ -98,10 +98,6 @@ impl RuntimeNetwork {
     pub fn node_current_mut(&mut self, idx: usize) -> &mut BitVector {
         self.nodes[idx].current_mut()
     }
-}
-
-fn ones_mask(bits: usize) -> BitVector {
-    BitVector::new(bits, Some(u64::MAX))
 }
 
 #[cfg(test)]
@@ -132,6 +128,7 @@ mod tests {
         assert_ne!(n0_word0, 0);
     }
 
+    #[test]
     fn simple_network_learns_static_pattern() {
         // Build: input -> N0 (implicit in program)->output, then tick once
         let prog = GraphProgram::new();

@@ -30,7 +30,7 @@ pub struct BitVecHistory {
 
 impl BitVecHistory {
     pub fn new(init: BitVector, hist_len: usize) -> Self {
-        assert!(hist_len >= 3, "hist_len must be >= 3");
+        assert!(hist_len >= 1, "hist_len must be >= 1");
         let mut frames = Vec::with_capacity(hist_len);
         // Seed the ring with copies so Prev1/Prev2 exist at t0.
         for _ in 0..hist_len {

@@ -86,7 +86,7 @@ pub struct EdgeSpec {
 impl EdgeSpec {
     pub fn from_defaults(defaults: &ProgramDefaults) -> Self {
         Self {
-            input_read_back: 1, // default to reading snapshot of previous frame
+            input_read_back: defaults.default_history_depth, // default to reading snapshot of previous frame
             threshold: defaults.default_threshold,
             op: defaults.default_op,
         }
@@ -197,14 +197,17 @@ impl GraphProgram {
         let mut stack: Vec<NodeIndex> = Vec::new();
 
         // Node 0 is always the "input" node. A bitvector with an edge is created off this
-        // to start from.
+        // to start from. when there's a non-zero program length.  Otherwise we just connect 
+        // the input to the output directly with an edge.
         let input_node = curr;
-        curr = graph.add_node(NodeSpec::from_defaults(&defaults));
-        graph.add_edge(
-            input_node,
-            curr,
-            EdgeSpec::from_defaults(&defaults),
-        );
+        if self.code.len() > 0 {
+            curr = graph.add_node(NodeSpec::from_defaults(&defaults));
+            graph.add_edge(
+                input_node,
+                curr,
+                EdgeSpec::from_defaults(&defaults),
+            );
+        }
 
         // Create the output vector node to make it available to connect to
         let output_node = graph.add_node(NodeSpec::from_defaults(&defaults));
@@ -346,10 +349,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_program_starts_with_one_node() {
+    fn default_program_connects_in_to_out() {
         let prog = GraphProgram::new();
         let g = prog.build_graph(&ProgramDefaults::default());
-        assert_eq!(g.node_count(), 3); // input, N0, output
+        assert_eq!(g.node_count(), 2); // input, output
         let n = g.node_weight(1.into()).unwrap();
         assert_eq!(n.bits, 256);
         assert_eq!(n.history_depth, 1);
@@ -381,7 +384,7 @@ mod tests {
 
         let g = prog.build_graph(&defaults);
         assert_eq!(g.node_count(), 4); // input, N0, N1, output
-        assert_eq!(g.edge_count(), 4); // input->N0, N0->N1, N1++ (not an edge), N1->N0, N0->output
+        assert_eq!(g.edge_count(), 5); // input->N0, N0->N1, N1(t-1), N1->N0, N0->output
 
         // Validate edge specs are defaults
         for e in g.edge_weights() {
@@ -433,7 +436,7 @@ mod tests {
         // N0 -> output
         let g = prog.build_graph(&ProgramDefaults::default());
         assert_eq!(g.node_count(), 5); // input, N0, N1, N2, output
-        assert_eq!(g.edge_count(), 5); // input->N0, N0->N1, N1->N2, N2->N0, N0++ N0->output
+        assert_eq!(g.edge_count(), 6); // input->N0, N0->N1, N1->N2, N2->N0, N0(t-1) N0->output
     }
 
     #[test]

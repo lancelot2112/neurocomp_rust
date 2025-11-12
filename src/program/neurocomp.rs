@@ -73,7 +73,7 @@ impl RuntimeNetwork {
     }
 
     /// Advance histories and process all edges once.
-    pub fn tick(&mut self, mode: AdvanceMode) {
+    pub fn tick(&mut self, mode: AdvanceMode, adj_temperature: i16) {
         // Advance all nodes first so writes go into a fresh current frame
         for n in &mut self.nodes {
             n.advance(mode);
@@ -85,7 +85,7 @@ impl RuntimeNetwork {
             let src_view = self.nodes[eg.src.idx].snapshot(eg.src.read_back);
             let dst_curr = self.nodes[eg.dst].current_mut();
 
-            eg.group.process_all(&src_view, dst_curr, 0); // phase=0 for now
+            eg.group.process_all(&src_view, dst_curr, 0, adj_temperature); // phase=0 for now
         }
     }
 
@@ -98,34 +98,56 @@ impl RuntimeNetwork {
     pub fn node_current_mut(&mut self, idx: usize) -> &mut BitVector {
         self.nodes[idx].current_mut()
     }
+
+    pub fn write_input(&mut self, input: &BitVector, word_offset: usize) {
+        let node = self.node_current_mut(0);
+        node.mask_mut(word_offset, input, |a, b| a | b);
+    }
+
+    pub fn read_output(&self) -> &BitVector {
+        self.node_current(self.nodes.len() - 1)
+    }
+
+    pub fn read_node(&self, node_idx: usize) -> &BitVector {
+        self.node_current(node_idx)
+    }
+
+    pub fn write_node(&mut self, input: &BitVector, node_idx: usize, word_offset: usize) {
+        let node = self.node_current_mut(node_idx);
+        node.mask_mut(word_offset, input, |a, b| a | b);
+    }
+
+    pub fn overwrite_node(&mut self, input: &BitVector, node_idx: usize, word_offset: usize) {
+        let node = self.node_current_mut(node_idx);
+        node.mask_mut(word_offset, input, |_, b| b);
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::graph::{GraphInstruction, GraphProgram};
+    use crate::program::graph::{GraphProgram};
 
     #[test]
     fn materialize_with_groups_and_tick() {
         // Build: input -> N0 (implicit in program)->output, then tick once
         let prog = GraphProgram::new();
-        let defaults = ProgramDefaults::default();
+        let mut defaults = ProgramDefaults::default();
+        defaults.default_threshold = 1; // make sure kernel fires easily for test
 
         let mut net = RuntimeNetwork::from_program(&prog, &defaults);
 
         // Seed input: set 8 low bits
-        {
-            let inp = net.node_current_mut(0);
-            let mask = BitVector::from_words(vec![0xFF]);
-            inp.mask_mut(0, &mask, |a, b| a | b);
-        }
-
+        net.write_input(
+            &BitVector::from_words(vec![0xFF]),
+            0,
+        );
         // One tick: CopyPrev then process edges with default kernel
-        net.tick(AdvanceMode::CopyPrev);
+        net.tick(AdvanceMode::CopyPrev, 16);
 
-        // N0 (node 1) should have received a write (default threshold is 1)
-        let n0_word0 = net.node_current(1).as_lswords().next().unwrap_or(0);
-        assert_ne!(n0_word0, 0);
+        // N0 (node 1) should have fired, with high temperature
+        let output = net.read_output();
+        assert_eq!(output.count_ones(), 1);
     }
 
     #[test]
@@ -135,5 +157,33 @@ mod tests {
         let defaults = ProgramDefaults::default();
         
         let mut net = RuntimeNetwork::from_program(&prog, &defaults);
+
+        //build vocab
+        //need at least 16 bits for the mask to fire (threshold is 16)
+        let a = BitVector::from_words(vec![0b01010101010101010101010101010101]);
+        net.write_input(&a, 0);
+        
+        //show that it doesn't respond yet
+        net.tick(AdvanceMode::CopyPrev, 0);
+        assert_eq!(net.read_output().count_ones(),0);
+
+        //start at a temperature of 16 that forces it to fire
+        //and then gradually reduce temperature down
+        for i in 0..16 {
+            net.tick(AdvanceMode::CopyPrev, 16 - i);
+            assert_eq!(net.read_output().count_ones(),1, "Failed at temperature adjustment {}",16 - i);
+            net.overwrite_node(&BitVector::new(64, Some(0)), 1, 0); //clear output after first tick
+            assert_eq!(net.read_output().count_ones(),0);
+        }
+        //fire with 0 temperature and show that the pattern has learned
+        net.tick(AdvanceMode::CopyPrev, 0);
+
+        //show that the input is preserved
+        let input = net.read_node(0);
+        assert_eq!(input.count_ones(), 16);
+        //show that the kernel has fired to output
+        let output = net.read_output();
+        assert_eq!(output.count_ones(), 1);
+
     }
 }

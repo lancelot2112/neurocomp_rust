@@ -22,11 +22,11 @@ impl SimpleKernel {
 
     pub fn default(output_bit: usize) -> Self {
         Self {
-            input_mask: BitVector::new(64, Some(0)),
+            input_mask: BitVector::new(64, Some(0xF0F0_F0F0_F0F0_F0F0)),
             input_idx: 0,
             output_mask: BitVector::from_bits(&[output_bit&63],1),
             output_idx: output_bit >> 6,
-            threshold: 1,
+            threshold: 16,
             op: KernelOp::Or,
         }
     }

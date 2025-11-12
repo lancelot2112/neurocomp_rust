@@ -76,14 +76,14 @@ impl<K: KernelTrait> KernelClass<K> {
     }
 
     /// Run all kernels; kernels may OR/XOR/AND/CLEAR into `output`.
-    pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16) {
+    pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16) {
         let mut inhibit = BitVector::new(input.word_len(),Some(0));
         let mut rng = rand::thread_rng();
         for k in &mut self.active_kernels {
             let ctx = KernelContext {
                 input,
                 inhibit: &inhibit,
-                temperature: self.temperature.current,
+                temperature: self.temperature.current + adj_temperature,
                 phase,
             };
 

@@ -287,11 +287,17 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
                 } else {
                     None
                 };
-                th.channels[worst] = proposal.unwrap_or_else(|| {
-                    if policy == Policy::LearnedOpen { random_open_channel(&mut rng) } else { random_channel(&mut rng) }
-                });
-                credit[worst] = 0.0;
-                age[worst] = 0;
+                // Open discovery: only swap a route for one that is more consistent
+                // (avoids churning out a good route the predictor hasn't used yet).
+                let keep = policy == Policy::LearnedOpen
+                    && proposal.map_or(true, |p| route_scores.precision(p) <= route_scores.precision(th.channels[worst]));
+                if !keep {
+                    th.channels[worst] = proposal.unwrap_or_else(|| {
+                        if policy == Policy::LearnedOpen { random_open_channel(&mut rng) } else { random_channel(&mut rng) }
+                    });
+                    credit[worst] = 0.0;
+                    age[worst] = 0;
+                }
             }
             for a in age.iter_mut() {
                 *a += 1;
@@ -328,6 +334,7 @@ fn main() {
             Ok("proposed") => vec![Policy::Learned, Policy::LearnedProposed],
             Ok("proposed_only") => vec![Policy::LearnedProposed],
             Ok("oracle") => vec![Policy::Oracle],
+            Ok("open_only") => vec![Policy::LearnedOpen],
             Ok("open") => vec![Policy::NoThalamus, Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
             _ => vec![

@@ -94,7 +94,7 @@ bit-sliced counters ([probability in bits](../concepts/probability-in-bits.md)):
 | list memory | 99.0% | 98.7% (same code; rerun) | 97.5% | 98.7% (same code; rerun) |
 | CA3 1,024 / 64, settle 2 | 97.7% | 97.1% | 93.5% | 90.3% (98/78/95; answer in recall 99.1%) |
 | CA3 16,384 / 32, settle 2 | 99.1% | 99.4% | 96.1% | 89.1% (92/79/96; answer in recall 99.9%) |
-| CA3 16,384 / 32, no settling | 99.0% | 99.3% | 99.3% | BITS_NOSETTLE_3 |
+| CA3 16,384 / 32, no settling | 99.0% | 99.3% | 99.3% | 90.9% (96/78/100; answer in recall 99.8%) |
 
 Same-seed check (short stories, seed 0, CA3 16,384 / 32, settle 2), floats vs bits:
 1–2 facts **72.2% vs 73.6%** (answer in recall 94.4% vs 94.1%); 1–3 facts **100% vs 98.6%**
@@ -102,7 +102,21 @@ Same-seed check (short stories, seed 0, CA3 16,384 / 32, settle 2), floats vs bi
 low 1–2-fact score is the predictor under-using a correct recall, in both versions
 (as with one seed of the list memory in [11](11-episodic-memory.md)).
 
-BITS_FINDING
+**Findings, in bits:**
+1. **With 1–2 facts, bits match floats** in every configuration (97.1–99.4% vs
+   97.7–99.1%).
+2. **With 1–3 facts, the memory still finds the answer** (answer in recall 99.1–99.9%),
+   but held-out accuracy drops to 89–91% (floats: 93.5–99.3%). The drop is one seed:
+   seed 1 scores 78–79% in *all three* CA3 bit configurations, where floats scored 99–100%.
+   So it is systematic, not noise.
+3. Likely cause: **less clean readouts.** "Answer in recall" checks that the answer is
+   present, not that it is alone. Coarse integer weights (16–23 per write, halved every 2
+   stores, floored) make older episodes' weights equal sooner, so more of them pass the
+   50%-of-best readout and extra places reach the predictor, which then leans on trained
+   pairs. Next: measure how many places each recall contains, and give the counters more
+   resolution (more planes, larger writes) or a sharper readout after removing the cue.
+4. The separation and settling effects seen with floats are not visible here; the seed-1
+   drop dominates.
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and
 [13](13-big-loop.md) for chaining recalls.

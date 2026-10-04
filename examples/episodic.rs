@@ -42,6 +42,7 @@ const BITS: usize = 8192; // sparse enough that words rarely share bits (habitua
 const NAMES: &[&str] = &["mary", "john", "sandra", "daniel", "anna", "peter"];
 const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", "bedroom"];
 const FILLERS: &[&str] = &["then", "later", "so", "next", "after"];
+const OBJECTS: &[&str] = &["ball", "apple", "book", "key", "cup", "box"];
 const TRAIN: usize = 3000;
 const TEST: usize = 1000;
 
@@ -50,6 +51,8 @@ enum Task {
     Short,
     Long,
     Varied,
+    /// Two-hop questions: "X picked up the O" + "X went to the P" ... "where is the O ?"
+    TwoHop,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -60,6 +63,12 @@ enum Policy {
     /// Experiment 12: dentate-gyrus code + Hebbian CA3 store instead of a list.
     /// (granule cells, active cells, recurrent settle steps)
     Ca3 { cells: usize, k: usize, settle: usize },
+    /// Big-loop recall (`EpisodicMemory::recall_chain`) with this many hops; one
+    /// predictor frame per hop.
+    Loop(usize),
+    /// Branching big loop (`EpisodicMemory::recall_branches`): hop 1 plus this many
+    /// hop-2 branches, one per rare item of hop 1; one frame each.
+    Branch(usize),
 }
 
 struct Story {
@@ -72,7 +81,51 @@ fn allowed(n: usize, p: usize) -> bool {
     p != n % PLACES.len()
 }
 
+/// Two-hop story: 2-3 people move around (1-2 moves each) and 1-2 of them pick up an
+/// object, in random order; the question asks where an object is, i.e. the last place
+/// its holder went. Held-out: (object, place) answers never seen in training.
+fn two_hop_story(rng: &mut StdRng, want_held_out: bool) -> Story {
+    loop {
+        let mut words: Vec<&'static str> = Vec::new();
+        for _ in 0..rng.gen_range(0..=4) {
+            words.push(FILLERS.choose(rng).unwrap());
+        }
+        let mut names: Vec<usize> = (0..NAMES.len()).collect();
+        names.shuffle(rng);
+        let people = &names[..rng.gen_range(2..=3)];
+        let mut objects: Vec<usize> = (0..OBJECTS.len()).collect();
+        objects.shuffle(rng);
+        let held: Vec<(usize, usize)> = objects[..rng.gen_range(1..=2)].iter().map(|&o| (o, *people.choose(rng).unwrap())).collect();
+        let mut sentences: Vec<(Vec<&'static str>, Option<(usize, usize)>)> = Vec::new(); // (words, (person, place) if a move)
+        for &p in people {
+            for _ in 0..rng.gen_range(1..=2) {
+                let place = rng.gen_range(0..PLACES.len());
+                sentences.push((vec![NAMES[p], "went", "to", "the", PLACES[place], "."], Some((p, place))));
+            }
+        }
+        for &(o, p) in &held {
+            sentences.push((vec![NAMES[p], "picked", "up", "the", OBJECTS[o], "."], None));
+        }
+        sentences.shuffle(rng);
+        let (o, holder) = held[rng.gen_range(0..held.len())];
+        let answer = sentences.iter().filter_map(|(_, m)| *m).filter(|&(p, _)| p == holder).last().unwrap().1;
+        if (answer != o % PLACES.len()) == want_held_out {
+            continue; // held-out answers: place == object index (a diagonal)
+        }
+        for (w, _) in sentences {
+            words.extend(w);
+        }
+        words.extend(["where", "is", "the", OBJECTS[o], "?"]);
+        let answer_at = words.len();
+        words.extend([PLACES[answer], "."]);
+        return Story { words, answer_at, held_out: want_held_out };
+    }
+}
+
 fn story(rng: &mut StdRng, task: Task, max_facts: usize, want_held_out: bool) -> Story {
+    if task == Task::TwoHop {
+        return two_hop_story(rng, want_held_out);
+    }
     loop {
         let mut words: Vec<&'static str> = Vec::new();
         for _ in 0..rng.gen_range(0..=4) {
@@ -123,8 +176,9 @@ struct Outcome {
 fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut vocab: Vec<&str> = vec![
-        "went", "to", "the", ".", "where", "is", "?", "all", "way", "over", "right", "now", "quickly", "slowly", "big", "old",
+        "went", "to", "the", ".", "where", "is", "?", "all", "way", "over", "right", "now", "quickly", "slowly", "big", "old", "picked", "up",
     ];
+    vocab.extend(OBJECTS);
     vocab.extend(NAMES);
     vocab.extend(PLACES);
     vocab.extend(FILLERS);
@@ -138,6 +192,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     ];
     let mid_frames = match policy {
         Policy::NoMemory | Policy::Episodic | Policy::Ca3 { .. } => 1,
+        Policy::Loop(hops) => hops,
+        Policy::Branch(b) => b + 1,
         Policy::FixedRelay => routes.len(),
     };
     let mut th = Thalamus::new(BITS, 60, routes);
@@ -185,6 +241,37 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 match policy {
                     Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
                     Policy::FixedRelay => words.extend_from_slice(th.relay().as_words()),
+                    Policy::Loop(hops) => {
+                        let cue = memory.rarest(&sentence, 0.1, 1.5);
+                        let chain = memory.recall_chain(&cue, hops, habituation, 0.1, 1.5);
+                        if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 3 {
+                            let names = |bv: &BitVector| -> Vec<&str> {
+                                (0..vocab.len())
+                                    .filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
+                                    .map(|i| vocab[i])
+                                    .collect()
+                            };
+                            let hops_named: Vec<Vec<&str>> = chain.iter().map(|h| names(h)).collect();
+                            eprintln!("{:?}\n  cue {:?} -> hops {:?}", s.words, names(&cue), hops_named);
+                            let freqs: Vec<String> = ["picked", "up", "the", "went", "where", "mary", "john", "kitchen", "ball"]
+                                .iter()
+                                .map(|w| format!("{w}:{:.2}", memory.frequency(&enc.codes[index[w]])))
+                                .collect();
+                            eprintln!("  frequencies: {}", freqs.join(" "));
+                        }
+                        for h in 0..hops {
+                            match chain.get(h) {
+                                Some(frame) => words.extend_from_slice(frame.as_words()),
+                                None => words.extend(std::iter::repeat(0).take(BITS / 64)),
+                            }
+                        }
+                    }
+                    Policy::Branch(b) => {
+                        let cue = memory.rarest(&sentence, 0.1, 1.5);
+                        for frame in memory.recall_branches(&cue, b, habituation, 16) {
+                            words.extend_from_slice(frame.as_words());
+                        }
+                    }
                     Policy::Ca3 { .. } => {
                         let cue = memory.rarest(&sentence, 0.1, 1.5);
                         let mut recalled = BitVector::new(BITS, Some(0));
@@ -292,14 +379,22 @@ fn main() {
         Ok("short") => vec![Task::Short],
         Ok("long") => vec![Task::Long],
         Ok("varied") => vec![Task::Varied],
+        Ok("twohop") => vec![Task::TwoHop],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
     for task in tasks {
-        for max_facts in [2usize, 3] {
+        let fact_settings: &[usize] = if task == Task::TwoHop { &[0] } else { &[2, 3] };
+        for &max_facts in fact_settings {
             println!();
-            println!("{task:?} stories, 1-{max_facts} facts, question about a random one");
+            if task == Task::TwoHop {
+                println!("TwoHop stories: 2-3 people, 1-2 moves each, 1-2 objects picked up; \"where is the O ?\"");
+            } else {
+                println!("{task:?} stories, 1-{max_facts} facts, question about a random one");
+            }
             let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
+                Ok("loop") => vec![Policy::NoMemory, Policy::Episodic, Policy::Loop(1), Policy::Loop(2), Policy::Branch(3)],
+                Ok("branch") => vec![Policy::Branch(3)],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3") => vec![
                     Policy::Episodic,

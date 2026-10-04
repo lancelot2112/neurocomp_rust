@@ -19,11 +19,12 @@ pub struct EpisodicMemory {
     episodes: Vec<BitVector>, // oldest first
     bit_counts: Vec<u32>,     // how many stored episodes (ever) had each bit
     stored: u32,
+    first_id: usize,          // id of episodes[0]; ids stay stable as old episodes are forgotten
 }
 
 impl EpisodicMemory {
     pub fn new(bits: usize, capacity: usize) -> Self {
-        Self { bits, capacity, episodes: Vec::new(), bit_counts: vec![0; bits], stored: 0 }
+        Self { bits, capacity, episodes: Vec::new(), bit_counts: vec![0; bits], stored: 0, first_id: 0 }
     }
 
     /// Store one episode in a single shot (the oldest is forgotten at capacity).
@@ -37,6 +38,7 @@ impl EpisodicMemory {
         self.episodes.push(episode.clone());
         if self.episodes.len() > self.capacity {
             self.episodes.remove(0);
+            self.first_id += 1;
         }
     }
 
@@ -89,14 +91,102 @@ impl EpisodicMemory {
     /// The stored episode overlapping `cue` the most (at least `min_overlap`
     /// bits), the most recent one on ties.
     pub fn recall(&self, cue: &BitVector, min_overlap: u32) -> Option<&BitVector> {
+        self.recall_excluding(cue, min_overlap, &[]).map(|(_, e)| e)
+    }
+
+    /// Like `recall`, skipping episodes whose ids are in `exclude`; returns (id, episode).
+    pub fn recall_excluding(&self, cue: &BitVector, min_overlap: u32, exclude: &[usize]) -> Option<(usize, &BitVector)> {
         let mut best: Option<(u32, usize)> = None;
         for (i, e) in self.episodes.iter().enumerate() {
+            if exclude.contains(&(self.first_id + i)) {
+                continue;
+            }
             let o = overlap(e, cue);
             if o >= min_overlap && best.map_or(true, |(bo, _)| o >= bo) {
                 best = Some((o, i));
             }
         }
-        best.map(|(_, i)| &self.episodes[i])
+        best.map(|(_, i)| (self.first_id + i, &self.episodes[i]))
+    }
+
+    /// Big-loop recall (EC -> hippocampus -> EC -> ...): recall from `cue`, then use
+    /// the rarest new content of what came back as the next cue, for up to `hops`
+    /// hops. Episodes already recalled are skipped (inhibition of return) and content
+    /// already used as a cue is removed, so each hop moves on. Returns each hop's new
+    /// (habituated) content; stops early when nothing new is recalled.
+    ///
+    /// "where is the ball ?" -> hop 1: "mary picked up the ball" -> *mary* ->
+    /// hop 2: "mary went to the kitchen" -> *kitchen*.
+    pub fn recall_chain(&self, cue: &BitVector, hops: usize, habituation: f32, percentile: f32, ratio: f32) -> Vec<BitVector> {
+        let mut out = Vec::new();
+        let mut visited = Vec::new();
+        let mut used = cue.clone(); // everything cued so far
+        let mut cue = cue.clone();
+        for _ in 0..hops {
+            let need = ((cue.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+            if cue.count_ones() == 0 {
+                break;
+            }
+            let Some((id, ep)) = self.recall_excluding(&cue, need, &visited) else { break };
+            visited.push(id);
+            let mut content = self.novel(ep, habituation);
+            for (c, &u) in content.as_words_mut().iter_mut().zip(used.as_words()) {
+                *c &= !u;
+            }
+            if content.count_ones() == 0 {
+                break;
+            }
+            cue = self.rarest(&content, percentile, ratio);
+            for (u, &c) in used.as_words_mut().iter_mut().zip(cue.as_words()) {
+                *u |= c;
+            }
+            out.push(content);
+        }
+        out
+    }
+
+    /// Split `pattern` into item-like groups: bits with the same stored count
+    /// (with sparse codes, one word's bits share a count). Groups smaller than
+    /// `min_bits` (collision debris) are dropped; rarest groups first.
+    pub fn items(&self, pattern: &BitVector, min_bits: usize) -> Vec<BitVector> {
+        let mut by_count: std::collections::BTreeMap<u32, Vec<usize>> = std::collections::BTreeMap::new();
+        for b in set_bits(pattern) {
+            if b < self.bits {
+                by_count.entry(self.bit_counts[b]).or_default().push(b);
+            }
+        }
+        by_count.into_values().filter(|bits| bits.len() >= min_bits).map(|bits| BitVector::from_bits(&bits, self.bits)).collect()
+    }
+
+    /// Branching big loop: hop 1 from `cue` as in `recall_chain`, then a separate
+    /// hop-2 recall from each of the `branches` rarest items of hop 1's new content
+    /// (like several attention heads). Returns `[hop 1, branch 1, ..]`; a reader that
+    /// learns (the predictor) decides which branch carries the answer. Missing
+    /// recalls are empty frames, so positions stay fixed.
+    pub fn recall_branches(&self, cue: &BitVector, branches: usize, habituation: f32, min_item_bits: usize) -> Vec<BitVector> {
+        let empty = BitVector::new(self.bits, Some(0));
+        let mut out = vec![empty.clone(); branches + 1];
+        if cue.count_ones() == 0 {
+            return out;
+        }
+        let need = ((cue.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+        let Some((id, ep)) = self.recall_excluding(cue, need, &[]) else { return out };
+        let mut hop1 = self.novel(ep, habituation);
+        for (c, &u) in hop1.as_words_mut().iter_mut().zip(cue.as_words()) {
+            *c &= !u;
+        }
+        for (b, item) in self.items(&hop1, min_item_bits).into_iter().take(branches).enumerate() {
+            let need = ((item.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+            if let Some((_, ep2)) = self.recall_excluding(&item, need, &[id]) {
+                let mut content = self.novel(ep2, habituation);
+                for (c, (&u, &i)) in content.as_words_mut().iter_mut().zip(cue.as_words().iter().zip(item.as_words())) {
+                    *c &= !(u | i);
+                }
+                out[b + 1] = content;
+            }
+        }
+        out[0] = hop1;
+        out
     }
 
     pub fn len(&self) -> usize {
@@ -174,5 +264,22 @@ mod tests {
         }
         let cue = m.rarest(&bag(&[10, 11, 3]), 0.1, 1.5);
         assert_eq!(cue.as_words(), sym(3).as_words());
+    }
+
+    #[test]
+    fn big_loop_chains_two_hops_without_revisiting() {
+        // 1 mary, 2 john, 30 ball, 31 picked-up, 10 went-to-the, 20 kitchen, 21 garden
+        let mut m = EpisodicMemory::new(256, 64);
+        for _ in 0..3 {
+            m.store(&bag(&[40, 10])); // background episodes make "went to the" (10)
+            m.store(&bag(&[41, 31])); // and "picked up" (31) frequent, as in real stories
+        }
+        m.store(&bag(&[1, 31, 30])); // mary picked up the ball
+        m.store(&bag(&[2, 10, 21])); // john went to the garden
+        m.store(&bag(&[1, 10, 20])); // mary went to the kitchen
+        let hops = m.recall_chain(&sym(30), 2, 0.4, 0.1, 1.5);
+        assert_eq!(hops.len(), 2);
+        assert_eq!(hops[0].as_words(), sym(1).as_words(), "hop 1 brings back mary");
+        assert_eq!(hops[1].as_words(), sym(20).as_words(), "hop 2 brings back kitchen");
     }
 }

@@ -138,7 +138,7 @@ predictor at the answer (1.00 = clean).
 |---|---|---|---|
 | 1–2 facts, settle 2 | 99.4% (1.00) | 99.3% (1.00) | 97.2% (1.00) |
 | 1–2 facts, no settling | 99.3% (1.00) | 99.5% (1.00) | 98.1% (1.00) |
-| 1–3 facts, settle 2 | CNT_S_3 | 92.7% (1.00; 94/84/100) | SHIFT_S_3 |
+| 1–3 facts, settle 2 | CNT_S_3 | 92.7% (1.00; 94/84/100) | 92.1% (1.00; 97/79/100) |
 | 1–3 facts, no settling | CNT_NS_3 | 90.0% (1.00; 90/81/99) | SHIFT_NS_3 |
 
 SHIFT_FINDINGS

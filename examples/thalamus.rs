@@ -136,7 +136,9 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
         sample_bits: 16,
         match_fraction: 0.8,
         surprise_fraction: 0.5,
-        generalize: None,
+        // GENERALIZE=f turns on synapse-level credit (drop silent inputs of near-matching
+        // kernels that would have been right); off by default.
+        generalize: std::env::var("GENERALIZE").ok().and_then(|v| v.parse().ok()),
     });
 
     let mut prev: Option<usize> = None;
@@ -261,6 +263,9 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
 }
 
 fn main() {
+    if let Ok(g) = std::env::var("GENERALIZE") {
+        println!("synapse-level credit on: generalize near misses matching >= {g} of their connections");
+    }
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (learning off at test); chance 1/6");
     println!("channel (q, v): relay the word v steps after the last earlier occurrence of the word q steps back");
     println!();

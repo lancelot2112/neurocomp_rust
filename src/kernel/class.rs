@@ -126,6 +126,9 @@ struct PredictiveState {
     sticky_tags: std::collections::HashMap<usize, std::collections::HashSet<usize>>,
     /// Caller-provided credit: input bits that are always sticky.
     sticky_mask: Option<BitVector>,
+    /// Bad credit releases tags: a tagged bit that was active when its kernel fired and
+    /// the target did not contain the bit it copies loses its tag (then prunes normally).
+    sticky_blame: bool,
     /// Winner ranking: a kernel's depth only counts if its reliability is at least this
     /// (deeper-but-unreliable kernels no longer outrank reliable shallower ones). None = off.
     trust_floor: Option<f32>,
@@ -247,6 +250,7 @@ impl KernelClass<SimpleKernel> {
             sticky_factor: 0,
             sticky_tags: std::collections::HashMap::new(),
             sticky_mask: None,
+            sticky_blame: false,
             trust_floor: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
@@ -454,6 +458,13 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Let bad credit release sticky tags (see `sticky_blame`).
+    pub fn set_sticky_blame(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.sticky_blame = on;
+        }
+    }
+
     /// The kernel that made the last prediction, if any.
     pub fn winner(&self) -> Option<&SimpleKernel> {
         let st = self.predictive.as_ref()?;
@@ -554,6 +565,18 @@ impl KernelClass<SimpleKernel> {
         let min_bits = cfg.sample_bits.max(2);
         let need = cfg.generalize_after.max(1);
         let frame_bits = cfg.frame_words * 64;
+        // Bad credit: a tagged bit that was active when its kernel fired and mispredicted,
+        // and whose copied bit is not in the target, loses its tag.
+        if st.sticky_blame {
+            for &k in &st.last_misses {
+                if let Some(tags) = st.sticky_tags.get_mut(&k) {
+                    tags.retain(|&b| {
+                        let t = b % frame_bits;
+                        !(input.bit_get(b) && t < target.bit_len() && !target.bit_get(t))
+                    });
+                }
+            }
+        }
         // A connection that is active while its kernel is right has proven compatible.
         for &k in &st.last_hits {
             if let Some(counts) = st.silent_counts.get_mut(&k) {

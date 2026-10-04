@@ -261,6 +261,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if let Some(f) = std::env::var("STICKY").ok().and_then(|v| v.parse().ok()) {
         class.set_sticky(f, None);
     }
+    // STICKY_BLAME=1: a tag is released when its bit was active on a misprediction
+    class.set_sticky_blame(std::env::var("STICKY_BLAME").is_ok());
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     let mut recall_has_answer = 0usize;

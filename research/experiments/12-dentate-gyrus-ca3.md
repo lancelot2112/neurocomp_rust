@@ -159,7 +159,39 @@ predictor received, split by right and wrong answers:
 4. **Decay as a pure shift works.** The bit-native shift register (0.5 decay per store,
    writes as OR, decay as advancing a ring) performs like the 0.7 versions: 97.2/98.1%
    (1–2 facts) and 92.1/90.3% (1–3 facts).
-5. Method lesson: compare variants **in the same build and run**. Numbers from different
+**Which input the winning kernel reads** (delay line, settle 2, 1–3 facts; `DIAG=1`
+prints `KDIAG`). Input frames are [current word "?" | recalled memory | previous word "now"];
+each kernel samples 16 bits per frame it reaches.
+
+| Seed, held-out | n | Winner reads memory | Mask bits current / memory / previous | Winner reliability |
+|---|---|---|---|---|
+| seed 0, right | 471 | 100% | 16.0 / 16.0 / 9.0 | 0.89 |
+| seed 0, wrong | 29 | 100% | 16.0 / 16.0 / 16.0 | 0.53 |
+| seed 1, right | 420 | 81% | 16.0 / 12.9 / 16.0 | 0.84 |
+| **seed 1, wrong** | 80 | **29%** | 16.0 / **4.6** / 16.0 | **0.24** |
+
+(With 1–2 facts both seeds look like seed 0: every winner reads all three frames,
+reliability 0.99.)
+
+6. **Seed 1's errors come from memory-blind kernels.** 71% of its wrong answers are made by
+   a kernel that reads only "?" and "now", i.e. it guesses a place from context that
+   carries no information (reliability 0.24). Such a kernel wins only when no
+   memory-reading kernel of the same depth matches, so the memory-reading kernels
+   failed to match a recall that *did* contain the answer.
+7. **Likely reason:** a kernel samples its 16 memory bits at random from the whole recall,
+   which holds ~4.5 words (the place plus adverbs, adjectives and fillers from the same
+   sentence). Kernels that sampled incidental words match only when those words recur;
+   on seed 1, with more facts and more varied recalls, they often don't, and the
+   memory-blind fallback wins. Seed 0's wrong answers instead had unusually large
+   recalls (198 bits, 6.7 words), which crowd the sample the same way.
+8. So the remaining gap is **attention within the recall** (credit for *which* recalled
+   bits predict the answer), not memory. Candidate fixes: gradual pruning of unused
+   synapses (`generalize_after`, which took [09](09-thalamic-attention.md) to 82%);
+   growing kernels that sample memory bits overlapping the target (the answer is in the
+   recall); or a cleaner readout (the [CA1 comparator](14-ca1-comparator.md) or the
+   [basal-ganglia selector](15-basal-ganglia-selector.md) choosing one item).
+
+9. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and

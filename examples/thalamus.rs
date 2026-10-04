@@ -1,0 +1,245 @@
+//! Thalamus-like relay as attention: can the network bind facts it was never
+//! trained on?
+//!
+//! Run:  cargo run --release --example thalamus
+//!
+//! Task (as in experiment 06B): stories such as
+//!   "mary went to the kitchen . [john went to the garden .] where is mary ? kitchen"
+//! with one place per name held out of training. Without attention the
+//! predictor memorizes (name, place) pairs: 100% on seen pairs, 0% on held-out.
+//!
+//! Here a `Thalamus` watches the word stream. Each relay channel finds the most
+//! recent earlier occurrence of the word `q` steps back and relays the word `v`
+//! steps after it (an induction-head-style hard attention). The predictor reads
+//! [current word | relay channel 0 | relay channel 1 | previous word].
+//! Channels: none, oracle (q=1, v=4), fixed random, or learned by ablation
+//! credit (re-predict without a channel's frame; every review, re-point the
+//! channel with the least credit to a random (q, v)). "LearnedGuided" adds
+//! credit-guided growth: a new kernel samples the current word plus ONE relay
+//! channel (odds credit + 1), so it doesn't also require the name or other
+//! channels' incidental content. "LearnedPatient": a newly re-pointed channel is
+//! protected for 3 reviews, giving the predictor time to start using it.
+
+mod common;
+
+use std::collections::HashMap;
+
+use common::Encoder;
+use neurocomp::bitvec::BitVector;
+use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
+use neurocomp::program::{RelayChannel, Thalamus};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
+const BITS: usize = 512;
+const CHANNELS: usize = 4;
+const NAMES: &[&str] = &["mary", "john", "sandra", "daniel", "anna", "peter"];
+const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", "bedroom"];
+const TRAIN: usize = 3000;
+const TEST: usize = 1000;
+const REVIEW_EVERY: usize = 50; // stories between channel re-pointing (learned policy)
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Policy {
+    NoThalamus,
+    Oracle,
+    FixedRandom,
+    Learned,
+    LearnedGuided,
+    LearnedPatient,
+}
+
+struct Story {
+    words: Vec<&'static str>,
+    answer_at: usize,
+    held_out: bool,
+}
+
+/// One place per name is never paired with it in training (a diagonal).
+fn allowed(n: usize, p: usize) -> bool {
+    p != n % PLACES.len()
+}
+
+fn story(rng: &mut StdRng, facts: usize, want_held_out: bool) -> Story {
+    loop {
+        let mut words = Vec::new();
+        let mut loc: HashMap<usize, usize> = HashMap::new();
+        let mut first = None;
+        let mut ok = true;
+        for _ in 0..facts {
+            let n = rng.gen_range(0..NAMES.len());
+            let p = rng.gen_range(0..PLACES.len());
+            ok &= allowed(n, p) || want_held_out;
+            loc.insert(n, p);
+            first.get_or_insert(n);
+            words.extend([NAMES[n], "went", "to", "the", PLACES[p], "."]);
+        }
+        let q = first.unwrap();
+        let a = loc[&q];
+        if !ok || allowed(q, a) == want_held_out {
+            continue;
+        }
+        words.extend(["where", "is", NAMES[q], "?"]);
+        let answer_at = words.len();
+        words.extend([PLACES[a], "."]);
+        return Story { words, answer_at, held_out: want_held_out };
+    }
+}
+
+fn random_channel(rng: &mut StdRng) -> RelayChannel {
+    RelayChannel { query_lag: rng.gen_range(0..=2), value_offset: rng.gen_range(1..=6) }
+}
+
+struct Outcome {
+    seen: f64,
+    held_out: f64,
+    channels: Vec<RelayChannel>,
+}
+
+fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut vocab: Vec<&str> = vec!["went", "to", "the", ".", "where", "is", "?"];
+    vocab.extend(NAMES);
+    vocab.extend(PLACES);
+    let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
+    let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
+
+    let channels = match policy {
+        Policy::NoThalamus => vec![],
+        Policy::Oracle => vec![RelayChannel { query_lag: 1, value_offset: 4 }, RelayChannel { query_lag: 0, value_offset: 1 }],
+        Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient => (0..CHANNELS).map(|_| random_channel(&mut rng)).collect(),
+    };
+    let n_ch = channels.len();
+    let mut th = Thalamus::new(BITS, 40, channels);
+    let mut credit = vec![0f64; n_ch];
+    let mut age = vec![0usize; n_ch]; // reviews since a channel was re-pointed
+    let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
+        max_kernels: 100_000,
+        frame_words: BITS / 64,
+        max_frames: n_ch + 2,
+        sample_bits: 16,
+        match_fraction: 0.8,
+        surprise_fraction: 0.5,
+        generalize: None,
+    });
+
+    let mut prev: Option<usize> = None;
+    let (mut res_seen, mut res_held) = ((0usize, 0usize), (0usize, 0usize));
+    for s_i in 0..TRAIN + TEST {
+        let testing = s_i >= TRAIN;
+        let s = story(&mut rng, facts, testing && s_i % 2 == 1);
+        let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
+        for t in 0..ids.len() - 1 {
+            let code = &enc.codes[ids[t]];
+            th.observe(code);
+            // [current | relay 0 | relay 1 | previous]
+            let mut words = code.as_words().to_vec();
+            words.extend_from_slice(th.relay().as_words());
+            words.extend_from_slice(prev.map_or(&[0u64; BITS / 64][..], |p| enc.codes[p].as_words()));
+            let input = BitVector::from_words(words);
+
+            let mut out = BitVector::new(BITS, Some(0));
+            class.process_predictive(&input, &mut out);
+            let next = ids[t + 1];
+            let right = enc.decode(&out) == Some(next);
+            if testing && t + 1 == s.answer_at {
+                let r = if s.held_out { &mut res_held } else { &mut res_seen };
+                r.0 += right as usize;
+                r.1 += 1;
+            }
+            if !testing {
+                let learned = matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient);
+                if policy == Policy::LearnedGuided {
+                    // frame 0 (current word) + one relaying channel picked by credit;
+                    // the previous word only when no channel relays anything
+                    let live: Vec<usize> =
+                        (0..n_ch).filter(|&c| input.as_words()[(c + 1) * BITS / 64..(c + 2) * BITS / 64].iter().any(|&w| w != 0)).collect();
+                    let mut mask = BitVector::new((n_ch + 2) * BITS, Some(0));
+                    for b in 0..BITS {
+                        mask.bit_set(b);
+                    }
+                    let extra = if live.is_empty() {
+                        n_ch + 1
+                    } else {
+                        let w: Vec<f64> = live.iter().map(|&c| credit[c].max(0.0) + 1.0).collect();
+                        let mut r = rng.gen_range(0.0..w.iter().sum::<f64>());
+                        let mut pick = live[0];
+                        for (&c, &wc) in live.iter().zip(&w) {
+                            if r < wc {
+                                pick = c;
+                                break;
+                            }
+                            r -= wc;
+                        }
+                        pick + 1
+                    };
+                    for b in extra * BITS..(extra + 1) * BITS {
+                        mask.bit_set(b);
+                    }
+                    class.set_growth_mask(Some(mask));
+                }
+                if learned {
+                    // ablation credit: would the answer change without this channel?
+                    for c in 0..n_ch {
+                        let mut ablated = input.clone();
+                        for b in (c + 1) * BITS..(c + 2) * BITS {
+                            ablated.bit_clear(b);
+                        }
+                        let right_without = class.peek(&ablated).and_then(|o| enc.decode(o)) == Some(next);
+                        credit[c] += (right && !right_without) as u8 as f64 - (!right && right_without) as u8 as f64;
+                    }
+                }
+                class.feedback(&input, &enc.codes[next], &mut rng);
+            }
+            prev = Some(ids[t]);
+        }
+        prev = Some(*ids.last().unwrap());
+
+        if matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient)
+            && !testing
+            && s_i % REVIEW_EVERY == REVIEW_EVERY - 1
+        {
+            let grace = if policy == Policy::LearnedPatient { 3 } else { 0 };
+            let worst = (0..n_ch).filter(|&c| age[c] >= grace).min_by(|&a, &b| credit[a].partial_cmp(&credit[b]).unwrap());
+            if let Some(worst) = worst {
+                th.channels[worst] = random_channel(&mut rng);
+                credit[worst] = 0.0;
+                age[worst] = 0;
+            }
+            for a in age.iter_mut() {
+                *a += 1;
+            }
+            for c in credit.iter_mut() {
+                *c *= 0.5;
+            }
+        }
+    }
+    let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
+    Outcome { seen: pct(res_seen), held_out: pct(res_held), channels: th.channels.clone() }
+}
+
+fn main() {
+    println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (learning off at test); chance 1/6");
+    println!("channel (q, v): relay the word v steps after the last earlier occurrence of the word q steps back");
+    println!();
+    for facts in [1usize, 2] {
+        println!("{facts} fact(s) per story{}", if facts > 1 { " (the other is a distractor)" } else { "" });
+        let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
+            Ok("patient") => vec![Policy::Learned, Policy::LearnedPatient],
+            _ => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedGuided, Policy::LearnedPatient],
+        };
+        for policy in policies {
+            let runs: Vec<Outcome> = (0..5).map(|seed| run(policy, facts, seed)).collect();
+            let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
+            println!(
+                "  {:<12} seen pairs {:5.1}%   held-out pairs {:5.1}%   held-out runs [{}]   e.g. channels {}",
+                format!("{policy:?}"),
+                mean(|o| o.seen),
+                mean(|o| o.held_out),
+                runs.iter().map(|o| format!("{:.0}", o.held_out)).collect::<Vec<_>>().join(" "),
+                runs[0].channels.iter().map(|c| format!("({},{})", c.query_lag, c.value_offset)).collect::<Vec<_>>().join(" ")
+            );
+        }
+        println!();
+    }
+}

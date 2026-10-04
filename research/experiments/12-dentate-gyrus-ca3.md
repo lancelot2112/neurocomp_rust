@@ -118,5 +118,30 @@ low 1–2-fact score is the predictor under-using a correct recall, in both vers
 4. The separation and settling effects seen with floats are not visible here; the seed-1
    drop dominates.
 
+## Decay as a shift: delay line and shift register
+The counter store above halves every 2 stores and floors, so older episodes' weights
+become equal and (we suspected) blend into the readout. Two alternatives store each
+write in an **age plane** (one bit plane per recent store, in a ring indexed by store
+number; decay = advancing the ring, expired planes cleared on reuse):
+- **Delay line** (`Ca3Memory::new_delay_line`, `CA3_STORE=ring`): plane weight is an exact
+  integer table round(1024·0.7^age), 11 planes. Same decay as floats, no rounding.
+- **Shift register** (`Ca3Memory::new_shift_register`, `CA3_STORE=shift`): plane weights are
+  powers of two (1024, 512, …, 1), so a synapse's planes *are* the binary digits of its
+  weight, newest write = most significant bit. Writing is OR, decay is a shift
+  (0.5 per store), no table, no rounding. Fully bit-native storage; summing over
+  active inputs is still integer adds over set bits.
+
+A new diagnostic, **places in recall**, counts distinct place words the memory hands the
+predictor at the answer (1.00 = clean).
+
+| Varied stories, CA3 16,384 / 32, 3 seeds, held-out (places in recall) | Counters | Delay line | Shift register |
+|---|---|---|---|
+| 1–2 facts, settle 2 | 99.4% (1.00) | 99.3% (1.00) | 97.2% (1.00) |
+| 1–2 facts, no settling | 99.3% (1.00) | 99.5% (1.00) | SHIFT_NS_2 |
+| 1–3 facts, settle 2 | CNT_S_3 | RING_S_3 | SHIFT_S_3 |
+| 1–3 facts, no settling | CNT_NS_3 | RING_NS_3 | SHIFT_NS_3 |
+
+SHIFT_FINDINGS
+
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and
 [13](13-big-loop.md) for chaining recalls.

@@ -280,6 +280,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
+        if s_i == TRAIN {
+            // TRUST_AT_TEST=f: reliability-aware ranking only when answering, so training
+            // keeps the depth-first ranking that drives growth
+            if let Some(f) = std::env::var("TRUST_AT_TEST").ok().and_then(|v| v.parse().ok()) {
+                class.set_trust_floor(Some(f));
+            }
+        }
         let s = story(&mut rng, task, max_facts, testing && s_i % 2 == 1);
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         for t in 0..ids.len() {

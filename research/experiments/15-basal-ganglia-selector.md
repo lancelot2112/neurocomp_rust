@@ -28,6 +28,7 @@ See [basal ganglia and cerebellum](../concepts/basal-ganglia-and-cerebellum.md).
 | Loop(2): follow the rarest item ([13](13-big-loop.md)) | 5.5% (5 seeds) | – |
 | Branch(3): 3 branches, predictor chooses ([13](13-big-loop.md)) | 80.8% (5 seeds) | – |
 | **Select: basal-ganglia selector** | **84.5%** (5 seeds: 90/84/90/84/74) | 84.1% |
+| Select, **bit-sliced counters** (4 planes, stochastic steps) | 86.2% (1 seed; float version 90.4% on that seed); SELECT_BITS_5 (5 seeds) | 86.9% |
 | Select with the CA1 comparator ([14](14-ca1-comparator.md)) | 23.6% (1 seed) | 55.0% |
 
 ## Findings
@@ -45,5 +46,9 @@ See [basal ganglia and cerebellum](../concepts/basal-ganglia-and-cerebellum.md).
    with it). Under prediction-error storage the answer reaches the recalled frames only
    55% of the time, so the failure is upstream of the choice: what is stored and what
    cues hop 1, not which item hop 2 follows.
-5. The reward is immediate (next word). Delayed choices (holding an item across words)
+5. **The selector works in bits.** With go values in 4-plane bit-sliced counters
+   (`SlicedCounter`), integer comparisons, bit-mask eligibility and stochastic ±1 steps
+   (probability 1.5 × |error|), the same seed scores 86.2% vs 90.4% with floats, within
+   the 74–90% seed spread. See [probability in bits](../concepts/probability-in-bits.md).
+6. The reward is immediate (next word). Delayed choices (holding an item across words)
    need the eligibility trace (`BG_TRACE`), not yet tested.

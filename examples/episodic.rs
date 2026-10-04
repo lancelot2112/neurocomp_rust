@@ -186,6 +186,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let cue_bits = set_bits(&cue);
                         if !cue_bits.is_empty() {
                             let (bits, strength) = ca3.as_ref().unwrap().recall(&cue_bits, BITS);
+                            if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 3 {
+                                let raw = BitVector::from_bits(&bits, BITS);
+                                let names = |bv: &BitVector| -> Vec<&str> {
+                                    (0..vocab.len())
+                                        .filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
+                                        .map(|i| vocab[i])
+                                        .collect()
+                                };
+                                eprintln!("{:?}\n  CA3 cue {:?} -> raw recall {:?} ({} bits, strength {strength:.2})", s.words, names(&cue), names(&raw), bits.len());
+                            }
                             if strength > 0.0 {
                                 recalled = memory.novel(&BitVector::from_bits(&bits, BITS), habituation);
                                 for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {

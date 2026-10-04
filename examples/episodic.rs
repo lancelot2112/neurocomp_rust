@@ -254,6 +254,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         generalize_after: std::env::var("GENERALIZE_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
     });
 
+    // STICKY=f: credit-tagged synapses (input bits that carried the correctly predicted
+    // word) need f times as many silent confirmations before pruning
+    if let Some(f) = std::env::var("STICKY").ok().and_then(|v| v.parse().ok()) {
+        class.set_sticky(f, None);
+    }
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     let mut recall_has_answer = 0usize;

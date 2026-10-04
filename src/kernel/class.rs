@@ -120,6 +120,12 @@ struct PredictiveState {
     last_near: Vec<usize>,    // kernels that nearly matched on the last step (see `generalize`)
     growth_mask: Option<BitVector>, // if set, new kernels may only sample these input bits
     silent_counts: std::collections::HashMap<usize, std::collections::HashMap<usize, u8>>, // kernel -> bit -> confirmations it was irrelevant
+    /// Sticky synapses (credit tags): kernel -> input bits that earned credit; pruning
+    /// them takes `sticky_factor` times as many silent confirmations. 0 = off.
+    sticky_factor: u8,
+    sticky_tags: std::collections::HashMap<usize, std::collections::HashSet<usize>>,
+    /// Caller-provided credit: input bits that are always sticky.
+    sticky_mask: Option<BitVector>,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
 }
@@ -235,6 +241,9 @@ impl KernelClass<SimpleKernel> {
             last_near: Vec::new(),
             growth_mask: None,
             silent_counts: std::collections::HashMap::new(),
+            sticky_factor: 0,
+            sticky_tags: std::collections::HashMap::new(),
+            sticky_mask: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
         });
@@ -417,6 +426,17 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().map_or(0.0, |st| st.last_target_prob)
     }
 
+    /// Sticky synapses for gradual pruning (`GrowthConfig::generalize`): input bits that
+    /// earned copy credit on a hit (they carry the bit the kernel correctly predicted),
+    /// or that are in `mask`, need `factor` times as many silent confirmations before
+    /// they are dropped. `factor` 0 turns stickiness off.
+    pub fn set_sticky(&mut self, factor: u8, mask: Option<BitVector>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.sticky_factor = factor;
+            st.sticky_mask = mask;
+        }
+    }
+
     /// The kernel that made the last prediction, if any.
     pub fn winner(&self) -> Option<&SimpleKernel> {
         let st = self.predictive.as_ref()?;
@@ -516,10 +536,21 @@ impl KernelClass<SimpleKernel> {
         let near = std::mem::take(&mut st.last_near);
         let min_bits = cfg.sample_bits.max(2);
         let need = cfg.generalize_after.max(1);
+        let frame_bits = cfg.frame_words * 64;
         // A connection that is active while its kernel is right has proven compatible.
         for &k in &st.last_hits {
             if let Some(counts) = st.silent_counts.get_mut(&k) {
                 counts.retain(|&b, _| !input.bit_get(b));
+            }
+            // Copy credit: an active input bit that carries the same bit (frame-relative)
+            // as the target the kernel just predicted correctly gets a sticky tag.
+            if st.sticky_factor > 0 {
+                for b in set_bits(&self.active_kernels[k].input_mask) {
+                    let t = b % frame_bits;
+                    if input.bit_get(b) && t < target.bit_len() && target.bit_get(t) {
+                        st.sticky_tags.entry(k).or_default().insert(b);
+                    }
+                }
             }
         }
         for k in near {
@@ -528,6 +559,7 @@ impl KernelClass<SimpleKernel> {
             }
             let old = set_bits(&self.active_kernels[k].input_mask);
             let counts = st.silent_counts.entry(k).or_default();
+            let tags = st.sticky_tags.get(&k);
             let mut drop = Vec::new();
             for &b in &old {
                 if input.bit_get(b) {
@@ -535,7 +567,11 @@ impl KernelClass<SimpleKernel> {
                 } else {
                     let c = counts.entry(b).or_insert(0);
                     *c = c.saturating_add(1);
-                    if *c >= need {
+                    let sticky = st.sticky_factor > 0
+                        && (tags.map_or(false, |t| t.contains(&b))
+                            || st.sticky_mask.as_ref().map_or(false, |m| b < m.bit_len() && m.bit_get(b)));
+                    let needed = if sticky { need.saturating_mul(st.sticky_factor) } else { need };
+                    if *c >= needed {
                         drop.push(b);
                     }
                 }
@@ -615,6 +651,7 @@ impl KernelClass<SimpleKernel> {
             st.last_matches.retain(|&x| x != victim);
             st.last_hits.retain(|&x| x != victim);
             st.silent_counts.remove(&victim);
+            st.sticky_tags.remove(&victim);
             st.last_misses.retain(|&x| x != victim);
             self.active_kernels[victim] = k;
             self.recycled += 1;

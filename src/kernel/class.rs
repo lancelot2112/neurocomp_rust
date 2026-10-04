@@ -134,6 +134,9 @@ struct PredictiveState {
     /// Winner ranking: a kernel's depth only counts if its reliability is at least this
     /// (deeper-but-unreliable kernels no longer outrank reliable shallower ones). None = off.
     trust_floor: Option<f32>,
+    /// Growth: only kernels at least this reliable count as "this depth already
+    /// predicts the target" (None = any kernel does).
+    growth_trust: Option<f32>,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
 }
@@ -255,6 +258,7 @@ impl KernelClass<SimpleKernel> {
             sticky_blame: false,
             copy_growth: false,
             trust_floor: None,
+            growth_trust: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
         });
@@ -461,6 +465,14 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Growth: a matching kernel that predicted the target blocks same-depth growth only
+    /// if its reliability is at least `floor` (None: any kernel blocks it).
+    pub fn set_growth_trust(&mut self, floor: Option<f32>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.growth_trust = floor;
+        }
+    }
+
     /// Credit-guided growth: a new kernel samples, in any frame that contains the target's
     /// bits, only those bits (it is born as a copy kernel for the whole word).
     pub fn set_copy_growth(&mut self, on: bool) {
@@ -512,6 +524,7 @@ impl KernelClass<SimpleKernel> {
 
         let winner = st.last_winner;
         let matches = st.last_matches.clone();
+        let trust_floor = st.growth_trust;
         let mut depth_has_target = vec![false; cfg.max_frames + 2];
         let mut expected: Option<(usize, f32)> = None;
         for &m in &matches {
@@ -528,9 +541,15 @@ impl KernelClass<SimpleKernel> {
         for &m in &matches {
             let k = &mut self.active_kernels[m];
             if predicts(k, target) {
+                // A kernel that was right blocks same-depth growth only if it is trusted:
+                // a lucky guess by an unreliable kernel must not stop a better kernel
+                // from being grown for this case.
+                let trusted = trust_floor.map_or(true, |f| reliability(&k.stats) >= f);
                 k.stats.hits += 1;
                 k.stats.last_useful = self.tick;
-                depth_has_target[k.context_frames] = true;
+                if trusted {
+                    depth_has_target[k.context_frames] = true;
+                }
                 hits.push(m);
             } else {
                 k.stats.misses += 1;

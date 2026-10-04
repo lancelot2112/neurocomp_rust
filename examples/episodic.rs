@@ -265,6 +265,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_sticky_blame(std::env::var("STICKY_BLAME").is_ok());
     // COPY_GROW=1: new kernels sample only the target's bits in a frame that contains them
     class.set_copy_growth(std::env::var("COPY_GROW").is_ok());
+    // GROW_TRUST=f: a lucky unreliable kernel (< f) does not block growth of a better one
+    class.set_growth_trust(std::env::var("GROW_TRUST").ok().and_then(|v| v.parse().ok()));
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     let mut recall_has_answer = 0usize;

@@ -59,6 +59,7 @@ Experiments (chronological)
 7. [Top-down bias from a higher layer](experiments/07-top-down-bias.md)
 8. [Credit assignment for a hidden layer](experiments/08-credit-assignment.md)
 9. [Thalamus-like relay as attention](experiments/09-thalamic-attention.md)
+10. [Attention by inhibition: a route pool with learned gating](experiments/10-route-pool-inhibition.md)
 
 Concepts
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)

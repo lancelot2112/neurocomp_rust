@@ -78,6 +78,7 @@ pub enum ClassInstruction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EdgeSpec {
     pub input_read_back: usize, // how many frames back to read from source node
+    pub input_frames: usize,    // consecutive frames read (read_back, read_back+1, ...), concatenated most-recent first
     pub threshold: usize,
     pub op: KernelOp,
     // room for future kernel-class parameters (windows, remapping, etc.)
@@ -87,6 +88,7 @@ impl EdgeSpec {
     pub fn from_defaults(defaults: &ProgramDefaults) -> Self {
         Self {
             input_read_back: defaults.default_history_depth, // default to reading snapshot of previous frame
+            input_frames: 1,
             threshold: defaults.default_threshold,
             op: defaults.default_op,
         }
@@ -97,6 +99,7 @@ impl Default for EdgeSpec {
     fn default() -> Self {
         Self {
             input_read_back: 1, // default to reading snapshot of previous frame
+            input_frames: 1,
             threshold: 16,
             op: KernelOp::Or,
         }
@@ -229,7 +232,11 @@ impl GraphProgram {
                         curr,
                         curr,
                         EdgeSpec {
-                            input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
+                            // Each self-loop deepens history by one frame and the new loop reads the oldest
+                            // frame (depth 2 -> previous frame t-1, depth 3 -> t-2, ...). Frame 0 is the
+                            // frame being written this tick, so read_back must stay < history_depth.
+                            input_read_back: graph.node_weight(curr).unwrap().history_depth - 1,
+                            input_frames: 1,
                             threshold: defaults.default_threshold,
                             op: defaults.default_op,
                         },
@@ -257,7 +264,11 @@ impl GraphProgram {
                                 curr,
                                 curr,
                                 EdgeSpec {
-                                    input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
+                                    // Each self-loop deepens history by one frame and the new loop reads the oldest
+                                    // frame (depth 2 -> previous frame t-1, depth 3 -> t-2, ...). Frame 0 is the
+                                    // frame being written this tick, so read_back must stay < history_depth.
+                                    input_read_back: graph.node_weight(curr).unwrap().history_depth - 1,
+                                    input_frames: 1,
                                     threshold: defaults.default_threshold,
                                     op: defaults.default_op,
                                 },
@@ -418,6 +429,24 @@ mod tests {
         // but should be allowed for future flexibility
         assert_eq!(n.bits, 32);
         assert_eq!(n.history_depth, 2);
+    }
+
+    #[test]
+    fn stay_self_loops_read_previous_frames() {
+        let prog = GraphProgram::new().stay().stay();
+        let g = prog.build_graph(&ProgramDefaults::default());
+        let n0 = g.node_weight(1.into()).unwrap();
+        assert_eq!(n0.history_depth, 3);
+        let mut self_reads: Vec<usize> = g
+            .raw_edges()
+            .iter()
+            .filter(|e| e.source().index() == 1 && e.target().index() == 1)
+            .map(|e| e.weight.input_read_back)
+            .collect();
+        self_reads.sort();
+        // t-1 then t-2; never frame 0 (current) and never past the ring
+        assert_eq!(self_reads, vec![1, 2]);
+        assert!(self_reads.iter().all(|&r| r < n0.history_depth));
     }
 
     #[test]

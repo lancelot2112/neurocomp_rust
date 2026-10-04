@@ -57,6 +57,7 @@ impl BitVecHistory {
     }
 
     pub fn get_frame(&self, steps: usize) -> &BitVector {
+        assert!(steps < self.frames.len(), "frame {steps} is older than the history ring ({} frames)", self.frames.len());
         &self.frames[self.frame_idx(steps)]
     }
 

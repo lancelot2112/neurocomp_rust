@@ -3,6 +3,16 @@ use crate::kernel::class::{KernelTrait, KernelOp, KernelContext};
 
 
 
+/// Per-kernel bookkeeping used by predictive learning and recycling.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct KernelStats {
+    pub fired_last: bool, // fired on the most recent tick
+    pub fires: u32,
+    pub hits: u32,        // fired and the target confirmed its output
+    pub misses: u32,      // fired and the target did not confirm its output
+    pub last_useful: u64, // class tick of creation or last hit (least-recently-useful recycling)
+}
+
 /// A simple “dendrite” kernel:
 /// - Reads input ∧ input_mask, counts ones
 /// - If count >= threshold, applies `op` of output_mask at `dest_word_idx` into `output`
@@ -13,11 +23,24 @@ pub struct SimpleKernel {
     pub output_idx: usize, // word index in output where output_mask[0] lands
     pub threshold: usize,     // fire when (input & input_mask).ones() >= threshold
     pub op: KernelOp,
+    pub plastic: bool,        // apply the local Hebbian rules (strengthen / search_remap) while firing
+    pub context_frames: usize, // history frames the input mask spans (set by predictive growth)
+    pub stats: KernelStats,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op }
+        Self {
+            input_mask,
+            input_idx,
+            output_mask,
+            output_idx,
+            threshold,
+            op,
+            plastic: true,
+            context_frames: 1,
+            stats: KernelStats::default(),
+        }
     }
 
     pub fn default(output_bit: usize) -> Self {
@@ -28,6 +51,9 @@ impl SimpleKernel {
             output_idx: output_bit >> 6,
             threshold: 16,
             op: KernelOp::Or,
+            plastic: true,
+            context_frames: 1,
+            stats: KernelStats::default(),
         }
     }
 
@@ -59,8 +85,10 @@ impl SimpleKernel {
 
     #[inline]
     fn is_inhibited(&self, ctx: &KernelContext, _stats: &InputStats) -> bool {
-        // Example: any inhibit bit overlapping our input window
-        ctx.inhibit.bit_get(self.input_idx)
+        // The class sets one inhibit bit per OUTPUT word a winning kernel wrote,
+        // so check our own output words (not our input window).
+        let (start, end) = self.word_range();
+        (start..end).any(|w| w < ctx.inhibit.bit_len() && ctx.inhibit.bit_get(w))
     }
 
     #[inline]
@@ -99,17 +127,29 @@ impl KernelTrait for SimpleKernel {
         out: &mut BitVector,
         rng: &mut R,
     ) -> bool {
+        self.stats.fired_last = false;
         let stats = self.input_stats(ctx);
         if stats.count < stats.threshold {
             return false;
         }
         if self.is_inhibited(ctx, &stats) {
-            self.search_remap(ctx, &stats, rng);
+            if self.plastic {
+                self.search_remap(ctx, &stats, rng);
+            }
             return false;
         }
-        self.strengthen(ctx, &stats, rng);
+        if self.plastic {
+            self.strengthen(ctx, &stats, rng);
+        }
         self.apply_output(out);
+        self.stats.fired_last = true;
+        self.stats.fires += 1;
         true
+    }
+
+    fn excitation(&self, ctx: &KernelContext) -> isize {
+        let stats = self.input_stats(ctx);
+        stats.count as isize - stats.threshold as isize
     }
 
     fn word_range(&self) -> (usize, usize) {
@@ -244,5 +284,25 @@ mod tests {
             &mut output,
             &mut rng);
         assert_eq!(output.as_words()[0] & 0xFF, 0x0F);
+    }
+
+    #[test]
+    fn inhibition_is_checked_on_output_words() {
+        let input = BitVector::from_words(vec![0xFF]);
+        let mut output = BitVector::new(128, Some(0));
+        let mut rng = rand::thread_rng();
+        // reads input word 0, writes output word 1
+        let mut k = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![0x1]), 1, 8, KernelOp::Or);
+
+        // a winner on output word 0 must not block a kernel writing word 1
+        let inhibit = BitVector::from_bits(&[0], 64);
+        let ctx = KernelContext { input: &input, inhibit: &inhibit, temperature: 0, phase: 0 };
+        assert!(k.try_fire(&ctx, &mut output, &mut rng));
+
+        // a winner on output word 1 does block it
+        let inhibit = BitVector::from_bits(&[1], 64);
+        let ctx = KernelContext { input: &input, inhibit: &inhibit, temperature: 0, phase: 0 };
+        assert!(!k.try_fire(&ctx, &mut output, &mut rng));
+        assert!(!k.stats.fired_last);
     }
 }

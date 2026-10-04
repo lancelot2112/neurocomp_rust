@@ -2,12 +2,19 @@
 //!
 //! Run with: cargo run --release --example read_text
 //!
-//! The library is used exactly as it is today (no changes to kernels or learning
-//! rules). Characters are encoded as fixed random sparse bit patterns and fed in
-//! one per tick. Because the network has no supervised output, we measure how
-//! much next-character information its hidden state carries with an external
-//! "probe": a vote table counts[bit][next_char] built online from the same
-//! stream. The probe is NOT part of the network; it only reads it.
+//! Characters are encoded as fixed random sparse bit patterns and fed in one per
+//! tick. Networks A-C only learn with the local Hebbian kernel rules, so they have
+//! no output that names a character; we measure how much next-character
+//! information their hidden state carries with an external "probe": a vote table
+//! counts[bit][next_char] built online from the same stream. The probe is NOT part
+//! of the network; it only reads it.
+//!
+//! Network D is predictive: its output node is trained (`RuntimeNetwork::learn`)
+//! to hold the next character's code, with surprise-driven kernel growth and
+//! recycling. It is scored directly by decoding its own output.
+//!
+//! Two scores per model: the last training epoch (memorization of seen text) and a
+//! held-out sentence made of the same words in a new order (generalization).
 //!
 //! Baselines use the same online protocol (predict, then update counts):
 //! - unigram / n-gram tables over the raw characters
@@ -17,7 +24,7 @@
 use std::collections::HashMap;
 
 use neurocomp::bitvec::{AdvanceMode, BitVector};
-use neurocomp::kernel::{KernelClass, KernelGroup, KernelOp, SimpleKernel};
+use neurocomp::kernel::{GrowthConfig, KernelClass, KernelGroup, KernelOp, SimpleKernel};
 use neurocomp::program::{GraphProgram, ProgramDefaults, RuntimeNetwork};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -27,6 +34,9 @@ const CORPUS: &str = "the cat sat on the mat. the dog sat on the log. \
 the cat saw the dog and the dog saw the cat. a bird sang in the tree \
 and the cat looked up at the bird. the dog ran to the tree and the bird \
 flew away. then the cat and the dog sat in the sun on the mat by the log. ";
+
+/// Seen words, new order. Fed once after training; learning stays on (online).
+const HELDOUT: &str = "the bird sat on the log and the dog saw the sun. the cat ran to the mat. ";
 
 const EPOCHS: usize = 40;
 const INPUT_BITS: usize = 512; // 8 words
@@ -201,7 +211,7 @@ fn random_kernel_class(
     dst_bits: usize,
     threshold: usize,
 ) -> KernelClass<SimpleKernel> {
-    let mut out_bits: Vec<usize> = (1..dst_bits).collect(); // bit 0 is used by KernelGroup's built-in default kernel
+    let mut out_bits: Vec<usize> = (0..dst_bits).collect();
     out_bits.shuffle(rng);
     let kernels = (0..KERNELS_PER_EDGE)
         .map(|i| {
@@ -217,9 +227,50 @@ fn random_kernel_class(
     KernelClass::with_kernels(kernels)
 }
 
+/// Scores for the last training epoch and for the held-out text.
+#[derive(Default, Clone, Copy)]
+struct Split {
+    train: Score,
+    heldout: Score,
+}
+
+impl Split {
+    fn add(&mut self, seg: Option<Seg>, pred: Option<usize>, actual: usize) {
+        match seg {
+            Some(Seg::Train) => self.train.add(pred, actual),
+            Some(Seg::Heldout) => self.heldout.add(pred, actual),
+            None => {}
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Seg {
+    Train,
+    Heldout,
+}
+
+/// Which scoring segment (if any) a prediction made at tick `t` belongs to.
+struct Segments {
+    eval_from: usize,
+    heldout_from: usize,
+}
+
+impl Segments {
+    fn of(&self, t: usize) -> Option<Seg> {
+        if t >= self.heldout_from {
+            Some(Seg::Heldout)
+        } else if t >= self.eval_from {
+            Some(Seg::Train)
+        } else {
+            None
+        }
+    }
+}
+
 struct Stats {
-    probe: Score,
-    lookup: Score,
+    probe: Split,
+    lookup: Split,
     density: f64,
     distinct_states: usize,
     ever_fired: usize,
@@ -232,15 +283,15 @@ fn run_network(
     probe_node: usize,
     enc: &Encoder,
     stream: &[usize],
-    eval_from: usize,
+    segs: &Segments,
 ) -> Stats {
     let n_chars = enc.alphabet.len();
     let hidden_bits = net.read_node(probe_node).bit_len();
     let mut probe = BitVoteProbe::new(hidden_bits, n_chars);
     let mut lookup = StateLookupProbe::default();
     let mut s = Stats {
-        probe: Score::default(),
-        lookup: Score::default(),
+        probe: Split::default(),
+        lookup: Split::default(),
         density: 0.0,
         distinct_states: 0,
         ever_fired: 0,
@@ -256,9 +307,10 @@ fn run_network(
         let state = net.read_node(probe_node).clone();
         let next = stream[t + 1];
 
-        if t >= eval_from {
-            s.probe.add(probe.predict(&state), next);
-            s.lookup.add(lookup.predict(&state), next);
+        let seg = segs.of(t);
+        s.probe.add(seg, probe.predict(&state), next);
+        s.lookup.add(seg, lookup.predict(&state), next);
+        if seg == Some(Seg::Train) {
             s.density += state.count_ones() as f64;
             for b in active_bits(&state) {
                 fire_counts[b] += 1;
@@ -278,8 +330,8 @@ fn run_network(
 
 fn print_stats(name: &str, s: &Stats, bits: usize) {
     println!("  {name}");
-    println!("    bit-vote probe accuracy : {:5.1}%", s.probe.pct());
-    println!("    state-lookup accuracy   : {:5.1}%", s.lookup.pct());
+    println!("    bit-vote probe accuracy : {:5.1}%   held-out {:5.1}%", s.probe.train.pct(), s.probe.heldout.pct());
+    println!("    state-lookup accuracy   : {:5.1}%   held-out {:5.1}%", s.lookup.train.pct(), s.lookup.heldout.pct());
     println!(
         "    active bits/tick        : {:5.1} of {bits}   ever active: {}   always on: {}",
         s.density, s.ever_fired, s.always_on
@@ -292,42 +344,55 @@ fn main() {
     let enc = Encoder::new(CORPUS, &mut rng);
     let n_chars = enc.alphabet.len();
     let one_pass: Vec<usize> = CORPUS.chars().map(|c| enc.index(c)).collect();
-    let stream: Vec<usize> = one_pass.iter().cloned().cycle().take(one_pass.len() * EPOCHS).collect();
-    // Score only the final epoch (after the network has seen the text EPOCHS-1 times).
-    let eval_from = one_pass.len() * (EPOCHS - 1);
+    let mut stream: Vec<usize> = one_pass.iter().cloned().cycle().take(one_pass.len() * EPOCHS).collect();
+    stream.extend(HELDOUT.chars().map(|c| enc.index(c)));
+    // Score the final training epoch (after EPOCHS-1 passes), then the held-out text.
+    let segs = Segments {
+        eval_from: one_pass.len() * (EPOCHS - 1),
+        heldout_from: one_pass.len() * EPOCHS,
+    };
 
-    println!("corpus: {} chars, alphabet {}, {} epochs, scoring last epoch", one_pass.len(), n_chars, EPOCHS);
+    println!(
+        "corpus: {} chars, alphabet {}, {} epochs, scoring last epoch; held-out: {} chars",
+        one_pass.len(),
+        n_chars,
+        EPOCHS,
+        HELDOUT.chars().count()
+    );
     println!();
 
     // ---- Baselines --------------------------------------------------------
     println!("Baselines (online counting, same protocol):");
-    let mut uni = Score::default();
+    let mut uni = Split::default();
     let mut uni_counts = vec![0u32; n_chars];
-    let mut ngrams: Vec<(NGram, Score)> =
-        (1..=6).map(|o| (NGram { order: o, table: HashMap::new() }, Score::default())).collect();
+    let mut ngrams: Vec<(NGram, Split)> =
+        (1..=6).map(|o| (NGram { order: o, table: HashMap::new() }, Split::default())).collect();
     let mut raw_probe = BitVoteProbe::new(INPUT_BITS, n_chars);
-    let mut raw_score = Score::default();
+    let mut raw_score = Split::default();
     for t in 0..stream.len() - 1 {
         let ctx = &stream[..=t];
         let next = stream[t + 1];
-        if t >= eval_from {
-            uni.add(argmax_u(&uni_counts), next);
-            for (g, sc) in ngrams.iter_mut() {
-                sc.add(g.predict(ctx), next);
-            }
-            raw_score.add(raw_probe.predict(&enc.codes[stream[t]]), next);
+        let seg = segs.of(t);
+        uni.add(seg, argmax_u(&uni_counts), next);
+        for (g, sc) in ngrams.iter_mut() {
+            sc.add(seg, g.predict(ctx), next);
         }
+        raw_score.add(seg, raw_probe.predict(&enc.codes[stream[t]]), next);
         uni_counts[next] += 1;
         for (g, _) in ngrams.iter_mut() {
             g.learn(ctx, next, n_chars);
         }
         raw_probe.learn(&enc.codes[stream[t]], next);
     }
-    println!("  most frequent char        : {:5.1}%", uni.pct());
+    println!("  most frequent char         : {:5.1}%   held-out {:5.1}%", uni.train.pct(), uni.heldout.pct());
     for (g, sc) in &ngrams {
-        println!("  {}-char context n-gram     : {:5.1}%", g.order, sc.pct());
+        println!("  {}-char context n-gram      : {:5.1}%   held-out {:5.1}%", g.order, sc.train.pct(), sc.heldout.pct());
     }
-    println!("  bit-vote probe on raw input: {:5.1}%  (no-context ceiling for this probe)", raw_score.pct());
+    println!(
+        "  bit-vote probe on raw input: {:5.1}%   held-out {:5.1}%  (no-context ceiling for this probe)",
+        raw_score.train.pct(),
+        raw_score.heldout.pct()
+    );
     println!();
 
     // ---- Network A: stock defaults ---------------------------------------
@@ -338,52 +403,129 @@ fn main() {
         let defaults = ProgramDefaults { default_bits: INPUT_BITS, ..ProgramDefaults::default() };
         let mut net = RuntimeNetwork::from_program(&GraphProgram::new(), &defaults);
         let out = net.nodes.len() - 1;
-        let s = run_network(&mut net, out, &enc, &stream, eval_from);
+        let s = run_network(&mut net, out, &enc, &stream, &segs);
         print_stats("output node", &s, INPUT_BITS);
     }
     println!();
 
     // ---- Network B: scaled up, feed-forward only --------------------------
     // input -> N0 -> output, with KERNELS_PER_EDGE random SimpleKernels on the
-    // input -> N0 edge. Learning rules unchanged.
+    // input -> N0 edge, learning with the local Hebbian rules.
     println!("Network B: input -> hidden, {KERNELS_PER_EDGE} SimpleKernels (no recurrence)");
-    for threshold in [3usize, 5, 8] {
+    for (threshold, target) in [(3usize, None), (5, None), (8, None), (8, Some(16usize))] {
         let defaults = ProgramDefaults { default_bits: HIDDEN_BITS, ..ProgramDefaults::default() };
         let prog = GraphProgram::new().nop(); // non-empty -> creates hidden node N0 (index 1)
         let mut net = RuntimeNetwork::from_program(&prog, &defaults);
         for eg in net.edges.iter_mut() {
             if eg.src.idx == 0 && eg.dst == 1 {
-                let mut g = KernelGroup::default();
-                g.add_class(random_kernel_class(&mut rng, INPUT_BITS / 64, HIDDEN_BITS, threshold));
-                eg.group = g;
+                eg.group = hebbian_group(&mut rng, INPUT_BITS / 64, threshold, target);
             }
         }
-        let s = run_network(&mut net, 1, &enc, &stream, eval_from);
-        print_stats(&format!("hidden node, threshold {threshold}"), &s, HIDDEN_BITS);
+        let s = run_network(&mut net, 1, &enc, &stream, &segs);
+        print_stats(&format!("hidden node, threshold {threshold}{}", homeo_label(target)), &s, HIDDEN_BITS);
     }
     println!();
 
     // ---- Network C: with recurrence (Stay -> self loop on N0) -------------
-    // GraphProgram::stay() adds an N0 -> N0 edge with read_back = history_depth.
+    // GraphProgram::stay() adds an N0 -> N0 edge reading N0's previous frame.
     println!("Network C: input -> hidden + hidden -> hidden (recurrent context)");
-    for (label, fix_read_back) in [("as built (read_back=2)", false), ("read_back forced to 1", true)] {
-        for threshold in [3usize, 5, 8] {
-            let defaults = ProgramDefaults { default_bits: HIDDEN_BITS, ..ProgramDefaults::default() };
-            let prog = GraphProgram::new().stay();
-            let mut net = RuntimeNetwork::from_program(&prog, &defaults);
-            for eg in net.edges.iter_mut() {
-                let src_words = if eg.src.idx == 0 { INPUT_BITS / 64 } else { HIDDEN_BITS / 64 };
-                if eg.dst == 1 {
-                    let mut g = KernelGroup::default();
-                    g.add_class(random_kernel_class(&mut rng, src_words, HIDDEN_BITS, threshold));
-                    eg.group = g;
-                }
-                if fix_read_back && eg.src.idx == 1 && eg.dst == 1 {
-                    eg.src.read_back = 1;
-                }
+    for (threshold, target) in [(3usize, None), (5, None), (8, Some(16usize))] {
+        let defaults = ProgramDefaults { default_bits: HIDDEN_BITS, ..ProgramDefaults::default() };
+        let prog = GraphProgram::new().stay();
+        let mut net = RuntimeNetwork::from_program(&prog, &defaults);
+        for eg in net.edges.iter_mut() {
+            let src_words = if eg.src.idx == 0 { INPUT_BITS / 64 } else { HIDDEN_BITS / 64 };
+            if eg.dst == 1 {
+                eg.group = hebbian_group(&mut rng, src_words, threshold, target);
             }
-            let s = run_network(&mut net, 1, &enc, &stream, eval_from);
-            print_stats(&format!("hidden node, {label}, threshold {threshold}"), &s, HIDDEN_BITS);
         }
+        let s = run_network(&mut net, 1, &enc, &stream, &segs);
+        print_stats(&format!("hidden node, threshold {threshold}{}", homeo_label(target)), &s, HIDDEN_BITS);
     }
+    println!();
+
+    // ---- Network D: predictive, surprise-driven growth --------------------
+    // input -> output where the edge reads the last `frames` input frames and the
+    // output is trained to hold the next character's code. Kernels start at zero
+    // and are grown (and recycled at the budget) by KernelClass::feedback.
+    println!("Network D: predictive input history -> output (native prediction, no probe)");
+    for (frames, budget) in [(1usize, 4096usize), (3, 4096), (6, 4096), (6, 256), (6, 64)] {
+        let s = run_predictive(&enc, &stream, &segs, frames, budget);
+        println!("  context window {frames} frame(s), kernel budget {budget}");
+        println!("    prediction accuracy     : {:5.1}%   held-out {:5.1}%", s.acc.train.pct(), s.acc.heldout.pct());
+        println!(
+            "    kernels: {} live, {} grown, {} recycled; by context depth {:?}",
+            s.live, s.grown, s.recycled, s.by_depth
+        );
+    }
+}
+
+fn hebbian_group(rng: &mut StdRng, src_words: usize, threshold: usize, target: Option<usize>) -> KernelGroup {
+    let mut kc = random_kernel_class(rng, src_words, HIDDEN_BITS, threshold);
+    if let Some(t) = target {
+        kc = kc.with_target_active(t);
+    }
+    let mut g = KernelGroup::new();
+    g.add_class(kc);
+    g
+}
+
+fn homeo_label(target: Option<usize>) -> String {
+    target.map_or(String::new(), |t| format!(" + homeostasis (target {t} active)"))
+}
+
+struct PredictiveStats {
+    acc: Split,
+    live: usize,
+    grown: usize,
+    recycled: usize,
+    by_depth: Vec<usize>,
+}
+
+fn run_predictive(enc: &Encoder, stream: &[usize], segs: &Segments, frames: usize, budget: usize) -> PredictiveStats {
+    let defaults = ProgramDefaults { default_bits: INPUT_BITS, ..ProgramDefaults::default() };
+    let mut g = GraphProgram::new().build_graph(&defaults); // input -> output
+    for e in g.edge_weights_mut() {
+        e.input_frames = frames;
+    }
+    let mut net = RuntimeNetwork::from_graph(&g);
+    let cfg = GrowthConfig {
+        max_kernels: budget,
+        frame_words: INPUT_BITS / 64,
+        max_frames: frames,
+        sample_bits: 16,
+        match_fraction: 0.8,
+        surprise_fraction: 0.5,
+    };
+    let mut group = KernelGroup::new();
+    group.add_class(KernelClass::predictive(cfg));
+    net.edges[0].group = group;
+    let out = net.nodes.len() - 1;
+
+    let mut acc = Split::default();
+    for t in 0..stream.len() - 1 {
+        net.write_input(&enc.codes[stream[t]], 0);
+        net.tick(AdvanceMode::Clear, 0);
+        let next = stream[t + 1];
+        acc.add(segs.of(t), decode(enc, net.read_node(out)), next);
+        net.learn(out, &enc.codes[next]);
+    }
+
+    let kc = &net.edges[0].group.classes()[0];
+    let mut by_depth = vec![0; frames];
+    for k in kc.kernels() {
+        by_depth[k.context_frames - 1] += 1;
+    }
+    PredictiveStats { acc, live: kc.len(), grown: kc.grown(), recycled: kc.recycled(), by_depth }
+}
+
+/// The character whose code overlaps the output the most (None if nothing is active).
+fn decode(enc: &Encoder, out: &BitVector) -> Option<usize> {
+    let words = out.as_words();
+    let overlaps: Vec<u32> = enc
+        .codes
+        .iter()
+        .map(|c| c.as_words().iter().zip(words).map(|(a, b)| (a & b).count_ones()).sum())
+        .collect();
+    argmax_u(&overlaps)
 }

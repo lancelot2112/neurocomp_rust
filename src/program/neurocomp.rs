@@ -20,11 +20,13 @@ pub struct RuntimeNetwork {
 pub struct RuntimeEdgeTarget {
     pub idx: usize, // target node index
     pub read_back: usize, // how many frames back to read from
+    pub frames: usize, // consecutive frames read from read_back on, concatenated most-recent first
 }
 pub struct RuntimeEdgeGroup {
     pub src: RuntimeEdgeTarget,
     pub dst: usize,
     pub group: KernelGroup,
+    pub last_input: Option<BitVector>, // what the group read on the last tick (for `learn`)
 }
 
 impl RuntimeNetwork {
@@ -36,12 +38,21 @@ impl RuntimeNetwork {
 
     /// Build a runnable network from a Graph<NodeSpec, EdgeSpec>.
     pub fn from_graph(g: &Graph<NodeSpec, EdgeSpec, Directed>) -> Self {
+        // Every frame an outgoing edge reads must exist in the ring without wrapping
+        // onto the current frame (index 0).
+        let mut deepest_read = vec![0usize; g.node_count()];
+        for e in g.edge_references() {
+            let es = e.weight();
+            let d = &mut deepest_read[e.source().index()];
+            *d = (*d).max(es.input_read_back + es.input_frames.max(1) - 1);
+        }
+
         // Materialize node histories
         let mut nodes: Vec<BitVecHistory> = Vec::with_capacity(g.node_count());
         for ni in g.node_indices() {
             let ns = g.node_weight(ni).expect("node weight");
             let bits = ns.bits;
-            let ring_len = ns.history_depth.max(2);
+            let ring_len = ns.history_depth.max(deepest_read[ni.index()] + 1).max(2);
             let init = BitVector::new(bits, Some(0));
             nodes.push(BitVecHistory::new(init, ring_len));
         }
@@ -63,9 +74,11 @@ impl RuntimeNetwork {
                 src: RuntimeEdgeTarget {
                     idx: src,
                     read_back: es.input_read_back,
+                    frames: es.input_frames.max(1),
                 },
                 dst,
                 group: KernelGroup::default(), // placeholder; later: pick group per edge
+                last_input: None,
             });
         }
 
@@ -82,10 +95,22 @@ impl RuntimeNetwork {
         // Execute edges
         for eg in &mut self.edges {
             // Snapshot source at read_back frames
-            let src_view = self.nodes[eg.src.idx].snapshot(eg.src.read_back);
+            let src_view = read_frames(&self.nodes[eg.src.idx], eg.src.read_back, eg.src.frames);
             let dst_curr = self.nodes[eg.dst].current_mut();
 
             eg.group.process_all(&src_view, dst_curr, 0, adj_temperature); // phase=0 for now
+            eg.last_input = Some(src_view);
+        }
+    }
+
+    /// Predictive learning step: tell every edge into `dst` what `dst` should have
+    /// held after the last tick (e.g. the next input). Call after `tick`, before the next one.
+    pub fn learn(&mut self, dst: usize, target: &BitVector) {
+        let mut rng = rand::thread_rng();
+        for eg in self.edges.iter_mut().filter(|eg| eg.dst == dst) {
+            if let Some(input) = &eg.last_input {
+                eg.group.feedback(input, target, &mut rng);
+            }
         }
     }
 
@@ -121,6 +146,19 @@ impl RuntimeNetwork {
         let node = self.node_current_mut(node_idx);
         node.mask_mut(word_offset, input, |_, b| b);
     }
+}
+
+/// Read `frames` consecutive history frames starting at `read_back`,
+/// concatenated most-recent first.
+fn read_frames(hist: &BitVecHistory, read_back: usize, frames: usize) -> BitVector {
+    if frames <= 1 {
+        return hist.snapshot(read_back);
+    }
+    let mut words = Vec::new();
+    for f in 0..frames {
+        words.extend_from_slice(hist.get_frame(read_back + f).as_words());
+    }
+    BitVector::from_words(words)
 }
 
 #[cfg(test)]
@@ -185,5 +223,41 @@ mod tests {
         let output = net.read_output();
         assert_eq!(output.count_ones(), 1);
 
+    }
+
+    #[test]
+    fn history_ring_covers_multi_frame_reads() {
+        let defaults = ProgramDefaults::default();
+        let mut g = GraphProgram::new().build_graph(&defaults);
+        let e = g.edge_indices().next().unwrap(); // input -> output
+        g.edge_weight_mut(e).unwrap().input_frames = 3;
+        let net = RuntimeNetwork::from_graph(&g);
+        // reading frames 1..=3 needs a ring of 4 so frame 3 doesn't wrap onto the current frame
+        assert!(net.nodes[0].get_frame(3).bit_len() > 0);
+        assert_eq!(net.edges[0].src.frames, 3);
+    }
+
+    #[test]
+    fn learns_to_predict_next_input() {
+        use crate::kernel::{GrowthConfig, KernelClass, KernelGroup};
+        let defaults = ProgramDefaults { default_bits: 64, ..ProgramDefaults::default() };
+        let mut net = RuntimeNetwork::from_program(&GraphProgram::new(), &defaults);
+        let mut group = KernelGroup::new();
+        group.add_class(KernelClass::predictive(GrowthConfig { sample_bits: 8, ..GrowthConfig::default() }));
+        net.edges[0].group = group;
+        let out = net.nodes.len() - 1;
+
+        let seq = [0xFFu64, 0xFF00, 0xFF_0000]; // A B C A B C ...
+        let mut correct = 0;
+        for t in 0..30 {
+            net.write_input(&BitVector::from_words(vec![seq[t % 3]]), 0);
+            net.tick(AdvanceMode::Clear, 0);
+            let next = BitVector::from_words(vec![seq[(t + 1) % 3]]);
+            if t >= 3 && net.read_node(out).as_words()[0] == seq[(t + 1) % 3] {
+                correct += 1;
+            }
+            net.learn(out, &next);
+        }
+        assert_eq!(correct, 27);
     }
 }

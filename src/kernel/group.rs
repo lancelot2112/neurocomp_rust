@@ -17,6 +17,11 @@ impl KernelGroup {
         Self { available_classes }
     }
 
+    /// A group with no classes (no built-in default kernel).
+    pub fn new() -> Self {
+        Self { available_classes: Vec::new() }
+    }
+
     pub fn add_class(&mut self, kc: KernelClass<SimpleKernel>) {
         self.available_classes.push(kc);
     }
@@ -29,9 +34,23 @@ impl KernelGroup {
         self.available_classes.is_empty()
     }
 
-    pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16) {
+    pub fn classes(&self) -> &[KernelClass<SimpleKernel>] {
+        &self.available_classes
+    }
+
+    /// Returns the number of kernels that fired across all classes.
+    pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16) -> usize {
+        let mut fired = 0;
         for kclass in &mut self.available_classes {
-            kclass.process_all(input, output, phase, adj_temperature);
+            fired += kclass.process_all(input, output, phase, adj_temperature);
+        }
+        fired
+    }
+
+    /// Predictive learning for every class; see `KernelClass::feedback`.
+    pub fn feedback<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, target: &BitVector, rng: &mut R) {
+        for kclass in &mut self.available_classes {
+            kclass.feedback(input, target, rng);
         }
     }
 }

@@ -491,7 +491,8 @@ impl KernelClass<SimpleKernel> {
         if !depth_has_target[depth] {
             self.grow(input, target, depth, rng);
         }
-        if winner.is_some() && depth < cfg.max_frames {
+        // Grow one frame deeper only if that frame carries something new.
+        if winner.is_some() && depth < cfg.max_frames && frame_has_bits(input, depth, cfg.frame_words) {
             self.grow(input, target, depth + 1, rng);
         }
     }
@@ -553,6 +554,7 @@ impl KernelClass<SimpleKernel> {
 
         let mut input_mask = BitVector::new(input.bit_len(), Some(0));
         let mut sampled = 0;
+        let mut reach = 0; // frames back the kernel actually connects to
         for f in 0..depth {
             let first = f * cfg.frame_words * 64;
             let last = ((f + 1) * cfg.frame_words * 64).min(input.bit_len());
@@ -561,6 +563,7 @@ impl KernelClass<SimpleKernel> {
             for &b in active.choose_multiple(rng, cfg.sample_bits) {
                 input_mask.bit_set(b);
                 sampled += 1;
+                reach = f + 1;
             }
         }
         if sampled == 0 {
@@ -580,7 +583,10 @@ impl KernelClass<SimpleKernel> {
             KernelOp::Or,
         );
         k.plastic = false;
-        k.context_frames = depth;
+        // Depth is how far back the connections really reach: a kernel grown over
+        // empty frames is no more specific than a shallower one and must not
+        // outrank (or block the growth of) kernels that use those frames later.
+        k.context_frames = reach;
         k.stats.last_useful = tick;
 
         let slot = if self.active_kernels.len() < cfg.max_kernels {
@@ -611,6 +617,11 @@ impl KernelClass<SimpleKernel> {
             st.index[b].push(slot as u32);
         }
     }
+}
+
+/// Whether frame `f` (0 = most recent) of a concatenated input has any active bit.
+fn frame_has_bits(input: &BitVector, f: usize, frame_words: usize) -> bool {
+    input.as_words().iter().skip(f * frame_words).take(frame_words).any(|&w| w != 0)
 }
 
 /// Smoothed hit rate of a predictive kernel.
@@ -871,5 +882,26 @@ mod tests {
         assert_eq!(kc.kernels()[0].input_mask.as_words(), &[0xFF, 0x0F]);
         step(&mut kc, &a_f2, &b); // second: filler connections dropped
         assert_eq!(kc.kernels()[0].input_mask.as_words(), &[0xFF, 0]);
+    }
+
+    #[test]
+    fn kernels_grown_over_empty_frames_do_not_block_later_context() {
+        // frame 0 = cue "?", frame 1 = a relay that starts out empty
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        // relay empty: answers vary, so only "?"-only kernels can be grown
+        for t in [&b, &c, &b, &c] {
+            step(&mut kc, &frames(&[0xFF, 0]), t);
+        }
+        assert!(kc.kernels().iter().all(|k| k.context_frames == 1));
+        // relay now carries the answer: relay-specific kernels must be able to grow and win
+        for _ in 0..3 {
+            step(&mut kc, &frames(&[0xFF, 0x0F]), &b);
+            step(&mut kc, &frames(&[0xFF, 0xF0]), &c);
+        }
+        assert_eq!(step(&mut kc, &frames(&[0xFF, 0x0F]), &b), 0xFF00);
+        assert_eq!(step(&mut kc, &frames(&[0xFF, 0xF0]), &c), 0xFF0000);
     }
 }

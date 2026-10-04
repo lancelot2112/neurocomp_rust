@@ -184,6 +184,7 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
     let n_ch = if gated { 1 } else { channels.len() };
     let mut gate = RouteGate::new(0.5, 3.0, 1, policy == Policy::GatedValue);
     let mut pool: Vec<RelayChannel> = Vec::new();
+    let mut train_trace = (0usize, 0usize, 0usize, 0usize); // '?' ticks, relay on, right, sum of winner depth
     let mut th = Thalamus::new(BITS, 40, channels);
     let mut credit = vec![0f64; n_ch];
     let mut age = vec![0usize; n_ch]; // reviews since a channel was re-pointed
@@ -221,7 +222,11 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
             } else {
                 words.extend_from_slice(th.relay().as_words());
             }
-            words.extend_from_slice(prev.map_or(&[0u64; BITS / 64][..], |p| enc.codes[p].as_words()));
+            if std::env::var("NO_PREV").is_ok() {
+                words.extend_from_slice(&[0u64; BITS / 64]); // diagnostic: hide the previous word
+            } else {
+                words.extend_from_slice(prev.map_or(&[0u64; BITS / 64][..], |p| enc.codes[p].as_words()));
+            }
             let input = BitVector::from_words(words);
 
             let mut out = BitVector::new(BITS, Some(0));
@@ -234,6 +239,40 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
                     .map(|c| format!("{:?}", th.channels[c]))
                     .collect();
                 eprintln!("story {:?} -> answer carried by {:?}", s.words, carriers);
+            }
+            if gated && !testing && t + 1 == s.answer_at && std::env::var("TRACE_TRAIN").is_ok() {
+                let relay_on = input.as_words()[BITS / 64..2 * BITS / 64].iter().any(|&w| w != 0);
+                train_trace.0 += 1;
+                train_trace.1 += relay_on as usize;
+                train_trace.2 += right as usize;
+                train_trace.3 += class.winner_depth().unwrap_or(0);
+                if s_i % 500 == 499 {
+                    eprintln!(
+                        "  train stories {}: at '?' relay on {:.0}%, answer right {:.0}%, mean winner depth {:.2}, kernels {}",
+                        s_i + 1,
+                        100.0 * train_trace.1 as f64 / train_trace.0 as f64,
+                        100.0 * train_trace.2 as f64 / train_trace.0 as f64,
+                        train_trace.3 as f64 / train_trace.0 as f64,
+                        class.len()
+                    );
+                    train_trace = (0, 0, 0, 0);
+                }
+            }
+            if gated && testing && t + 1 == s.answer_at && std::env::var("TRACE_GATE").is_ok() && s_i < TRAIN + 4 {
+                let passed: Vec<String> = gate
+                    .select(&th, &pool)
+                    .iter()
+                    .map(|(r, v)| format!("({},{})->{:?}", r.query_lag, r.value_offset, enc.decode(v).map(|i| vocab[i])))
+                    .collect();
+                let has_good = pool.contains(&RelayChannel { query_lag: 1, value_offset: 4 });
+                eprintln!(
+                    "{:?} | answer {} | gate passes {:?} | pool has (1,4): {has_good} (pool {}) | predicted {:?}",
+                    s.words,
+                    vocab[next],
+                    passed,
+                    pool.len(),
+                    enc.decode(&out).map(|i| vocab[i])
+                );
             }
             if testing && t + 1 == s.answer_at {
                 let r = if s.held_out { &mut res_held } else { &mut res_seen };
@@ -380,6 +419,7 @@ fn main() {
             Ok("oracle") => vec![Policy::Oracle],
             Ok("open_only") => vec![Policy::LearnedOpen],
             Ok("open") => vec![Policy::NoThalamus, Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
+            Ok("gated_only") => vec![Policy::Gated],
             Ok("gated") => vec![Policy::LearnedOpen, Policy::Gated, Policy::GatedValue],
             Ok("open_cmp") => vec![Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
@@ -395,7 +435,8 @@ fn main() {
             ],
         };
         for policy in policies {
-            let runs: Vec<Outcome> = (0..5).map(|seed| run(policy, facts, long, seed)).collect();
+            let seeds: u64 = std::env::var("SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+            let runs: Vec<Outcome> = (0..seeds).map(|seed| run(policy, facts, long, seed)).collect();
             let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
             if std::env::var("ALL_CHANNELS").is_ok() {
                 for (i, o) in runs.iter().enumerate() {

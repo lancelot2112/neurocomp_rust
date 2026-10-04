@@ -417,6 +417,12 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().map_or(0.0, |st| st.last_target_prob)
     }
 
+    /// The kernel that made the last prediction, if any.
+    pub fn winner(&self) -> Option<&SimpleKernel> {
+        let st = self.predictive.as_ref()?;
+        st.last_winner.map(|w| &self.active_kernels[w])
+    }
+
     /// Context depth (frames) of the current winning kernel, if any.
     pub fn winner_depth(&self) -> Option<usize> {
         let st = self.predictive.as_ref()?;

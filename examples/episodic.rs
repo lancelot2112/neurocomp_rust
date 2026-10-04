@@ -259,6 +259,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // DIAG: what the predictor got at the answer, split by right / wrong
     // [answer bits recalled, recall size in bits, whole words recalled, count]
     let mut diag = [[0usize; 4]; 2];
+    // DIAG: the winning kernel at held-out answers, split by right / wrong:
+    // [no winner, reads the memory frame, mask bits in current/memory/previous frames
+    //  summed (3 entries), reliability ×1000 summed, count]
+    let mut kdiag = [[0usize; 7]; 2];
     let mut pending_diag = [0usize; 3];
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
@@ -470,6 +474,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let next = ids[t + 1];
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
+                    if s.held_out && std::env::var("DIAG").is_ok() {
+                        let kd = &mut kdiag[right as usize];
+                        kd[6] += 1;
+                        match class.winner() {
+                            None => kd[0] += 1,
+                            Some(k) => {
+                                // which input frames the kernel's mask covers
+                                let frame = BITS / 64;
+                                let mut per = [0usize; 3]; // current word, memory frames, previous word
+                                for (wi, &m) in k.input_mask.as_words().iter().enumerate() {
+                                    let f = (k.input_idx + wi) / frame;
+                                    let slot = if f == 0 { 0 } else if f <= mid_frames { 1 } else { 2 };
+                                    per[slot] += m.count_ones() as usize;
+                                }
+                                kd[1] += (per[1] > 0) as usize;
+                                for i in 0..3 {
+                                    kd[2 + i] += per[i];
+                                }
+                                kd[5] += (1000.0 * class.confidence().unwrap_or(0.0)) as usize;
+                            }
+                        }
+                    }
                     if s.held_out {
                         let d = &mut diag[right as usize];
                         for i in 0..3 {
@@ -512,6 +538,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
     if std::env::var("DIAG").is_ok() {
+        for (label, kd) in [("right", kdiag[1]), ("wrong", kdiag[0])] {
+            let n = kd[6].max(1) as f64;
+            let fired = (kd[6] - kd[0]).max(1) as f64;
+            eprintln!(
+                "  KDIAG seed {seed} held-out {label}: n={} no winner {:.0}%, winner reads memory {:.0}%, mask bits current/memory/previous {:.1}/{:.1}/{:.1}, reliability {:.2}",
+                kd[6],
+                100.0 * kd[0] as f64 / n,
+                100.0 * kd[1] as f64 / fired,
+                kd[2] as f64 / fired,
+                kd[3] as f64 / fired,
+                kd[4] as f64 / fired,
+                kd[5] as f64 / 1000.0 / fired
+            );
+        }
         for (label, d) in [("right", diag[1]), ("wrong", diag[0])] {
             let n = d[3].max(1) as f64;
             eprintln!(

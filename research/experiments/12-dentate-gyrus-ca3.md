@@ -137,7 +137,7 @@ predictor at the answer (1.00 = clean).
 | Varied stories, CA3 16,384 / 32, 3 seeds, held-out (places in recall) | Counters | Delay line | Shift register |
 |---|---|---|---|
 | 1–2 facts, settle 2 | 99.4% (1.00) | 99.3% (1.00) | 97.2% (1.00) |
-| 1–2 facts, no settling | 99.3% (1.00) | 99.5% (1.00) | SHIFT_NS_2 |
+| 1–2 facts, no settling | 99.3% (1.00) | 99.5% (1.00) | 98.1% (1.00) |
 | 1–3 facts, settle 2 | CNT_S_3 | 92.7% (1.00; 94/84/100) | SHIFT_S_3 |
 | 1–3 facts, no settling | CNT_NS_3 | RING_NS_3 | SHIFT_NS_3 |
 

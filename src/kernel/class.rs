@@ -661,8 +661,16 @@ impl KernelClass<SimpleKernel> {
         if st.index.len() < input.bit_len() {
             st.index.resize(input.bit_len(), Vec::new());
         }
+        let frame_bits = cfg.frame_words * 64;
         for b in set_bits(&self.active_kernels[slot].input_mask) {
             st.index[b].push(slot as u32);
+            // Copy credit at birth: the kernel is grown to predict `target` from this
+            // input, so its bits that carry the target's bits are tagged at once (before
+            // a near miss could prune them).
+            let t = b % frame_bits;
+            if st.sticky_factor > 0 && t < target.bit_len() && target.bit_get(t) {
+                st.sticky_tags.entry(slot).or_default().insert(b);
+            }
         }
     }
 }

@@ -5,7 +5,8 @@
 //!
 //! Task (as in experiment 06B): stories such as
 //!   "mary went to the kitchen . [john went to the garden .] where is mary ? kitchen"
-//! with one place per name held out of training. Without attention the
+//! with one place per name held out of training. Stories have a random number of
+//! facts and ask about a random one, so the answer's position varies. Without attention the
 //! predictor memorizes (name, place) pairs: 100% on seen pairs, 0% on held-out.
 //!
 //! Here a `Thalamus` watches the word stream. Each relay channel finds the most
@@ -34,6 +35,7 @@ use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
 use neurocomp::program::{RelayChannel, Thalamus};
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 const BITS: usize = 512;
@@ -66,22 +68,26 @@ fn allowed(n: usize, p: usize) -> bool {
     p != n % PLACES.len()
 }
 
-fn story(rng: &mut StdRng, facts: usize, want_held_out: bool) -> Story {
+/// A story with 1..=`max_facts` facts about distinct people, then a question about
+/// a random one of them. Varying length and question target rules out positional
+/// shortcuts ("the answer is always k words after the last `?`"): only routing by
+/// content (the asked name) can find the answer.
+fn story(rng: &mut StdRng, max_facts: usize, want_held_out: bool) -> Story {
     loop {
+        let facts = rng.gen_range(1..=max_facts);
+        let mut names: Vec<usize> = (0..NAMES.len()).collect();
+        names.shuffle(rng);
         let mut words = Vec::new();
-        let mut loc: HashMap<usize, usize> = HashMap::new();
-        let mut first = None;
+        let mut loc = Vec::new();
         let mut ok = true;
-        for _ in 0..facts {
-            let n = rng.gen_range(0..NAMES.len());
+        for &n in &names[..facts] {
             let p = rng.gen_range(0..PLACES.len());
-            ok &= allowed(n, p) || want_held_out;
-            loc.insert(n, p);
-            first.get_or_insert(n);
+            loc.push((n, p));
             words.extend([NAMES[n], "went", "to", "the", PLACES[p], "."]);
         }
-        let q = first.unwrap();
-        let a = loc[&q];
+        let (q, a) = loc[rng.gen_range(0..facts)];
+        // training stories may not contain any held-out pair, even as a distractor
+        ok &= want_held_out || loc.iter().all(|&(n, p)| allowed(n, p));
         if !ok || allowed(q, a) == want_held_out {
             continue;
         }
@@ -152,6 +158,13 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
             class.process_predictive(&input, &mut out);
             let next = ids[t + 1];
             let right = enc.decode(&out) == Some(next);
+            if testing && t + 1 == s.answer_at && std::env::var("TRACE").is_ok() && s_i < TRAIN + 3 {
+                let carriers: Vec<String> = (0..n_ch)
+                    .filter(|&c| th.relay_channel(th.channels[c]).map_or(false, |v| v.as_words() == enc.codes[next].as_words()))
+                    .map(|c| format!("{:?}", th.channels[c]))
+                    .collect();
+                eprintln!("story {:?} -> answer carried by {:?}", s.words, carriers);
+            }
             if testing && t + 1 == s.answer_at {
                 let r = if s.held_out { &mut res_held } else { &mut res_seen };
                 r.0 += right as usize;
@@ -208,7 +221,9 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
             }
             prev = Some(ids[t]);
         }
-        prev = Some(*ids.last().unwrap());
+        let last = *ids.last().unwrap();
+        th.observe(&enc.codes[last]);
+        prev = Some(last);
 
         if matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed)
             && !testing
@@ -249,11 +264,12 @@ fn main() {
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (learning off at test); chance 1/6");
     println!("channel (q, v): relay the word v steps after the last earlier occurrence of the word q steps back");
     println!();
-    for facts in [1usize, 2] {
-        println!("{facts} fact(s) per story{}", if facts > 1 { " (the other is a distractor)" } else { "" });
+    for facts in [2usize, 3] {
+        println!("1-{facts} facts per story, question about a random one (others are distractors)");
         let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
             Ok("patient") => vec![Policy::Learned, Policy::LearnedPatient],
             Ok("proposed") => vec![Policy::Learned, Policy::LearnedProposed],
+            Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
             _ => vec![
                 Policy::NoThalamus,
                 Policy::Oracle,

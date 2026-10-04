@@ -242,7 +242,33 @@ at the kernel's birth (it is grown to predict this target from this input).
   maximum depth locks the case in. Next: grow a sibling at the same depth when a
   max-depth winner fails, or rank by reliability before depth for unreliable kernels.
 
-10. Method lesson: compare variants **in the same build and run**. Numbers from different
+**Coverage or ranking?** A third diagnostic (`CDIAG`) checks, at each wrong held-out answer,
+whether a memory-reading kernel for the right place exists, how close it came to
+matching, and how reliable it is. It turned the problem from "coverage" into three
+separate predictor bugs, each fixed in turn (seed 1, varied, held-out):
+
+| Fix (cumulative unless noted) | 1–2 facts | 1–3 facts | What the wrong answers showed |
+|---|---|---|---|
+| baseline (no pruning) | 99.2% | 84.0% | no copy kernel *for the "?" context*: the best one missed 13.8 current-word bits |
+| prune after 1 miss + tags at birth | 99.4% | 66.6% | a copy kernel **fully matched** but lost to a deeper guesser (0.18) |
+| + trust floor 0.5 (always) | 99.4% | 83.6% | the matching copy kernels were themselves over-pruned guessers (reliability 0.16–0.44 over 1–3k uses): 2–3 memory bits under a global tolerance of 3 |
+| + frame floor (≥ tolerance+1 bits per frame) | 83.8% | – | worse: a 4-bit frame still matched with 1 bit present |
+| **tolerance scaled to the smallest frame** (instead of the floor) | 99.4% | 81.8% | reliable copy kernel (0.99) fully matched, lost on **depth** to a guesser |
+| + trust floor during training too | 82.4% | 100% | 1–2: copy kernels never grown for some places (training ranking changes growth) |
+| **+ trust floor only when answering** (`TRUST_AT_TEST`) | **99.4%** | **100%** | none on 1–3; 3 on 1–2 (recall lacked the place bits) |
+
+The three bugs, all in how a predictive class picks and prunes kernels:
+1. **Global tolerance on pruned kernels.** `threshold = bits − 3` lets a frame pruned to ≤ 4
+   bits be absent and the kernel still fire. Fix: tolerance = ⌊smallest frame × (1 −
+   match_fraction)⌋ after pruning.
+2. **Depth before reliability.** The longest-context kernel wins even at reliability 0.18.
+   Fix: depth only ranks among kernels at least 0.5 reliable, when answering.
+3. **Pruning before credit.** Copy bits must be tagged when the kernel is born (it is
+   grown to predict this target), not only after a hit.
+
+Settings: `GENERALIZE=0.5 GENERALIZE_AFTER=1 STICKY=4 TRUST_AT_TEST=0.5`. Three-seed results: FULL_FIX_RESULTS
+
+11. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and

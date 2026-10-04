@@ -43,7 +43,10 @@
 //! `RouteGate` inhibits all routes except those proven reliable in the current
 //! context (current word; for GatedValue, current word + the relayed word);
 //! winner-take-one among open routes. The predictor reads
-//! [current word | gated relay | previous word].
+//! [current word | gated relay | previous word]. "GatedKernel" replaces the
+//! gate's lookup table with a predictive KernelClass over
+//! [route code | current word | relayed word] -> RIGHT/WRONG (`KernelGate`),
+//! so the inhibition is learned by bit-pattern matching like everything else.
 //!
 //! JITTER=1 puts 0-4 random filler words ("then", "later", "so", "next", "after")
 //! before each story, so no fixed offset from the previous story's words lands on
@@ -57,7 +60,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{RelayChannel, RouteGate, RouteScores, Thalamus};
+use neurocomp::program::{KernelGate, RelayChannel, RouteGate, RouteScores, Thalamus};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -86,6 +89,7 @@ enum Policy {
     LearnedOpen,
     Gated,
     GatedValue,
+    GatedKernel,
 }
 
 struct Story {
@@ -176,13 +180,14 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
         Policy::Oracle if long => vec![RelayChannel { query_lag: 3, value_offset: 4 }, RelayChannel { query_lag: 3, value_offset: 8 }],
         Policy::Oracle => vec![RelayChannel { query_lag: 1, value_offset: 4 }, RelayChannel { query_lag: 0, value_offset: 1 }],
         Policy::LearnedOpen => (0..channels()).map(|_| random_open_channel(&mut rng)).collect(),
-        Policy::Gated | Policy::GatedValue => vec![],
+        Policy::Gated | Policy::GatedValue | Policy::GatedKernel => vec![],
         Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed => (0..channels()).map(|_| random_channel(&mut rng)).collect(),
     };
-    let gated = matches!(policy, Policy::Gated | Policy::GatedValue);
+    let gated = matches!(policy, Policy::Gated | Policy::GatedValue | Policy::GatedKernel);
     // frames of relay input to the predictor: one per channel, or one gated relay
     let n_ch = if gated { 1 } else { channels.len() };
     let mut gate = RouteGate::new(0.5, 3.0, 1, policy == Policy::GatedValue);
+    let mut kgate = KernelGate::new(BITS, 0.5, 1, seed);
     let mut pool: Vec<RelayChannel> = Vec::new();
     let mut train_trace = (0usize, 0usize, 0usize, 0usize); // '?' ticks, relay on, right, sum of winner depth
     let mut th = Thalamus::new(BITS, 40, channels);
@@ -217,7 +222,9 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
             th.observe(code);
             // [current | relay 0 | relay 1 | previous]
             let mut words = code.as_words().to_vec();
-            if gated {
+            if policy == Policy::GatedKernel {
+                words.extend_from_slice(kgate.gated_relay(&th, &pool, BITS).as_words());
+            } else if gated {
                 words.extend_from_slice(gate.gated_relay(&th, &pool, BITS).as_words());
             } else {
                 words.extend_from_slice(th.relay().as_words());
@@ -289,10 +296,12 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
                         *votes.entry((r.query_lag, r.value_offset)).or_default() += 1.0;
                     }
                 }
-                if !right && matches!(policy, Policy::LearnedOpen | Policy::Gated | Policy::GatedValue) {
+                if !right && (policy == Policy::LearnedOpen || gated) {
                     route_scores.observe_surprise(&th, &enc.codes[next], OPEN_MAX_Q, OPEN_MAX_V);
                 }
-                if gated {
+                if policy == Policy::GatedKernel {
+                    kgate.learn(&th, &pool, &enc.codes[next]);
+                } else if gated {
                     gate.learn(&th, &pool, &enc.codes[next]);
                 }
                 if policy == Policy::LearnedGuided {
@@ -420,6 +429,8 @@ fn main() {
             Ok("open_only") => vec![Policy::LearnedOpen],
             Ok("open") => vec![Policy::NoThalamus, Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("gated_only") => vec![Policy::Gated],
+            Ok("kernel_gate") => vec![Policy::Gated, Policy::GatedKernel],
+            Ok("kernel_gate_only") => vec![Policy::GatedKernel],
             Ok("gated") => vec![Policy::LearnedOpen, Policy::Gated, Policy::GatedValue],
             Ok("open_cmp") => vec![Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],

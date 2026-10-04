@@ -343,6 +343,11 @@ impl KernelClass<SimpleKernel> {
     /// pattern, or None if no kernel matches. Used for counterfactual
     /// (ablation) credit: compare the prediction with and without some inputs.
     pub fn peek(&self, input: &BitVector) -> Option<&BitVector> {
+        self.peek_scored(input).map(|(out, _)| out)
+    }
+
+    /// Like `peek`, also returning the winning kernel's smoothed hit rate.
+    pub fn peek_scored(&self, input: &BitVector) -> Option<(&BitVector, f32)> {
         let st = self.predictive.as_ref()?;
         let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         for b in set_bits(input) {
@@ -360,7 +365,7 @@ impl KernelClass<SimpleKernel> {
                 ((kern.context_frames, reliability(&kern.stats), c), k as usize)
             })
             .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)))
-            .map(|(_, k)| &self.active_kernels[k].output_mask)
+            .map(|((_, rel, _), k)| (&self.active_kernels[k].output_mask, rel))
     }
 
     /// Restrict which input bits newly grown kernels may sample (None = all).

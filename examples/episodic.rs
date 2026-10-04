@@ -248,8 +248,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         sample_bits: 16,
         match_fraction: 0.8,
         surprise_fraction: 0.5,
-        generalize: None,
-        generalize_after: 1,
+        // GENERALIZE=f: drop silent inputs of near-matching kernels that would have been
+        // right (synapse-level credit), after GENERALIZE_AFTER misses; off by default
+        generalize: std::env::var("GENERALIZE").ok().and_then(|v| v.parse().ok()),
+        generalize_after: std::env::var("GENERALIZE_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
     });
 
     let mut prev: Option<usize> = None;

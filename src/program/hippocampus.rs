@@ -312,6 +312,154 @@ impl Ca3Memory {
     }
 }
 
+/// Weight with lazy exponential decay: (value at `t`, `t`).
+type Synapses = std::collections::HashMap<u32, (f32, u32)>;
+
+/// The original float version of `Ca3Memory` (f32 weights, exact exponential decay),
+/// kept for comparison.
+pub struct Ca3FloatMemory {
+    pub k: usize,
+    pub decay: f32,
+    pub prune_below: f32,
+    pub settle_steps: usize,
+    /// Readout keeps EC bits scoring at least this fraction of the best score
+    /// (higher = sharper clean-up toward the single strongest memory).
+    pub readout_fraction: f32,
+    ec_to_ca3: Vec<Synapses>,
+    ca3_to_ca3: Vec<Synapses>,
+    ca3_to_ec: Vec<Synapses>,
+    now: u32,
+}
+
+impl Ca3FloatMemory {
+    pub fn new(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self {
+        Self {
+            k,
+            decay,
+            prune_below: 0.02,
+            settle_steps,
+            readout_fraction: 0.5,
+            ec_to_ca3: vec![std::collections::HashMap::new(); ec_bits],
+            ca3_to_ca3: vec![std::collections::HashMap::new(); ca3_cells],
+            ca3_to_ec: vec![std::collections::HashMap::new(); ca3_cells],
+            now: 0,
+        }
+    }
+
+    fn effective(&self, (w, t): (f32, u32)) -> f32 {
+        w * self.decay.powi((self.now - t) as i32)
+    }
+
+    fn strengthen(syn: &mut Synapses, target: u32, now: u32, decay: f32) {
+        let e = syn.entry(target).or_insert((0.0, now));
+        let current = e.0 * decay.powi((now - e.1) as i32);
+        *e = (current + 1.0, now);
+    }
+
+    /// Store one episode: EC pattern `x` (active bits) with CA3 code `c`
+    /// (e.g. from the dentate gyrus).
+    pub fn store(&mut self, x: &[usize], c: &[u32]) {
+        self.now += 1;
+        let (now, decay) = (self.now, self.decay);
+        for &i in x {
+            for &j in c {
+                Self::strengthen(&mut self.ec_to_ca3[i], j, now, decay);
+            }
+        }
+        for &i in c {
+            for &j in c {
+                if i != j {
+                    Self::strengthen(&mut self.ca3_to_ca3[i as usize], j, now, decay);
+                }
+            }
+            for &j in x {
+                Self::strengthen(&mut self.ca3_to_ec[i as usize], j as u32, now, decay);
+            }
+        }
+        if self.now % 50 == 0 {
+            self.prune();
+        }
+    }
+
+    fn prune(&mut self) {
+        let (now, decay, eps) = (self.now, self.decay, self.prune_below);
+        for layer in [&mut self.ec_to_ca3, &mut self.ca3_to_ca3, &mut self.ca3_to_ec] {
+            for syn in layer.iter_mut() {
+                syn.retain(|_, &mut (w, t)| w * decay.powi((now - t) as i32) >= eps);
+            }
+        }
+    }
+
+    fn drive(&self, layer: &[Synapses], from: &[usize], size: usize) -> Vec<f32> {
+        let mut out = vec![0f32; size];
+        for &i in from {
+            if let Some(syn) = layer.get(i) {
+                for (&j, &wt) in syn {
+                    out[j as usize] += self.effective(wt);
+                }
+            }
+        }
+        out
+    }
+
+    /// Recall from a partial EC cue: drive CA3 from the cue, settle through the
+    /// recurrent weights, read EC out. Returns the EC bits scoring at least
+    /// `readout_fraction` of the best score, and that best score (0 if nothing was recalled).
+    pub fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
+        let ca3_cells = self.ca3_to_ca3.len();
+        let from_cue = self.drive(&self.ec_to_ca3, cue, ca3_cells);
+        let mut c = top_k(from_cue.iter().copied(), self.k);
+        for _ in 0..self.settle_steps {
+            let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
+            let rec = self.drive(&self.ca3_to_ca3, &active, ca3_cells);
+            c = top_k(rec.iter().zip(&from_cue).map(|(r, f)| r + f), self.k);
+        }
+        let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
+        let out = self.drive(&self.ca3_to_ec, &active, ec_bits);
+        let best = out.iter().cloned().fold(0f32, f32::max);
+        if best <= 0.0 {
+            return (Vec::new(), 0.0);
+        }
+        ((0..ec_bits).filter(|&b| out[b] >= self.readout_fraction * best).collect(), best)
+    }
+
+    /// Number of stored synapses (all three pathways).
+    pub fn synapses(&self) -> usize {
+        [&self.ec_to_ca3, &self.ca3_to_ca3, &self.ca3_to_ec].iter().map(|l| l.iter().map(|s| s.len()).sum::<usize>()).sum()
+    }
+}
+
+/// Common interface of the CA3 stores, so experiments can swap them.
+pub trait Autoassociative {
+    fn store(&mut self, x: &[usize], c: &[u32]);
+    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32);
+    fn set_readout_fraction(&mut self, f: f32);
+}
+
+impl Autoassociative for Ca3Memory {
+    fn store(&mut self, x: &[usize], c: &[u32]) {
+        Ca3Memory::store(self, x, c)
+    }
+    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
+        Ca3Memory::recall(self, cue, ec_bits)
+    }
+    fn set_readout_fraction(&mut self, f: f32) {
+        self.readout_fraction = f;
+    }
+}
+
+impl Autoassociative for Ca3FloatMemory {
+    fn store(&mut self, x: &[usize], c: &[u32]) {
+        Ca3FloatMemory::store(self, x, c)
+    }
+    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
+        Ca3FloatMemory::recall(self, cue, ec_bits)
+    }
+    fn set_readout_fraction(&mut self, f: f32) {
+        self.readout_fraction = f;
+    }
+}
+
 /// Indices of the `k` largest positive values (ties by index).
 fn top_k(values: impl Iterator<Item = f32>, k: usize) -> Vec<u32> {
     let mut v: Vec<(f32, u32)> = values.enumerate().filter(|(_, x)| *x > 0.0).map(|(i, x)| (x, i as u32)).collect();

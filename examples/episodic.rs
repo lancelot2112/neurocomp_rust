@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{BasalGanglia, Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, Thalamus};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, Thalamus};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -212,12 +212,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let env = |name: &str, default: f32| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
             let fan_in = env("DG_FAN_IN", 300.0) as usize;
             let decay = env("CA3_DECAY", 0.7);
-            let mut ca3 = match std::env::var("CA3_STORE").as_deref() {
-                Ok("ring") => Ca3Memory::new_delay_line(BITS, cells, k, decay, settle),
-                Ok("shift") => Ca3Memory::new_shift_register(BITS, cells, k, 11, settle),
-                _ => Ca3Memory::new(BITS, cells, k, decay, settle),
+            let mut ca3: Box<dyn Autoassociative> = match std::env::var("CA3_STORE").as_deref() {
+                Ok("ring") => Box::new(Ca3Memory::new_delay_line(BITS, cells, k, decay, settle)),
+                Ok("shift") => Box::new(Ca3Memory::new_shift_register(BITS, cells, k, 11, settle)),
+                Ok("float") => Box::new(Ca3FloatMemory::new(BITS, cells, k, decay, settle)),
+                _ => Box::new(Ca3Memory::new(BITS, cells, k, decay, settle)),
             };
-            ca3.readout_fraction = env("CA3_READOUT", 0.5);
+            ca3.set_readout_fraction(env("CA3_READOUT", 0.5));
             (Some(DentateGyrus::new(BITS, cells, fan_in, k, seed + 100)), Some(ca3))
         }
         _ => (None, None),
@@ -255,6 +256,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     let mut recall_has_answer = 0usize;
     let mut recall_places = 0usize;
+    // DIAG: what the predictor got at the answer, split by right / wrong
+    // [answer bits recalled, recall size in bits, whole words recalled, count]
+    let mut diag = [[0usize; 4]; 2];
+    let mut pending_diag = [0usize; 3];
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
@@ -433,6 +438,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     recall_has_answer += found as usize;
                     // how many places the recall offers (1 = clean, more = blended)
                     let mem = &words[frame..frame * (1 + mid_frames)];
+                    {
+                        let mem = &words[frame..frame * (1 + mid_frames)];
+                        let ans_bits: usize = (0..mid_frames)
+                            .map(|f| mem[frame * f..frame * (f + 1)].iter().zip(answer).map(|(a, b)| (a & b).count_ones() as usize).sum::<usize>())
+                            .max()
+                            .unwrap_or(0);
+                        let size: usize = mem.iter().map(|w| w.count_ones() as usize).sum();
+                        let whole = (0..vocab.len())
+                            .filter(|&i| {
+                                let code = enc.codes[i].as_words();
+                                (0..mid_frames).any(|f| mem[frame * f..frame * (f + 1)].iter().zip(code).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
+                            })
+                            .count();
+                        pending_diag = [ans_bits, size, whole];
+                    }
                     recall_places += PLACES
                         .iter()
                         .filter(|p| {
@@ -450,6 +470,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let next = ids[t + 1];
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
+                    if s.held_out {
+                        let d = &mut diag[right as usize];
+                        for i in 0..3 {
+                            d[i] += pending_diag[i];
+                        }
+                        d[3] += 1;
+                    }
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
@@ -484,6 +511,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
+    if std::env::var("DIAG").is_ok() {
+        for (label, d) in [("right", diag[1]), ("wrong", diag[0])] {
+            let n = d[3].max(1) as f64;
+            eprintln!(
+                "  DIAG seed {seed} held-out {label}: n={} answer bits {:.1}/32, recall size {:.0} bits, whole words {:.2}",
+                d[3],
+                d[0] as f64 / n,
+                d[1] as f64 / n,
+                d[2] as f64 / n
+            );
+        }
+    }
     Outcome { seen: pct(seen), held_out: pct(held), recall: 100.0 * recall_has_answer as f64 / TEST as f64, places: recall_places as f64 / TEST as f64 }
 }
 
@@ -493,6 +532,7 @@ fn set_bits(bv: &BitVector) -> Vec<usize> {
 
 fn main() {
     let seeds: u64 = std::env::var("SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let seed_start: u64 = std::env::var("SEED_START").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let tasks: Vec<Task> = match std::env::var("TASK").as_deref() {
         Ok("short") => vec![Task::Short],
         Ok("long") => vec![Task::Long],
@@ -531,7 +571,7 @@ fn main() {
                 _ => vec![Policy::NoMemory, Policy::FixedRelay, Policy::Episodic],
             };
             for policy in policies {
-                let runs: Vec<Outcome> = (0..seeds).map(|seed| run(policy, task, max_facts, seed)).collect();
+                let runs: Vec<Outcome> = (seed_start..seed_start + seeds).map(|seed| run(policy, task, max_facts, seed)).collect();
                 let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
                 println!(
                     "  {:<40} seen pairs {:5.1}%   held-out pairs {:5.1}%   answer in recall {:5.1}%   places in recall {:4.2}   held-out runs [{}]",

@@ -148,6 +148,10 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   episodic store plus slow cortical learning via replay.
 - **Hasselmo, M. (2005).** *What is the function of hippocampal theta rhythm?* Hippocampus
   15. Encoding vs retrieval phases.
+- **Lisman, J. & Jensen, O. (2013).** *The theta-gamma neural code.* Neuron 77. Items
+  held at different gamma sub-cycles within a theta cycle: multiplexing instead of blending.
+- **Frady, E. P., Kent, S., Olshausen, B. & Sommer, F. (2020).** *Resonator networks.*
+  Neural Computation 32. Iteratively factoring superposed vector-symbolic bindings.
 - **Zacks, J. et al. (2007).** *Event perception: a mind-brain perspective.* Psychological
   Bulletin 133. Event boundaries at prediction errors.
 

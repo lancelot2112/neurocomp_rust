@@ -15,10 +15,48 @@ counterpart (or absence) in this codebase.
 | **Replay / consolidation** | Hippocampal replay trains neocortex slowly (complementary learning systems, [McClelland, McNaughton & O'Reilly 1995](../related-work.md#hippocampus-and-entorhinal-cortex)) | None: fast store and slow predictor are separate | Replay stored episodes through the predictor's growth rules between stories. |
 | **Indexing** | The hippocampus stores an index to distributed cortical patterns ([Teyler & DiScenna 1986](../related-work.md#hippocampus-and-entorhinal-cortex)) | Episodes store the word codes themselves | Store a pointer (sparse index code) bound to cortical codes; pairs naturally with expansion. |
 
+## Is the dentate gyrus code random or semantic?
+Biologically: driven by entorhinal input that *is* meaningful (lateral EC: objects /
+content; medial EC: grid / structure), through a broad, quasi-random projection, then
+sparsified by competition so that **similar inputs get dissimilar codes**. It depends on
+content but deliberately discards similarity; similarity lives in EC and cortex, and the
+dentate gyrus keeps memories from colliding. Plasticity (including adult neurogenesis)
+tunes it somewhat. Here, `DentateGyrus` is a fixed random projection + k-WTA over
+*random* word codes, so nothing on the memory path is semantic yet. Next: feed it the
+learned syntax/topic codes from [05](../experiments/05-syntax.md)/[06](../experiments/06-meaning.md),
+so recall can generalize by meaning while episodes stay separated.
+
+## Superposition, counts and phase
+- **Superimposed history with counts.** Bundle past frames into one count vector
+  (optionally decaying) instead of separate frames: it keeps how often and how
+  recently each feature was active, which a readout can normalize by (fixes frequent
+  words drowning out distinctive ones).
+- **Rotate by age, then superimpose:** history = Σ rot^lag(frame). Rotating back by k
+  recovers the frame k steps ago as the strongest component. One vector holds an ordered
+  sequence: a position code (cf. transformer position encodings, the EC structure code).
+  Uses `rotl_mut`/`rotr_mut` and popcount already in `bitvec`. Capacity is limited by
+  superposition noise.
+- **Phase.** Theta–gamma multiplexing keeps competing items apart in time instead of
+  blending them ([Lisman & Jensen 2013](../related-work.md#hippocampus-and-entorhinal-cortex));
+  encode vs retrieve phases ([Hasselmo 2005](../related-work.md#hippocampus-and-entorhinal-cortex));
+  phasor binding and resonator networks factor superpositions iteratively
+  ([Plate 1995](../related-work.md#sparse-distributed-representations);
+  [Frady & Sommer 2020](../related-work.md#hippocampus-and-entorhinal-cortex)). In bits: serial
+  recall with inhibition of return, which is also the big loop.
+
+## Thalamic links (not yet modelled)
+Nucleus reuniens (prefrontal ↔ hippocampus) and anterior thalamus (Papez circuit). The
+natural analogue here is making memory recall one more candidate route in the
+[experiment 10](../experiments/10-route-pool-inhibition.md) pool, so the learned gate
+decides when a recall gets through.
+
 ## Suggested order
-1. Dentate-gyrus-style expansion + Hebbian completion weights (interference test).
-2. Big-loop recurrence (multi-hop test).
-3. Learned structure/role code (TEM-style) bound to content (word-order-ambiguity test).
-4. Surprise-cut boundaries and replay, later.
+1. Dentate-gyrus-style expansion + Hebbian completion weights (interference test), with
+   a count-normalized readout and clean-up.
+2. Big-loop recurrence as serial recall with inhibition of return (multi-hop test).
+3. Rotation-superimposed history as a structure/order code (word-order test), then
+   learned roles (TEM-style).
+4. Semantic (learned) codes on the memory path.
+5. Surprise-cut boundaries and replay, later.
 
 See also [variable binding](variable-binding.md) and [open questions](../open-questions.md).

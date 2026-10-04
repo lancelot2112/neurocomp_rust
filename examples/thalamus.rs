@@ -19,6 +19,11 @@
 //! channel (odds credit + 1), so it doesn't also require the name or other
 //! channels' incidental content. "LearnedPatient": a newly re-pointed channel is
 //! protected for 3 reviews, giving the predictor time to start using it.
+//! "LearnedProposed": hindsight route proposals. Whenever the prediction is
+//! wrong, the thalamus checks which of all 18 (q, v) routes would have relayed
+//! the word that actually came (`Thalamus::routes_that_would_relay`) and gives
+//! each a vote. At review the least credited channel is re-pointed to the most
+//! voted route not already in use, instead of a random one.
 
 mod common;
 
@@ -47,6 +52,7 @@ enum Policy {
     Learned,
     LearnedGuided,
     LearnedPatient,
+    LearnedProposed,
 }
 
 struct Story {
@@ -107,12 +113,16 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
     let channels = match policy {
         Policy::NoThalamus => vec![],
         Policy::Oracle => vec![RelayChannel { query_lag: 1, value_offset: 4 }, RelayChannel { query_lag: 0, value_offset: 1 }],
-        Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient => (0..CHANNELS).map(|_| random_channel(&mut rng)).collect(),
+        Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed => (0..CHANNELS).map(|_| random_channel(&mut rng)).collect(),
     };
     let n_ch = channels.len();
     let mut th = Thalamus::new(BITS, 40, channels);
     let mut credit = vec![0f64; n_ch];
     let mut age = vec![0usize; n_ch]; // reviews since a channel was re-pointed
+    let mut votes: HashMap<(usize, usize), f64> = HashMap::new(); // hindsight route votes
+    let all_routes: Vec<RelayChannel> = (0..=2)
+        .flat_map(|q| (1..=6).map(move |v| RelayChannel { query_lag: q, value_offset: v }))
+        .collect();
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
         max_kernels: 100_000,
         frame_words: BITS / 64,
@@ -148,7 +158,12 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
                 r.1 += 1;
             }
             if !testing {
-                let learned = matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient);
+                let learned = matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed);
+                if policy == Policy::LearnedProposed && !right {
+                    for r in th.routes_that_would_relay(&enc.codes[next], &all_routes) {
+                        *votes.entry((r.query_lag, r.value_offset)).or_default() += 1.0;
+                    }
+                }
                 if policy == Policy::LearnedGuided {
                     // frame 0 (current word) + one relaying channel picked by credit;
                     // the previous word only when no channel relays anything
@@ -195,19 +210,31 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
         }
         prev = Some(*ids.last().unwrap());
 
-        if matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient)
+        if matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed)
             && !testing
             && s_i % REVIEW_EVERY == REVIEW_EVERY - 1
         {
             let grace = if policy == Policy::LearnedPatient { 3 } else { 0 };
             let worst = (0..n_ch).filter(|&c| age[c] >= grace).min_by(|&a, &b| credit[a].partial_cmp(&credit[b]).unwrap());
             if let Some(worst) = worst {
-                th.channels[worst] = random_channel(&mut rng);
+                let proposal = if policy == Policy::LearnedProposed {
+                    votes
+                        .iter()
+                        .filter(|((q, v), _)| !th.channels.iter().any(|c| c.query_lag == *q && c.value_offset == *v))
+                        .max_by(|a, b| a.1.partial_cmp(b.1).unwrap().then(b.0.cmp(a.0)))
+                        .map(|(&(q, v), _)| RelayChannel { query_lag: q, value_offset: v })
+                } else {
+                    None
+                };
+                th.channels[worst] = proposal.unwrap_or_else(|| random_channel(&mut rng));
                 credit[worst] = 0.0;
                 age[worst] = 0;
             }
             for a in age.iter_mut() {
                 *a += 1;
+            }
+            for v in votes.values_mut() {
+                *v *= 0.5;
             }
             for c in credit.iter_mut() {
                 *c *= 0.5;
@@ -226,7 +253,16 @@ fn main() {
         println!("{facts} fact(s) per story{}", if facts > 1 { " (the other is a distractor)" } else { "" });
         let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
             Ok("patient") => vec![Policy::Learned, Policy::LearnedPatient],
-            _ => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedGuided, Policy::LearnedPatient],
+            Ok("proposed") => vec![Policy::Learned, Policy::LearnedProposed],
+            _ => vec![
+                Policy::NoThalamus,
+                Policy::Oracle,
+                Policy::FixedRandom,
+                Policy::Learned,
+                Policy::LearnedGuided,
+                Policy::LearnedPatient,
+                Policy::LearnedProposed,
+            ],
         };
         for policy in policies {
             let runs: Vec<Outcome> = (0..5).map(|seed| run(policy, facts, seed)).collect();

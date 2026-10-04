@@ -67,6 +67,22 @@ impl Thalamus {
             .map(|p| &self.history[p + c.value_offset])
     }
 
+    /// Hindsight route proposal: of the `candidates`, the routes that would
+    /// relay `target` right now (overlap >= `match_fraction` of its bits). Call
+    /// it when the cortex was surprised by `target`, before observing it, to
+    /// find which routes would have carried the missing information.
+    pub fn routes_that_would_relay(&self, target: &BitVector, candidates: &[RelayChannel]) -> Vec<RelayChannel> {
+        let need = (target.count_ones() as f32 * self.match_fraction).ceil() as u32;
+        if need == 0 {
+            return Vec::new();
+        }
+        candidates
+            .iter()
+            .copied()
+            .filter(|&c| self.relay_channel(c).map_or(false, |v| overlap(v, target) >= need))
+            .collect()
+    }
+
     /// All channels' relayed frames concatenated, channel 0 first; an empty
     /// frame where a channel found nothing.
     pub fn relay(&self) -> BitVector {
@@ -129,5 +145,19 @@ mod tests {
         th.observe(&sym(7));
         th.observe(&sym(7)); // capacity 5: the first "1 2" pair is gone
         assert_eq!(th.history.len(), 5);
+    }
+
+    #[test]
+    fn hindsight_finds_the_route_that_would_have_relayed_the_answer() {
+        let mut th = Thalamus::new(64, 32, vec![]);
+        for s in [1, 2, 3, 4, 5, 6, 7, 8, 1, 9] {
+            th.observe(&sym(s));
+        }
+        let all: Vec<RelayChannel> = (0..=2)
+            .flat_map(|q| (1..=6).map(move |v| RelayChannel { query_lag: q, value_offset: v }))
+            .collect();
+        // the answer after "?" is "kitchen" (5)
+        let routes = th.routes_that_would_relay(&sym(5), &all);
+        assert_eq!(routes, vec![RelayChannel { query_lag: 1, value_offset: 4 }]);
     }
 }

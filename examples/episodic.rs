@@ -218,7 +218,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     };
     let mut sentence = BitVector::new(BITS, Some(0)); // bag of the current sentence so far
     let mut bg = BasalGanglia::new(BITS);
-    bg.trace_decay = std::env::var("BG_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    bg.trace_len = std::env::var("BG_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut bg_pending: Option<BitVector> = None; // hop-2 content of the latest choice, awaiting reward
     // CA1-style comparator (NOVELTY=prediction): store, cue and read out only what the
     // predictor failed to predict, instead of frequency habituation.
@@ -443,7 +443,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // dopamine: did the followed item's recall contain what came next?
                     if let Some(hop2) = bg_pending.take() {
                         let hit = hop2.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                        bg.reward(hit as u32 as f32);
+                        bg.reward(hit as u32 as f32, &mut rng);
                     }
                 }
                 bg_pending = None;

@@ -15,6 +15,7 @@ pub mod bitslice;
 pub mod bitdensity;
 pub mod bithistory;
 pub mod bitgen;
+pub mod bitcounter;
 
 /*
 Implements new methods in bitvector so nothing to re-export here
@@ -33,3 +34,4 @@ pub use bitslice::*;
 pub use bitdensity::*;
 pub use bithistory::*;
 pub use bitgen::*;
+pub use bitcounter::*;

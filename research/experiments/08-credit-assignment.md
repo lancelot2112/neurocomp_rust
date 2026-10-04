@@ -91,7 +91,17 @@ Commit `6b9caab`: `KernelClass::peek` (predict without changing state) and
 | 2 cues + 2 fillers | 76.9% |
 | 1 cue + 3 fillers | 50.1% |
 
-LONG_RUN_PLACEHOLDER
+Longer training (20K episodes, credit-guided growth):
+
+| Policy | 20K, guided | 20K, guided + patient |
+|---|---|---|
+| fixed random | 37.4% | 37.4% |
+| three-factor | 37.3% | 45.1% |
+| **ablation** | **67.2%** (62–74) | 60.8% (53–78) |
+
+Ablation + guided growth keeps improving slowly (64.4% → 67.2%). Runs typically hold
+2–3 cue units by the end, but the last cue is found late and the predictor is still
+relearning when scoring starts.
 
 ### Findings
 1. **Ablation credit is the best signal tried** (54.6% vs 43.3% three-factor, 39.3%

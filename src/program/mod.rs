@@ -12,3 +12,6 @@ pub use memory::*;
 
 pub mod hippocampus;
 pub use hippocampus::*;
+
+pub mod basal_ganglia;
+pub use basal_ganglia::*;

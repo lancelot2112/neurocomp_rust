@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, Thalamus};
+use neurocomp::program::{BasalGanglia, Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, Thalamus};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -69,6 +69,10 @@ enum Policy {
     /// Branching big loop (`EpisodicMemory::recall_branches`): hop 1 plus this many
     /// hop-2 branches, one per rare item of hop 1; one frame each.
     Branch(usize),
+    /// Big loop where a basal-ganglia selector (`BasalGanglia`) picks which item of
+    /// hop 1 to follow, learned from reward (did hop 2 recall the next word?).
+    /// Frames: hop 1, hop 2.
+    Select,
 }
 
 struct Story {
@@ -196,6 +200,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         Policy::NoMemory | Policy::Episodic | Policy::Ca3 { .. } => 1,
         Policy::Loop(hops) => hops,
         Policy::Branch(b) => b + 1,
+        Policy::Select => 2,
         Policy::FixedRelay => routes.len(),
     };
     let mut th = Thalamus::new(BITS, 60, routes);
@@ -212,6 +217,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         _ => (None, None),
     };
     let mut sentence = BitVector::new(BITS, Some(0)); // bag of the current sentence so far
+    let mut bg = BasalGanglia::new(BITS);
+    bg.trace_decay = std::env::var("BG_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let mut bg_pending: Option<BitVector> = None; // hop-2 content of the latest choice, awaiting reward
     // CA1-style comparator (NOVELTY=prediction): store, cue and read out only what the
     // predictor failed to predict, instead of frequency habituation.
     let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
@@ -302,6 +310,44 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 None => words.extend(std::iter::repeat(0).take(BITS / 64)),
                             }
                         }
+                    }
+                    Policy::Select => {
+                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let (mut hop1, mut hop2) = (BitVector::new(BITS, Some(0)), BitVector::new(BITS, Some(0)));
+                        let need = ((cue.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+                        if cue.count_ones() > 0 {
+                            if let Some((id, ep)) = memory.recall_excluding(&cue, need, &[]) {
+                                hop1 = memory.novel(ep, habituation);
+                                for (c, &u) in hop1.as_words_mut().iter_mut().zip(cue.as_words()) {
+                                    *c &= !u;
+                                }
+                                let items = memory.items(&hop1, 16);
+                                let explore = if testing { None } else { Some(&mut rng) };
+                                if let Some(i) = bg.select(&items, explore) {
+                                    let item = &items[i];
+                                    let need = ((item.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+                                    if let Some((_, ep2)) = memory.recall_excluding(item, need, &[id]) {
+                                        hop2 = memory.novel(ep2, habituation);
+                                        for (c, (&u, &it)) in hop2.as_words_mut().iter_mut().zip(cue.as_words().iter().zip(item.as_words())) {
+                                            *c &= !(u | it);
+                                        }
+                                    }
+                                    bg_pending = Some(hop2.clone());
+                                }
+                                if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 5 {
+                                    let names = |bv: &BitVector| -> Vec<&str> {
+                                        (0..vocab.len())
+                                            .filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
+                                            .map(|i| vocab[i])
+                                            .collect()
+                                    };
+                                    let vals: Vec<String> = items.iter().map(|it| format!("{:?}={:.2}", names(it), bg.value(it))).collect();
+                                    eprintln!("{:?}\n  cue {:?} -> hop1 {:?}; items {}; hop2 {:?}", s.words, names(&cue), names(&hop1), vals.join(" "), names(&hop2));
+                                }
+                            }
+                        }
+                        words.extend_from_slice(hop1.as_words());
+                        words.extend_from_slice(hop2.as_words());
                     }
                     Policy::Branch(b) => {
                         let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
@@ -394,7 +440,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if !testing {
                     class.feedback(&input, &enc.codes[next], &mut rng);
+                    // dopamine: did the followed item's recall contain what came next?
+                    if let Some(hop2) = bg_pending.take() {
+                        let hit = hop2.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
+                        bg.reward(hit as u32 as f32);
+                    }
                 }
+                bg_pending = None;
             }
 
             if ids[t] == full_stop {
@@ -448,6 +500,8 @@ fn main() {
             let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
                 Ok("loop") => vec![Policy::NoMemory, Policy::Episodic, Policy::Loop(1), Policy::Loop(2), Policy::Branch(3)],
                 Ok("branch") => vec![Policy::Branch(3)],
+                Ok("select") => vec![Policy::Select],
+                Ok("bg") => vec![Policy::Loop(2), Policy::Branch(3), Policy::Select],
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],

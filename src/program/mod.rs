@@ -9,3 +9,6 @@ pub use thalamus::*;
 
 pub mod memory;
 pub use memory::*;
+
+pub mod hippocampus;
+pub use hippocampus::*;

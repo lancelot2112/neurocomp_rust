@@ -21,6 +21,8 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Top-down bias: word layer → char layer (60K chars) | 53.4% (+0.3) | oracle word layer 92.6% | [07](experiments/07-top-down-bias.md) |
 | – | Long-gap memory: what should hidden units hold? | ablation credit + guided growth 67% | oracle 100%, Hebbian-like 25% | [08](experiments/08-credit-assignment.md) |
 | – | Binding via thalamic relay, held-out pairs | oracle route **100%**; learned (hindsight proposals + gradual generalization) **82%** | no relay 0% | [09](experiments/09-thalamic-attention.md) |
+| – | Binding by inhibition over a route pool (1–2 facts) | context gate 100% (original), value gate 100% (long) | 4 channel slots 75% / 44.5% | [10](experiments/10-route-pool-inhibition.md) |
+| – | Binding by one-shot episodic memory, variable sentence shapes | **98%** held-out | best fixed routes 33–34% | [11](experiments/11-episodic-memory.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -60,6 +62,7 @@ Experiments (chronological)
 8. [Credit assignment for a hidden layer](experiments/08-credit-assignment.md)
 9. [Thalamus-like relay as attention](experiments/09-thalamic-attention.md)
 10. [Attention by inhibition: a route pool with learned gating](experiments/10-route-pool-inhibition.md)
+11. [Episodic autoassociative memory](experiments/11-episodic-memory.md)
 
 Concepts
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)
@@ -87,7 +90,8 @@ cargo run --release --example syntax             # experiment 05 (~2 min)
 cargo run --release --example meaning            # experiment 06 (~2 min)
 cargo run --release --example topdown            # experiment 07 (~4 min)
 cargo run --release --example credit             # experiment 08 (~15 min for all configs; pass 20000 for the long run)
-cargo run --release --example thalamus           # experiment 09 (~15 min)
+cargo run --release --example thalamus           # experiments 09-10 (~15 min per policy set; see POLICIES)
+cargo run --release --example episodic           # experiments 11-12 (~35 min; POLICIES=ca3 for 12)
 ```
 
 Learning uses `rand::thread_rng()` inside the kernels, so numbers move by a point or

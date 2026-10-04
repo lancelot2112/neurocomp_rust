@@ -20,6 +20,11 @@
 //! learning is off at test.
 //!
 //! Predictor input: [current word | memory (or relay) frames | previous word].
+//!
+//! Experiment 12 adds `Ca3` policies: episodes are stored in Hebbian weights
+//! (EC->CA3, CA3 recurrent, CA3->EC; decaying palimpsest) under a dentate-gyrus
+//! code, and recalled by driving CA3 from the cue and letting it settle. Low vs high
+//! pattern separation = few dense vs many sparse granule/CA3 cells.
 
 mod common;
 
@@ -28,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{EpisodicMemory, RelayChannel, Thalamus};
+use neurocomp::program::{Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, Thalamus};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -52,6 +57,9 @@ enum Policy {
     NoMemory,
     FixedRelay, // hand-set thalamic routes from experiments 09-10: (1,4), (3,4), (3,8)
     Episodic,
+    /// Experiment 12: dentate-gyrus code + Hebbian CA3 store instead of a list.
+    /// (granule cells, active cells, recurrent settle steps)
+    Ca3 { cells: usize, k: usize, settle: usize },
 }
 
 struct Story {
@@ -129,11 +137,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         RelayChannel { query_lag: 3, value_offset: 8 },
     ];
     let mid_frames = match policy {
-        Policy::NoMemory | Policy::Episodic => 1,
+        Policy::NoMemory | Policy::Episodic | Policy::Ca3 { .. } => 1,
         Policy::FixedRelay => routes.len(),
     };
     let mut th = Thalamus::new(BITS, 60, routes);
-    let mut memory = EpisodicMemory::new(BITS, 200);
+    let mut memory = EpisodicMemory::new(BITS, 200); // also keeps the habituation statistics
+    let (dg, mut ca3) = match policy {
+        Policy::Ca3 { cells, k, settle } => {
+            (Some(DentateGyrus::new(BITS, cells, 300, k, seed + 100)), Some(Ca3Memory::new(BITS, cells, k, 0.97, settle)))
+        }
+        _ => (None, None),
+    };
     let mut sentence = BitVector::new(BITS, Some(0)); // bag of the current sentence so far
     let habituation = 0.4; // recalled content: drop bits in more than 40% of episodes
     let min_overlap = 8; // floor for the recall threshold
@@ -166,6 +180,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 match policy {
                     Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
                     Policy::FixedRelay => words.extend_from_slice(th.relay().as_words()),
+                    Policy::Ca3 { .. } => {
+                        let cue = memory.rarest(&sentence, 0.1, 1.5);
+                        let mut recalled = BitVector::new(BITS, Some(0));
+                        let cue_bits = set_bits(&cue);
+                        if !cue_bits.is_empty() {
+                            let (bits, strength) = ca3.as_ref().unwrap().recall(&cue_bits, BITS);
+                            if strength > 0.0 {
+                                recalled = memory.novel(&BitVector::from_bits(&bits, BITS), habituation);
+                                for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {
+                                    *r &= !c;
+                                }
+                            }
+                        }
+                        words.extend_from_slice(recalled.as_words());
+                    }
                     Policy::Episodic => {
                         let cue = memory.rarest(&sentence, 0.1, 1.5);
                         let mut recalled = BitVector::new(BITS, Some(0));
@@ -220,6 +249,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
 
             if ids[t] == full_stop {
                 memory.store(&sentence); // one-shot: the whole sentence is one episode
+                if let (Some(dg), Some(ca3)) = (&dg, &mut ca3) {
+                    let x = set_bits(&sentence);
+                    ca3.store(&x, &dg.separate(&x));
+                }
                 sentence = BitVector::new(BITS, Some(0));
             }
             prev = Some(ids[t]);
@@ -227,6 +260,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
     Outcome { seen: pct(seen), held_out: pct(held) }
+}
+
+fn set_bits(bv: &BitVector) -> Vec<usize> {
+    (0..bv.bit_len()).filter(|&b| bv.bit_get(b)).collect()
 }
 
 fn main() {
@@ -242,11 +279,20 @@ fn main() {
         for max_facts in [2usize, 3] {
             println!();
             println!("{task:?} stories, 1-{max_facts} facts, question about a random one");
-            for policy in [Policy::NoMemory, Policy::FixedRelay, Policy::Episodic] {
+            let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
+                Ok("ca3") => vec![
+                    Policy::Episodic,
+                    Policy::Ca3 { cells: 1024, k: 64, settle: 2 },
+                    Policy::Ca3 { cells: 16384, k: 32, settle: 2 },
+                    Policy::Ca3 { cells: 16384, k: 32, settle: 0 },
+                ],
+                _ => vec![Policy::NoMemory, Policy::FixedRelay, Policy::Episodic],
+            };
+            for policy in policies {
                 let runs: Vec<Outcome> = (0..seeds).map(|seed| run(policy, task, max_facts, seed)).collect();
                 let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
                 println!(
-                    "  {:<11} seen pairs {:5.1}%   held-out pairs {:5.1}%   held-out runs [{}]",
+                    "  {:<40} seen pairs {:5.1}%   held-out pairs {:5.1}%   held-out runs [{}]",
                     format!("{policy:?}"),
                     mean(|o| o.seen),
                     mean(|o| o.held_out),

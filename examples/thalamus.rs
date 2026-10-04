@@ -269,6 +269,7 @@ fn main() {
         let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
             Ok("patient") => vec![Policy::Learned, Policy::LearnedPatient],
             Ok("proposed") => vec![Policy::Learned, Policy::LearnedProposed],
+            Ok("proposed_only") => vec![Policy::LearnedProposed],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
             _ => vec![
                 Policy::NoThalamus,
@@ -283,6 +284,16 @@ fn main() {
         for policy in policies {
             let runs: Vec<Outcome> = (0..5).map(|seed| run(policy, facts, seed)).collect();
             let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
+            if std::env::var("ALL_CHANNELS").is_ok() {
+                for (i, o) in runs.iter().enumerate() {
+                    eprintln!(
+                        "    {policy:?} run {i}: held-out {:.0}% seen {:.0}% channels {}",
+                        o.held_out,
+                        o.seen,
+                        o.channels.iter().map(|c| format!("({},{})", c.query_lag, c.value_offset)).collect::<Vec<_>>().join(" ")
+                    );
+                }
+            }
             println!(
                 "  {:<12} seen pairs {:5.1}%   held-out pairs {:5.1}%   held-out runs [{}]   e.g. channels {}",
                 format!("{policy:?}"),

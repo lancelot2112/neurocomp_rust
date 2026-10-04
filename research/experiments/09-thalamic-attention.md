@@ -32,9 +32,11 @@ the word four steps later (*kitchen*).
 
 ## Setup
 - Stories as in [06B](06-meaning.md): 6 names × 6 places, one place per name never
-  paired with that name in training. 1-fact stories, and 2-fact stories where the
-  second fact is a distractor.
-- Predictor input: `[current word | relay channels | previous word]`. Unlike 06B, the
+  paired with that name in training (training stories never contain a held-out pair,
+  even as a distractor).
+- **Each story has 1 to N facts about distinct people (N = 2 or 3) and asks about a
+  random one**, so the answer's position varies. See the shortcut below for why.
+- Predictor input: `[current word | 4 relay channels | previous word]`. Unlike 06B, the
   predictor does **not** see the whole story, only one word back.
 - 3,000 training stories, then 1,000 test stories with learning off (half
   held-out pairs). 5 seeds.
@@ -42,46 +44,54 @@ the word four steps later (*kitchen*).
   - **none**;
   - **oracle**: (1,4) + (0,1);
   - **fixed random**;
-  - **learned**: ablation credit, the lowest-credit channel re-pointed to a random
+  - **learned**: ablation credit; the lowest-credit channel is re-pointed to a random
     (q ∈ 0..2, v ∈ 1..6) every 50 stories;
-  - **learned + guided growth**;
-  - **learned + grace period**.
+  - **learned + hindsight proposals**: on every wrong prediction the thalamus asks
+    which of all 18 routes *would have* relayed the word that actually came
+    (`Thalamus::routes_that_would_relay`) and gives them a vote; the re-pointed channel
+    takes the most voted unused route instead of a random one.
 
-## Results (answer accuracy, chance 1/6)
+## Results (answer accuracy on held-out pairs, chance 1/6)
 
-| Channels | 1 fact: seen | 1 fact: held-out | 2 facts: seen | 2 facts: held-out |
+| Channels | 1–2 facts: seen | 1–2 facts: held-out | 1–3 facts: seen | 1–3 facts: held-out |
 |---|---|---|---|---|
-| none | 20.0% | **0%** | 20.4% | **0%** |
+| none | 18.9% | **0%** | 19.2% | **0%** |
 | **oracle (1,4)** | 100% | **100%** | 100% | **100%** |
-| fixed random (4) | 19.1% | 0% | 18.9% | 0% |
-| learned, 2 channels | 51.6% | 13.5% (runs 0/50/17/0/0) | 36.5% | 20.0% (100/0/0/0/0) |
-| learned, 4 channels | 68.4% | 40.0% (0/100/100/0/0) | 30.7% | 17.2% (0/86/0/0/0) |
-| learned + guided growth | 23.8% | 20.0% | 18.6% | 13.8% |
-| learned + grace period (3 reviews) | 13.6% | 11.3% (0/0/20/18/19) | 17.5% | 14.8% (0/15/17/26/16) |
+| fixed random | 19.5% | 0% | 20.2% | 0% |
+| learned (ablation credit, random re-pointing) | 52.2% | 40.0% (100/0/0/0/100) | 51.8% | 41.2% (100/0/100/0/6) |
+| **learned + hindsight proposals** | **84.0%** | **60.0%** (100/100/0/100/0) | **83.8%** | **60.0%** (100/100/0/0/100) |
+
+Every successful run holds (1, +4) among its final channels.
+
+### A shortcut we caught (and why the setup changed)
+The first version used fixed-length stories that always asked about the first fact,
+and the story's final "." was never fed to the relay. Route **(0, +6)**, "the word
+six after the previous `?`", then hit the answer **by position alone**. A trace showed a
+100% run whose channels did not include (1,4). Earlier numbers from that version
+(commit `4e4411a`: learned 40% / 17%; grace period 11% / 15%; guided growth 20% / 14%;
+proposals 61% / 68%) are confounded by this and should not be compared with the table
+above. The oracle and no-relay rows were unaffected (100% / 0% either way).
 
 ## Findings
-1. **Thalamic relay solves binding.** With the induction channel, held-out pairs go
-   from 0% to **100%**, with or without a distractor. The predictor no longer stores
-   (name, place) combinations. It learns "relay says *bedroom* → answer *bedroom*",
-   which transfers to every name. This is the first held-out generalization in the
-   project, and it comes from routing, not from more memory.
-2. **Learning the route is the hard part.** With ablation credit, a run either finds
-   (1,4) and reaches ~100%, or doesn't and stays near 0%. Bimodal, like the
-   memory-unit task in [08](08-credit-assignment.md).
-3. **Credit-guided growth hurt here** (opposite of 08). Restricting new kernels to
-   the current word plus one channel also stopped them using the previous word, which
-   ordinary next-word prediction needs. That degraded the predictor and with it the
-   credit signal. Guidance has to be applied where it matters (e.g. only on surprising
-   ticks), not everywhere.
-4. **A grace period for new channels hurt** (40% → 11% held-out). Protected newcomers
-   crowd out the good channel's competitors without themselves being any better, so
-   fewer distinct routes get tried. Fast churn plus counterfactual credit explores better here.
-5. Distractors make learning harder (17% vs 40% held-out with 4 learned channels)
-   but don't affect the oracle at all. The relay picks the right fact by content.
+1. **Thalamic relay solves binding.** With the induction route, held-out pairs go
+   from 0% to **100%**, with up to two distractor facts. The predictor no longer
+   stores (name, place) combinations. It learns "relay says *bedroom* → answer
+   *bedroom*", which transfers to every name. This is the first held-out
+   generalization in the project, and it comes from routing, not from more memory.
+2. **Hindsight proposals make route learning work more often** (40% → 60% held-out,
+   seen pairs 52% → 84%). Asking "which route would have carried what I just failed
+   to predict?" points straight at the useful route instead of waiting for random
+   re-pointing to hit it.
+3. **Still all-or-nothing.** Each run either keeps (1,4) and scores 100%, or doesn't
+   and scores ~0%. See the failure analysis below.
+4. Older variants (credit-guided growth, a grace period for new channels) were worse
+   than plain learning in the confounded version. They have not been re-run on the
+   fixed task.
+
+FAILURE_ANALYSIS
 
 ## Next
-- Make the route search smarter than uniform random re-pointing: propose channels
-  from where the surprise was (e.g. the query lag at which a matching word occurred).
+- ~~Propose routes from surprise~~: done (hindsight proposals).
 - Soft relays: let several matches contribute (summed codes), closer to softmax attention.
 - Use the relay on real text ([03](03-book-scale-char-prediction.md),
   [05](05-syntax.md)): induction channels should help wherever text repeats itself.

@@ -117,6 +117,40 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   control.* Nature Neuroscience 20. A review of the thalamus as a controller of
   cortical communication.
 
+## Hippocampus and entorhinal cortex
+- **Marr, D. (1971).** *Simple memory: a theory for archicortex.* Phil. Trans. R. Soc. B 262.
+  Sparse expansion and recurrent completion as the basis of episodic memory.
+- **Treves, A. & Rolls, E. (1994).** *Computational analysis of the role of the
+  hippocampus in memory.* Hippocampus 4(3). Dentate-gyrus pattern separation, CA3
+  autoassociative completion, capacity.
+- **O'Reilly, R. & McClelland, J. (1994).** *Hippocampal conjunctive encoding, storage,
+  and recall: avoiding a trade-off.* Hippocampus 4(6).
+- **Yassa, M. & Stark, C. (2011).** *Pattern separation in the hippocampus.* Trends in
+  Neurosciences 34(10).
+- **O'Keefe, J. & Dostrovsky, J. (1971).** *The hippocampus as a spatial map.* Brain
+  Research 34. Place cells.
+- **Hafting, T. et al. (2005).** *Microstructure of a spatial map in the entorhinal
+  cortex.* Nature 436. Grid cells.
+- **Whittington, J. et al. (2020).** *The Tolman-Eichenbaum Machine: unifying space and
+  relational memory through generalization in the hippocampal formation.* Cell 183. Structure
+  (EC) vs content (sensory), bound in hippocampus.
+- **Whittington, J., Warren, J. & Behrens, T. (2022).** *Relating transformers to models and
+  neural representations of the hippocampal formation.* ICLR.
+  [arXiv:2112.04035](https://arxiv.org/abs/2112.04035). Transformers with position encodings
+  ≈ TEM; the bridge between [concepts/hippocampal-functions](concepts/hippocampal-functions.md)
+  and attention.
+- **Stachenfeld, K., Botvinick, M. & Gershman, S. (2017).** *The hippocampus as a predictive
+  map.* Nature Neuroscience 20. Successor representations: graph codes from prediction.
+- **Teyler, T. & DiScenna, P. (1986).** *The hippocampal memory indexing theory.* Behavioral
+  Neuroscience 100.
+- **McClelland, J., McNaughton, B. & O'Reilly, R. (1995).** *Why there are complementary
+  learning systems in the hippocampus and neocortex.* Psychological Review 102. Fast
+  episodic store plus slow cortical learning via replay.
+- **Hasselmo, M. (2005).** *What is the function of hippocampal theta rhythm?* Hippocampus
+  15. Encoding vs retrieval phases.
+- **Zacks, J. et al. (2007).** *Event perception: a mind-brain perspective.* Psychological
+  Bulletin 133. Event boundaries at prediction errors.
+
 ## Credit assignment
 - **Lillicrap, T., Santoro, A., Marris, L., Akerman, C. & Hinton, G. (2020).**
   *Backpropagation and the brain.* Nature Reviews Neuroscience 21. A survey of how

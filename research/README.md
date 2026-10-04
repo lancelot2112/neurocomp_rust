@@ -68,6 +68,7 @@ Concepts
 - [Variable binding: the gap to transformers](concepts/variable-binding.md)
 - [Top-down bias](concepts/top-down-bias.md)
 - [Credit assignment](concepts/credit-assignment.md)
+- [Hippocampal-formation functions: what we have and what's missing](concepts/hippocampal-functions.md)
 
 Reference
 - [Bugs found and fixed](bugs-and-fixes.md)

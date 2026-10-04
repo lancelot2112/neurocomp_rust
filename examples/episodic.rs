@@ -171,6 +171,8 @@ fn story(rng: &mut StdRng, task: Task, max_facts: usize, want_held_out: bool) ->
 struct Outcome {
     seen: f64,
     held_out: f64,
+    /// % of test questions where the memory (or relay) frames contained the answer word
+    recall: f64,
 }
 
 fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
@@ -215,10 +217,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
     let mut surprising = BitVector::new(BITS, Some(0)); // unpredicted bits of the sentence so far
     let mut last_out = BitVector::new(BITS, Some(0)); // the predictor's last prediction
+    let mut last_confidence = 0f32; // reliability of the kernel that made it
     let predicted_share: f32 = std::env::var("PREDICTED_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
     // recalled content: drop bits in more than 40% of episodes (all kept with prediction novelty)
     let habituation = if predictive_novelty { 1.0 } else { 0.4 };
-    let rarity_ratio = if predictive_novelty { f32::INFINITY } else { 1.5 };
+    // which recalled item to cue with: the rarest among stored items (an IDF-like
+    // specificity); RARITY=all cues with everything unpredicted
+    let rarity_ratio = if std::env::var("RARITY").map_or(false, |v| v == "all") { f32::INFINITY } else { 1.5 };
     let min_overlap = 8; // floor for the recall threshold
 
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
@@ -234,6 +239,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
 
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
+    let mut recall_has_answer = 0usize;
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
@@ -253,8 +259,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             } else {
                 code.as_words().iter().zip(last_out.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() as f32 / predicted_bits as f32
             };
+            // probability the predictor gave this word: its share of the prediction times
+            // the predicting kernel's reliability (a lucky guess is still a surprise)
+            let share = share * last_confidence;
             if share < predicted_share {
                 surprising.or_mut(code);
+            }
+            if std::env::var("TRACE_SHARE").is_ok() && testing && s_i < TRAIN + 3 {
+                eprint!("{}:{share:.2}/{predicted_bits} ", s.words[t]);
+                if t + 1 == ids.len() {
+                    eprintln!();
+                }
             }
             let cue_source = if predictive_novelty { &surprising } else { &sentence };
 
@@ -355,11 +370,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 words.extend_from_slice(prev.map_or(&[0u64; BITS / 64][..], |p| enc.codes[p].as_words()));
+                if testing && t + 1 == s.answer_at {
+                    // memory diagnostic: does any recalled frame contain the answer word?
+                    let frame = BITS / 64;
+                    let answer = enc.codes[ids[t + 1]].as_words();
+                    let found = (0..mid_frames).any(|f| {
+                        words[frame * (1 + f)..frame * (2 + f)].iter().zip(answer).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24
+                    });
+                    recall_has_answer += found as usize;
+                }
                 let input = BitVector::from_words(words);
 
                 let mut out = BitVector::new(BITS, Some(0));
                 class.process_predictive(&input, &mut out);
                 last_out = out.clone();
+                last_confidence = class.confidence().unwrap_or(0.0);
                 let next = ids[t + 1];
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
@@ -391,7 +416,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
-    Outcome { seen: pct(seen), held_out: pct(held) }
+    Outcome { seen: pct(seen), held_out: pct(held), recall: 100.0 * recall_has_answer as f64 / TEST as f64 }
 }
 
 fn set_bits(bv: &BitVector) -> Vec<usize> {
@@ -438,10 +463,11 @@ fn main() {
                 let runs: Vec<Outcome> = (0..seeds).map(|seed| run(policy, task, max_facts, seed)).collect();
                 let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
                 println!(
-                    "  {:<40} seen pairs {:5.1}%   held-out pairs {:5.1}%   held-out runs [{}]",
+                    "  {:<40} seen pairs {:5.1}%   held-out pairs {:5.1}%   answer in recall {:5.1}%   held-out runs [{}]",
                     format!("{policy:?}"),
                     mean(|o| o.seen),
                     mean(|o| o.held_out),
+                    mean(|o| o.recall),
                     runs.iter().map(|o| format!("{:.0}", o.held_out)).collect::<Vec<_>>().join(" ")
                 );
             }

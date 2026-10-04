@@ -45,6 +45,23 @@ impl SlicedCounter {
         }
     }
 
+    /// Add 2^`plane` to every counter under `mask`, saturating at `max`.
+    pub fn add_power(&mut self, mask: &BitVector, plane: usize) {
+        let mut carry = mask.as_words().to_vec();
+        for p in &mut self.planes[plane..] {
+            for (w, c) in p.as_words_mut().iter_mut().zip(carry.iter_mut()) {
+                let next = *w & *c;
+                *w ^= *c;
+                *c = next;
+            }
+        }
+        for p in &mut self.planes {
+            for (w, &c) in p.as_words_mut().iter_mut().zip(&carry) {
+                *w |= c;
+            }
+        }
+    }
+
     /// Subtract 1 from every counter under `mask`, saturating at 0.
     pub fn decrement(&mut self, mask: &BitVector) {
         let mut borrow = mask.as_words().to_vec();
@@ -71,6 +88,22 @@ impl SlicedCounter {
             lo[i] = hi[0].clone();
         }
         self.planes[top] = BitVector::new(self.bits, Some(0));
+    }
+
+    /// Halve every counter `times` times (shift planes down; floor division by 2^times).
+    pub fn shift_down(&mut self, times: usize) {
+        for _ in 0..times.min(self.planes.len()) {
+            self.halve();
+        }
+    }
+
+    pub fn planes(&self) -> usize {
+        self.planes.len()
+    }
+
+    /// Plane `i`: bit `i` of every counter.
+    pub fn plane(&self, i: usize) -> &BitVector {
+        &self.planes[i]
     }
 
     /// Σ over the set bits of `pattern` of their counters.
@@ -112,5 +145,9 @@ mod tests {
         assert_eq!(c.sum(&BitVector::from_bits(&[1, 2, 3], 128)), 7 + 0 + 5);
         c.halve();
         assert_eq!((c.get(1), c.get(3)), (3, 2));
+        c.add_power(&a, 1); // +2
+        assert_eq!(c.get(1), 5);
+        c.add_power(&a, 2); // +4, saturates at 7
+        assert_eq!(c.get(1), 7);
     }
 }

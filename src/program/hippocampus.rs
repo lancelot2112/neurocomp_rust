@@ -13,14 +13,15 @@
 //!   drives CA3 from a partial EC cue directly (perforant path; the dentate gyrus is used for
 //!   storage, not retrieval), lets the recurrent weights settle the CA3 code for a
 //!   few steps (pattern completion, a self-reference loop), and reads EC back out.
-//!   Weights decay by `decay` per stored episode (a palimpsest), so recent episodes
-//!   dominate recall; entries that decay below `prune_below` are removed.
-
-use std::collections::HashMap;
+//!   Weights are bit-sliced counters (`SlicedCounter`, one row per source cell) and
+//!   decay by halving, a plane shift, every few stores (a palimpsest), so recent
+//!   episodes dominate recall. All arithmetic is on integers and bit planes.
 
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
+
+use crate::bitvec::{BitVector, SlicedCounter};
 
 pub struct DentateGyrus {
     pub cells: usize,
@@ -56,118 +57,156 @@ impl DentateGyrus {
     }
 }
 
-/// Weight with lazy exponential decay: (value at `t`, `t`).
-type Synapses = HashMap<u32, (f32, u32)>;
-
-pub struct Ca3Memory {
-    pub k: usize,
-    pub decay: f32,
-    pub prune_below: f32,
-    pub settle_steps: usize,
-    /// Readout keeps EC bits scoring at least this fraction of the best score
-    /// (higher = sharper clean-up toward the single strongest memory).
-    pub readout_fraction: f32,
-    ec_to_ca3: Vec<Synapses>,
-    ca3_to_ca3: Vec<Synapses>,
-    ca3_to_ec: Vec<Synapses>,
-    now: u32,
+/// One pathway's weights in bits: for each source cell, a row of bit-sliced counters
+/// (one small counter per target), allocated when first written. Decay is a plane
+/// shift (halving) every `half_life` stores, applied lazily: each row remembers the
+/// epoch it was last normalized, and reads skip the planes that would have been shifted
+/// out (floor(v / 2^s) = Σ_{p ≥ s} bit_p · 2^(p − s)).
+struct Pathway {
+    rows: Vec<Option<(SlicedCounter, u32)>>,
+    targets: usize,
 }
 
-impl Ca3Memory {
-    pub fn new(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self {
-        Self {
-            k,
-            decay,
-            prune_below: 0.02,
-            settle_steps,
-            readout_fraction: 0.5,
-            ec_to_ca3: vec![HashMap::new(); ec_bits],
-            ca3_to_ca3: vec![HashMap::new(); ca3_cells],
-            ca3_to_ec: vec![HashMap::new(); ca3_cells],
-            now: 0,
-        }
+impl Pathway {
+    fn new(sources: usize, targets: usize) -> Self {
+        Self { rows: (0..sources).map(|_| None).collect(), targets }
     }
 
-    fn effective(&self, (w, t): (f32, u32)) -> f32 {
-        w * self.decay.powi((self.now - t) as i32)
-    }
-
-    fn strengthen(syn: &mut Synapses, target: u32, now: u32, decay: f32) {
-        let e = syn.entry(target).or_insert((0.0, now));
-        let current = e.0 * decay.powi((now - e.1) as i32);
-        *e = (current + 1.0, now);
-    }
-
-    /// Store one episode: EC pattern `x` (active bits) with CA3 code `c`
-    /// (e.g. from the dentate gyrus).
-    pub fn store(&mut self, x: &[usize], c: &[u32]) {
-        self.now += 1;
-        let (now, decay) = (self.now, self.decay);
-        for &i in x {
-            for &j in c {
-                Self::strengthen(&mut self.ec_to_ca3[i], j, now, decay);
-            }
-        }
-        for &i in c {
-            for &j in c {
-                if i != j {
-                    Self::strengthen(&mut self.ca3_to_ca3[i as usize], j, now, decay);
-                }
-            }
-            for &j in x {
-                Self::strengthen(&mut self.ca3_to_ec[i as usize], j as u32, now, decay);
-            }
-        }
-        if self.now % 50 == 0 {
-            self.prune();
-        }
-    }
-
-    fn prune(&mut self) {
-        let (now, decay, eps) = (self.now, self.decay, self.prune_below);
-        for layer in [&mut self.ec_to_ca3, &mut self.ca3_to_ca3, &mut self.ca3_to_ec] {
-            for syn in layer.iter_mut() {
-                syn.retain(|_, &mut (w, t)| w * decay.powi((now - t) as i32) >= eps);
+    /// Add `amount` to row `i`'s counters under `mask` (after bringing the row up to `epoch`).
+    fn strengthen(&mut self, i: usize, mask: &BitVector, amount: u32, planes: usize, epoch: u32) {
+        let targets = self.targets;
+        let (row, at) = self.rows[i].get_or_insert_with(|| (SlicedCounter::new(targets, planes, 0), epoch));
+        row.shift_down((epoch - *at) as usize);
+        *at = epoch;
+        for p in 0..planes {
+            if amount >> p & 1 == 1 {
+                row.add_power(mask, p);
             }
         }
     }
 
-    fn drive(&self, layer: &[Synapses], from: &[usize], size: usize) -> Vec<f32> {
-        let mut out = vec![0f32; size];
-        for &i in from {
-            if let Some(syn) = layer.get(i) {
-                for (&j, &wt) in syn {
-                    out[j as usize] += self.effective(wt);
+    /// Summed (decayed) weights from the active `sources` onto every target.
+    fn drive(&self, sources: &[usize], epoch: u32) -> Vec<u32> {
+        let mut out = vec![0u32; self.targets];
+        for &i in sources {
+            let Some(Some((row, at))) = self.rows.get(i) else { continue };
+            let shift = (epoch - at) as usize;
+            for p in shift..row.planes() {
+                let w = 1u32 << (p - shift);
+                for (wi, &word) in row.plane(p).as_words().iter().enumerate() {
+                    let mut word = word;
+                    while word != 0 {
+                        out[wi * 64 + word.trailing_zeros() as usize] += w;
+                        word &= word - 1;
+                    }
                 }
             }
         }
         out
     }
 
+    /// Number of nonzero counters (stored synapses), as of their last normalization.
+    fn synapses(&self) -> usize {
+        self.rows
+            .iter()
+            .flatten()
+            .map(|(row, _)| {
+                let mut any = BitVector::new(self.targets, Some(0));
+                for p in 0..row.planes() {
+                    any.or_mut(row.plane(p));
+                }
+                any.count_ones()
+            })
+            .sum()
+    }
+}
+
+pub struct Ca3Memory {
+    pub k: usize,
+    /// Stores per halving of every weight (decay ≈ 0.5^(1/half_life) per store).
+    pub half_life: u32,
+    pub settle_steps: usize,
+    /// Readout keeps EC bits scoring at least this fraction of the best score
+    /// (higher = sharper clean-up toward the single strongest memory).
+    pub readout_fraction: f32,
+    planes: usize,
+    ec_to_ca3: Pathway,
+    ca3_to_ca3: Pathway,
+    ca3_to_ec: Pathway,
+    stores: u32,
+}
+
+impl Ca3Memory {
+    /// `decay` per stored episode is approximated by halving every
+    /// round(ln 0.5 / ln decay) stores. Weights are 7-plane bit-sliced counters
+    /// (0..127). Within a halving period, the n-th store adds 16·2^(n/half_life)
+    /// (16 up to 31), so later stores outweigh earlier ones exactly as continuous decay
+    /// would; each write survives about 5 halvings.
+    pub fn new(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self {
+        let half_life = ((0.5f32.ln() / decay.clamp(0.01, 0.999).ln()).round() as u32).max(1);
+        Self {
+            k,
+            half_life,
+            settle_steps,
+            readout_fraction: 0.5,
+            planes: 7,
+            ec_to_ca3: Pathway::new(ec_bits, ca3_cells),
+            ca3_to_ca3: Pathway::new(ca3_cells, ca3_cells),
+            ca3_to_ec: Pathway::new(ca3_cells, ec_bits),
+            stores: 0,
+        }
+    }
+
+    fn epoch(&self) -> u32 {
+        self.stores / self.half_life
+    }
+
+    /// Store one episode: EC pattern `x` (active bits) with CA3 code `c`
+    /// (e.g. from the dentate gyrus).
+    pub fn store(&mut self, x: &[usize], c: &[u32]) {
+        self.stores += 1;
+        let (epoch, planes) = (self.epoch(), self.planes);
+        let phase = (self.stores % self.half_life) as f32 / self.half_life as f32;
+        let amount = (16.0 * 2f32.powf(phase)).round() as u32;
+        let c_idx: Vec<usize> = c.iter().map(|&j| j as usize).collect();
+        let c_mask = BitVector::from_bits(&c_idx, self.ca3_to_ca3.targets);
+        let x_mask = BitVector::from_bits(x, self.ca3_to_ec.targets);
+        for &i in x {
+            self.ec_to_ca3.strengthen(i, &c_mask, amount, planes, epoch);
+        }
+        for &i in &c_idx {
+            let mut others = c_mask.clone();
+            others.bit_clear(i);
+            self.ca3_to_ca3.strengthen(i, &others, amount, planes, epoch);
+            self.ca3_to_ec.strengthen(i, &x_mask, amount, planes, epoch);
+        }
+    }
+
     /// Recall from a partial EC cue: drive CA3 from the cue, settle through the
     /// recurrent weights, read EC out. Returns the EC bits scoring at least
     /// `readout_fraction` of the best score, and that best score (0 if nothing was recalled).
     pub fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
-        let ca3_cells = self.ca3_to_ca3.len();
-        let from_cue = self.drive(&self.ec_to_ca3, cue, ca3_cells);
-        let mut c = top_k(from_cue.iter().copied(), self.k);
+        let epoch = self.epoch();
+        let from_cue = self.ec_to_ca3.drive(cue, epoch);
+        let mut c = top_k(from_cue.iter().map(|&v| v as f32), self.k);
         for _ in 0..self.settle_steps {
             let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
-            let rec = self.drive(&self.ca3_to_ca3, &active, ca3_cells);
-            c = top_k(rec.iter().zip(&from_cue).map(|(r, f)| r + f), self.k);
+            let rec = self.ca3_to_ca3.drive(&active, epoch);
+            c = top_k(rec.iter().zip(&from_cue).map(|(r, f)| (r + f) as f32), self.k);
         }
         let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
-        let out = self.drive(&self.ca3_to_ec, &active, ec_bits);
-        let best = out.iter().cloned().fold(0f32, f32::max);
-        if best <= 0.0 {
+        let out = self.ca3_to_ec.drive(&active, epoch);
+        let best = out.iter().copied().max().unwrap_or(0);
+        if best == 0 {
             return (Vec::new(), 0.0);
         }
-        ((0..ec_bits).filter(|&b| out[b] >= self.readout_fraction * best).collect(), best)
+        let floor = self.readout_fraction * best as f32;
+        ((0..ec_bits.min(out.len())).filter(|&b| out[b] as f32 >= floor).collect(), best as f32)
     }
 
     /// Number of stored synapses (all three pathways).
     pub fn synapses(&self) -> usize {
-        [&self.ec_to_ca3, &self.ca3_to_ca3, &self.ca3_to_ec].iter().map(|l| l.iter().map(|s| s.len()).sum::<usize>()).sum()
+        self.ec_to_ca3.synapses() + self.ca3_to_ca3.synapses() + self.ca3_to_ec.synapses()
     }
 }
 

@@ -57,7 +57,7 @@ the word four steps later (*kitchen*).
 | learned, 2 channels | 51.6% | 13.5% (runs 0/50/17/0/0) | 36.5% | 20.0% (100/0/0/0/0) |
 | learned, 4 channels | 68.4% | 40.0% (0/100/100/0/0) | 30.7% | 17.2% (0/86/0/0/0) |
 | learned + guided growth | 23.8% | 20.0% | 18.6% | 13.8% |
-| learned + grace period | PATIENT_1_SEEN | PATIENT_1_HELD | PATIENT_2_SEEN | PATIENT_2_HELD |
+| learned + grace period (3 reviews) | 13.6% | 11.3% (0/0/20/18/19) | 17.5% | 14.8% (0/15/17/26/16) |
 
 ## Findings
 1. **Thalamic relay solves binding.** With the induction channel, held-out pairs go
@@ -73,7 +73,10 @@ the word four steps later (*kitchen*).
    ordinary next-word prediction needs. That degraded the predictor and with it the
    credit signal. Guidance has to be applied where it matters (e.g. only on surprising
    ticks), not everywhere.
-4. Distractors make learning harder (17% vs 40% held-out with 4 learned channels)
+4. **A grace period for new channels hurt** (40% → 11% held-out). Protected newcomers
+   crowd out the good channel's competitors without themselves being any better, so
+   fewer distinct routes get tried. Fast churn plus counterfactual credit explores better here.
+5. Distractors make learning harder (17% vs 40% held-out with 4 learned channels)
    but don't affect the oracle at all. The relay picks the right fact by content.
 
 ## Next

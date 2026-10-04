@@ -25,6 +25,16 @@
 //! the word that actually came (`Thalamus::routes_that_would_relay`) and gives
 //! each a vote. At review the least credited channel is re-pointed to the most
 //! voted route not already in use, instead of a random one.
+//! "LearnedOpen": open-ended route discovery (`Thalamus::discover_routes`).
+//! Instead of checking a fixed menu, the thalamus searches its history for
+//! earlier occurrences of the surprising word and proposes every (q, v) for which
+//! a word in the current context (up to 8 back) matched a word shortly (up to 12)
+//! before it.
+//!
+//! TASK=long uses stories that need routes outside the old 18-route menu
+//! (q <= 2, v <= 6): facts are "X went to the P ." (place 4 after the name) or
+//! "X went all the way over to the P ." (8 after), and questions are
+//! "where is X right now ?" (name 3 before "?"). Correct routes: (3,4) and (3,8).
 
 mod common;
 
@@ -55,6 +65,7 @@ enum Policy {
     LearnedGuided,
     LearnedPatient,
     LearnedProposed,
+    LearnedOpen,
 }
 
 struct Story {
@@ -72,7 +83,7 @@ fn allowed(n: usize, p: usize) -> bool {
 /// a random one of them. Varying length and question target rules out positional
 /// shortcuts ("the answer is always k words after the last `?`"): only routing by
 /// content (the asked name) can find the answer.
-fn story(rng: &mut StdRng, max_facts: usize, want_held_out: bool) -> Story {
+fn story(rng: &mut StdRng, max_facts: usize, long: bool, want_held_out: bool) -> Story {
     loop {
         let facts = rng.gen_range(1..=max_facts);
         let mut names: Vec<usize> = (0..NAMES.len()).collect();
@@ -83,7 +94,11 @@ fn story(rng: &mut StdRng, max_facts: usize, want_held_out: bool) -> Story {
         for &n in &names[..facts] {
             let p = rng.gen_range(0..PLACES.len());
             loc.push((n, p));
-            words.extend([NAMES[n], "went", "to", "the", PLACES[p], "."]);
+            if long && rng.gen_bool(0.5) {
+                words.extend([NAMES[n], "went", "all", "the", "way", "over", "to", "the", PLACES[p], "."]);
+            } else {
+                words.extend([NAMES[n], "went", "to", "the", PLACES[p], "."]);
+            }
         }
         let (q, a) = loc[rng.gen_range(0..facts)];
         // training stories may not contain any held-out pair, even as a distractor
@@ -91,15 +106,28 @@ fn story(rng: &mut StdRng, max_facts: usize, want_held_out: bool) -> Story {
         if !ok || allowed(q, a) == want_held_out {
             continue;
         }
-        words.extend(["where", "is", NAMES[q], "?"]);
+        if long {
+            words.extend(["where", "is", NAMES[q], "right", "now", "?"]);
+        } else {
+            words.extend(["where", "is", NAMES[q], "?"]);
+        }
         let answer_at = words.len();
         words.extend([PLACES[a], "."]);
         return Story { words, answer_at, held_out: want_held_out };
     }
 }
 
+/// A random route from the old menu (q <= 2, v <= 6).
 fn random_channel(rng: &mut StdRng) -> RelayChannel {
     RelayChannel { query_lag: rng.gen_range(0..=2), value_offset: rng.gen_range(1..=6) }
+}
+
+const OPEN_MAX_Q: usize = 8;
+const OPEN_MAX_V: usize = 12;
+
+/// A random route from the open-ended range used by discovery.
+fn random_open_channel(rng: &mut StdRng) -> RelayChannel {
+    RelayChannel { query_lag: rng.gen_range(0..=OPEN_MAX_Q), value_offset: rng.gen_range(1..=OPEN_MAX_V) }
 }
 
 struct Outcome {
@@ -108,9 +136,9 @@ struct Outcome {
     channels: Vec<RelayChannel>,
 }
 
-fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
+fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut vocab: Vec<&str> = vec!["went", "to", "the", ".", "where", "is", "?"];
+    let mut vocab: Vec<&str> = vec!["went", "to", "the", ".", "where", "is", "?", "all", "way", "over", "right", "now"];
     vocab.extend(NAMES);
     vocab.extend(PLACES);
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
@@ -118,7 +146,9 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
 
     let channels = match policy {
         Policy::NoThalamus => vec![],
+        Policy::Oracle if long => vec![RelayChannel { query_lag: 3, value_offset: 4 }, RelayChannel { query_lag: 3, value_offset: 8 }],
         Policy::Oracle => vec![RelayChannel { query_lag: 1, value_offset: 4 }, RelayChannel { query_lag: 0, value_offset: 1 }],
+        Policy::LearnedOpen => (0..CHANNELS).map(|_| random_open_channel(&mut rng)).collect(),
         Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed => (0..CHANNELS).map(|_| random_channel(&mut rng)).collect(),
     };
     let n_ch = channels.len();
@@ -146,7 +176,7 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
     let (mut res_seen, mut res_held) = ((0usize, 0usize), (0usize, 0usize));
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
-        let s = story(&mut rng, facts, testing && s_i % 2 == 1);
+        let s = story(&mut rng, facts, long, testing && s_i % 2 == 1);
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         for t in 0..ids.len() - 1 {
             let code = &enc.codes[ids[t]];
@@ -174,9 +204,17 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
                 r.1 += 1;
             }
             if !testing {
-                let learned = matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed);
-                if policy == Policy::LearnedProposed && !right {
-                    for r in th.routes_that_would_relay(&enc.codes[next], &all_routes) {
+                let learned = matches!(
+                    policy,
+                    Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed | Policy::LearnedOpen
+                );
+                if !right && matches!(policy, Policy::LearnedProposed | Policy::LearnedOpen) {
+                    let routes = if policy == Policy::LearnedOpen {
+                        th.discover_routes(&enc.codes[next], OPEN_MAX_Q, OPEN_MAX_V)
+                    } else {
+                        th.routes_that_would_relay(&enc.codes[next], &all_routes)
+                    };
+                    for r in routes {
                         *votes.entry((r.query_lag, r.value_offset)).or_default() += 1.0;
                     }
                 }
@@ -228,14 +266,16 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
         th.observe(&enc.codes[last]);
         prev = Some(last);
 
-        if matches!(policy, Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed)
-            && !testing
+        if matches!(
+            policy,
+            Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed | Policy::LearnedOpen
+        ) && !testing
             && s_i % REVIEW_EVERY == REVIEW_EVERY - 1
         {
             let grace = if policy == Policy::LearnedPatient { 3 } else { 0 };
             let worst = (0..n_ch).filter(|&c| age[c] >= grace).min_by(|&a, &b| credit[a].partial_cmp(&credit[b]).unwrap());
             if let Some(worst) = worst {
-                let proposal = if policy == Policy::LearnedProposed {
+                let proposal = if matches!(policy, Policy::LearnedProposed | Policy::LearnedOpen) {
                     votes
                         .iter()
                         .filter(|((q, v), _)| !th.channels.iter().any(|c| c.query_lag == *q && c.value_offset == *v))
@@ -244,7 +284,9 @@ fn run(policy: Policy, facts: usize, seed: u64) -> Outcome {
                 } else {
                     None
                 };
-                th.channels[worst] = proposal.unwrap_or_else(|| random_channel(&mut rng));
+                th.channels[worst] = proposal.unwrap_or_else(|| {
+                    if policy == Policy::LearnedOpen { random_open_channel(&mut rng) } else { random_channel(&mut rng) }
+                });
                 credit[worst] = 0.0;
                 age[worst] = 0;
             }
@@ -268,6 +310,10 @@ fn main() {
         let after = std::env::var("GENERALIZE_AFTER").unwrap_or_else(|_| "1".into());
         println!("synapse-level credit on: generalize near misses matching >= {g} of their connections, after {after} confirmation(s)");
     }
+    let long = std::env::var("TASK").as_deref() == Ok("long");
+    if long {
+        println!("TASK=long: facts \"X went [all the way over] to the P .\", questions \"where is X right now ?\" (routes (3,4) and (3,8))");
+    }
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (learning off at test); chance 1/6");
     println!("channel (q, v): relay the word v steps after the last earlier occurrence of the word q steps back");
     println!();
@@ -277,6 +323,7 @@ fn main() {
             Ok("patient") => vec![Policy::Learned, Policy::LearnedPatient],
             Ok("proposed") => vec![Policy::Learned, Policy::LearnedProposed],
             Ok("proposed_only") => vec![Policy::LearnedProposed],
+            Ok("open") => vec![Policy::NoThalamus, Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
             _ => vec![
                 Policy::NoThalamus,
@@ -286,10 +333,11 @@ fn main() {
                 Policy::LearnedGuided,
                 Policy::LearnedPatient,
                 Policy::LearnedProposed,
+                Policy::LearnedOpen,
             ],
         };
         for policy in policies {
-            let runs: Vec<Outcome> = (0..5).map(|seed| run(policy, facts, seed)).collect();
+            let runs: Vec<Outcome> = (0..5).map(|seed| run(policy, facts, long, seed)).collect();
             let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
             if std::env::var("ALL_CHANNELS").is_ok() {
                 for (i, o) in runs.iter().enumerate() {

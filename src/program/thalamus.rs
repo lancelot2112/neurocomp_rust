@@ -83,6 +83,47 @@ impl Thalamus {
             .collect()
     }
 
+    /// Open-ended route discovery: on a surprise by `target` (call before
+    /// observing it), find routes from the data instead of a fixed menu. For each
+    /// earlier frame matching `target`, look at the frames up to `max_value_offset`
+    /// before it (candidate keys); wherever one of them matches a frame in the
+    /// current context, up to `max_query_lag` back, that pair defines a route
+    /// (query lag, value offset). Routes are kept only if the relay, with its
+    /// "most recent match" rule, would actually deliver `target` now.
+    pub fn discover_routes(&self, target: &BitVector, max_query_lag: usize, max_value_offset: usize) -> Vec<RelayChannel> {
+        let n = self.history.len();
+        let need = |a: &BitVector| (a.count_ones() as f32 * self.match_fraction).ceil() as u32;
+        let t_need = need(target);
+        if t_need == 0 || n == 0 {
+            return Vec::new();
+        }
+        let mut found: Vec<RelayChannel> = Vec::new();
+        for p in 0..n {
+            if overlap(&self.history[p], target) < t_need {
+                continue;
+            }
+            for v in 1..=max_value_offset.min(p) {
+                let key = &self.history[p - v];
+                let k_need = need(key);
+                if k_need == 0 {
+                    continue;
+                }
+                for q in 0..=max_query_lag {
+                    let Some(q_pos) = n.checked_sub(1 + q) else { break };
+                    if q_pos <= p - v {
+                        break; // the query must come after the key it matches
+                    }
+                    let c = RelayChannel { query_lag: q, value_offset: v };
+                    if !found.contains(&c) && overlap(&self.history[q_pos], key) >= k_need {
+                        found.push(c);
+                    }
+                }
+            }
+        }
+        found.retain(|&c| self.relay_channel(c).map_or(false, |v| overlap(v, target) >= t_need));
+        found
+    }
+
     /// All channels' relayed frames concatenated, channel 0 first; an empty
     /// frame where a channel found nothing.
     pub fn relay(&self) -> BitVector {
@@ -159,5 +200,22 @@ mod tests {
         // the answer after "?" is "kitchen" (5)
         let routes = th.routes_that_would_relay(&sym(5), &all);
         assert_eq!(routes, vec![RelayChannel { query_lag: 1, value_offset: 4 }]);
+    }
+
+    #[test]
+    fn discovery_finds_routes_outside_any_menu() {
+        // mary(1) went(2) all(3) the(4) way(5) over(6) to(7) the(4) kitchen(9) .(10)
+        // where(11) is(12) mary(1) right(13) now(14) ?(15)  -> answer kitchen
+        let mut th = Thalamus::new(64, 40, vec![]);
+        for s in [1, 2, 3, 4, 5, 6, 7, 4, 9, 10, 11, 12, 1, 13, 14, 15] {
+            th.observe(&sym(s));
+        }
+        let routes = th.discover_routes(&sym(9), 8, 12);
+        // query "mary" 3 back, kitchen 8 after the earlier "mary"
+        assert!(routes.contains(&RelayChannel { query_lag: 3, value_offset: 8 }));
+        // and every proposed route really relays the answer
+        for r in &routes {
+            assert_eq!(th.relay_channel(*r).unwrap().as_words(), sym(9).as_words());
+        }
     }
 }

@@ -212,10 +212,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let env = |name: &str, default: f32| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
             let fan_in = env("DG_FAN_IN", 300.0) as usize;
             let decay = env("CA3_DECAY", 0.7);
-            let mut ca3 = if std::env::var("CA3_STORE").map_or(false, |v| v == "ring") {
-                Ca3Memory::new_delay_line(BITS, cells, k, decay, settle)
-            } else {
-                Ca3Memory::new(BITS, cells, k, decay, settle)
+            let mut ca3 = match std::env::var("CA3_STORE").as_deref() {
+                Ok("ring") => Ca3Memory::new_delay_line(BITS, cells, k, decay, settle),
+                Ok("shift") => Ca3Memory::new_shift_register(BITS, cells, k, 11, settle),
+                _ => Ca3Memory::new(BITS, cells, k, decay, settle),
             };
             ca3.readout_fraction = env("CA3_READOUT", 0.5);
             (Some(DentateGyrus::new(BITS, cells, fan_in, k, seed + 100)), Some(ca3))

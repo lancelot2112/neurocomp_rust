@@ -231,6 +231,17 @@ impl Ca3Memory {
         m
     }
 
+    /// Bit-native delay line: `planes` age planes per row whose weights are powers of
+    /// two, newest = 2^(planes−1). Each synapse's planes are then literally the binary
+    /// digits of its weight (its write history as a shift register, newest write the most
+    /// significant bit): writing is OR into the newest plane, decay is the ring advancing
+    /// (a shift, halving every weight per store), and nothing is ever rounded.
+    pub fn new_shift_register(ec_bits: usize, ca3_cells: usize, k: usize, planes: usize, settle_steps: usize) -> Self {
+        let mut m = Self::new_delay_line(ec_bits, ca3_cells, k, 0.5, settle_steps);
+        m.age_weights = (0..planes).map(|a| 1u32 << (planes - 1 - a)).collect();
+        m
+    }
+
     fn write(w: &mut Weights, i: usize, mask: &BitVector, amount: u32, planes: usize, epoch: u32, store: u32, len: usize) {
         match w {
             Weights::Counters(p) => p.strengthen(i, mask, amount, planes, epoch),
@@ -348,6 +359,18 @@ mod tests {
         assert!(has(22) && !has(20), "should recall the recent mary episode (office)");
         let (out, _) = m.recall(&word(2), 512);
         assert!(word(21).iter().all(|b| out.contains(b)));
+    }
+
+    #[test]
+    fn shift_register_ca3_completes_the_most_recent_episode() {
+        let dg = DentateGyrus::new(512, 4096, 64, 20, 1);
+        let mut m = Ca3Memory::new_shift_register(512, 4096, 20, 11, 2);
+        for ep in [episode(&[1, 10, 20]), episode(&[2, 10, 21]), episode(&[1, 10, 22])] {
+            m.store(&ep, &dg.separate(&ep));
+        }
+        let (out, _) = m.recall(&word(1), 512);
+        let has = |w: usize| word(w).iter().all(|b| out.contains(b));
+        assert!(has(22) && !has(20));
     }
 
     #[test]

@@ -107,6 +107,22 @@ struct PredictiveState {
     last_matches: Vec<usize>, // kernels at/above threshold on the last tick
     last_winner: Option<usize>,
     last_target_prob: f32,    // see `target_probability`
+    last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
+    last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
+}
+
+/// How a higher layer's expectation (`bias`) steers a predictive step.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BiasMode {
+    /// Among candidates at the deepest matching depth, ones agreeing with the bias
+    /// win (over hit rate); a deeper non-agreeing candidate still wins.
+    SameDepth,
+    /// Any candidate agreeing with the bias beats every candidate that doesn't.
+    Prefer,
+    /// Only when no kernel matches: output the bias itself.
+    Fallback,
+    /// Prefer, and Fallback when nothing matches.
+    PreferAndFallback,
 }
 
 impl<K: KernelTrait> KernelClass<K> {
@@ -203,6 +219,8 @@ impl KernelClass<SimpleKernel> {
             last_matches: Vec::new(),
             last_winner: None,
             last_target_prob: 0.0,
+            last_hits: Vec::new(),
+            last_misses: Vec::new(),
         });
         kc
     }
@@ -225,6 +243,17 @@ impl KernelClass<SimpleKernel> {
     /// hit rate, then the most matched bits. Only the winner writes its prediction.
     /// Uses an inverted index so cost scales with active input bits, not kernels.
     pub fn process_predictive(&mut self, input: &BitVector, output: &mut BitVector) -> usize {
+        self.process_predictive_biased(input, output, None)
+    }
+
+    /// `process_predictive` with an optional top-down `bias`: a pattern a higher
+    /// layer expects the output to be, applied according to `BiasMode`.
+    pub fn process_predictive_biased(
+        &mut self,
+        input: &BitVector,
+        output: &mut BitVector,
+        bias: Option<(&BitVector, BiasMode)>,
+    ) -> usize {
         let st = self.predictive.as_mut().expect("process_predictive on a non-predictive class");
         if let Some(w) = st.last_winner.take() {
             self.active_kernels[w].stats.fired_last = false;
@@ -250,7 +279,10 @@ impl KernelClass<SimpleKernel> {
             }
         }
 
-        let mut best: Option<(usize, f32, u32, usize)> = None; // (depth, reliability, count, kernel)
+        let mode = bias.map(|(_, m)| m);
+        let agrees = |k: &SimpleKernel| bias.map_or(false, |(b, _)| predicts(k, b));
+        // (agree-first, depth, agree-within-depth, reliability, count)
+        let mut best: Option<((bool, usize, bool, f32, u32), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -260,24 +292,54 @@ impl KernelClass<SimpleKernel> {
                 continue;
             }
             st.last_matches.push(k);
-            let key = (kern.context_frames, reliability(&kern.stats), count, k);
-            let better = match best {
-                None => true,
-                Some(b) => (key.0, key.1, key.2) > (b.0, b.1, b.2),
-            };
-            if better {
-                best = Some(key);
+            let a = agrees(kern);
+            let prefer = matches!(mode, Some(BiasMode::Prefer | BiasMode::PreferAndFallback)) && a;
+            let tie = mode == Some(BiasMode::SameDepth) && a;
+            let key = (prefer, kern.context_frames, tie, reliability(&kern.stats), count);
+            if best.map_or(true, |(b, _)| key > b) {
+                best = Some((key, k));
             }
         }
         st.touched.clear();
 
-        let Some((_, _, _, w)) = best else { return 0 };
+        let Some((_, w)) = best else {
+            if let Some((b, BiasMode::Fallback | BiasMode::PreferAndFallback)) = bias {
+                output.mask_mut(0, b, |a, b| a | b);
+            }
+            return 0;
+        };
         let k = &mut self.active_kernels[w];
         output.mask_mut(k.output_idx, &k.output_mask, |a, b| a | b);
         k.stats.fired_last = true;
         k.stats.fires += 1;
         st.last_winner = Some(w);
         1
+    }
+
+    /// Credit assignment readout: the input bits that matching kernels relied on
+    /// when they predicted the last target correctly (`bits` = input width).
+    /// A layer feeding this class can use it to learn which of its outputs are useful.
+    pub fn credited_inputs(&self, bits: usize) -> BitVector {
+        self.union_of_masks(bits, |st| &st.last_hits)
+    }
+
+    /// Like `credited_inputs`, for kernels whose prediction the last target contradicted.
+    pub fn blamed_inputs(&self, bits: usize) -> BitVector {
+        self.union_of_masks(bits, |st| &st.last_misses)
+    }
+
+    fn union_of_masks(&self, bits: usize, pick: impl Fn(&PredictiveState) -> &Vec<usize>) -> BitVector {
+        let mut out = BitVector::new(bits, Some(0));
+        if let Some(st) = self.predictive.as_ref() {
+            for &k in pick(st) {
+                let m = &self.active_kernels[k].input_mask;
+                let n = out.word_len().min(m.word_len());
+                for (o, &w) in out.as_words_mut()[..n].iter_mut().zip(&m.as_words()[..n]) {
+                    *o |= w;
+                }
+            }
+        }
+        out
     }
 
     /// Estimated probability that the current prediction is right (the winning
@@ -335,18 +397,24 @@ impl KernelClass<SimpleKernel> {
                 }
             }
         }
-        if let Some(st) = self.predictive.as_mut() {
-            st.last_target_prob = expected.map_or(0.0, |e| e.1);
-        }
+        let mut hits = Vec::new();
+        let mut misses = Vec::new();
         for &m in &matches {
             let k = &mut self.active_kernels[m];
             if predicts(k, target) {
                 k.stats.hits += 1;
                 k.stats.last_useful = self.tick;
                 depth_has_target[k.context_frames] = true;
+                hits.push(m);
             } else {
                 k.stats.misses += 1;
+                misses.push(m);
             }
+        }
+        if let Some(st) = self.predictive.as_mut() {
+            st.last_target_prob = expected.map_or(0.0, |e| e.1);
+            st.last_hits = hits;
+            st.last_misses = misses;
         }
 
         let unpredicted = match winner {
@@ -420,6 +488,8 @@ impl KernelClass<SimpleKernel> {
                 st.index[b].retain(|&x| x as usize != victim);
             }
             st.last_matches.retain(|&x| x != victim);
+            st.last_hits.retain(|&x| x != victim);
+            st.last_misses.retain(|&x| x != victim);
             self.active_kernels[victim] = k;
             self.recycled += 1;
             victim
@@ -588,5 +658,45 @@ mod tests {
         assert!(kc.target_probability() > 0.7); // A->B is well established
         step(&mut kc, &a, &c);
         assert_eq!(kc.target_probability(), 0.0); // C after A is a surprise
+    }
+
+    #[test]
+    fn bias_modes_steer_or_fill_in_the_prediction() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        let a = frames(&[0xFF]);
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        // A->B twice, A->C once: unbiased, B wins
+        for t in [&b, &b, &c, &b] {
+            step(&mut kc, &a, t);
+        }
+        let run = |kc: &mut KernelClass<SimpleKernel>, input: &BitVector, mode: BiasMode| {
+            let mut out = BitVector::new(64, Some(0));
+            kc.process_predictive_biased(input, &mut out, Some((&c, mode)));
+            out.as_words()[0]
+        };
+        assert_eq!(run(&mut kc, &a, BiasMode::SameDepth), 0xFF0000); // C agrees, same depth as B
+        assert_eq!(run(&mut kc, &a, BiasMode::Prefer), 0xFF0000); // a candidate agrees with C
+        assert_eq!(run(&mut kc, &a, BiasMode::Fallback), 0xFF00); // something matched: no fallback
+        let unseen = frames(&[0xFF00_0000]);
+        assert_eq!(run(&mut kc, &unseen, BiasMode::Fallback), 0xFF0000); // nothing matched: use the bias
+        assert_eq!(run(&mut kc, &unseen, BiasMode::Prefer), 0);
+    }
+
+    #[test]
+    fn credit_points_at_the_inputs_correct_kernels_used() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        let a = frames(&[0xFF]);
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        step(&mut kc, &a, &b); // grow A->B
+        step(&mut kc, &a, &b); // hit
+        assert_eq!(kc.credited_inputs(64).as_words()[0], 0xFF);
+        assert_eq!(kc.blamed_inputs(64).count_ones(), 0);
+        step(&mut kc, &a, &c); // miss
+        assert_eq!(kc.credited_inputs(64).count_ones(), 0);
+        assert_eq!(kc.blamed_inputs(64).as_words()[0], 0xFF);
     }
 }

@@ -96,6 +96,12 @@ bit-sliced counters ([probability in bits](../concepts/probability-in-bits.md)):
 | CA3 16,384 / 32, settle 2 | 99.1% | BITS_HIGH_2 | 96.1% | BITS_HIGH_3 |
 | CA3 16,384 / 32, no settling | 99.0% | BITS_NOSETTLE_2 | 99.3% | BITS_NOSETTLE_3 |
 
+Same-seed check (short stories, seed 0, CA3 16,384 / 32, settle 2), floats vs bits:
+1–2 facts **72.2% vs 73.6%** (answer in recall 94.4% vs 94.1%); 1–3 facts: bits 98.6%
+(answer in recall 100%). The bit-sliced store reproduces the float store; this seed's
+low 1–2-fact score is the predictor under-using a correct recall, in both versions
+(as with one seed of the list memory in [11](11-episodic-memory.md)).
+
 BITS_FINDING
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and

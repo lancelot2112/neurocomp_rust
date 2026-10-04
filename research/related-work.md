@@ -98,6 +98,25 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   enable learning the structure of the world.* Frontiers in Neural Circuits. HTM's use
   of apical/feedback context to disambiguate input.
 
+## Thalamus and attention
+- **Crick, F. (1984).** *Function of the thalamic reticular complex: the searchlight
+  hypothesis.* PNAS 81. The reticular nucleus as an attentional gate on thalamic relay.
+  The limited, competing relay channels in [09](experiments/09-thalamic-attention.md).
+- **Sherman, S. M. & Guillery, R. W. (2006).** *Exploring the Thalamus and Its Role in
+  Cortical Function* (2nd ed.). MIT Press. Higher-order thalamic nuclei relay
+  cortex → thalamus → cortex "driver" signals: the relay path in `Thalamus`.
+- **Saalmann, Y. et al. (2012).** *The pulvinar regulates information transmission
+  between cortical areas based on attention demands.* Science 337. Attention-dependent
+  routing between cortical areas through the thalamus.
+- **Wimmer, R. et al. (2015).** *Thalamic control of sensory selection in divided
+  attention.* Nature 526. Prefrontal control of the reticular nucleus gating sensory relay.
+- **Schmitt, L. et al. (2017).** *Thalamic amplification of cortical connectivity
+  sustains attentional control.* Nature 545. Mediodorsal thalamus sustaining
+  task-relevant cortical representations.
+- **Halassa, M. & Kastner, S. (2017).** *Thalamic functions in distributed cognitive
+  control.* Nature Neuroscience 20. A review of the thalamus as a controller of
+  cortical communication.
+
 ## Credit assignment
 - **Lillicrap, T., Santoro, A., Marris, L., Akerman, C. & Hinton, G. (2020).**
   *Backpropagation and the brain.* Nature Reviews Neuroscience 21. A survey of how

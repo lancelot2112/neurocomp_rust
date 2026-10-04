@@ -36,5 +36,12 @@ associative memory ([Ramsauer et al. 2020](../related-work.md#binding-and-attent
   fixed bits: "output whatever was in frame k". That is a minimal pointer and the
   operation an induction head performs.
 
+## Update: thalamic relay ([09](../experiments/09-thalamic-attention.md))
+A thalamus-like relay with an induction-style channel (find the earlier occurrence of
+the word one step back and relay what came four steps after it) takes held-out pairs
+from **0% to 100%**, with or without a distractor fact. Copy-by-routing is enough for
+binding in this task. What is still open is *learning* the right route: ablation credit
+finds it in some runs and not in others.
+
 This is the most important open problem for "reading like a transformer"; see
 [open questions](../open-questions.md).

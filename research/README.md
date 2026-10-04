@@ -19,7 +19,8 @@ number, and every claim should point at the code or command that reproduces it.
 | 4 | Semantic groups (92 words, 12 groups) | 52–60% | chance 7.4%, count vectors 70.7% | [06](experiments/06-meaning.md) |
 | 4 | Fact binding, held-out name/place pairs | **0%** (100% on seen pairs) | chance 17% | [06](experiments/06-meaning.md) |
 | – | Top-down bias: word layer → char layer (60K chars) | 53.4% (+0.3) | oracle word layer 92.6% | [07](experiments/07-top-down-bias.md) |
-| – | Long-gap memory: what should hidden units hold? | three-factor credit 44% | oracle 100%, Hebbian-like 25% | [08](experiments/08-credit-assignment.md) |
+| – | Long-gap memory: what should hidden units hold? | ablation credit + guided growth 67% | oracle 100%, Hebbian-like 25% | [08](experiments/08-credit-assignment.md) |
+| – | Binding via thalamic relay, held-out pairs | oracle channel **100%**; learned 17–40% (bimodal) | no relay 0% | [09](experiments/09-thalamic-attention.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -35,8 +36,13 @@ mechanically: a perfect word layer lifts character prediction from 53% to 93%. B
 only helps as much as the higher layer knows. With today's word layer it adds 0.3
 points. A credit-assignment operation *is* needed once a layer must supply useful
 features to another. Activity-driven (Hebbian) choice fails, and naive credit is
-fooled by co-active inputs. A three-factor rule helps a little; the gap to the oracle
-is open.
+fooled by co-active inputs. Ablation (counterfactual) credit plus credit-guided growth
+gets 67% of the way where the oracle gets 100%.
+
+**Attention via a thalamic relay** ([09](experiments/09-thalamic-attention.md)).
+Routing "what followed the earlier occurrence of this word" into the predictor (an
+induction head in thalamic form) takes held-out fact binding from 0% to 100%. Learning
+*which* route to use is now the bottleneck.
 
 ## Pages
 
@@ -49,6 +55,7 @@ Experiments (chronological)
 6. [Meaning: topical similarity and fact binding](experiments/06-meaning.md)
 7. [Top-down bias from a higher layer](experiments/07-top-down-bias.md)
 8. [Credit assignment for a hidden layer](experiments/08-credit-assignment.md)
+9. [Thalamus-like relay as attention](experiments/09-thalamic-attention.md)
 
 Concepts
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)
@@ -74,7 +81,8 @@ cargo run --release --example segment_words      # experiment 04 (~3 min)
 cargo run --release --example syntax             # experiment 05 (~2 min)
 cargo run --release --example meaning            # experiment 06 (~2 min)
 cargo run --release --example topdown            # experiment 07 (~4 min)
-cargo run --release --example credit             # experiment 08 (~2.5 min; pass 20000 for the long run)
+cargo run --release --example credit             # experiment 08 (~15 min for all configs; pass 20000 for the long run)
+cargo run --release --example thalamus           # experiment 09 (~15 min)
 ```
 
 Learning uses `rand::thread_rng()` inside the kernels, so numbers move by a point or

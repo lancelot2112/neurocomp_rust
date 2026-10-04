@@ -210,7 +210,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         _ => (None, None),
     };
     let mut sentence = BitVector::new(BITS, Some(0)); // bag of the current sentence so far
-    let habituation = 0.4; // recalled content: drop bits in more than 40% of episodes
+    // CA1-style comparator (NOVELTY=prediction): store, cue and read out only what the
+    // predictor failed to predict, instead of frequency habituation.
+    let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
+    let mut surprising = BitVector::new(BITS, Some(0)); // unpredicted bits of the sentence so far
+    let mut last_out = BitVector::new(BITS, Some(0)); // the predictor's last prediction
+    // recalled content: drop bits in more than 40% of episodes (all kept with prediction novelty)
+    let habituation = if predictive_novelty { 1.0 } else { 0.4 };
+    let rarity_ratio = if predictive_novelty { f32::INFINITY } else { 1.5 };
     let min_overlap = 8; // floor for the recall threshold
 
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
@@ -235,6 +242,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let code = &enc.codes[ids[t]];
             th.observe(code);
             sentence.or_mut(code);
+            // comparator: the parts of this word the predictor did not predict
+            for (u, (&c, &p)) in surprising.as_words_mut().iter_mut().zip(code.as_words().iter().zip(last_out.as_words())) {
+                *u |= c & !p;
+            }
+            let cue_source = if predictive_novelty { &surprising } else { &sentence };
 
             if t + 1 < ids.len() {
                 let mut words = code.as_words().to_vec();
@@ -242,8 +254,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
                     Policy::FixedRelay => words.extend_from_slice(th.relay().as_words()),
                     Policy::Loop(hops) => {
-                        let cue = memory.rarest(&sentence, 0.1, 1.5);
-                        let chain = memory.recall_chain(&cue, hops, habituation, 0.1, 1.5);
+                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let chain = memory.recall_chain(&cue, hops, habituation, 0.1, rarity_ratio);
                         if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 3 {
                             let names = |bv: &BitVector| -> Vec<&str> {
                                 (0..vocab.len())
@@ -267,13 +279,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                     Policy::Branch(b) => {
-                        let cue = memory.rarest(&sentence, 0.1, 1.5);
+                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
                         for frame in memory.recall_branches(&cue, b, habituation, 16) {
                             words.extend_from_slice(frame.as_words());
                         }
                     }
                     Policy::Ca3 { .. } => {
-                        let cue = memory.rarest(&sentence, 0.1, 1.5);
+                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
                         let mut recalled = BitVector::new(BITS, Some(0));
                         let cue_bits = set_bits(&cue);
                         if !cue_bits.is_empty() {
@@ -298,7 +310,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(recalled.as_words());
                     }
                     Policy::Episodic => {
-                        let cue = memory.rarest(&sentence, 0.1, 1.5);
+                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
                         let mut recalled = BitVector::new(BITS, Some(0));
                         if cue.count_ones() > 0 {
                             // recall needs most of the cue to be present in the episode
@@ -337,6 +349,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
 
                 let mut out = BitVector::new(BITS, Some(0));
                 class.process_predictive(&input, &mut out);
+                last_out = out.clone();
                 let next = ids[t + 1];
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
@@ -350,17 +363,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
 
             if ids[t] == full_stop {
-                memory.store(&sentence); // one-shot: the whole sentence is one episode
+                // one-shot: the whole sentence (or its unpredicted part) is one episode
+                memory.store(if predictive_novelty { &surprising } else { &sentence });
                 if let (Some(dg), Some(ca3)) = (&dg, &mut ca3) {
                     // Encode the novel part: content shared by most episodes ("went to the")
                     // would otherwise dominate the dentate gyrus, give every episode the same
                     // code, and swamp recall.
-                    let x = set_bits(&memory.novel(&sentence, habituation));
+                    let x = set_bits(&if predictive_novelty { surprising.clone() } else { memory.novel(&sentence, 0.4) });
                     if !x.is_empty() {
                         ca3.store(&x, &dg.separate(&x));
                     }
                 }
                 sentence = BitVector::new(BITS, Some(0));
+                surprising = BitVector::new(BITS, Some(0));
             }
             prev = Some(ids[t]);
         }
@@ -383,6 +398,9 @@ fn main() {
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
+    if std::env::var("NOVELTY").map_or(false, |v| v == "prediction") {
+        println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
+    }
     for task in tasks {
         let fact_settings: &[usize] = if task == Task::TwoHop { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
@@ -395,6 +413,8 @@ fn main() {
             let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
                 Ok("loop") => vec![Policy::NoMemory, Policy::Episodic, Policy::Loop(1), Policy::Loop(2), Policy::Branch(3)],
                 Ok("branch") => vec![Policy::Branch(3)],
+                Ok("episodic") => vec![Policy::Episodic],
+                Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3") => vec![
                     Policy::Episodic,

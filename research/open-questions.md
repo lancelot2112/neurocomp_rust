@@ -23,5 +23,13 @@ Ordered roughly by how much they matter for "reading like a transformer".
    Compare against Bayesian models ([Goldwater et al. 2009](related-work.md#word-segmentation)).
 6. **One pipeline instead of separate examples.** Letters → words (stage 2) → syntax
    codes (3) → topical codes (4) → predictor, all online in one `RuntimeNetwork`.
-7. **Closing the Hebbian vs count-vector gap** (75 vs 82.5% POS, about 58 vs 71% semantic):
+7. **Causal credit for hidden layers.** In the long-gap task
+   ([08](experiments/08-credit-assignment.md)), three-factor credit reaches 44% against
+   100% for an oracle. Try ablation credit, surprise-timed eligibility, and
+   credit-guided growth ([credit assignment](concepts/credit-assignment.md)).
+8. **A better higher layer to make top-down pay off.** Top-down bias is worth up to
+   +40 points with a perfect word layer and +0.3 with today's
+   ([07](experiments/07-top-down-bias.md)). Items 1–3 above are what would improve
+   the word layer.
+9. **Closing the Hebbian vs count-vector gap** (75 vs 82.5% POS, about 58 vs 71% semantic):
    larger masks with more moves, or weighting moves by surprise.

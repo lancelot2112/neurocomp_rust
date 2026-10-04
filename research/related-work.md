@@ -83,6 +83,46 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   [arXiv:1711.00350](https://arxiv.org/abs/1711.00350). Held-out combinations as the
   test of compositional generalization, the same design principle as our held-out pairs.
 
+## Top-down feedback and predictive coding
+- **McClelland, J. & Rumelhart, D. (1981).** *An interactive activation model of context
+  effects in letter perception: Part 1.* Psychological Review 88(5). Word-level units
+  feed back to letter units (the word-superiority effect). This is the architecture
+  tested in [07](experiments/07-top-down-bias.md).
+- **Rao, R. & Ballard, D. (1999).** *Predictive coding in the visual cortex: a functional
+  interpretation of some extra-classical receptive-field effects.* Nature Neuroscience
+  2(1). Higher levels send predictions down and lower levels send residual errors up.
+- **Friston, K. (2005).** *A theory of cortical responses.* Phil. Trans. R. Soc. B 360.
+  Precision-weighted prediction errors, i.e. weighting top-down by its reliability
+  ([top-down bias](concepts/top-down-bias.md)).
+- **Hawkins, J., Ahmad, S. & Cui, Y. (2017).** *A theory of how columns in the neocortex
+  enable learning the structure of the world.* Frontiers in Neural Circuits. HTM's use
+  of apical/feedback context to disambiguate input.
+
+## Credit assignment
+- **Lillicrap, T., Santoro, A., Marris, L., Akerman, C. & Hinton, G. (2020).**
+  *Backpropagation and the brain.* Nature Reviews Neuroscience 21. A survey of how
+  brains might assign credit across layers.
+- **Lillicrap, T., Cownden, D., Tweed, D. & Akerman, C. (2016).** *Random synaptic
+  feedback weights support error backpropagation for deep learning.* Nature
+  Communications 7. Feedback alignment.
+- **Bengio, Y. (2014).** *How auto-encoders could provide credit assignment in deep
+  networks via target propagation.* [arXiv:1407.7906](https://arxiv.org/abs/1407.7906).
+- **Frémaux, N. & Gerstner, W. (2016).** *Neuromodulated spike-timing-dependent
+  plasticity, and theory of three-factor learning rules.* Frontiers in Neural
+  Circuits 9. The "three-factor" policy in [08](experiments/08-credit-assignment.md).
+- **Gerstner, W., Lehmann, M., Liakoni, V., Corneil, D. & Brea, J. (2018).**
+  *Eligibility traces and plasticity on behavioral time scales.* Frontiers in Neural
+  Circuits 12. Bridging the delay between a cause and its reward.
+- **Williams, R. (1992).** *Simple statistical gradient-following algorithms for
+  connectionist reinforcement learning.* Machine Learning 8. REINFORCE: reward minus
+  baseline times eligibility.
+- **Hochreiter, S. & Schmidhuber, J. (1997).** *Long short-term memory.* Neural
+  Computation 9(8). Gated memory cells that learn what to hold across long gaps, which
+  is the job of the memory units in [08](experiments/08-credit-assignment.md), learned
+  there by backprop through time.
+- **Bengio, Y., Simard, P. & Frasconi, P. (1994).** *Learning long-term dependencies
+  with gradient descent is difficult.* IEEE Trans. Neural Networks 5(2).
+
 ## Learning rules
 - **Hebb, D. (1949).** *The Organization of Behavior.* Wiley.
 - **Turrigiano, G. (2008).** *The self-tuning neuron: synaptic scaling of excitatory

@@ -284,6 +284,46 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
+        if s_i == TRAIN && std::env::var("DIAG").is_ok() {
+            // Coverage after training: per place, kernels that predict it from the
+            // question context ("?" as current word) and read the memory frame.
+            let frame = BITS / 64;
+            let q = enc.codes[index["?"]].as_words();
+            let mut line = String::new();
+            for p in PLACES {
+                let code = &enc.codes[index[p]];
+                let (mut copy_q, mut blind_q, mut best_rel) = (0usize, 0usize, 0f32);
+                for k in class.kernels() {
+                    if code.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 < k.output_mask.count_ones() {
+                        continue;
+                    }
+                    let mut cur_ok = 0u32;
+                    let mut cur_n = 0u32;
+                    let mut mem = false;
+                    for (wi, &m) in k.input_mask.as_words().iter().enumerate() {
+                        let w = k.input_idx + wi;
+                        if w < frame {
+                            cur_ok += (m & q[w]).count_ones();
+                            cur_n += m.count_ones();
+                        } else if w < frame * (1 + mid_frames) && m != 0 {
+                            mem = true;
+                        }
+                    }
+                    if cur_n == 0 || cur_ok * 10 < cur_n * 8 {
+                        continue; // not a "?"-context kernel
+                    }
+                    let rel = (k.stats.hits as f32 + 1.0) / ((k.stats.hits + k.stats.misses) as f32 + 2.0);
+                    if mem {
+                        copy_q += 1;
+                        best_rel = best_rel.max(rel);
+                    } else {
+                        blind_q += 1;
+                    }
+                }
+                line += &format!(" {p}: copy {copy_q} (best {best_rel:.2}), blind {blind_q};");
+            }
+            eprintln!("  COVER seed {seed} after training:{line}");
+        }
         if s_i == TRAIN {
             // TRUST_AT_TEST=f: reliability-aware ranking only when answering, so training
             // keeps the depth-first ranking that drives growth

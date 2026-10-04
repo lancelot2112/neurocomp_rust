@@ -119,11 +119,43 @@ need (e.g. the `generalize` rule, or proposals that also tell growth *which fram
 carried the answer); (2) needs proposals weighted by how *consistently* a route
 carries the surprising word, not just how often.
 
+## Follow-up: learning not to depend on the name (synapse-level credit)
+Failure mode 1 above, answer kernels that also require the name, can be learned away
+without a task-specific rule. The training data itself shows the name is irrelevant: the
+same relayed place appears with different names, and the answer is always the relayed
+place. The generic rule `GrowthConfig::generalize` says: a kernel that nearly matched
+and would have been right drops its silent connections. With `generalize_after = N`
+(commit `c25e9de`), a connection is dropped only after N such confirmations, and its
+count resets whenever it is active while the kernel is right, like HTM's gradual
+permanence. Run: `GENERALIZE=0.5 GENERALIZE_AFTER=3 POLICIES=proposed_only ...`.
+
+| Hindsight proposals + | 1–2 facts: seen | 1–2 facts: held-out | 1–3 facts: seen | 1–3 facts: held-out |
+|---|---|---|---|---|
+| no generalization | 84.0% | 60.0% (100/100/0/100/0) | 83.8% | 60.0% (100/100/0/0/100) |
+| generalize, one-shot (N = 1) | 40.8% | 42.5% (16/66/15/16/99) | 26.3% | 26.9% (18/13/68/16/19) |
+| **generalize, N = 3** | **83.5%** | **82.2%** (81/100/66/82/82) | 68.0% | **67.5%** (100/89/49/17/83) |
+| generalize, N = 5 | 49.8% | 48.2% (18/100/16/7/100) | 72.5% | 73.0% (100/18/65/100/83) |
+
+### Findings
+1. **The network learns not to depend on the name.** With any generalization,
+   held-out ≈ seen in every run. Memorizing pairs disappears. Nothing about names, places
+   or routes was put in by hand: the rule only says "drop inputs that keep being
+   irrelevant when you're right".
+2. **One-shot pruning over-generalizes.** With 6 places, a different relayed place gives the
+   right answer by coincidence 1 time in 6. After one such event, kernels throw away the
+   relay bits too and collapse to "`?` → some place" (most runs at chance).
+3. **Requiring repeated evidence fixes most of it.** N = 3 lifts held-out from 60% to
+   **82%** (1–2 facts). All five runs hold (1,4) and score ≥ 66%, so no run fails
+   outright any more. With up to 3 facts it is 67.5%, with one run still at chance.
+4. N trades off over-generalization (too small) against too-slow generalization within
+   3,000 stories (too large: N = 5 is bimodal again on 1–2 facts). N = 3 is the best
+   setting tried; the right value probably depends on how often coincidences happen
+   (here, 1 in 6).
+
 ## Next
 - ~~Propose routes from surprise~~: done (hindsight proposals).
-- Route-aware growth: when a channel's relay matched the surprising target, grow the
-  new kernel from that channel's frame (plus the current word) only, so the answer
-  kernel can't also depend on the name.
+- ~~Route-aware growth~~: not needed; gradual synapse-level credit learned the same
+  thing from the data (follow-up above).
 - Consistency-weighted votes: score routes by hits / (hits + misses) when they relay
   something on surprise ticks, so routes that are right by coincidence lose.
 - Soft relays: let several matches contribute (summed codes), closer to softmax attention.

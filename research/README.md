@@ -20,7 +20,7 @@ number, and every claim should point at the code or command that reproduces it.
 | 4 | Fact binding, held-out name/place pairs | **0%** (100% on seen pairs) | chance 17% | [06](experiments/06-meaning.md) |
 | – | Top-down bias: word layer → char layer (60K chars) | 53.4% (+0.3) | oracle word layer 92.6% | [07](experiments/07-top-down-bias.md) |
 | – | Long-gap memory: what should hidden units hold? | ablation credit + guided growth 67% | oracle 100%, Hebbian-like 25% | [08](experiments/08-credit-assignment.md) |
-| – | Binding via thalamic relay, held-out pairs | oracle route **100%**; learned + hindsight proposals 60% (3/5 runs at 100%) | no relay 0% | [09](experiments/09-thalamic-attention.md) |
+| – | Binding via thalamic relay, held-out pairs | oracle route **100%**; learned (hindsight proposals + gradual generalization) **82%** | no relay 0% | [09](experiments/09-thalamic-attention.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -43,7 +43,9 @@ gets 67% of the way where the oracle gets 100%.
 Routing "what followed the earlier occurrence of this word" into the predictor (an
 induction head in thalamic form) takes held-out fact binding from 0% to 100%. Learning
 *which* route to use is the bottleneck. Hindsight proposals ("which route would have
-carried what I failed to predict?") find it in 3 of 5 runs.
+carried what I failed to predict?") find it, and gradual synapse-level credit ("drop
+inputs that keep being irrelevant when you're right") stops the network memorizing
+names: 82% on held-out pairs, all learned, with nothing task-specific put in by hand.
 
 ## Pages
 

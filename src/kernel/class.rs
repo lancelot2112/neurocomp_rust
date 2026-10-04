@@ -1,6 +1,6 @@
 use crate::bitvec::BitVector;
 use crate::common::config;
-use crate::kernel::simple::SimpleKernel;
+use crate::kernel::simple::{KernelStats, SimpleKernel};
 use rand::seq::SliceRandom;
 
 /// How to combine the output mask into the output BitVector (word-aligned).
@@ -71,7 +71,7 @@ pub struct GrowthConfig {
     pub frame_words: usize,      // words per history frame in the class input
     pub max_frames: usize,       // deepest context a grown kernel may span
     pub sample_bits: usize,      // active input bits sampled per frame for a new kernel
-    pub match_fraction: f32,     // new kernel threshold = ceil(sampled * match_fraction)
+    pub match_fraction: f32,     // per-frame match needed: threshold = sampled - floor(sample_bits * (1 - match_fraction))
     pub surprise_fraction: f32,  // grow when more than this fraction of target bits went unpredicted
 }
 
@@ -92,10 +92,21 @@ pub struct KernelClass<K: KernelTrait> {
     active_kernels: Vec<K>,
     temperature: KernelClassTemperature,
     target_active: Option<usize>, // homeostasis: steer temperature toward this many firing kernels per tick
-    growth: Option<GrowthConfig>,
+    predictive: Option<PredictiveState>,
     tick: u64,
     grown: usize,
     recycled: usize,
+}
+
+/// Bookkeeping for predictive classes.
+struct PredictiveState {
+    cfg: GrowthConfig,
+    index: Vec<Vec<u32>>,    // input bit -> kernels connected to it
+    counts: Vec<u32>,        // scratch: matched bits per kernel this tick
+    touched: Vec<u32>,       // scratch: kernels with a nonzero count this tick
+    last_matches: Vec<usize>, // kernels at/above threshold on the last tick
+    last_winner: Option<usize>,
+    last_target_prob: f32,    // see `target_probability`
 }
 
 impl<K: KernelTrait> KernelClass<K> {
@@ -108,7 +119,7 @@ impl<K: KernelTrait> KernelClass<K> {
             active_kernels: kernels,
             temperature: KernelClassTemperature::default(),
             target_active: None,
-            growth: None,
+            predictive: None,
             tick: 0,
             grown: 0,
             recycled: 0,
@@ -184,69 +195,187 @@ impl KernelClass<SimpleKernel> {
     /// An initially empty class that learns to predict its target by growing kernels.
     pub fn predictive(cfg: GrowthConfig) -> Self {
         let mut kc = Self::default();
-        kc.growth = Some(cfg);
+        kc.predictive = Some(PredictiveState {
+            cfg,
+            index: Vec::new(),
+            counts: Vec::new(),
+            touched: Vec::new(),
+            last_matches: Vec::new(),
+            last_winner: None,
+            last_target_prob: 0.0,
+        });
         kc
+    }
+
+    pub fn is_predictive(&self) -> bool {
+        self.predictive.is_some()
+    }
+
+    /// Run the class: predictive classes use `process_predictive`, others `process_all`.
+    pub fn process(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16) -> usize {
+        if self.is_predictive() {
+            self.process_predictive(input, output)
+        } else {
+            self.process_all(input, output, phase, adj_temperature)
+        }
+    }
+
+    /// Predictive step: every kernel whose matched input bits reach its threshold
+    /// is a candidate; the winner is the one with the longest context, then the best
+    /// hit rate, then the most matched bits. Only the winner writes its prediction.
+    /// Uses an inverted index so cost scales with active input bits, not kernels.
+    pub fn process_predictive(&mut self, input: &BitVector, output: &mut BitVector) -> usize {
+        let st = self.predictive.as_mut().expect("process_predictive on a non-predictive class");
+        if let Some(w) = st.last_winner.take() {
+            self.active_kernels[w].stats.fired_last = false;
+        }
+        st.last_matches.clear();
+        if st.counts.len() < self.active_kernels.len() {
+            st.counts.resize(self.active_kernels.len(), 0);
+        }
+
+        for (wi, &w) in input.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                let b = wi * 64 + w.trailing_zeros() as usize;
+                w &= w - 1;
+                if let Some(ks) = st.index.get(b) {
+                    for &k in ks {
+                        if st.counts[k as usize] == 0 {
+                            st.touched.push(k);
+                        }
+                        st.counts[k as usize] += 1;
+                    }
+                }
+            }
+        }
+
+        let mut best: Option<(usize, f32, u32, usize)> = None; // (depth, reliability, count, kernel)
+        for &k in &st.touched {
+            let k = k as usize;
+            let count = st.counts[k];
+            st.counts[k] = 0;
+            let kern = &self.active_kernels[k];
+            if (count as usize) < kern.threshold {
+                continue;
+            }
+            st.last_matches.push(k);
+            let key = (kern.context_frames, reliability(&kern.stats), count, k);
+            let better = match best {
+                None => true,
+                Some(b) => (key.0, key.1, key.2) > (b.0, b.1, b.2),
+            };
+            if better {
+                best = Some(key);
+            }
+        }
+        st.touched.clear();
+
+        let Some((_, _, _, w)) = best else { return 0 };
+        let k = &mut self.active_kernels[w];
+        output.mask_mut(k.output_idx, &k.output_mask, |a, b| a | b);
+        k.stats.fired_last = true;
+        k.stats.fires += 1;
+        st.last_winner = Some(w);
+        1
+    }
+
+    /// Estimated probability that the current prediction is right (the winning
+    /// kernel's smoothed hit rate), or None if nothing was predicted.
+    pub fn confidence(&self) -> Option<f32> {
+        let st = self.predictive.as_ref()?;
+        st.last_winner.map(|w| reliability(&self.active_kernels[w].stats))
+    }
+
+    /// How expected the last target was: the hit rate (before this update) of the
+    /// longest-context matching kernel that predicted it, or 0 if none did.
+    /// Low values mark surprising transitions (e.g. the start of a new word).
+    pub fn target_probability(&self) -> f32 {
+        self.predictive.as_ref().map_or(0.0, |st| st.last_target_prob)
+    }
+
+    /// Context depth (frames) of the current winning kernel, if any.
+    pub fn winner_depth(&self) -> Option<usize> {
+        let st = self.predictive.as_ref()?;
+        st.last_winner.map(|w| self.active_kernels[w].context_frames)
     }
 
     /// Local learning from what actually happened next.
     ///
-    /// `input` is the input the class saw on its last `process_all`, and `target`
-    /// is the pattern that output should have predicted. Only predictive classes
-    /// (built with `predictive`) learn here:
-    /// - a kernel that fired is scored a hit if the target confirmed at least half
-    ///   of its output bits, otherwise a miss;
-    /// - when too much of the target went unpredicted (surprise), a kernel is grown
-    ///   from a sample of the active input bits, outputting the target. If a kernel
-    ///   fired wrongly, the new one spans one more history frame than it did, so a
-    ///   longer context can override a shorter one that keeps being wrong;
-    /// - at the deepest allowed context, a kernel that misses more than it hits
-    ///   (by two or more) is retargeted to the latest target instead;
+    /// `input` is the input the class saw on its last step, and `target` is the
+    /// pattern its output should have predicted. Only predictive classes learn here:
+    /// - every kernel that matched is scored a hit if the target confirms at least
+    ///   half of its output bits, otherwise a miss (so each context keeps a hit rate
+    ///   per continuation, and the most reliable continuation wins);
+    /// - when the winner was wrong (or nothing matched) and too much of the target
+    ///   went unpredicted, grow a kernel at the winner's depth that outputs the
+    ///   target (unless a matching one already does), and if a kernel fired wrongly,
+    ///   another spanning one more history frame, so longer contexts can override
+    ///   shorter ones that keep being wrong;
     /// - at the kernel budget, the least-recently-useful kernel is recycled.
     pub fn feedback<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, target: &BitVector, rng: &mut R) {
-        let Some(cfg) = self.growth else { return };
+        let Some(st) = self.predictive.as_ref() else { return };
+        let cfg = st.cfg;
         self.tick += 1;
         let target_bits = target.count_ones();
         if target_bits == 0 {
             return;
         }
 
-        let mut predicted = BitVector::new(target.bit_len(), Some(0));
-        let mut deepest_wrong: Option<usize> = None;
-        for k in self.active_kernels.iter_mut().filter(|k| k.stats.fired_last) {
-            let confirmed = target.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m);
-            if confirmed * 2 >= k.output_mask.count_ones() {
+        let winner = st.last_winner;
+        let matches = st.last_matches.clone();
+        let mut depth_has_target = vec![false; cfg.max_frames + 2];
+        let mut expected: Option<(usize, f32)> = None;
+        for &m in &matches {
+            let k = &self.active_kernels[m];
+            if predicts(k, target) {
+                let key = (k.context_frames, reliability(&k.stats));
+                if expected.map_or(true, |e| key > e) {
+                    expected = Some(key);
+                }
+            }
+        }
+        if let Some(st) = self.predictive.as_mut() {
+            st.last_target_prob = expected.map_or(0.0, |e| e.1);
+        }
+        for &m in &matches {
+            let k = &mut self.active_kernels[m];
+            if predicts(k, target) {
                 k.stats.hits += 1;
                 k.stats.last_useful = self.tick;
+                depth_has_target[k.context_frames] = true;
             } else {
                 k.stats.misses += 1;
-                deepest_wrong = Some(deepest_wrong.map_or(k.context_frames, |d| d.max(k.context_frames)));
             }
-            predicted.mask_mut(k.output_idx, &k.output_mask, |a, b| a | b);
         }
 
-        let unpredicted = target_bits - target.mask_and_count(0, &predicted, |a, m| a & m);
+        let unpredicted = match winner {
+            Some(w) => {
+                let k = &self.active_kernels[w];
+                target_bits - target.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m)
+            }
+            None => target_bits,
+        };
         if (unpredicted as f32) <= cfg.surprise_fraction * target_bits as f32 {
             return;
         }
 
-        let depth = deepest_wrong.map_or(1, |d| d + 1);
-        if depth > cfg.max_frames {
-            // Context window exhausted: nothing longer to grow. A kernel at the
-            // limit that is wrong clearly more often than right switches its prediction to
-            // the latest target instead, so it tracks the common continuation.
-            for k in self.active_kernels.iter_mut() {
-                if k.stats.fired_last && k.context_frames == cfg.max_frames && k.stats.misses >= k.stats.hits + 2 {
-                    k.output_mask = target.clone();
-                    k.output_idx = 0;
-                    k.stats.hits = 0;
-                    k.stats.misses = 0;
-                    k.stats.last_useful = self.tick;
-                }
-            }
-            return;
+        let depth = winner.map_or(1, |w| self.active_kernels[w].context_frames);
+        if !depth_has_target[depth] {
+            self.grow(input, target, depth, rng);
         }
+        if winner.is_some() && depth < cfg.max_frames {
+            self.grow(input, target, depth + 1, rng);
+        }
+    }
 
-        // Sample active input bits from the `depth` most recent frames.
+    /// Grow (or, at the budget, recycle) a kernel that recognises a sample of the
+    /// active bits in the `depth` most recent frames of `input` and outputs `target`.
+    pub fn grow<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, target: &BitVector, depth: usize, rng: &mut R) {
+        let tick = self.tick;
+        let Some(st) = self.predictive.as_mut() else { return };
+        let cfg = st.cfg;
+
         let mut input_mask = BitVector::new(input.bit_len(), Some(0));
         let mut sampled = 0;
         for f in 0..depth {
@@ -261,33 +390,70 @@ impl KernelClass<SimpleKernel> {
         if sampled == 0 {
             return;
         }
+        // Tolerate one frame's worth of noise (not a fraction of all sampled bits),
+        // so a long-context kernel can't fire when a whole frame is different.
+        let tolerance = (sampled.min(cfg.sample_bits) as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+        let threshold = sampled - tolerance;
 
         let mut k = SimpleKernel::new(
             input_mask,
             0,
             target.clone(),
             0,
-            (sampled as f32 * cfg.match_fraction).ceil() as usize,
+            threshold,
             KernelOp::Or,
         );
         k.plastic = false;
         k.context_frames = depth;
-        k.stats.last_useful = self.tick;
+        k.stats.last_useful = tick;
 
-        if self.active_kernels.len() < cfg.max_kernels {
+        let slot = if self.active_kernels.len() < cfg.max_kernels {
             self.active_kernels.push(k);
             self.grown += 1;
-        } else if let Some(victim) = self
-            .active_kernels
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, k)| k.stats.last_useful)
-            .map(|(i, _)| i)
-        {
+            self.active_kernels.len() - 1
+        } else {
+            let victim = (0..self.active_kernels.len())
+                .filter(|&i| Some(i) != st.last_winner)
+                .min_by_key(|&i| self.active_kernels[i].stats.last_useful)
+                .expect("budget must allow at least two kernels");
+            for b in set_bits(&self.active_kernels[victim].input_mask) {
+                st.index[b].retain(|&x| x as usize != victim);
+            }
+            st.last_matches.retain(|&x| x != victim);
             self.active_kernels[victim] = k;
             self.recycled += 1;
+            victim
+        };
+
+        if st.index.len() < input.bit_len() {
+            st.index.resize(input.bit_len(), Vec::new());
+        }
+        for b in set_bits(&self.active_kernels[slot].input_mask) {
+            st.index[b].push(slot as u32);
         }
     }
+}
+
+/// Smoothed hit rate of a predictive kernel.
+fn reliability(s: &KernelStats) -> f32 {
+    (s.hits as f32 + 1.0) / ((s.hits + s.misses) as f32 + 2.0)
+}
+
+/// True if `target` confirms at least half of `k`'s output bits.
+fn predicts(k: &SimpleKernel, target: &BitVector) -> bool {
+    target.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 >= k.output_mask.count_ones()
+}
+
+fn set_bits(bv: &BitVector) -> Vec<usize> {
+    let mut out = Vec::new();
+    for (wi, &w) in bv.as_words().iter().enumerate() {
+        let mut w = w;
+        while w != 0 {
+            out.push(wi * 64 + w.trailing_zeros() as usize);
+            w &= w - 1;
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -329,89 +495,98 @@ mod tests {
         BitVector::from_words(words.to_vec())
     }
 
+    /// One predictive step: run, read the prediction, learn from `target`.
+    fn step(kc: &mut KernelClass<SimpleKernel>, ctx: &BitVector, target: &BitVector) -> u64 {
+        let mut rng = rand::thread_rng();
+        let mut out = BitVector::new(64, Some(0));
+        kc.process(ctx, &mut out, 0, 0);
+        kc.feedback(ctx, target, &mut rng);
+        out.as_words()[0]
+    }
+
     #[test]
     fn predictive_class_grows_then_predicts() {
         let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
         let mut kc = KernelClass::predictive(cfg);
-        let mut rng = rand::thread_rng();
         let ctx = frames(&[0xFF, 0]); // A at t, nothing at t-1
         let target = BitVector::from_words(vec![0xFF00]); // B
 
-        let mut out = BitVector::new(64, Some(0));
-        kc.process_all(&ctx, &mut out, 0, 0);
-        assert_eq!(out.count_ones(), 0);
-        kc.feedback(&ctx, &target, &mut rng); // surprise -> grow
+        assert_eq!(step(&mut kc, &ctx, &target), 0); // surprise -> grow
         assert_eq!((kc.len(), kc.grown()), (1, 1));
         assert_eq!(kc.kernels()[0].context_frames, 1);
 
-        out.bit_clear_all();
-        kc.process_all(&ctx, &mut out, 0, 0);
-        assert_eq!(out.as_words()[0], 0xFF00);
-        kc.feedback(&ctx, &target, &mut rng); // correct -> no growth
+        assert_eq!(step(&mut kc, &ctx, &target), 0xFF00); // correct -> no growth
         assert_eq!(kc.len(), 1);
         assert_eq!(kc.kernels()[0].stats.hits, 1);
+        assert!(kc.confidence().unwrap() > 0.5);
     }
 
     #[test]
-    fn wrong_prediction_grows_deeper_context_that_wins() {
+    fn longer_context_overrides_shorter_one() {
         let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
         let mut kc = KernelClass::predictive(cfg);
-        let mut rng = rand::thread_rng();
         let b = BitVector::from_words(vec![0xFF00]);
         let c = BitVector::from_words(vec![0xFF0000]);
         // "xA -> B" and "yA -> C": same current frame, different previous frame
         let xa = frames(&[0xFF, 0xF000_0000_0000_0000]);
         let ya = frames(&[0xFF, 0x0F00_0000_0000_0000]);
 
-        let mut run = |kc: &mut KernelClass<SimpleKernel>, ctx: &BitVector, target: &BitVector| {
-            let mut out = BitVector::new(64, Some(0));
-            kc.process_all(ctx, &mut out, 0, 0);
-            kc.feedback(ctx, target, &mut rng);
-            out
-        };
-        run(&mut kc, &xa, &b); // grows A->B (1 frame)
-        run(&mut kc, &ya, &c); // A->B fires wrongly -> grows yA->C (2 frames)
-        assert_eq!(kc.kernels()[1].context_frames, 2);
+        for _ in 0..3 {
+            step(&mut kc, &xa, &b);
+            step(&mut kc, &ya, &c);
+        }
+        assert!(kc.kernels().iter().any(|k| k.context_frames == 2));
+        assert_eq!(step(&mut kc, &ya, &c), 0xFF0000);
+        assert_eq!(step(&mut kc, &xa, &b), 0xFF00);
+        assert_eq!(kc.winner_depth(), Some(2));
+    }
 
-        assert_eq!(run(&mut kc, &ya, &c).as_words()[0], 0xFF0000);
-        assert_eq!(run(&mut kc, &xa, &b).as_words()[0], 0xFF00);
+    #[test]
+    fn most_reliable_continuation_wins_at_same_depth() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        let a = frames(&[0xFF]);
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        step(&mut kc, &a, &b); // grows A->B
+        assert_eq!(step(&mut kc, &a, &c), 0xFF00); // wrong -> grows sibling A->C
+        assert_eq!(kc.len(), 2);
+        step(&mut kc, &a, &c);
+        // A was followed by C twice and B once: C wins, B is kept as an alternative
+        assert_eq!(step(&mut kc, &a, &b), 0xFF0000);
+        assert_eq!(kc.len(), 2);
     }
 
     #[test]
     fn budget_recycles_least_recently_useful() {
         let cfg = GrowthConfig { max_kernels: 2, frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
         let mut kc = KernelClass::predictive(cfg);
-        let mut rng = rand::thread_rng();
         for i in 0..3u64 {
-            let ctx = frames(&[0xFF << (8 * i)]);
-            let mut out = BitVector::new(64, Some(0));
-            kc.process_all(&ctx, &mut out, 0, 0);
-            kc.feedback(&ctx, &BitVector::from_words(vec![1 << i]), &mut rng);
+            step(&mut kc, &frames(&[0xFF << (8 * i)]), &BitVector::from_words(vec![1 << i]));
         }
         assert_eq!((kc.len(), kc.grown(), kc.recycled()), (2, 2, 1));
-        // the first kernel (oldest, never useful since) was replaced
+        // the first kernel (oldest, never useful since) was replaced, and the
+        // index no longer routes its old input to the new occupant
         let outs: Vec<u64> = kc.kernels().iter().map(|k| k.output_mask.as_words()[0]).collect();
         assert!(!outs.contains(&1) && outs.contains(&2) && outs.contains(&4));
+        assert_eq!(step(&mut kc, &frames(&[0xFF0000]), &BitVector::from_words(vec![4])), 4);
+        assert_eq!(step(&mut kc, &frames(&[0xFF]), &BitVector::from_words(vec![8])), 0);
     }
 
     #[test]
-    fn kernel_at_context_limit_retargets_after_mostly_missing() {
+    fn target_probability_tracks_how_expected_the_target_was() {
         let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
         let mut kc = KernelClass::predictive(cfg);
-        let mut rng = rand::thread_rng();
         let a = frames(&[0xFF]);
         let b = BitVector::from_words(vec![0xFF00]);
         let c = BitVector::from_words(vec![0xFF0000]);
-        let mut step = |kc: &mut KernelClass<SimpleKernel>, target: &BitVector| {
-            let mut out = BitVector::new(64, Some(0));
-            kc.process_all(&a, &mut out, 0, 0);
-            kc.feedback(&a, target, &mut rng);
-            out.as_words()[0]
-        };
-        step(&mut kc, &b); // grows A->B
-        assert_eq!(step(&mut kc, &c), 0xFF00); // miss 1: one miss is not enough
-        assert_eq!(step(&mut kc, &c), 0xFF00); // miss 2 (misses 2 >= hits 0 + 2) -> retarget to C
-        assert_eq!(step(&mut kc, &c), 0xFF0000);
-        assert_eq!(kc.len(), 1);
+        step(&mut kc, &a, &b);
+        assert_eq!(kc.target_probability(), 0.0); // nothing predicted B yet
+        for _ in 0..4 {
+            step(&mut kc, &a, &b);
+        }
+        assert!(kc.target_probability() > 0.7); // A->B is well established
+        step(&mut kc, &a, &c);
+        assert_eq!(kc.target_probability(), 0.0); // C after A is a surprise
     }
 }

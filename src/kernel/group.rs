@@ -42,7 +42,7 @@ impl KernelGroup {
     pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16) -> usize {
         let mut fired = 0;
         for kclass in &mut self.available_classes {
-            fired += kclass.process_all(input, output, phase, adj_temperature);
+            fired += kclass.process(input, output, phase, adj_temperature);
         }
         fired
     }

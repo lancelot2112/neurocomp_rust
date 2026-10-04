@@ -436,7 +436,8 @@ impl KernelClass<SimpleKernel> {
     /// Sticky synapses for gradual pruning (`GrowthConfig::generalize`): input bits that
     /// earned copy credit on a hit (they carry the bit the kernel correctly predicted),
     /// or that are in `mask`, need `factor` times as many silent confirmations before
-    /// they are dropped. `factor` 0 turns stickiness off.
+    /// they are dropped. `factor` 0 turns stickiness off; `u8::MAX` makes tagged bits
+    /// permanent (never pruned).
     pub fn set_sticky(&mut self, factor: u8, mask: Option<BitVector>) {
         if let Some(st) = self.predictive.as_mut() {
             st.sticky_factor = factor;
@@ -586,8 +587,10 @@ impl KernelClass<SimpleKernel> {
                     let sticky = st.sticky_factor > 0
                         && (tags.map_or(false, |t| t.contains(&b))
                             || st.sticky_mask.as_ref().map_or(false, |m| b < m.bit_len() && m.bit_get(b)));
+                    // factor u8::MAX: tagged bits are never pruned
+                    let never = sticky && st.sticky_factor == u8::MAX;
                     let needed = if sticky { need.saturating_mul(st.sticky_factor) } else { need };
-                    if *c >= needed {
+                    if !never && *c >= needed {
                         drop.push(b);
                     }
                 }

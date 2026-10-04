@@ -191,6 +191,25 @@ reliability 0.99.)
    recall); or a cleaner readout (the [CA1 comparator](14-ca1-comparator.md) or the
    [basal-ganglia selector](15-basal-ganglia-selector.md) choosing one item).
 
+**Does gradual synapse pruning fix it?** (`GENERALIZE=0.5 GENERALIZE_AFTER=N`, the fix that
+took [09](09-thalamic-attention.md) to 82%; seed 1, delay line, settle 2.)
+
+| Seed 1 | 1–2 facts | 1–3 facts | Wrong answers (1–3): winner reads memory / memory bits / reliability |
+|---|---|---|---|
+| off | 99.2% | **84.0%** | 29% / 4.6 / 0.24 |
+| prune after 3 misses | 99.2% | 77.4% | 56% / 2.2 / 0.34 |
+| prune after 1 miss | 16.0% | 35.2% | 100% / 1.0 / 0.18 |
+
+**No, it makes it worse.** Pruning removes inputs that were silent when a near-miss kernel
+would have been right. The recalled place changes from story to story, so a kernel's
+memory bits are exactly the inputs that look silent, and they go first: after one miss,
+kernels lose them entirely (chance on 1–2 facts); after three, winners keep ~2–9 of 16
+memory bits, too few to tell places apart. Pruning helps when the useful input is
+*fixed* (a route's relayed word in 09) and hurts when it is *variable content to copy*.
+What the predictor lacks is a way to grow kernels that read the right memory bits in the
+first place: e.g. sample memory bits that overlap the target (the answer is in the
+recall, so a "copy" kernel can be grown in one step), or hand it a one-item recall.
+
 9. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.
 

@@ -36,7 +36,7 @@ Random fillers between stories; 3,000 training, 1,000 test stories; chance 1/6.
 | Loop(2), single rarest-item cue | 1.4% | LOOP_2 |
 | **Branch(3)** | **81.8%** | LOOP_BRANCH |
 
-Check on one-hop varied stories (does branching hurt?): Branch(3) 97.3% held-out (3 seeds: 95/99/98) vs 99.0% for one hop, so extra branches cost little on one-hop questions.
+Check on one-hop varied stories (does branching hurt?): Branch(3) 97.3% (1–2 facts; 3 seeds 95/99/98) and 95.5% (1–3 facts; 99/96/92) held-out, vs 99.0% and 97.5% for one hop: extra branches cost 2 points on one-hop questions.
 
 ## Findings
 1. **Chaining recalls answers two-hop questions about unseen combinations**, but only

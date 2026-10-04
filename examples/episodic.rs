@@ -215,6 +215,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
     let mut surprising = BitVector::new(BITS, Some(0)); // unpredicted bits of the sentence so far
     let mut last_out = BitVector::new(BITS, Some(0)); // the predictor's last prediction
+    let predicted_share: f32 = std::env::var("PREDICTED_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
     // recalled content: drop bits in more than 40% of episodes (all kept with prediction novelty)
     let habituation = if predictive_novelty { 1.0 } else { 0.4 };
     let rarity_ratio = if predictive_novelty { f32::INFINITY } else { 1.5 };
@@ -242,9 +243,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let code = &enc.codes[ids[t]];
             th.observe(code);
             sentence.or_mut(code);
-            // comparator: the parts of this word the predictor did not predict
-            for (u, (&c, &p)) in surprising.as_words_mut().iter_mut().zip(code.as_words().iter().zip(last_out.as_words())) {
-                *u |= c & !p;
+            // Comparator: was this word predicted? Graded, at the word level: the share of
+            // the prediction that this word accounts for. A prediction that superimposes a
+            // whole class ("some name", "some place") gives each member a small share, so
+            // the actual member still counts as unpredicted. Bitwise mismatch would not.
+            let predicted_bits = last_out.count_ones();
+            let share = if predicted_bits == 0 {
+                0.0
+            } else {
+                code.as_words().iter().zip(last_out.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() as f32 / predicted_bits as f32
+            };
+            if share < predicted_share {
+                surprising.or_mut(code);
             }
             let cue_source = if predictive_novelty { &surprising } else { &sentence };
 

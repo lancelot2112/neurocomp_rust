@@ -126,6 +126,8 @@ struct PredictiveState {
     sticky_tags: std::collections::HashMap<usize, std::collections::HashSet<usize>>,
     /// Caller-provided credit: input bits that are always sticky.
     sticky_mask: Option<BitVector>,
+    /// Credit-guided growth (see `grow`).
+    copy_growth: bool,
     /// Bad credit releases tags: a tagged bit that was active when its kernel fired and
     /// the target did not contain the bit it copies loses its tag (then prunes normally).
     sticky_blame: bool,
@@ -251,6 +253,7 @@ impl KernelClass<SimpleKernel> {
             sticky_tags: std::collections::HashMap::new(),
             sticky_mask: None,
             sticky_blame: false,
+            copy_growth: false,
             trust_floor: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
@@ -458,6 +461,14 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Credit-guided growth: a new kernel samples, in any frame that contains the target's
+    /// bits, only those bits (it is born as a copy kernel for the whole word).
+    pub fn set_copy_growth(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.copy_growth = on;
+        }
+    }
+
     /// Let bad credit release sticky tags (see `sticky_blame`).
     pub fn set_sticky_blame(&mut self, on: bool) {
         if let Some(st) = self.predictive.as_mut() {
@@ -659,7 +670,17 @@ impl KernelClass<SimpleKernel> {
             let first = f * cfg.frame_words * 64;
             let last = ((f + 1) * cfg.frame_words * 64).min(input.bit_len());
             let allowed = |b: usize| st.growth_mask.as_ref().map_or(true, |m| b < m.bit_len() && m.bit_get(b));
-            let active: Vec<usize> = (first..last).filter(|&b| input.bit_get(b) && allowed(b)).collect();
+            let mut active: Vec<usize> = (first..last).filter(|&b| input.bit_get(b) && allowed(b)).collect();
+            // Credit-guided growth: in a frame that carries the target's bits (a copy of
+            // the word to predict, e.g. a recalled place), sample only those bits, so the
+            // kernel is born keyed on the whole copied word rather than on incidental words.
+            if st.copy_growth {
+                let fb = cfg.frame_words * 64;
+                let copies: Vec<usize> = active.iter().copied().filter(|&b| (b % fb) < target.bit_len() && target.bit_get(b % fb)).collect();
+                if !copies.is_empty() {
+                    active = copies;
+                }
+            }
             for &b in active.choose_multiple(rng, cfg.sample_bits) {
                 input_mask.bit_set(b);
                 sampled += 1;

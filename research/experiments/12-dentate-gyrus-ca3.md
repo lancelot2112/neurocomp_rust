@@ -210,7 +210,39 @@ What the predictor lacks is a way to grow kernels that read the right memory bit
 first place: e.g. sample memory bits that overlap the target (the answer is in the
 recall, so a "copy" kernel can be grown in one step), or hand it a one-item recall.
 
-9. Method lesson: compare variants **in the same build and run**. Numbers from different
+**Sticky synapses from credit** (`STICKY=f`, `KernelClass::set_sticky`): input bits that
+earn *copy credit* (they carry the same bit, frame-relative, as the word the kernel
+predicts) get a tag, and pruning a tagged bit takes f× as many silent confirmations
+(synaptic tagging / metaplasticity). Tags are earned on hits, and in a second version also
+at the kernel's birth (it is grown to predict this target from this input).
+
+| Seed 1, held-out | 1–2 facts | 1–3 facts | 1–3 wrong answers: winner reads memory / memory bits / reliability |
+|---|---|---|---|
+| pruning off | 99.2% | **84.0%** | 29% / 4.6 / 0.24 |
+| prune after 1 miss | 16.0% | 35.2% | 100% / 1.0 / 0.18 |
+| + tags on hits (×4 or ×16) | 99.4% | 35.2% | (identical: tags never earned in time) |
+| + tags at birth (×4) | 99.4% | 66.6% | **0% / 0.0 / 0.18** |
+| prune after 3 misses | 99.2% | 77.4% | 56% / 2.2 / 0.34 |
+| + tags on hits (×4) | 99.2% | 77.0% | 55% / 2.2 / 0.34 |
+| + tags at birth (×4) | 99.2% | 76.4% | 53% / 2.1 / 0.32 |
+
+- **Tags protect the right bits.** On 1–2 facts, tags turn aggressive pruning from chance
+  (16%) into 99.4%: kernels are pruned down to their tagged place bits (4–8 of 16) and
+  still match. Tags earned only on hits come too late with 1–3 facts (a new kernel's
+  place bits are pruned at its first near miss, before any hit); tagging at birth fixes
+  that.
+- **With tags at birth the split is clean:** every right answer (333) comes from a
+  memory-reading copy kernel with reliability 1.00, every wrong answer (167) from a
+  memory-blind guesser (0 memory bits, reliability 0.18). Copy kernels are now perfect
+  when they fire; the failures are questions where *no* copy kernel matches.
+- **So the remaining problem is coverage, not pruning.** Likely cause (not yet confirmed):
+  the guesser reads "?" and "now", so it spans the deepest frame; when it wins and is
+  wrong, surprise-driven growth goes *deeper* than the winner, and there is no deeper
+  frame, so no new copy kernel is grown for that case. A low-reliability kernel at
+  maximum depth locks the case in. Next: grow a sibling at the same depth when a
+  max-depth winner fails, or rank by reliability before depth for unreliable kernels.
+
+10. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and

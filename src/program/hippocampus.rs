@@ -64,6 +64,9 @@ pub struct Ca3Memory {
     pub decay: f32,
     pub prune_below: f32,
     pub settle_steps: usize,
+    /// Readout keeps EC bits scoring at least this fraction of the best score
+    /// (higher = sharper clean-up toward the single strongest memory).
+    pub readout_fraction: f32,
     ec_to_ca3: Vec<Synapses>,
     ca3_to_ca3: Vec<Synapses>,
     ca3_to_ec: Vec<Synapses>,
@@ -77,6 +80,7 @@ impl Ca3Memory {
             decay,
             prune_below: 0.02,
             settle_steps,
+            readout_fraction: 0.5,
             ec_to_ca3: vec![HashMap::new(); ec_bits],
             ca3_to_ca3: vec![HashMap::new(); ca3_cells],
             ca3_to_ec: vec![HashMap::new(); ca3_cells],
@@ -141,8 +145,8 @@ impl Ca3Memory {
     }
 
     /// Recall from a partial EC cue: drive CA3 from the cue, settle through the
-    /// recurrent weights, read EC out. Returns the EC bits scoring at least half the
-    /// best score, and that best score (0 if nothing was recalled).
+    /// recurrent weights, read EC out. Returns the EC bits scoring at least
+    /// `readout_fraction` of the best score, and that best score (0 if nothing was recalled).
     pub fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
         let ca3_cells = self.ca3_to_ca3.len();
         let from_cue = self.drive(&self.ec_to_ca3, cue, ca3_cells);
@@ -158,7 +162,7 @@ impl Ca3Memory {
         if best <= 0.0 {
             return (Vec::new(), 0.0);
         }
-        ((0..ec_bits).filter(|&b| out[b] >= 0.5 * best).collect(), best)
+        ((0..ec_bits).filter(|&b| out[b] >= self.readout_fraction * best).collect(), best)
     }
 
     /// Number of stored synapses (all three pathways).

@@ -144,7 +144,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut memory = EpisodicMemory::new(BITS, 200); // also keeps the habituation statistics
     let (dg, mut ca3) = match policy {
         Policy::Ca3 { cells, k, settle } => {
-            (Some(DentateGyrus::new(BITS, cells, 300, k, seed + 100)), Some(Ca3Memory::new(BITS, cells, k, 0.97, settle)))
+            let env = |name: &str, default: f32| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+            let fan_in = env("DG_FAN_IN", 300.0) as usize;
+            let decay = env("CA3_DECAY", 0.7);
+            let mut ca3 = Ca3Memory::new(BITS, cells, k, decay, settle);
+            ca3.readout_fraction = env("CA3_READOUT", 0.5);
+            (Some(DentateGyrus::new(BITS, cells, fan_in, k, seed + 100)), Some(ca3))
         }
         _ => (None, None),
     };
@@ -260,8 +265,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             if ids[t] == full_stop {
                 memory.store(&sentence); // one-shot: the whole sentence is one episode
                 if let (Some(dg), Some(ca3)) = (&dg, &mut ca3) {
-                    let x = set_bits(&sentence);
-                    ca3.store(&x, &dg.separate(&x));
+                    // Encode the novel part: content shared by most episodes ("went to the")
+                    // would otherwise dominate the dentate gyrus, give every episode the same
+                    // code, and swamp recall.
+                    let x = set_bits(&memory.novel(&sentence, habituation));
+                    if !x.is_empty() {
+                        ca3.store(&x, &dg.separate(&x));
+                    }
                 }
                 sentence = BitVector::new(BITS, Some(0));
             }
@@ -290,6 +300,7 @@ fn main() {
             println!();
             println!("{task:?} stories, 1-{max_facts} facts, question about a random one");
             let policies: Vec<Policy> = match std::env::var("POLICIES").as_deref() {
+                Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3") => vec![
                     Policy::Episodic,
                     Policy::Ca3 { cells: 1024, k: 64, settle: 2 },

@@ -190,6 +190,20 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   collectives.* Advances in Complex Systems 4. "Difference rewards": credit each agent
   with the system's reward minus the reward had it been absent. This is the
   counterfactual behind ablation credit in [08](experiments/08-credit-assignment.md).
+- **Doya, K. (2000).** *Complementary roles of basal ganglia and cerebellum in learning
+  and motor control.* Current Opinion in Neurobiology 10. Cortex unsupervised,
+  cerebellum supervised, basal ganglia reinforcement. See
+  [basal ganglia and cerebellum](concepts/basal-ganglia-and-cerebellum.md).
+- **O'Reilly, R. & Frank, M. (2006).** *Making working memory work: a computational model
+  of learning in the prefrontal cortex and basal ganglia.* Neural Computation 18. PBWM:
+  basal ganglia learn when to gate information into working memory.
+- **Marr, D. (1969).** *A theory of cerebellar cortex.* J. Physiology 202; **Albus, J.
+  (1971).** *A theory of cerebellar function.* Mathematical Biosciences 10; **Ito, M.
+  (2001).** *Cerebellar long-term depression.* Physiological Reviews 81. Granule
+  expansion + climbing-fibre error = a per-unit supervised learner.
+- **Bell, C., Han, V., Sugawara, Y. & Grant, K. (1997).** *Synaptic plasticity in a
+  cerebellum-like structure depends on temporal order.* Nature 387. Learned cancellation
+  of predictable input: store/transmit only what was not predicted.
 - **Foerster, J. et al. (2018).** *Counterfactual multi-agent policy gradients.* AAAI.
   [arXiv:1705.08926](https://arxiv.org/abs/1705.08926). The same idea with a learned
   counterfactual baseline.

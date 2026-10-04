@@ -45,7 +45,12 @@ predictor failures.
    now stored and recalled alongside the place; the predictor must learn to ignore them.
 
 ## Two-hop stories
-TWOHOP_PROB
+With the probability-weighted comparator (1 seed, held-out): one hop 0.4%, Loop(2)
+2.6%, **Branch(3) 25.8%** (answer in some recalled frame 65.6%), vs 80.8% for
+Branch(3) with frequency habituation ([13](13-big-loop.md)). The comparator is worse
+here: "picked" is unpredictable and so is stored in every pick-up episode, and branches
+grouped by stored count now follow "picked" (or fillers) as often as the holder's name.
+Choosing what to follow is the job of the [basal-ganglia selector](../concepts/basal-ganglia-and-cerebellum.md).
 
 ## Next
 - Make the cue choice learned too (which surprising item to cue with) — a basal-ganglia

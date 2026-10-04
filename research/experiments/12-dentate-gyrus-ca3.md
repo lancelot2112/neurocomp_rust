@@ -257,6 +257,11 @@ separate predictor bugs, each fixed in turn (seed 1, varied, held-out):
 | + trust floor during training too | 82.4% | 100% | 1–2: copy kernels never grown for some places (training ranking changes growth) |
 | **+ trust floor only when answering** (`TRUST_AT_TEST`) | **99.4%** | **100%** | none on 1–3; 3 on 1–2 (recall lacked the place bits) |
 
+Control: the test-only trust floor **without** pruning stays at 99.2% / 84.0%. There the
+right copy kernel does not exist for the "?" context (best one matches 0.22 of its
+threshold), so ranking alone cannot help: pruning (which makes copy kernels general across
+contexts) and the ranking fix are both needed.
+
 The three bugs, all in how a predictive class picks and prunes kernels:
 1. **Global tolerance on pruned kernels.** `threshold = bits − 3` lets a frame pruned to ≤ 4
    bits be absent and the kernel still fire. Fix: tolerance = ⌊smallest frame × (1 −

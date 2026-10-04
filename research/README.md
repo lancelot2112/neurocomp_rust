@@ -23,6 +23,9 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Binding via thalamic relay, held-out pairs | oracle route **100%**; learned (hindsight proposals + gradual generalization) **82%** | no relay 0% | [09](experiments/09-thalamic-attention.md) |
 | – | Binding by inhibition over a route pool (1–2 facts) | context gate 100% (original), value gate 100% (long) | 4 channel slots 75% / 44.5% | [10](experiments/10-route-pool-inhibition.md) |
 | – | Binding by one-shot episodic memory, variable sentence shapes | **98%** held-out | best fixed routes 33–34% | [11](experiments/11-episodic-memory.md) |
+| – | Same, with dentate-gyrus expansion + Hebbian CA3 store | **99%** held-out (1–3 facts) | list memory 97.5% | [12](experiments/12-dentate-gyrus-ca3.md) |
+| – | Two-hop questions ("where is the ball?") by big-loop recall | branching recall **80.8%** | single-cue chain 5.5%, one hop 0% | [13](experiments/13-big-loop.md) |
+| – | Storing what the predictor didn't predict (CA1 comparator) | 93% / 87% held-out (1 seed) | frequency habituation 98% | [14](experiments/14-ca1-comparator.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -63,6 +66,9 @@ Experiments (chronological)
 9. [Thalamus-like relay as attention](experiments/09-thalamic-attention.md)
 10. [Attention by inhibition: a route pool with learned gating](experiments/10-route-pool-inhibition.md)
 11. [Episodic autoassociative memory](experiments/11-episodic-memory.md)
+12. [Dentate gyrus expansion and a Hebbian CA3 store](experiments/12-dentate-gyrus-ca3.md)
+13. [Big-loop recurrence: chaining recalls for two-hop questions](experiments/13-big-loop.md)
+14. [A CA1-style comparator: store what wasn't predicted](experiments/14-ca1-comparator.md)
 
 Concepts
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)
@@ -92,7 +98,7 @@ cargo run --release --example meaning            # experiment 06 (~2 min)
 cargo run --release --example topdown            # experiment 07 (~4 min)
 cargo run --release --example credit             # experiment 08 (~15 min for all configs; pass 20000 for the long run)
 cargo run --release --example thalamus           # experiments 09-10 (~15 min per policy set; see POLICIES)
-cargo run --release --example episodic           # experiments 11-12 (~35 min; POLICIES=ca3 for 12)
+cargo run --release --example episodic           # experiments 11-14 (~35 min; POLICIES=ca3 for 12; TASK=twohop POLICIES=loop for 13; NOVELTY=prediction for 14)
 ```
 
 Learning uses `rand::thread_rng()` inside the kernels, so numbers move by a point or

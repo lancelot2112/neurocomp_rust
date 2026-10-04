@@ -51,13 +51,28 @@ What each step showed:
 
 | Memory | 1–2 facts | 1–3 facts |
 |---|---|---|
-| list memory ([11](11-episodic-memory.md)) | CA3_LIST_2 | CA3_LIST_3 |
-| CA3, low separation (1,024 cells, 64 active), settle 2 | CA3_LOW_2 | CA3_LOW_3 |
-| CA3, high separation (16,384 cells, 32 active), settle 2 | CA3_HIGH_2 | CA3_HIGH_3 |
-| CA3, high separation, no settling | CA3_NOSETTLE_2 | CA3_NOSETTLE_3 |
+| list memory ([11](11-episodic-memory.md)) | 99.0% | 97.5% |
+| CA3, low separation (1,024 cells, 64 active), settle 2 | 97.7% | 93.5% (91/99/90) |
+| CA3, high separation (16,384 cells, 32 active), settle 2 | 99.1% | 96.1% (89/100/100) |
+| CA3, high separation, no settling | 99.0% | **99.3%** (98/100/100) |
 
 ## Findings
-CA3_FINDINGS
+1. **A Hebbian, superimposed store matches the idealized list memory** (99% vs 99%;
+   99.3% vs 97.5% with 1–3 facts), once it stores the novel part of each episode and
+   forgets fast enough that the latest episode about a person dominates.
+2. **Pattern separation matters as load grows.** With few dense cells (1,024 / 64 active)
+   held-out accuracy drops from 97.7% to 93.5% when stories have up to 3 facts; with many
+   sparse cells (16,384 / 32) it stays at 96–99%. Overlapping episodes blend in a small
+   code.
+3. **Recurrent settling (pattern completion) does not help here, and can hurt.** Without
+   settling: 99.0% / 99.3%; with 2 steps: 99.1% / 96.1%, with one seed at 89%. The cue
+   (a name) already selects the right cells; recurrent steps pull the code toward
+   whatever attractor is strongest, sometimes an older or blended memory. Completion
+   should pay off with *degraded* cues (missing or noisy words), which this task never
+   presents. That needs its own test.
+4. Forgetting is a fixed, global decay (0.7 per stored sentence). A store that keeps more
+   than the last few facts per name would need decay tied to novelty or interference
+   (the CA1 comparator of [14](14-ca1-comparator.md) is a step towards that).
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and
 [13](13-big-loop.md) for chaining recalls.

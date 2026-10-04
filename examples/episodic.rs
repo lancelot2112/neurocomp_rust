@@ -270,6 +270,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // [no winner, reads the memory frame, mask bits in current/memory/previous frames
     //  summed (3 entries), reliability ×1000 summed, count]
     let mut kdiag = [[0usize; 7]; 2];
+    // DIAG coverage at wrong held-out answers: [cases, cases with any memory-reading
+    // kernel for the answer, best match ratio ×100 summed, missing bits per frame
+    // (current, memory, previous) of that best kernel summed]
+    let mut cover = [0usize; 6];
     let mut pending_diag = [0usize; 3];
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
@@ -481,6 +485,47 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let next = ids[t + 1];
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
+                    if s.held_out && !right && std::env::var("DIAG").is_ok() {
+                        // is there a copy kernel for the answer, and how close did it come?
+                        let frame = BITS / 64;
+                        let answer = &enc.codes[next];
+                        let mut best: Option<(f32, [usize; 3])> = None;
+                        for k in class.kernels() {
+                            let out_ok = answer.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 >= k.output_mask.count_ones();
+                            if !out_ok {
+                                continue;
+                            }
+                            let mut missing = [0usize; 3];
+                            let mut reads_memory = false;
+                            let mut matched = 0usize;
+                            for (wi, &m) in k.input_mask.as_words().iter().enumerate() {
+                                let w = k.input_idx + wi;
+                                let f = w / frame;
+                                let slot = if f == 0 { 0 } else if f <= mid_frames { 1 } else { 2 };
+                                if slot == 1 && m != 0 {
+                                    reads_memory = true;
+                                }
+                                let on = input.as_words().get(w).copied().unwrap_or(0) & m;
+                                matched += on.count_ones() as usize;
+                                missing[slot] += (m & !on).count_ones() as usize;
+                            }
+                            if !reads_memory {
+                                continue;
+                            }
+                            let ratio = matched as f32 / k.threshold.max(1) as f32;
+                            if best.map_or(true, |(r, _)| ratio > r) {
+                                best = Some((ratio, missing));
+                            }
+                        }
+                        cover[0] += 1;
+                        if let Some((r, miss)) = best {
+                            cover[1] += 1;
+                            cover[2] += (r * 100.0) as usize;
+                            for i in 0..3 {
+                                cover[3 + i] += miss[i];
+                            }
+                        }
+                    }
                     if s.held_out && std::env::var("DIAG").is_ok() {
                         let kd = &mut kdiag[right as usize];
                         kd[6] += 1;
@@ -545,6 +590,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
     if std::env::var("DIAG").is_ok() {
+        let c = cover[1].max(1) as f64;
+        eprintln!(
+            "  CDIAG seed {seed} wrong held-out: n={} with a memory-reading kernel for the answer {:.0}%, best match/threshold {:.2}, its missing bits current/memory/previous {:.1}/{:.1}/{:.1}",
+            cover[0],
+            100.0 * cover[1] as f64 / cover[0].max(1) as f64,
+            cover[2] as f64 / 100.0 / c,
+            cover[3] as f64 / c,
+            cover[4] as f64 / c,
+            cover[5] as f64 / c
+        );
         for (label, kd) in [("right", kdiag[1]), ("wrong", kdiag[0])] {
             let n = kd[6].max(1) as f64;
             let fired = (kd[6] - kd[0]).max(1) as f64;

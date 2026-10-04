@@ -132,7 +132,7 @@ predictor at the answer (1.00 = clean).
 | 1–2 facts, settle 2 | 99.4% (1.00) | 99.3% (1.00) | 97.2% (1.00) |
 | 1–2 facts, no settling | 99.3% (1.00) | 99.5% (1.00) | 98.1% (1.00) |
 | 1–3 facts, settle 2 | 89.1% (1.00; 92/79/96) | 92.7% (1.00; 94/84/100) | 92.1% (1.00; 97/79/100) |
-| 1–3 facts, no settling | CNT_NS_3 | 90.0% (1.00; 90/81/99) | 90.3% (1.00; 98/75/98) |
+| 1–3 facts, no settling | 90.9% (1.00; 96/78/100) | 90.0% (1.00; 90/81/99) | 90.3% (1.00; 98/75/98) |
 
 **Seed-1 diagnostic** (same build, varied stories, 1–3 facts, CA3 16,384 / 32, settle 2;
 `DIAG=1 SEED_START=1 SEEDS=1 CA3_STORE=float|ring|…`). For held-out questions, what the

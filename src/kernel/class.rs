@@ -73,6 +73,10 @@ pub struct GrowthConfig {
     pub sample_bits: usize,      // active input bits sampled per frame for a new kernel
     pub match_fraction: f32,     // per-frame match needed: threshold = sampled - floor(sample_bits * (1 - match_fraction))
     pub surprise_fraction: f32,  // grow when more than this fraction of target bits went unpredicted
+    /// Synapse-level credit: a kernel that matched at least this fraction of its
+    /// connections (but not its threshold) and whose prediction the target confirms
+    /// drops the connections that were silent, becoming more general. None = off.
+    pub generalize: Option<f32>,
 }
 
 impl Default for GrowthConfig {
@@ -84,6 +88,7 @@ impl Default for GrowthConfig {
             sample_bits: 16,
             match_fraction: 0.8,
             surprise_fraction: 0.5,
+            generalize: None,
         }
     }
 }
@@ -107,6 +112,7 @@ struct PredictiveState {
     last_matches: Vec<usize>, // kernels at/above threshold on the last tick
     last_winner: Option<usize>,
     last_target_prob: f32,    // see `target_probability`
+    last_near: Vec<usize>,    // kernels that nearly matched on the last step (see `generalize`)
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
 }
@@ -219,6 +225,7 @@ impl KernelClass<SimpleKernel> {
             last_matches: Vec::new(),
             last_winner: None,
             last_target_prob: 0.0,
+            last_near: Vec::new(),
             last_hits: Vec::new(),
             last_misses: Vec::new(),
         });
@@ -259,6 +266,7 @@ impl KernelClass<SimpleKernel> {
             self.active_kernels[w].stats.fired_last = false;
         }
         st.last_matches.clear();
+        st.last_near.clear();
         if st.counts.len() < self.active_kernels.len() {
             st.counts.resize(self.active_kernels.len(), 0);
         }
@@ -289,6 +297,11 @@ impl KernelClass<SimpleKernel> {
             st.counts[k] = 0;
             let kern = &self.active_kernels[k];
             if (count as usize) < kern.threshold {
+                if let Some(frac) = st.cfg.generalize {
+                    if count as f32 >= frac * kern.input_mask.count_ones() as f32 {
+                        st.last_near.push(k);
+                    }
+                }
                 continue;
             }
             st.last_matches.push(k);
@@ -416,6 +429,9 @@ impl KernelClass<SimpleKernel> {
             st.last_hits = hits;
             st.last_misses = misses;
         }
+        if cfg.generalize.is_some() {
+            self.generalize_near_misses(input, target, &cfg);
+        }
 
         let unpredicted = match winner {
             Some(w) => {
@@ -434,6 +450,34 @@ impl KernelClass<SimpleKernel> {
         }
         if winner.is_some() && depth < cfg.max_frames {
             self.grow(input, target, depth + 1, rng);
+        }
+    }
+
+    /// Synapse-level credit (see `GrowthConfig::generalize`): near-matching kernels
+    /// whose prediction the target confirms keep only the connections that were
+    /// active, so inputs that didn't matter stop being required.
+    fn generalize_near_misses(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig) {
+        let Some(st) = self.predictive.as_mut() else { return };
+        let near = std::mem::take(&mut st.last_near);
+        let min_bits = cfg.sample_bits.max(2);
+        for k in near {
+            if !predicts(&self.active_kernels[k], target) {
+                continue;
+            }
+            let old = set_bits(&self.active_kernels[k].input_mask);
+            let kept: Vec<usize> = old.iter().copied().filter(|&b| input.bit_get(b)).collect();
+            if kept.len() < min_bits {
+                continue;
+            }
+            for &b in old.iter().filter(|&&b| !input.bit_get(b)) {
+                self.active_kernels[k].input_mask.bit_clear(b);
+                st.index[b].retain(|&x| x as usize != k);
+            }
+            let tolerance = (cfg.sample_bits as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+            let kern = &mut self.active_kernels[k];
+            kern.threshold = kept.len().saturating_sub(tolerance).max(1);
+            kern.stats.hits += 1;
+            kern.stats.last_useful = self.tick;
         }
     }
 
@@ -698,5 +742,24 @@ mod tests {
         step(&mut kc, &a, &c); // miss
         assert_eq!(kc.credited_inputs(64).count_ones(), 0);
         assert_eq!(kc.blamed_inputs(64).as_words()[0], 0xFF);
+    }
+
+    #[test]
+    fn near_miss_that_would_be_right_drops_irrelevant_connections() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, generalize: Some(0.5), ..GrowthConfig::default() };
+        let b = BitVector::from_words(vec![0xFF00]);
+        // frame 0 = cue A (relevant), frame 1 = a filler that varies (irrelevant)
+        let mut kc2 = KernelClass::predictive(cfg);
+        let mut rng = rand::thread_rng();
+        kc2.grow(&frames(&[0xFF, 0x0F]), &b, 2, &mut rng); // A + filler1 -> B
+        let a_f2 = frames(&[0xFF, 0xF0]); // A + filler2: only frame 0 matches
+        let mut out = BitVector::new(64, Some(0));
+        kc2.process(&a_f2, &mut out, 0, 0);
+        assert_eq!(out.count_ones(), 0); // too specific: no match
+        kc2.feedback(&a_f2, &b, &mut rng); // but it would have been right -> generalize
+        assert_eq!(kc2.kernels()[0].input_mask.as_words(), &[0xFF, 0]);
+        out.bit_clear_all();
+        kc2.process(&frames(&[0xFF, 0xF000]), &mut out, 0, 0); // any filler now
+        assert_eq!(out.as_words()[0], 0xFF00);
     }
 }

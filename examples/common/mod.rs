@@ -89,6 +89,7 @@ impl Predictor {
             sample_bits: 16,
             match_fraction: 0.8,
             surprise_fraction: 0.5,
+            generalize: None,
         }));
         net.edges[0].group = group;
         let out = net.nodes.len() - 1;

@@ -137,6 +137,7 @@ impl Lexicon {
             sample_bits: 16,
             match_fraction: 0.8,
             surprise_fraction: 0.5,
+            generalize: None,
         });
         let positions: Vec<usize> = (0..CHAR_BITS).collect();
         let boundary =

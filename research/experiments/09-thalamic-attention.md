@@ -88,10 +88,44 @@ above. The oracle and no-relay rows were unaffected (100% / 0% either way).
    than plain learning in the confounded version. They have not been re-run on the
    fixed task.
 
-FAILURE_ANALYSIS
+### Why runs fail (final channels of every hindsight-proposal run)
+
+| Facts | Run | Held-out | Seen | Final channels |
+|---|---|---|---|---|
+| 1–2 | 0 | 100% | 100% | (2,2) (0,5) (2,1) **(1,4)** |
+| 1–2 | 1 | 100% | 100% | (1,5) **(1,4)** (1,6) (2,1) |
+| 1–2 | 2 | **0%** | 100% | (2,6) (1,5) (0,5) **(1,4)** |
+| 1–2 | 3 | 100% | 100% | (2,2) (0,2) **(1,4)** (2,1) |
+| 1–2 | 4 | **0%** | 20% | (2,2) (1,2) (0,5) (2,1) |
+| 1–3 | 0 | 100% | 100% | (2,2) (1,2) **(1,4)** (0,1) |
+| 1–3 | 1 | 100% | 100% | (1,5) **(1,4)** (1,6) (2,1) |
+| 1–3 | 2 | **0%** | 100% | (2,6) (1,5) (0,5) **(1,4)** |
+| 1–3 | 3 | **0%** | 19% | (2,2) (0,2) (1,2) (0,1) |
+| 1–3 | 4 | 100% | 100% | (2,3) (0,3) **(1,4)** (2,1) |
+
+Two distinct failure modes:
+1. **Route found but used non-generally** (run 2). (1,4) is present and seen pairs are
+   perfect, but held-out pairs fail. The answer kernels combine the relayed place with
+   bits that also identify the name (most likely the previous word, which is the name
+   just before `?`). So the predictor still memorizes pairs, now *with* the relay as
+   one ingredient. This is the overspecific-kernel problem from
+   [08](08-credit-assignment.md) again: synapse-level credit is the missing piece.
+2. **Route never found** (1–2 run 4, 1–3 run 3). No (1,4) at the end; seen pairs at chance.
+   Votes go to routes that are right by coincidence often enough to keep them, or the
+   route was found and then lost.
+
+Each failure mode has its own fix: (1) needs kernels that drop the inputs they don't
+need (e.g. the `generalize` rule, or proposals that also tell growth *which frame*
+carried the answer); (2) needs proposals weighted by how *consistently* a route
+carries the surprising word, not just how often.
 
 ## Next
 - ~~Propose routes from surprise~~: done (hindsight proposals).
+- Route-aware growth: when a channel's relay matched the surprising target, grow the
+  new kernel from that channel's frame (plus the current word) only, so the answer
+  kernel can't also depend on the name.
+- Consistency-weighted votes: score routes by hits / (hits + misses) when they relay
+  something on surprise ticks, so routes that are right by coincidence lose.
 - Soft relays: let several matches contribute (summed codes), closer to softmax attention.
 - Use the relay on real text ([03](03-book-scale-char-prediction.md),
   [05](05-syntax.md)): induction channels should help wherever text repeats itself.

@@ -60,9 +60,9 @@ baseline was re-run as well (below). See [bugs and fixes](../bugs-and-fixes.md).
 | Routing | Original, 1–2 facts | Original, 1–3 facts | Long, 1–2 facts | Long, 1–3 facts |
 |---|---|---|---|---|
 | hand-set routes (oracle) | 100% | 100% | 100% | 100% |
-| 4 channel slots + open discovery | 75.0% (100/49/90/100/36) | SLOTS_SHORT_3 | 44.5% (32/55/59/44/33) | SLOTS_LONG_3 |
-| pool + **context** gate (table) | **100%** (all runs) | CTX_SHORT_3 | 54.4% (49–58) | CTX_LONG_3 |
-| pool + **context + value** gate (table) | 31.5% (16–52) | VAL_SHORT_3 | **100%** (all runs) | VAL_LONG_3 |
+| 4 channel slots + open discovery | 75.0% (100/49/90/100/36) | 70.2% (100/56/92/100/2) | 44.5% (32/55/59/44/33) | 44.4% (27–60) |
+| pool + **context** gate (table) | **100%** (all runs) | **100%** (all runs) | 54.4% (49–58) | 54.8% (52–59) |
+| pool + **context + value** gate (table) | 31.5% (16–52) | 47.1% (34–52) | **100%** (all runs) | **100%** (all runs) |
 | pool + **kernel gate** | KERNEL_SHORT_2 | KERNEL_SHORT_3 | KERNEL_LONG_2 | KERNEL_LONG_3 |
 
 ## Findings

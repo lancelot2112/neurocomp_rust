@@ -271,7 +271,7 @@ The three bugs, all in how a predictive class picks and prunes kernels:
 3. **Pruning before credit.** Copy bits must be tagged when the kernel is born (it is
    grown to predict this target), not only after a hit.
 
-Settings: `GENERALIZE=0.5 GENERALIZE_AFTER=1 STICKY=4 TRUST_AT_TEST=0.5`. Three-seed results: FULL_FIX_RESULTS
+Settings: `GENERALIZE=0.5 GENERALIZE_AFTER=1 STICKY=4 TRUST_AT_TEST=0.5`. Three-seed results (varied stories, held-out): list memory **100% / 100%** (1–2 / 1–3 facts, every seed; was 98.7% / 98.7%); CA3 FULL_FIX_CA3
 
 11. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.

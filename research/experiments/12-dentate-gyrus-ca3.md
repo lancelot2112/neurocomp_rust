@@ -74,5 +74,29 @@ What each step showed:
    than the last few facts per name would need decay tied to novelty or interference
    (the CA1 comparator of [14](14-ca1-comparator.md) is a step towards that).
 
+## In bits
+The store above used an f32 weight per synapse with exponential decay. It now uses
+bit-sliced counters ([probability in bits](../concepts/probability-in-bits.md)):
+- **Weights:** each pathway (EC→CA3, CA3→CA3, CA3→EC) has one row per source cell, a
+  7-plane `SlicedCounter` (values 0–127) over its targets, allocated on first write.
+- **Storing** adds an integer amount to the row's counters under the target mask
+  (ripple XOR/AND from the planes of the amount's set bits).
+- **Decay** is a plane shift every `half_life` stores (decay 0.7 → every 2 stores,
+  ≈ 0.707 per store), applied lazily by skipping shifted-out planes when a row is read.
+- **Recency between halvings:** the n-th store in a period adds 16 · 2^(n/half_life)
+  (16 or 23 for half_life 2), so newer episodes outweigh older ones as with continuous
+  decay. Without this, a unit test failed: same-period episodes tied.
+- **Recall:** drive onto each target = Σ over active sources and planes of 2^p for each set
+  bit; the same k-winner-take-all, settling and readout fraction as before.
+
+| Memory (varied stories, 3 seeds, held-out) | 1–2 facts, floats | 1–2 facts, **bits** | 1–3 facts, floats | 1–3 facts, **bits** |
+|---|---|---|---|---|
+| list memory | 99.0% | BITS_LIST_2 | 97.5% | BITS_LIST_3 |
+| CA3 1,024 / 64, settle 2 | 97.7% | BITS_LOW_2 | 93.5% | BITS_LOW_3 |
+| CA3 16,384 / 32, settle 2 | 99.1% | BITS_HIGH_2 | 96.1% | BITS_HIGH_3 |
+| CA3 16,384 / 32, no settling | 99.0% | BITS_NOSETTLE_2 | 99.3% | BITS_NOSETTLE_3 |
+
+BITS_FINDING
+
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and
 [13](13-big-loop.md) for chaining recalls.

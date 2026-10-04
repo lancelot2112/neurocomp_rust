@@ -16,12 +16,12 @@ where each kind lives and how probabilities and weights can be held in bits inst
 | Habituation statistics | per-bit episode counts (u32) | counts |
 | Route scores, `RouteGate` precision | counts → float ratio | counts are |
 | CA1 comparator ([14](../experiments/14-ca1-comparator.md)) | overlap/popcount (a ratio of popcounts) × kernel reliability | ratio of counts |
-| CA3 weights ([12](../experiments/12-dentate-gyrus-ca3.md)) | f32 per synapse, exponential decay | **no** |
-| Basal-ganglia "go" weights ([15](../experiments/15-basal-ganglia-selector.md)) | f32 per bit, eligibility trace f32 | **no** |
+| CA3 weights ([12](../experiments/12-dentate-gyrus-ca3.md#in-bits)) | ~~f32 per synapse~~ → 7-plane bit-sliced counter rows, lazy plane-shift decay | **yes** (integer) |
+| Basal-ganglia "go" weights ([15](../experiments/15-basal-ganglia-selector.md)) | ~~f32 per bit~~ → 4-plane bit-sliced counters, bit-mask eligibility, stochastic ±1 steps | **yes** (RPE still a float ratio) |
 
 Most "probabilities" here are already **ratios of counts**, which compare without
 floats by cross-multiplying (p ≥ ½ ⇔ 2·hits ≥ hits + misses). The genuine drift is in the
-CA3 weights and the basal-ganglia weights.
+CA3 weights and the basal-ganglia weights; both have now been converted (below).
 
 ## Ways to hold probability in bits
 1. **Counts and ratios of popcounts.** A probability is hits / trials, and the share of a
@@ -46,7 +46,31 @@ CA3 weights and the basal-ganglia weights.
    The learning rate becomes a flip probability, and the expected weight is a
    probability held across many bits.
 
-## Mapping to the drifted parts
+## Done: `SlicedCounter`
+[`src/bitvec/bitcounter.rs`](../../src/bitvec/bitcounter.rs) holds one saturating counter
+per bit position as `planes` bit vectors. Operations, all word-wide:
+- `increment` / `decrement` under a mask: ripple of XOR/AND (half adders / subtractors),
+  then saturate (OR / AND-NOT with the final carry or borrow).
+- `add_power(mask, p)`: add 2^p (start the ripple at plane p); any amount is a few of these.
+- `halve` / `shift_down(s)`: drop the lowest plane(s), i.e. floor(v / 2^s): decay.
+- `sum(pattern)`: Σ_p 2^p · popcount(pattern ∧ plane_p).
+
+**Basal ganglia** ([15](../experiments/15-basal-ganglia-selector.md)): go values in 4 planes;
+candidates compared by cross-multiplying integer sums; the eligibility trace is the
+chosen item's bit mask; each eligible counter steps ±1 with probability
+1.5 × |reward − value|. Result: 89.1% vs 84.5% for floats (5 seeds), and steadier.
+
+**CA3** ([12](../experiments/12-dentate-gyrus-ca3.md#in-bits)): see that page. Two details
+that generalize:
+- **Lazy decay.** Each row stores the epoch it was last normalized; a read skips the
+  planes that would have been shifted out (floor(v/2^s) = Σ_{p≥s} bit_p · 2^(p−s)), so
+  decay costs nothing until a row is touched.
+- **Recency within a halving period.** Halving only every few stores makes episodes
+  stored in the same period equal, which broke "most recent wins" (a unit test caught
+  it). Fix: the n-th store in a period adds 16 · 2^(n/half_life), i.e. growth instead
+  of decay between halvings, which is the same ordering as continuous exponential decay.
+
+## Mapping to the drifted parts (original plan)
 - **Basal ganglia:** go weights → a 4-plane bit-sliced counter per input bit (16 levels);
   the eligibility trace → a bit mask (chosen item's bits) or a short shift register of
   masks; dopamine → increment or decrement the counters under the mask, applied with

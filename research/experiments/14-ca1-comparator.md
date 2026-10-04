@@ -22,7 +22,7 @@ predictor failures.
 | frequency habituation ([11](11-episodic-memory.md)) | rarest | 98.1% | 98.5% | – |
 | bitwise mismatch (`code AND NOT prediction`) | all surprising | ~7% (short) | – | – |
 | word-level: share of prediction < 0.5 | rarest stored | 63.8% | 38.4% | 74.6% |
-| **word-level × kernel reliability < 0.5** | rarest stored | **93.2%** | CA1_PROB_3 | 93.4% |
+| **word-level × kernel reliability < 0.5** | rarest stored | **93.2%** | **86.6%** (answer in recall 98.3%) | 93.4% |
 
 ## What each step showed
 1. **Bitwise mismatch fails because predictions superimpose classes.** Early on, the

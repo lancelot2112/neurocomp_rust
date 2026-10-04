@@ -28,7 +28,7 @@ See [basal ganglia and cerebellum](../concepts/basal-ganglia-and-cerebellum.md).
 | Loop(2): follow the rarest item ([13](13-big-loop.md)) | 5.5% (5 seeds) | – |
 | Branch(3): 3 branches, predictor chooses ([13](13-big-loop.md)) | 80.8% (5 seeds) | – |
 | **Select: basal-ganglia selector** | **90.4%** (1 seed); SELECT_5 (5 seeds) | 90.2% |
-| Select with the CA1 comparator ([14](14-ca1-comparator.md)) | SELECT_CA1 | SELECT_CA1_RECALL |
+| Select with the CA1 comparator ([14](14-ca1-comparator.md)) | 23.6% (1 seed) | 55.0% |
 
 ## Findings
 1. **Learned values separate entities from verbs.** After training, names have values
@@ -40,5 +40,9 @@ See [basal ganglia and cerebellum](../concepts/basal-ganglia-and-cerebellum.md).
 3. **Remaining error is in hop 2, not in the choice.** Following the right name recalls that
    person's most recent episode, which is sometimes another pick-up rather than their
    last move. Choosing among *episodes* (not just items) would be the next level.
-4. The reward is immediate (next word). Delayed choices (holding an item across words)
+4. **The selector does not rescue the CA1 comparator** (23.6%, vs 25.8% for Branch(3)
+   with it). Under prediction-error storage the answer reaches the recalled frames only
+   55% of the time, so the failure is upstream of the choice: what is stored and what
+   cues hop 1, not which item hop 2 follows.
+5. The reward is immediate (next word). Delayed choices (holding an item across words)
    need the eligibility trace (`BG_TRACE`), not yet tested.

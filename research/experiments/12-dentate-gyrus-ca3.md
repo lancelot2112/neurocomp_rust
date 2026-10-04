@@ -93,7 +93,7 @@ bit-sliced counters ([probability in bits](../concepts/probability-in-bits.md)):
 |---|---|---|---|---|
 | list memory | 99.0% | 98.7% (same code; rerun) | 97.5% | BITS_LIST_3 |
 | CA3 1,024 / 64, settle 2 | 97.7% | 97.1% | 93.5% | BITS_LOW_3 |
-| CA3 16,384 / 32, settle 2 | 99.1% | BITS_HIGH_2 | 96.1% | BITS_HIGH_3 |
+| CA3 16,384 / 32, settle 2 | 99.1% | 99.4% | 96.1% | BITS_HIGH_3 |
 | CA3 16,384 / 32, no settling | 99.0% | BITS_NOSETTLE_2 | 99.3% | BITS_NOSETTLE_3 |
 
 Same-seed check (short stories, seed 0, CA3 16,384 / 32, settle 2), floats vs bits:

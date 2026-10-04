@@ -592,33 +592,6 @@ impl KernelClass<SimpleKernel> {
                     }
                 }
             }
-            // A frame may be dropped entirely (it was irrelevant) or keep more bits than
-            // the match tolerance, never something in between: a frame left with
-            // 1..=tolerance bits could be absent and the kernel still fire, turning a
-            // context-reading kernel into a guesser.
-            let tolerance = (cfg.sample_bits as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
-            let frame_bits = cfg.frame_words * 64;
-            let mut kept: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new(); // frame -> (bits, dropped)
-            for &b in &old {
-                kept.entry(b / frame_bits).or_default().0 += 1;
-            }
-            for &b in &drop {
-                kept.get_mut(&(b / frame_bits)).unwrap().1 += 1;
-            }
-            let mut restore: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
-            for (&f, &(n, d)) in &kept {
-                let left = n - d;
-                if left > 0 && left <= tolerance {
-                    restore.insert(f, (tolerance + 1).min(n) - left);
-                }
-            }
-            drop.retain(|&b| match restore.get_mut(&(b / frame_bits)) {
-                Some(r) if *r > 0 => {
-                    *r -= 1;
-                    false
-                }
-                _ => true,
-            });
             if drop.is_empty() || old.len() - drop.len() < min_bits {
                 continue;
             }
@@ -627,7 +600,18 @@ impl KernelClass<SimpleKernel> {
                 st.index[b].retain(|&x| x as usize != k);
                 counts.remove(&b);
             }
-            let tolerance = (cfg.sample_bits as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+            // The match tolerance scales with the kernel's smallest remaining frame, so a
+            // frame pruned to a few bits must still be (almost) fully present: otherwise
+            // the kernel could fire with that frame absent and turn into a guesser.
+            let frame_bits = cfg.frame_words * 64;
+            let mut per_frame: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for &b in &old {
+                if !drop.contains(&b) {
+                    *per_frame.entry(b / frame_bits).or_default() += 1;
+                }
+            }
+            let smallest = per_frame.values().copied().min().unwrap_or(cfg.sample_bits).min(cfg.sample_bits);
+            let tolerance = (smallest as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
             let kern = &mut self.active_kernels[k];
             kern.threshold = (old.len() - drop.len()).saturating_sub(tolerance).max(1);
             kern.stats.hits += 1;

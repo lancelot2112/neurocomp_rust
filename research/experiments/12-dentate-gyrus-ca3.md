@@ -102,21 +102,14 @@ Same-seed check (short stories, seed 0, CA3 16,384 / 32, settle 2), floats vs bi
 low 1–2-fact score is the predictor under-using a correct recall, in both versions
 (as with one seed of the list memory in [11](11-episodic-memory.md)).
 
-**Findings, in bits:**
+**Findings, in bits** (corrected; see the seed-1 diagnostic below):
 1. **With 1–2 facts, bits match floats** in every configuration (97.1–99.4% vs
    97.7–99.1%).
-2. **With 1–3 facts, the memory still finds the answer** (answer in recall 99.1–99.9%),
-   but held-out accuracy drops to 89–91% (floats: 93.5–99.3%). The drop is one seed:
-   seed 1 scores 78–79% in *all three* CA3 bit configurations, where floats scored 99–100%.
-   So it is systematic, not noise.
-3. Likely cause: **less clean readouts.** "Answer in recall" checks that the answer is
-   present, not that it is alone. Coarse integer weights (16–23 per write, halved every 2
-   stores, floored) make older episodes' weights equal sooner, so more of them pass the
-   50%-of-best readout and extra places reach the predictor, which then leans on trained
-   pairs. Next: measure how many places each recall contains, and give the counters more
-   resolution (more planes, larger writes) or a sharper readout after removing the cue.
-4. The separation and settling effects seen with floats are not visible here; the seed-1
-   drop dominates.
+2. **With 1–3 facts, every bit version loses one seed** (seed 1 at 78–79%) while the
+   floats column above had 99–100% on it. That comparison was **across builds**: the
+   float column came from an earlier build of the example (the list memory, which does
+   not use CA3, also moved, 97.5% → 98.7%). Run in the *same* build, the float store
+   does no better on seed 1 (74.6%; below). The conversion to bits did not cause the drop.
 
 ## Decay as a shift: delay line and shift register
 The counter store above halves every 2 stores and floors, so older episodes' weights
@@ -141,7 +134,33 @@ predictor at the answer (1.00 = clean).
 | 1–3 facts, settle 2 | 89.1% (1.00; 92/79/96) | 92.7% (1.00; 94/84/100) | 92.1% (1.00; 97/79/100) |
 | 1–3 facts, no settling | CNT_NS_3 | 90.0% (1.00; 90/81/99) | 90.3% (1.00; 98/75/98) |
 
-SHIFT_FINDINGS
+**Seed-1 diagnostic** (same build, varied stories, 1–3 facts, CA3 16,384 / 32, settle 2;
+`DIAG=1 SEED_START=1 SEEDS=1 CA3_STORE=float|ring|…`). For held-out questions, what the
+predictor received, split by right and wrong answers:
+
+| Store | Held-out | Seen pairs | Wrong: answer bits / recall bits / whole words | Right: answer bits / recall bits / whole words |
+|---|---|---|---|---|
+| float (`Ca3FloatMemory`) | 74.6% | 75.2% | 30.6/32, 149, 5.02 | 30.2/32, 138, 4.57 |
+| counters | 79.4% | 76.6% | 30.9/32, 144, 4.84 | 30.2/32, 133, 4.41 |
+| delay line | 84.0% | 80.6% | 30.1/32, 139, 4.70 | 30.4/32, 136, 4.49 |
+
+**Findings:**
+1. **The bit stores are as good as the float store**, here slightly better. Counters,
+   delay line and shift register all recall exactly one place, with the answer present
+   99.8–100% of the time, on every row of the table above.
+2. **Partial place codes are not the cause.** Wrong answers received ~30.5 of the answer's
+   32 bits, the same as right answers, in recalls of the same size and word count.
+3. **The failure is the predictor's, and it is learned.** Seed-1 predictors are wrong
+   on a clean, complete recall, and they are equally bad on *seen* pairs (75–81%). This
+   is how training went on that seed (which kernels grew, and which input frames they
+   key on), not what memory delivers at test. Next: look at what the seed-1 predictor's
+   winning kernels read at the answer (memory frame vs the cue word), e.g. with credit
+   readouts.
+4. **Decay as a pure shift works.** The bit-native shift register (0.5 decay per store,
+   writes as OR, decay as advancing a ring) performs like the 0.7 versions: 97.2/98.1%
+   (1–2 facts) and 92.1/90.3% (1–3 facts).
+5. Method lesson: compare variants **in the same build and run**. Numbers from different
+   builds of an example are not comparable, even with the same seed.
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and
 [13](13-big-loop.md) for chaining recalls.

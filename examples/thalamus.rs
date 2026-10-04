@@ -29,7 +29,9 @@
 //! Instead of checking a fixed menu, the thalamus searches its history for
 //! earlier occurrences of the surprising word and proposes every (q, v) for which
 //! a word in the current context (up to 8 back) matched a word shortly (up to 12)
-//! before it.
+//! before it. Candidates are ranked by consistency (`RouteScores`: of the
+//! surprises where a route relayed something, how often was it the right word),
+//! not by raw vote counts.
 //!
 //! TASK=long uses stories that need routes outside the old 18-route menu
 //! (q <= 2, v <= 6): facts are "X went to the P ." (place 4 after the name) or
@@ -43,7 +45,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{RelayChannel, Thalamus};
+use neurocomp::program::{RelayChannel, RouteScores, Thalamus};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -156,6 +158,7 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
     let mut credit = vec![0f64; n_ch];
     let mut age = vec![0usize; n_ch]; // reviews since a channel was re-pointed
     let mut votes: HashMap<(usize, usize), f64> = HashMap::new(); // hindsight route votes
+    let mut route_scores = RouteScores::default(); // open discovery: consistency per route
     let all_routes: Vec<RelayChannel> = (0..=2)
         .flat_map(|q| (1..=6).map(move |v| RelayChannel { query_lag: q, value_offset: v }))
         .collect();
@@ -208,15 +211,13 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
                     policy,
                     Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed | Policy::LearnedOpen
                 );
-                if !right && matches!(policy, Policy::LearnedProposed | Policy::LearnedOpen) {
-                    let routes = if policy == Policy::LearnedOpen {
-                        th.discover_routes(&enc.codes[next], OPEN_MAX_Q, OPEN_MAX_V)
-                    } else {
-                        th.routes_that_would_relay(&enc.codes[next], &all_routes)
-                    };
-                    for r in routes {
+                if !right && policy == Policy::LearnedProposed {
+                    for r in th.routes_that_would_relay(&enc.codes[next], &all_routes) {
                         *votes.entry((r.query_lag, r.value_offset)).or_default() += 1.0;
                     }
+                }
+                if !right && policy == Policy::LearnedOpen {
+                    route_scores.observe_surprise(&th, &enc.codes[next], OPEN_MAX_Q, OPEN_MAX_V);
                 }
                 if policy == Policy::LearnedGuided {
                     // frame 0 (current word) + one relaying channel picked by credit;
@@ -275,7 +276,9 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
             let grace = if policy == Policy::LearnedPatient { 3 } else { 0 };
             let worst = (0..n_ch).filter(|&c| age[c] >= grace).min_by(|&a, &b| credit[a].partial_cmp(&credit[b]).unwrap());
             if let Some(worst) = worst {
-                let proposal = if matches!(policy, Policy::LearnedProposed | Policy::LearnedOpen) {
+                let proposal = if policy == Policy::LearnedOpen {
+                    route_scores.best_unused(&th.channels, 2.0)
+                } else if policy == Policy::LearnedProposed {
                     votes
                         .iter()
                         .filter(|((q, v), _)| !th.channels.iter().any(|c| c.query_lag == *q && c.value_offset == *v))
@@ -296,6 +299,7 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
             for v in votes.values_mut() {
                 *v *= 0.5;
             }
+            route_scores.decay(0.9);
             for c in credit.iter_mut() {
                 *c *= 0.5;
             }
@@ -323,6 +327,7 @@ fn main() {
             Ok("patient") => vec![Policy::Learned, Policy::LearnedPatient],
             Ok("proposed") => vec![Policy::Learned, Policy::LearnedProposed],
             Ok("proposed_only") => vec![Policy::LearnedProposed],
+            Ok("oracle") => vec![Policy::Oracle],
             Ok("open") => vec![Policy::NoThalamus, Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
             _ => vec![

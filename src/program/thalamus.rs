@@ -15,9 +15,11 @@
 //! channels standing in for reticular-nucleus gating. Which channels are worth
 //! keeping is left to the caller (e.g. ablation credit, see research/experiments/08).
 
+use std::collections::HashMap;
+
 use crate::bitvec::BitVector;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RelayChannel {
     pub query_lag: usize,
     pub value_offset: usize,
@@ -138,6 +140,67 @@ impl Thalamus {
     }
 }
 
+/// Consistency scores for candidate routes, for learning routes from surprises.
+///
+/// Raw "would have relayed it" votes favour routes that are right by coincidence
+/// often (e.g. "the word after the last *the*" is some place 1 time in 6). Here
+/// every candidate discovered so far is re-checked on each surprise: `tries`
+/// counts surprises where it relayed something, `hits` those where it relayed the
+/// right thing. Routes are ranked by smoothed precision `hits / (tries + 2)`.
+#[derive(Default)]
+pub struct RouteScores {
+    stats: HashMap<RelayChannel, (f64, f64)>, // (hits, tries)
+}
+
+impl RouteScores {
+    /// Record a surprise by `target` (before observing it): discover new
+    /// candidates, then score every known candidate on this event.
+    pub fn observe_surprise(&mut self, th: &Thalamus, target: &BitVector, max_query_lag: usize, max_value_offset: usize) {
+        for r in th.discover_routes(target, max_query_lag, max_value_offset) {
+            self.stats.entry(r).or_insert((0.0, 0.0));
+        }
+        let need = (target.count_ones() as f32 * th.match_fraction).ceil() as u32;
+        for (r, (hits, tries)) in self.stats.iter_mut() {
+            if let Some(v) = th.relay_channel(*r) {
+                *tries += 1.0;
+                if overlap(v, target) >= need {
+                    *hits += 1.0;
+                }
+            }
+        }
+    }
+
+    /// Smoothed precision of a route (0 if never seen).
+    pub fn precision(&self, r: RelayChannel) -> f64 {
+        self.stats.get(&r).map_or(0.0, |&(h, t)| h / (t + 2.0))
+    }
+
+    /// The most consistent route not in `exclude`, with at least `min_hits` hits.
+    pub fn best_unused(&self, exclude: &[RelayChannel], min_hits: f64) -> Option<RelayChannel> {
+        self.stats
+            .iter()
+            .filter(|(r, (h, _))| *h >= min_hits && !exclude.contains(r))
+            .max_by(|a, b| {
+                let pa = a.1 .0 / (a.1 .1 + 2.0);
+                let pb = b.1 .0 / (b.1 .1 + 2.0);
+                pa.partial_cmp(&pb).unwrap().then(b.0.query_lag.cmp(&a.0.query_lag)).then(b.0.value_offset.cmp(&a.0.value_offset))
+            })
+            .map(|(r, _)| *r)
+    }
+
+    /// Multiply all counts by `factor` (forget slowly).
+    pub fn decay(&mut self, factor: f64) {
+        for (h, t) in self.stats.values_mut() {
+            *h *= factor;
+            *t *= factor;
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.stats.len()
+    }
+}
+
 fn overlap(a: &BitVector, b: &BitVector) -> u32 {
     a.as_words().iter().zip(b.as_words()).map(|(x, y)| (x & y).count_ones()).sum()
 }
@@ -217,5 +280,26 @@ mod tests {
         for r in &routes {
             assert_eq!(th.relay_channel(*r).unwrap().as_words(), sym(9).as_words());
         }
+    }
+
+    #[test]
+    fn consistent_route_beats_coincidental_one() {
+        // Two episodes "a b c X" ... then a surprise by the word after the query.
+        // Route (0,1) "what followed the last copy of the current word" is right
+        // both times; we check that precision ranks it first.
+        let mut th = Thalamus::new(64, 40, vec![]);
+        let mut scores = RouteScores::default();
+        for s in [1, 5, 2, 6, 1] {
+            th.observe(&sym(s));
+        }
+        scores.observe_surprise(&th, &sym(5), 4, 4); // after "1" came 5 before
+        th.observe(&sym(5));
+        for s in [3, 7, 1] {
+            th.observe(&sym(s));
+        }
+        scores.observe_surprise(&th, &sym(5), 4, 4);
+        let best = scores.best_unused(&[], 1.0).unwrap();
+        assert_eq!(best, RelayChannel { query_lag: 0, value_offset: 1 });
+        assert!(scores.precision(best) > 0.4);
     }
 }

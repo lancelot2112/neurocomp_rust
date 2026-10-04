@@ -27,14 +27,15 @@ See [basal ganglia and cerebellum](../concepts/basal-ganglia-and-cerebellum.md).
 |---|---|---|
 | Loop(2): follow the rarest item ([13](13-big-loop.md)) | 5.5% (5 seeds) | – |
 | Branch(3): 3 branches, predictor chooses ([13](13-big-loop.md)) | 80.8% (5 seeds) | – |
-| **Select: basal-ganglia selector** | **90.4%** (1 seed); SELECT_5 (5 seeds) | 90.2% |
+| **Select: basal-ganglia selector** | **84.5%** (5 seeds: 90/84/90/84/74) | 84.1% |
 | Select with the CA1 comparator ([14](14-ca1-comparator.md)) | 23.6% (1 seed) | 55.0% |
 
 ## Findings
 1. **Learned values separate entities from verbs.** After training, names have values
    0.08–0.16 and "picked up" 0.00: following a name is what tends to recall the next
    word. Nothing told it what a name is; reward did.
-2. **One learned choice beats several unlearned branches** (90% vs 81%): the predictor
+2. **One learned choice beats several unlearned branches** (84.5% vs 80.8% over 5 seeds,
+   though seeds vary from 74% to 90%): the predictor
    gets one clean frame instead of three to sort out. This is the basal-ganglia
    division of labour: select, then let cortex use the selection.
 3. **Remaining error is in hop 2, not in the choice.** Following the right name recalls that

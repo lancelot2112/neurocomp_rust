@@ -23,6 +23,15 @@
 //!   running baseline; periodically re-point the unit with the lowest utility at
 //!   a random unwatched symbol. Unlike "credit", a unit that is merely present
 //!   whenever things go right earns nothing unless things go *better* than usual.
+//! - ablation: counterfactual credit. After each prediction, re-predict with one
+//!   active unit's bits removed (`KernelClass::peek`, no state change). +1 if
+//!   the right answer becomes wrong without the unit, -1 if a wrong answer
+//!   becomes right; re-point the lowest-scoring unit at a random unwatched symbol.
+//!
+//! Credit-guided growth (`KernelClass::set_growth_mask`): optionally, a newly
+//! grown kernel may sample hidden bits from only ONE active unit, chosen with
+//! odds credit + 1, instead of from every active unit. Kernels then depend on a
+//! single unit, so ablating an incidental unit no longer flips them.
 //!
 //! Crossed with synapse-level credit inside the predictor (`GrowthConfig::generalize`):
 //! a kernel that nearly matched and would have been right drops its silent
@@ -50,10 +59,12 @@ const UNIT_BITS: usize = 32;
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Policy {
     Oracle, // units watch exactly the cues (upper bound on what memory can give)
+    Partial(usize), // diagnostic: units fixed to this many cues, the rest fillers
     FixedRandom,
     Activity,
     Credit,
     ThreeFactor,
+    Ablation,
 }
 
 struct Memory {
@@ -62,6 +73,7 @@ struct Memory {
     out_bits: Vec<Vec<usize>>, // hidden-frame bits each unit drives
     activity: Vec<f64>,
     credit: Vec<f64>,
+    age: Vec<usize>, // reviews since the unit was last re-pointed
 }
 
 impl Memory {
@@ -76,6 +88,7 @@ impl Memory {
             out_bits: (0..k).map(|u| positions[u * UNIT_BITS..(u + 1) * UNIT_BITS].to_vec()).collect(),
             activity: vec![0.0; k],
             credit: vec![0.0; k],
+            age: vec![0; k],
         }
     }
 
@@ -100,6 +113,7 @@ impl Memory {
         self.on_until[u] = 0;
         self.activity[u] = 0.0;
         self.credit[u] = 0.0;
+        self.age[u] = 0;
     }
 
     fn unwatched(&self) -> Vec<usize> {
@@ -119,13 +133,18 @@ fn episode(rng: &mut StdRng) -> (Vec<usize>, usize) {
     (seq, answer_at)
 }
 
-fn run(policy: Policy, k: usize, generalize: Option<f32>, episodes: usize, seed: u64) -> (f64, Vec<usize>) {
+fn run(policy: Policy, k: usize, generalize: Option<f32>, patient: bool, guided: bool, episodes: usize, seed: u64) -> (f64, Vec<usize>) {
     let mut rng = StdRng::seed_from_u64(seed);
     let enc = Encoder::new(N_SYMBOLS, BITS, 32, &mut rng);
     let mut mem = Memory::new(k, &mut rng);
     if policy == Policy::Oracle {
         for u in 0..k {
             mem.watch[u] = if u < CUES { u } else { QUERY };
+        }
+    }
+    if let Policy::Partial(n) = policy {
+        for u in 0..k {
+            mem.watch[u] = if u < n { u } else { CUES + u };
         }
     }
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
@@ -169,6 +188,45 @@ fn run(policy: Policy, k: usize, generalize: Option<f32>, episodes: usize, seed:
                 total += 1;
                 hits += (enc.decode(&out) == Some(next)) as usize;
             }
+            if guided {
+                // Credit-guided growth: a new kernel may use the two symbol frames
+                // plus the bits of ONE active unit, picked with odds credit + 1.
+                let active: Vec<usize> = (0..k).filter(|&u| t < mem.on_until[u]).collect();
+                let mut mask = BitVector::new(3 * BITS, Some(0));
+                for b in 0..2 * BITS {
+                    mask.bit_set(b);
+                }
+                if !active.is_empty() {
+                    let weights: Vec<f64> = active.iter().map(|&u| mem.credit[u].max(0.0) + 1.0).collect();
+                    let mut r = rng.gen_range(0.0..weights.iter().sum::<f64>());
+                    let mut pick = active[0];
+                    for (&u, &w) in active.iter().zip(&weights) {
+                        if r < w {
+                            pick = u;
+                            break;
+                        }
+                        r -= w;
+                    }
+                    for &b in &mem.out_bits[pick] {
+                        mask.bit_set(2 * BITS + b);
+                    }
+                }
+                class.set_growth_mask(Some(mask));
+            }
+            if policy == Policy::Ablation {
+                let right = enc.decode(&out) == Some(next);
+                for u in 0..k {
+                    if t >= mem.on_until[u] {
+                        continue; // inactive units can't have mattered
+                    }
+                    let mut ablated = input.clone();
+                    for &b in &mem.out_bits[u] {
+                        ablated.bit_clear(2 * BITS + b);
+                    }
+                    let right_without = class.peek(&ablated).and_then(|o| enc.decode(o)) == Some(next);
+                    mem.credit[u] += (right && !right_without) as u8 as f64 - (!right && right_without) as u8 as f64;
+                }
+            }
             class.feedback(&input, &enc.codes[next], &mut rng);
 
             if policy == Policy::Credit {
@@ -188,7 +246,7 @@ fn run(policy: Policy, k: usize, generalize: Option<f32>, episodes: usize, seed:
         if e % REVIEW_EVERY == REVIEW_EVERY - 1 {
             let free = mem.unwatched();
             match policy {
-                Policy::FixedRandom | Policy::Oracle => {}
+                Policy::FixedRandom | Policy::Oracle | Policy::Partial(_) => {}
                 Policy::Activity => {
                     // least active unit -> most frequent unwatched symbol
                     let u = (0..k).min_by(|&a, &b| mem.activity[a].partial_cmp(&mem.activity[b]).unwrap()).unwrap();
@@ -197,13 +255,21 @@ fn run(policy: Policy, k: usize, generalize: Option<f32>, episodes: usize, seed:
                         mem.reassign(u, s);
                     }
                 }
-                Policy::Credit | Policy::ThreeFactor => {
-                    // least credited unit -> a random unwatched symbol (explore)
-                    let u = (0..k).min_by(|&a, &b| mem.credit[a].partial_cmp(&mem.credit[b]).unwrap()).unwrap();
-                    mem.reassign(u, *free.choose(&mut rng).unwrap());
+                Policy::Credit | Policy::ThreeFactor | Policy::Ablation => {
+                    // least credited unit -> a random unwatched symbol (explore).
+                    // Patient exploration: new units get 3 reviews to earn credit,
+                    // and a unit that has earned credit (>= 1) is never replaced.
+                    let candidates: Vec<usize> = (0..k).filter(|&u| !patient || mem.age[u] >= 3).collect();
+                    let worst = candidates.into_iter().min_by(|&a, &b| mem.credit[a].partial_cmp(&mem.credit[b]).unwrap());
+                    if let Some(u) = worst {
+                        if !patient || mem.credit[u] < 1.0 {
+                            mem.reassign(u, *free.choose(&mut rng).unwrap());
+                        }
+                    }
                 }
             }
             for u in 0..k {
+                mem.age[u] += 1;
                 mem.activity[u] *= 0.5;
                 mem.credit[u] *= 0.5;
             }
@@ -228,16 +294,31 @@ fn main() {
     println!("answer accuracy over the last 1000 of {episodes} episodes (chance 25% once '?' is recognized)");
     println!("predictor sees: current symbol, previous symbol, and K persistent memory units");
     println!();
-    for (k, generalize) in [(4usize, None), (4, Some(0.5f32)), (4, Some(0.3))] {
+    let all = [Policy::Oracle, Policy::FixedRandom, Policy::Activity, Policy::Credit, Policy::ThreeFactor, Policy::Ablation];
+    let credit_based = [Policy::Credit, Policy::ThreeFactor, Policy::Ablation];
+    let partial = [Policy::Partial(3), Policy::Partial(2), Policy::Partial(1)];
+    let guided_set = [Policy::FixedRandom, Policy::ThreeFactor, Policy::Ablation];
+    let configs: [(usize, Option<f32>, bool, bool, &[Policy]); 6] = [
+        (4, None, false, false, &all),
+        (4, Some(0.5), false, false, &all),
+        (4, None, true, false, &credit_based),
+        (4, None, false, false, &partial),
+        (4, None, false, true, &guided_set),
+        (4, None, true, true, &guided_set),
+    ];
+    let skip: usize = std::env::var("SKIP_CONFIGS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    for (k, generalize, patient, guided, policies) in configs.into_iter().skip(skip) {
         println!(
-            "K={k} memory units, synapse-level credit (generalize near misses): {}",
-            generalize.map_or("off".to_string(), |f| format!("on, near = matched >= {f} of connections"))
+            "K={k} memory units, synapse-level credit (generalize near misses): {}{}{}",
+            generalize.map_or("off".to_string(), |f| format!("on, near = matched >= {f} of connections")),
+            if patient { "; patient exploration (3-review grace, keep units with credit >= 1)" } else { "" },
+            if guided { "; credit-guided growth (one unit per new kernel)" } else { "" }
         );
-        for policy in [Policy::Oracle, Policy::FixedRandom, Policy::Activity, Policy::Credit, Policy::ThreeFactor] {
+        for &policy in policies {
             let mut accs = Vec::new();
             let mut example = Vec::new();
             for seed in 0..5 {
-                let (acc, watched) = run(policy, k, generalize, episodes, seed);
+                let (acc, watched) = run(policy, k, generalize, patient, guided, episodes, seed);
                 accs.push(acc);
                 if seed == 0 {
                     example = watched;
@@ -246,7 +327,7 @@ fn main() {
             let mean = accs.iter().sum::<f64>() / accs.len() as f64;
             println!(
                 "  {:<12} mean {mean:5.1}%  runs [{}]  e.g. units watch {{{}}}",
-                format!("{policy:?}"),
+                format!("{policy:?}").replace("Partial(", "Fixed ").replace(')', " cues"),
                 accs.iter().map(|a| format!("{a:.0}")).collect::<Vec<_>>().join(" "),
                 example.iter().map(|&s| name(s)).collect::<Vec<_>>().join(", ")
             );

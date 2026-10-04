@@ -113,6 +113,7 @@ struct PredictiveState {
     last_winner: Option<usize>,
     last_target_prob: f32,    // see `target_probability`
     last_near: Vec<usize>,    // kernels that nearly matched on the last step (see `generalize`)
+    growth_mask: Option<BitVector>, // if set, new kernels may only sample these input bits
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
 }
@@ -226,6 +227,7 @@ impl KernelClass<SimpleKernel> {
             last_winner: None,
             last_target_prob: 0.0,
             last_near: Vec::new(),
+            growth_mask: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
         });
@@ -327,6 +329,40 @@ impl KernelClass<SimpleKernel> {
         k.stats.fires += 1;
         st.last_winner = Some(w);
         1
+    }
+
+    /// What the class would predict for `input`, without changing any state
+    /// (no stats, no winner bookkeeping). Returns the winning kernel's output
+    /// pattern, or None if no kernel matches. Used for counterfactual
+    /// (ablation) credit: compare the prediction with and without some inputs.
+    pub fn peek(&self, input: &BitVector) -> Option<&BitVector> {
+        let st = self.predictive.as_ref()?;
+        let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for b in set_bits(input) {
+            if let Some(ks) = st.index.get(b) {
+                for &k in ks {
+                    *counts.entry(k).or_default() += 1;
+                }
+            }
+        }
+        counts
+            .into_iter()
+            .filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold)
+            .map(|(k, c)| {
+                let kern = &self.active_kernels[k as usize];
+                ((kern.context_frames, reliability(&kern.stats), c), k as usize)
+            })
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)))
+            .map(|(_, k)| &self.active_kernels[k].output_mask)
+    }
+
+    /// Restrict which input bits newly grown kernels may sample (None = all).
+    /// A caller can use it for credit-guided growth: e.g. let new kernels depend
+    /// on one memory unit at a time, chosen by that unit's credit.
+    pub fn set_growth_mask(&mut self, mask: Option<BitVector>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.growth_mask = mask;
+        }
     }
 
     /// Credit assignment readout: the input bits that matching kernels relied on
@@ -493,7 +529,8 @@ impl KernelClass<SimpleKernel> {
         for f in 0..depth {
             let first = f * cfg.frame_words * 64;
             let last = ((f + 1) * cfg.frame_words * 64).min(input.bit_len());
-            let active: Vec<usize> = (first..last).filter(|&b| input.bit_get(b)).collect();
+            let allowed = |b: usize| st.growth_mask.as_ref().map_or(true, |m| b < m.bit_len() && m.bit_get(b));
+            let active: Vec<usize> = (first..last).filter(|&b| input.bit_get(b) && allowed(b)).collect();
             for &b in active.choose_multiple(rng, cfg.sample_bits) {
                 input_mask.bit_set(b);
                 sampled += 1;
@@ -761,5 +798,29 @@ mod tests {
         out.bit_clear_all();
         kc2.process(&frames(&[0xFF, 0xF000]), &mut out, 0, 0); // any filler now
         assert_eq!(out.as_words()[0], 0xFF00);
+    }
+
+    #[test]
+    fn peek_predicts_without_changing_state() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        let a = frames(&[0xFF]);
+        let b = BitVector::from_words(vec![0xFF00]);
+        step(&mut kc, &a, &b);
+        step(&mut kc, &a, &b);
+        let hits = kc.kernels()[0].stats.hits;
+        assert_eq!(kc.peek(&a).map(|o| o.as_words()[0]), Some(0xFF00));
+        assert!(kc.peek(&frames(&[0xF0])).is_none()); // only half the bits: no match
+        assert_eq!(kc.kernels()[0].stats.hits, hits);
+        assert_eq!(kc.kernels()[0].stats.fires, 1); // only the real step counted
+    }
+
+    #[test]
+    fn growth_mask_limits_what_new_kernels_sample() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        kc.set_growth_mask(Some(BitVector::from_words(vec![0x0F])));
+        step(&mut kc, &frames(&[0xFF]), &BitVector::from_words(vec![0xFF00]));
+        assert_eq!(kc.kernels()[0].input_mask.as_words()[0], 0x0F);
     }
 }

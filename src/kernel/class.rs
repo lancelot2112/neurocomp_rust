@@ -126,6 +126,9 @@ struct PredictiveState {
     sticky_tags: std::collections::HashMap<usize, std::collections::HashSet<usize>>,
     /// Caller-provided credit: input bits that are always sticky.
     sticky_mask: Option<BitVector>,
+    /// Winner ranking: a kernel's depth only counts if its reliability is at least this
+    /// (deeper-but-unreliable kernels no longer outrank reliable shallower ones). None = off.
+    trust_floor: Option<f32>,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
 }
@@ -244,6 +247,7 @@ impl KernelClass<SimpleKernel> {
             sticky_factor: 0,
             sticky_tags: std::collections::HashMap::new(),
             sticky_mask: None,
+            trust_floor: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
         });
@@ -307,8 +311,9 @@ impl KernelClass<SimpleKernel> {
 
         let mode = bias.map(|(_, m)| m);
         let agrees = |k: &SimpleKernel| bias.map_or(false, |(b, _)| predicts(k, b));
-        // (agree-first, depth, agree-within-depth, reliability, count)
-        let mut best: Option<((bool, usize, bool, f32, u32), usize)> = None;
+        // (agree-first, trusted, depth, agree-within-depth, reliability, count)
+        let trust_floor = st.trust_floor;
+        let mut best: Option<((bool, bool, usize, bool, f32, u32), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -326,7 +331,9 @@ impl KernelClass<SimpleKernel> {
             let a = agrees(kern);
             let prefer = matches!(mode, Some(BiasMode::Prefer | BiasMode::PreferAndFallback)) && a;
             let tie = mode == Some(BiasMode::SameDepth) && a;
-            let key = (prefer, kern.context_frames, tie, reliability(&kern.stats), count);
+            let r = reliability(&kern.stats);
+            let trusted = trust_floor.map_or(true, |f| r >= f);
+            let key = (prefer, trusted, kern.context_frames, tie, r, count);
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
             }
@@ -434,6 +441,15 @@ impl KernelClass<SimpleKernel> {
         if let Some(st) = self.predictive.as_mut() {
             st.sticky_factor = factor;
             st.sticky_mask = mask;
+        }
+    }
+
+    /// Winner ranking: with `Some(f)`, kernels with reliability below `f` rank below every
+    /// trusted kernel, whatever their depth (longest context wins only among kernels
+    /// that have earned trust). None restores pure longest-context ranking.
+    pub fn set_trust_floor(&mut self, floor: Option<f32>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.trust_floor = floor;
         }
     }
 

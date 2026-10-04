@@ -254,6 +254,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         generalize_after: std::env::var("GENERALIZE_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
     });
 
+    // TRUST=f: depth only outranks reliability among kernels at least f reliable
+    class.set_trust_floor(std::env::var("TRUST").ok().and_then(|v| v.parse().ok()));
     // STICKY=f: credit-tagged synapses (input bits that carried the correctly predicted
     // word) need f times as many silent confirmations before pruning
     if let Some(f) = std::env::var("STICKY").ok().and_then(|v| v.parse().ok()) {

@@ -592,6 +592,32 @@ impl KernelClass<SimpleKernel> {
                     }
                 }
             }
+            // A frame is dropped entirely (it was irrelevant) or keeps at least
+            // `MIN_FRAME_BITS`: one or two bits of a sparse code are often shared with
+            // other words, so a kernel keyed on them fires on the wrong content.
+            const MIN_FRAME_BITS: usize = 4;
+            let frame_bits = cfg.frame_words * 64;
+            let mut kept: std::collections::HashMap<usize, (usize, usize)> = std::collections::HashMap::new(); // frame -> (bits, dropped)
+            for &b in &old {
+                kept.entry(b / frame_bits).or_default().0 += 1;
+            }
+            for &b in &drop {
+                kept.get_mut(&(b / frame_bits)).unwrap().1 += 1;
+            }
+            let mut restore: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for (&f, &(n, d)) in &kept {
+                let left = n - d;
+                if left > 0 && left < MIN_FRAME_BITS {
+                    restore.insert(f, MIN_FRAME_BITS.min(n) - left);
+                }
+            }
+            drop.retain(|&b| match restore.get_mut(&(b / frame_bits)) {
+                Some(r) if *r > 0 => {
+                    *r -= 1;
+                    false
+                }
+                _ => true,
+            });
             if drop.is_empty() || old.len() - drop.len() < min_bits {
                 continue;
             }

@@ -82,6 +82,13 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
 - **Lake, B. & Baroni, M. (2018).** *Generalization without systematicity.*
   [arXiv:1711.00350](https://arxiv.org/abs/1711.00350). Held-out combinations as the
   test of compositional generalization, the same design principle as our held-out pairs.
+- **Sukhbaatar, S., Szlam, A., Weston, J. & Fergus, R. (2015).** *End-to-end memory
+  networks.* [arXiv:1503.08895](https://arxiv.org/abs/1503.08895). Learned multi-hop
+  attention over stored sentences, on bAbI; the learned version of our
+  [13](experiments/13-big-loop.md) big loop.
+- **Graves, A. (2016).** *Adaptive computation time for recurrent neural networks.*
+  [arXiv:1603.08983](https://arxiv.org/abs/1603.08983). Learning how many steps to take
+  (halting), cf. learned hop counts.
 
 ## Top-down feedback and predictive coding
 - **McClelland, J. & Rumelhart, D. (1981).** *An interactive activation model of context
@@ -154,6 +161,12 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   Neural Computation 32. Iteratively factoring superposed vector-symbolic bindings.
 - **Zacks, J. et al. (2007).** *Event perception: a mind-brain perspective.* Psychological
   Bulletin 133. Event boundaries at prediction errors.
+- **Lisman, J. & Grace, A. (2005).** *The hippocampal-VTA loop: controlling the entry of
+  information into long-term memory.* Neuron 46. CA1/subiculum novelty → dopamine →
+  encoding: novelty as a computed mismatch, not a frequency count.
+- **O'Mara, S. (2005).** *The subiculum: what it does, what it might do, and what
+  neuroanatomy has yet to tell us.* Journal of Anatomy 207. The main hippocampal output,
+  incl. via mammillary bodies to the anterior thalamus.
 
 ## Credit assignment
 - **Lillicrap, T., Santoro, A., Marris, L., Akerman, C. & Hinton, G. (2020).**

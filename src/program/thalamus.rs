@@ -46,6 +46,11 @@ impl Thalamus {
         }
     }
 
+    /// The most recently observed frame.
+    pub fn current(&self) -> Option<&BitVector> {
+        self.history.last()
+    }
+
     /// Forget everything observed so far (e.g. between independent episodes).
     pub fn clear(&mut self) {
         self.history.clear();
@@ -188,6 +193,18 @@ impl RouteScores {
             .map(|(r, _)| *r)
     }
 
+    /// Up to `n` routes with at least `min_hits` hits, most consistent first.
+    pub fn top(&self, n: usize, min_hits: f64) -> Vec<RelayChannel> {
+        let mut v: Vec<(f64, RelayChannel)> = self
+            .stats
+            .iter()
+            .filter(|(_, (h, _))| *h >= min_hits)
+            .map(|(r, (h, t))| (h / (t + 2.0), *r))
+            .collect();
+        v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.query_lag.cmp(&b.1.query_lag)).then(a.1.value_offset.cmp(&b.1.value_offset)));
+        v.into_iter().take(n).map(|(_, r)| r).collect()
+    }
+
     /// Multiply all counts by `factor` (forget slowly).
     pub fn decay(&mut self, factor: f64) {
         for (h, t) in self.stats.values_mut() {
@@ -199,6 +216,91 @@ impl RouteScores {
     pub fn len(&self) -> usize {
         self.stats.len()
     }
+}
+
+/// Attention by inhibition: every route in a pool computes its relay, and a
+/// gate passes only routes that have proven reliable *in the current context*.
+///
+/// Reliability is per-context precision: of the times a route relayed something
+/// in this context, how often was it the next frame (`learn`). The context is the
+/// current frame, optionally together with what the route relays
+/// (`condition_on_value`): "this route is trustworthy here when it brings back
+/// something like *this*". Routes are inhibited by default: a route opens only
+/// with at least `min_tries` observations and precision >= `threshold`. Among open
+/// routes, lateral inhibition keeps the `winners` most reliable (winner-take-k,
+/// a hard stand-in for softmax). The surviving relays are OR'ed into one frame.
+pub struct RouteGate {
+    pub threshold: f64,
+    pub min_tries: f64,
+    pub winners: usize,
+    pub condition_on_value: bool,
+    stats: HashMap<(RelayChannel, u64, u64), (f64, f64)>, // (route, context, value) -> (hits, tries)
+}
+
+impl RouteGate {
+    pub fn new(threshold: f64, min_tries: f64, winners: usize, condition_on_value: bool) -> Self {
+        Self { threshold, min_tries, winners, condition_on_value, stats: HashMap::new() }
+    }
+
+    fn key(&self, r: RelayChannel, ctx: &BitVector, value: &BitVector) -> (RelayChannel, u64, u64) {
+        (r, frame_hash(ctx), if self.condition_on_value { frame_hash(value) } else { 0 })
+    }
+
+    /// Smoothed precision of route `r` relaying `value` in context `ctx`, and its tries.
+    fn reliability(&self, r: RelayChannel, ctx: &BitVector, value: &BitVector) -> (f64, f64) {
+        self.stats.get(&self.key(r, ctx, value)).map_or((0.0, 0.0), |&(h, t)| ((h + 0.5) / (t + 1.0), t))
+    }
+
+    /// Routes from `pool` that pass the gate now, most reliable first, with their values.
+    pub fn select<'a>(&self, th: &'a Thalamus, pool: &[RelayChannel]) -> Vec<(RelayChannel, &'a BitVector)> {
+        let Some(ctx) = th.current() else { return Vec::new() };
+        let mut open: Vec<(f64, RelayChannel, &BitVector)> = pool
+            .iter()
+            .filter_map(|&r| th.relay_channel(r).map(|v| (r, v)))
+            .filter_map(|(r, v)| {
+                let (p, tries) = self.reliability(r, ctx, v);
+                (tries >= self.min_tries && p >= self.threshold).then_some((p, r, v))
+            })
+            .collect();
+        open.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        open.into_iter().take(self.winners).map(|(_, r, v)| (r, v)).collect()
+    }
+
+    /// The gated relay: the passing routes' values OR'ed into one frame of `bits`.
+    pub fn gated_relay(&self, th: &Thalamus, pool: &[RelayChannel], bits: usize) -> BitVector {
+        let mut out = BitVector::new(bits, Some(0));
+        for (_, v) in self.select(th, pool) {
+            for (o, &w) in out.as_words_mut().iter_mut().zip(v.as_words()) {
+                *o |= w;
+            }
+        }
+        out
+    }
+
+    /// Learn from what came next (call before observing `next`): every pool route
+    /// that relays something now is scored right or wrong in the current context.
+    pub fn learn(&mut self, th: &Thalamus, pool: &[RelayChannel], next: &BitVector) {
+        let Some(ctx) = th.current() else { return };
+        let need = (next.count_ones() as f32 * th.match_fraction).ceil() as u32;
+        for &r in pool {
+            if let Some(v) = th.relay_channel(r) {
+                let right = overlap(v, next) >= need;
+                let key = self.key(r, ctx, v);
+                let e = self.stats.entry(key).or_insert((0.0, 0.0));
+                e.1 += 1.0;
+                if right {
+                    e.0 += 1.0;
+                }
+            }
+        }
+    }
+}
+
+fn frame_hash(frame: &BitVector) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    frame.as_words().hash(&mut h);
+    h.finish()
 }
 
 fn overlap(a: &BitVector, b: &BitVector) -> u32 {
@@ -301,5 +403,32 @@ mod tests {
         let best = scores.best_unused(&[], 1.0).unwrap();
         assert_eq!(best, RelayChannel { query_lag: 0, value_offset: 1 });
         assert!(scores.precision(best) > 0.4);
+    }
+
+    #[test]
+    fn gate_opens_only_routes_reliable_in_this_context() {
+        // Episodes "1 2 3 | 1 ?": at "?", route (1,1) (what followed the last "1")
+        // relays 2, which is what comes next. Elsewhere it is unreliable.
+        let good = RelayChannel { query_lag: 1, value_offset: 1 };
+        let bad = RelayChannel { query_lag: 0, value_offset: 2 };
+        let pool = [good, bad];
+        let mut gate = RouteGate::new(0.6, 2.0, 1, false);
+        let mut th = Thalamus::new(64, 40, vec![]);
+        for _ in 0..4 {
+            for s in [1, 2, 3, 1, 9] {
+                gate.learn(&th, &pool, &sym(s)); // score routes against what comes next
+                th.observe(&sym(s));
+            }
+            gate.learn(&th, &pool, &sym(2));
+            th.observe(&sym(2));
+        }
+        // a new episode, at "9": only the reliable route passes
+        for s in [1, 2, 3, 1, 9] {
+            th.observe(&sym(s));
+        }
+        let open = gate.select(&th, &pool);
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].0, good);
+        assert_eq!(gate.gated_relay(&th, &pool, 64).as_words(), sym(2).as_words());
     }
 }

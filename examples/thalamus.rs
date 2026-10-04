@@ -38,6 +38,13 @@
 //! "X went all the way over to the P ." (8 after), and questions are
 //! "where is X right now ?" (name 3 before "?"). Correct routes: (3,4) and (3,8).
 //!
+//! "Gated" / "GatedValue" (experiment 10): no channel slots. Every route
+//! discovered from surprises (top 64 by consistency) computes its relay, and a
+//! `RouteGate` inhibits all routes except those proven reliable in the current
+//! context (current word; for GatedValue, current word + the relayed word);
+//! winner-take-one among open routes. The predictor reads
+//! [current word | gated relay | previous word].
+//!
 //! JITTER=1 puts 0-4 random filler words ("then", "later", "so", "next", "after")
 //! before each story, so no fixed offset from the previous story's words lands on
 //! the answer (open discovery otherwise finds such cross-story shortcuts, e.g.
@@ -50,7 +57,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{RelayChannel, RouteScores, Thalamus};
+use neurocomp::program::{RelayChannel, RouteGate, RouteScores, Thalamus};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -77,6 +84,8 @@ enum Policy {
     LearnedPatient,
     LearnedProposed,
     LearnedOpen,
+    Gated,
+    GatedValue,
 }
 
 struct Story {
@@ -167,9 +176,14 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
         Policy::Oracle if long => vec![RelayChannel { query_lag: 3, value_offset: 4 }, RelayChannel { query_lag: 3, value_offset: 8 }],
         Policy::Oracle => vec![RelayChannel { query_lag: 1, value_offset: 4 }, RelayChannel { query_lag: 0, value_offset: 1 }],
         Policy::LearnedOpen => (0..channels()).map(|_| random_open_channel(&mut rng)).collect(),
+        Policy::Gated | Policy::GatedValue => vec![],
         Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed => (0..channels()).map(|_| random_channel(&mut rng)).collect(),
     };
-    let n_ch = channels.len();
+    let gated = matches!(policy, Policy::Gated | Policy::GatedValue);
+    // frames of relay input to the predictor: one per channel, or one gated relay
+    let n_ch = if gated { 1 } else { channels.len() };
+    let mut gate = RouteGate::new(0.5, 3.0, 1, policy == Policy::GatedValue);
+    let mut pool: Vec<RelayChannel> = Vec::new();
     let mut th = Thalamus::new(BITS, 40, channels);
     let mut credit = vec![0f64; n_ch];
     let mut age = vec![0usize; n_ch]; // reviews since a channel was re-pointed
@@ -202,7 +216,11 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
             th.observe(code);
             // [current | relay 0 | relay 1 | previous]
             let mut words = code.as_words().to_vec();
-            words.extend_from_slice(th.relay().as_words());
+            if gated {
+                words.extend_from_slice(gate.gated_relay(&th, &pool, BITS).as_words());
+            } else {
+                words.extend_from_slice(th.relay().as_words());
+            }
             words.extend_from_slice(prev.map_or(&[0u64; BITS / 64][..], |p| enc.codes[p].as_words()));
             let input = BitVector::from_words(words);
 
@@ -232,8 +250,11 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
                         *votes.entry((r.query_lag, r.value_offset)).or_default() += 1.0;
                     }
                 }
-                if !right && policy == Policy::LearnedOpen {
+                if !right && matches!(policy, Policy::LearnedOpen | Policy::Gated | Policy::GatedValue) {
                     route_scores.observe_surprise(&th, &enc.codes[next], OPEN_MAX_Q, OPEN_MAX_V);
+                }
+                if gated {
+                    gate.learn(&th, &pool, &enc.codes[next]);
                 }
                 if policy == Policy::LearnedGuided {
                     // frame 0 (current word) + one relaying channel picked by credit;
@@ -283,6 +304,9 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
         th.observe(&enc.codes[last]);
         prev = Some(last);
 
+        if gated && !testing && s_i % REVIEW_EVERY == REVIEW_EVERY - 1 {
+            pool = route_scores.top(64, 2.0);
+        }
         if matches!(
             policy,
             Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed | Policy::LearnedOpen
@@ -328,7 +352,8 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
-    Outcome { seen: pct(res_seen), held_out: pct(res_held), channels: th.channels.clone() }
+    let channels = if gated { gate.select(&th, &pool).iter().map(|(r, _)| *r).chain(pool.iter().copied().take(3)).collect() } else { th.channels.clone() };
+    Outcome { seen: pct(res_seen), held_out: pct(res_held), channels }
 }
 
 fn main() {
@@ -355,6 +380,7 @@ fn main() {
             Ok("oracle") => vec![Policy::Oracle],
             Ok("open_only") => vec![Policy::LearnedOpen],
             Ok("open") => vec![Policy::NoThalamus, Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
+            Ok("gated") => vec![Policy::LearnedOpen, Policy::Gated, Policy::GatedValue],
             Ok("open_cmp") => vec![Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
             _ => vec![

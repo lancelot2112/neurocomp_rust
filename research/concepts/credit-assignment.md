@@ -21,6 +21,11 @@ parts not directly connected to the error signal can still learn the right thing
   below.
 - `GrowthConfig::generalize`: synapse-level credit. A near-matching kernel that would
   have been right drops its silent connections.
+- `KernelClass::peek(input)`: predict without changing any state. This is the
+  building block for **ablation credit**: compare the prediction with and without a
+  unit's bits.
+- `KernelClass::set_growth_mask(mask)`: restrict which input bits new kernels may
+  sample, for **credit-guided growth**.
 
 ## Results so far ([08](../experiments/08-credit-assignment.md))
 | Signal | Long-gap task |
@@ -29,23 +34,30 @@ parts not directly connected to the error signal can still learn the right thing
 | activity (Hebbian-like) | 25% (chance) |
 | "used by a correct kernel" (`credited_inputs`) | 30–36% |
 | three-factor: eligibility × (reward − baseline) | 40–44% |
+| **ablation** (would the answer change without this unit?) | 54.6% |
+| **ablation + credit-guided growth** (each new kernel uses one unit, picked by credit) | **64.4%** |
 | oracle hidden units | 100% |
 
-The gap between three-factor and oracle is the size of the problem still open.
+Ablation credit plus credit-guided growth closes about half the gap between random and oracle.
 
-## Why naive credit fails
+## Why naive credit fails (and what fixed most of it)
 **Co-activation.** Inputs that are merely present when a correct prediction is made
 get the same credit as the input that caused it. Frequent, irrelevant inputs are
-present most often, so they win. Fixes need some notion of *counterfactual*
-contribution (what if this input had been absent?) or a baseline-corrected,
-well-timed reward.
+present most often, so they win. Counterfactual credit asks the right question ("what
+if this input had been absent?"), but only once the kernels themselves don't depend
+on incidental inputs. Hence credit-guided growth
+([08 follow-up](../experiments/08-credit-assignment.md#follow-up-ablation-counterfactual-credit)).
 
 ## Candidate operations, from local to global
 1. **Three-factor rules** (eligibility trace × neuromodulatory reward − baseline): local,
-   biologically plausible, already tried (+4 points).
+   biologically plausible, tried (+4 points over random).
 2. **Counterfactual / ablation credit**: re-evaluate a prediction with one unit's bits
-   removed. Local to one class, costs one extra evaluation per unit.
-3. **Credit-guided growth**: sample new kernels' inputs according to unit utility.
+   removed. Costs one extra read-only evaluation per active unit. Tried: the best
+   signal (+15 points over random).
+3. **Credit-guided growth**: new kernels sample inputs according to unit credit. Tried
+   with ablation: +10 more. It matters because a kernel that *requires* an incidental
+   input makes that input genuinely necessary, and then even counterfactual credit
+   rewards it. Credit and growth have to be designed together.
 4. **Feedback alignment / target propagation**: send error signals down through fixed
    random or learned feedback paths (Lillicrap et al. 2016; Bengio 2014). The nearest
    biological stand-ins for backprop.

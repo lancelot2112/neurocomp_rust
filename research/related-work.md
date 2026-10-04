@@ -116,6 +116,13 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
 - **Williams, R. (1992).** *Simple statistical gradient-following algorithms for
   connectionist reinforcement learning.* Machine Learning 8. REINFORCE: reward minus
   baseline times eligibility.
+- **Wolpert, D. & Tumer, K. (2002).** *Optimal payoff functions for members of
+  collectives.* Advances in Complex Systems 4. "Difference rewards": credit each agent
+  with the system's reward minus the reward had it been absent. This is the
+  counterfactual behind ablation credit in [08](experiments/08-credit-assignment.md).
+- **Foerster, J. et al. (2018).** *Counterfactual multi-agent policy gradients.* AAAI.
+  [arXiv:1705.08926](https://arxiv.org/abs/1705.08926). The same idea with a learned
+  counterfactual baseline.
 - **Hochreiter, S. & Schmidhuber, J. (1997).** *Long short-term memory.* Neural
   Computation 9(8). Gated memory cells that learn what to hold across long gaps, which
   is the job of the memory units in [08](experiments/08-credit-assignment.md), learned

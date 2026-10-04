@@ -65,14 +65,54 @@ is not the same as *causing* them to go right.
    earns reward once some kernel uses it *without* also requiring the incidental
    fillers. The simple synapse-level rule tried here did not trigger usefully.
 
+## Follow-up: ablation (counterfactual) credit
+Commit `6b9caab`: `KernelClass::peek` (predict without changing state) and
+`KernelClass::set_growth_mask` (restrict what new kernels may sample).
+
+- **Ablation credit.** After each prediction, re-predict with one active unit's bits
+  removed. +1 if a right answer becomes wrong without the unit; −1 if a wrong answer
+  becomes right. Inactive units are not tested.
+- **Patient exploration.** New units get 3 reviews to earn credit, and units with
+  credit ≥ 1 are never replaced.
+- **Credit-guided growth.** A new kernel may sample hidden bits from only *one*
+  active unit, chosen with odds credit + 1, so each kernel depends on a single unit.
+- **Diagnostic.** Units fixed to a known mix of cues and fillers.
+
+| Policy (6K episodes, 5 seeds) | Plain | + patient | + guided growth | + guided + patient |
+|---|---|---|---|---|
+| fixed random | 39.3% | | 37.7% | 37.7% |
+| three-factor | 43.3% | 43.9% | 40.1% | 43.6% |
+| **ablation** | **54.6%** | 53.6% | **64.4%** | 59.1% |
+
+| Diagnostic: units fixed to | Answer accuracy |
+|---|---|
+| 4 cues (oracle) | 100% |
+| 3 cues + 1 filler | 100% (the 4th cue is inferred from absence) |
+| 2 cues + 2 fillers | 76.9% |
+| 1 cue + 3 fillers | 50.1% |
+
+LONG_RUN_PLACEHOLDER
+
+### Findings
+1. **Ablation credit is the best signal tried** (54.6% vs 43.3% three-factor, 39.3%
+   random) and never loses a run to chance. Asking "would the answer change without
+   you?" removes most of the co-activation confound.
+2. **The predictor is not the bottleneck.** With 3 cue units fixed it scores 100% even
+   with a filler unit active. Choosing *what to remember* is the whole problem.
+3. **Credit and growth must cooperate.** If new kernels sample every active unit,
+   incidental units become genuinely necessary to those kernels, and ablation credits
+   them too. Letting each new kernel depend on one unit, chosen by credit, lifts
+   ablation to **64.4%**. Credit-guided growth doesn't help three-factor credit,
+   whose signal is too diluted to guide anything.
+4. Patient exploration doesn't matter much (±1–5 points). Exploration speed is not the limit.
+
 ## Next things to try
-- **Counterfactual (ablation) credit:** re-run the winning prediction with one unit's
-  bits removed. Credit the unit only if the prediction flips from right to wrong.
-  This handles co-activation directly.
+- ~~Counterfactual (ablation) credit~~: done, see above.
+- ~~Credit-guided growth~~: done, see above.
+- **Prune kernels when their unit is re-pointed:** stale kernels keep firing on bits
+  that now mean something else, which slows the switch.
 - **Eligibility traces timed to surprise:** reward only on ticks where the prediction
   beat a lower-depth kernel, not on every active tick
   ([Gerstner et al. 2018](../related-work.md#credit-assignment)).
-- **Credit-guided growth:** when growing a kernel, sample hidden bits in proportion
-  to unit utility instead of uniformly, so new kernels avoid incidental inputs.
 
 See [credit assignment](../concepts/credit-assignment.md).

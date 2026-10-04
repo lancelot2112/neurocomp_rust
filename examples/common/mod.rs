@@ -114,3 +114,52 @@ impl Predictor {
         &self.net.edges[0].group.classes()[0]
     }
 }
+
+/// Collapse Brown tags into 12 coarse parts of speech.
+pub fn coarse_tag(tag: &str) -> &'static str {
+    if tag.starts_with("fw-") {
+        return "X";
+    }
+    let t = tag.split('-').next().unwrap_or(tag).trim_end_matches(['*', '$']);
+    let any = |ps: &[&str]| ps.iter().any(|p| t.starts_with(p));
+    if t.is_empty() || t == "*" || tag == "*" {
+        return "ADV"; // "not", "n't"
+    }
+    if any(&["wdt"]) || any(&["at", "dt", "ap", "abn", "abx", "abl"]) {
+        "DET"
+    } else if any(&["nn", "np", "nr"]) {
+        "NOUN"
+    } else if any(&["vb", "be", "hv", "do", "md"]) {
+        "VERB"
+    } else if any(&["jj"]) {
+        "ADJ"
+    } else if any(&["rb", "ql", "wrb", "rn"]) {
+        "ADV"
+    } else if any(&["pp", "pn", "wp", "ex"]) {
+        "PRON"
+    } else if any(&["in"]) {
+        "ADP"
+    } else if any(&["cc", "cs"]) {
+        "CONJ"
+    } else if any(&["cd", "od"]) {
+        "NUM"
+    } else if any(&["rp", "to"]) {
+        "PRT"
+    } else if t.chars().all(|c| !c.is_ascii_alphanumeric()) {
+        "PUNCT"
+    } else {
+        "X"
+    }
+}
+
+/// (word, coarse tag) per token, sentences concatenated.
+pub fn load_brown(path: &str) -> Vec<(String, &'static str)> {
+    let text = read_corpus(path);
+    let mut out = Vec::new();
+    for tok in text.split_whitespace() {
+        if let Some((w, t)) = tok.rsplit_once('/') {
+            out.push((w.to_lowercase(), coarse_tag(t)));
+        }
+    }
+    out
+}

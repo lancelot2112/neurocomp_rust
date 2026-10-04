@@ -56,7 +56,10 @@ use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
 const BITS: usize = 512;
-const CHANNELS: usize = 4;
+/// Relay channels for learned policies (CHANNELS env var overrides).
+fn channels() -> usize {
+    std::env::var("CHANNELS").ok().and_then(|v| v.parse().ok()).unwrap_or(4)
+}
 const NAMES: &[&str] = &["mary", "john", "sandra", "daniel", "anna", "peter"];
 const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", "bedroom"];
 const FILLERS: &[&str] = &["then", "later", "so", "next", "after"];
@@ -163,8 +166,8 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
         Policy::NoThalamus => vec![],
         Policy::Oracle if long => vec![RelayChannel { query_lag: 3, value_offset: 4 }, RelayChannel { query_lag: 3, value_offset: 8 }],
         Policy::Oracle => vec![RelayChannel { query_lag: 1, value_offset: 4 }, RelayChannel { query_lag: 0, value_offset: 1 }],
-        Policy::LearnedOpen => (0..CHANNELS).map(|_| random_open_channel(&mut rng)).collect(),
-        Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed => (0..CHANNELS).map(|_| random_channel(&mut rng)).collect(),
+        Policy::LearnedOpen => (0..channels()).map(|_| random_open_channel(&mut rng)).collect(),
+        Policy::FixedRandom | Policy::Learned | Policy::LearnedGuided | Policy::LearnedPatient | Policy::LearnedProposed => (0..channels()).map(|_| random_channel(&mut rng)).collect(),
     };
     let n_ch = channels.len();
     let mut th = Thalamus::new(BITS, 40, channels);

@@ -295,7 +295,31 @@ Settings: `GENERALIZE=0.5 GENERALIZE_AFTER=1 STICKY=4 TRUST_AT_TEST=0.5`. **Thre
   place (prune only *untagged* bits, never tagged ones), or match on the fraction of the
   recalled word present rather than a bit count.
 
-11. Method lesson: compare variants **in the same build and run**. Numbers from different
+**Tags that are never pruned, and tags released by bad credit.** (Large delay-line CA3,
+`GENERALIZE_AFTER=1`, scaled tolerance, trust floor when answering; held-out.)
+- *Permanent* (`STICKY=255`): a tagged bit is never pruned.
+- *Released by bad credit* (`STICKY=255 STICKY_BLAME=1`): a tagged bit that was active when
+  its kernel mispredicted, and whose copied bit was not in the target, loses its tag and
+  can then be pruned.
+
+| Seed | Permanent: 1–2 facts (settle / none) | 1–3 facts | Released by blame: 1–2 facts | 1–3 facts |
+|---|---|---|---|---|
+| 0 | 99.4 / 99.4 | **85.2 / 85.0** | 99.6 / 99.4 | 100 / 100 |
+| 1 | 99.4 / 99.2 | 99.8 / 100 | **82.8 / 82.2** | 100 / 100 |
+| 2 | **82.2 / 83.2** | 100 / 100 | 98.8 / 98.8 | 100 / 100 |
+
+- **Permanent tags lock in bad kernels.** Seed 2's failure is an over-general copy kernel
+  born with only 1–2 tagged place bits (reliability 0.11 over 7.5k uses); permanence keeps
+  it. Seed 0's 1–3 failure is the opposite, a missing copy kernel for the "?" context.
+- **Release by bad credit fixes both** (1–3 facts: 100% on every seed, with and without
+  settling) **but** prunes away good copy kernels that occasionally mispredict (when the
+  recall brings an older place): seed 1's 1–2 facts drop to 82%, with *no* copy kernel for
+  the answer in 96–98% of its errors.
+- **Common root:** growth samples 16 memory bits from a recall of 4–5 words (~140 bits), so
+  a copy kernel is born with only ~1–4 bits of the word it copies. Next: credit-guided
+  growth (`COPY_GROW=1`): in a frame that carries the target's bits, sample only those.
+
+12. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and

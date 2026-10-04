@@ -177,6 +177,8 @@ struct Outcome {
     held_out: f64,
     /// % of test questions where the memory (or relay) frames contained the answer word
     recall: f64,
+    /// mean number of distinct place words in the memory frames at the answer
+    places: f64,
 }
 
 fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
@@ -210,7 +212,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let env = |name: &str, default: f32| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
             let fan_in = env("DG_FAN_IN", 300.0) as usize;
             let decay = env("CA3_DECAY", 0.7);
-            let mut ca3 = Ca3Memory::new(BITS, cells, k, decay, settle);
+            let mut ca3 = if std::env::var("CA3_STORE").map_or(false, |v| v == "ring") {
+                Ca3Memory::new_delay_line(BITS, cells, k, decay, settle)
+            } else {
+                Ca3Memory::new(BITS, cells, k, decay, settle)
+            };
             ca3.readout_fraction = env("CA3_READOUT", 0.5);
             (Some(DentateGyrus::new(BITS, cells, fan_in, k, seed + 100)), Some(ca3))
         }
@@ -248,6 +254,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     let mut recall_has_answer = 0usize;
+    let mut recall_places = 0usize;
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
@@ -424,6 +431,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words[frame * (1 + f)..frame * (2 + f)].iter().zip(answer).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24
                     });
                     recall_has_answer += found as usize;
+                    // how many places the recall offers (1 = clean, more = blended)
+                    let mem = &words[frame..frame * (1 + mid_frames)];
+                    recall_places += PLACES
+                        .iter()
+                        .filter(|p| {
+                            let code = enc.codes[index[*p]].as_words();
+                            (0..mid_frames).any(|f| mem[frame * f..frame * (f + 1)].iter().zip(code).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
+                        })
+                        .count();
                 }
                 let input = BitVector::from_words(words);
 
@@ -468,7 +484,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
-    Outcome { seen: pct(seen), held_out: pct(held), recall: 100.0 * recall_has_answer as f64 / TEST as f64 }
+    Outcome { seen: pct(seen), held_out: pct(held), recall: 100.0 * recall_has_answer as f64 / TEST as f64, places: recall_places as f64 / TEST as f64 }
 }
 
 fn set_bits(bv: &BitVector) -> Vec<usize> {
@@ -505,6 +521,7 @@ fn main() {
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
+                Ok("ca3_big") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }, Policy::Ca3 { cells: 16384, k: 32, settle: 0 }],
                 Ok("ca3") => vec![
                     Policy::Episodic,
                     Policy::Ca3 { cells: 1024, k: 64, settle: 2 },
@@ -517,11 +534,12 @@ fn main() {
                 let runs: Vec<Outcome> = (0..seeds).map(|seed| run(policy, task, max_facts, seed)).collect();
                 let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
                 println!(
-                    "  {:<40} seen pairs {:5.1}%   held-out pairs {:5.1}%   answer in recall {:5.1}%   held-out runs [{}]",
+                    "  {:<40} seen pairs {:5.1}%   held-out pairs {:5.1}%   answer in recall {:5.1}%   places in recall {:4.2}   held-out runs [{}]",
                     format!("{policy:?}"),
                     mean(|o| o.seen),
                     mean(|o| o.held_out),
                     mean(|o| o.recall),
+                    mean(|o| o.places),
                     runs.iter().map(|o| format!("{:.0}", o.held_out)).collect::<Vec<_>>().join(" ")
                 );
             }

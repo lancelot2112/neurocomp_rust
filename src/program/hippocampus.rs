@@ -121,6 +121,61 @@ impl Pathway {
     }
 }
 
+/// One pathway as a delay line: for each source cell, one bit plane per recent store
+/// ("written `age` stores ago"), in a ring indexed by store number. Decay is a pure
+/// shift: advancing the ring ages every plane at once, and planes older than the ring
+/// expire. A weight is Σ over its writes of `weights[age]`, an exact integer table
+/// (e.g. 1024·decay^age), so nothing is rounded away between writes.
+struct RingPathway {
+    rows: Vec<Option<(Vec<BitVector>, Vec<u32>)>>, // (planes, store number each holds)
+    targets: usize,
+}
+
+impl RingPathway {
+    fn new(sources: usize, targets: usize) -> Self {
+        Self { rows: (0..sources).map(|_| None).collect(), targets }
+    }
+
+    fn strengthen(&mut self, i: usize, mask: &BitVector, store: u32, len: usize) {
+        let targets = self.targets;
+        let (planes, stamps) = self.rows[i].get_or_insert_with(|| (vec![BitVector::new(targets, Some(0)); len], vec![u32::MAX; len]));
+        let slot = store as usize % len;
+        if stamps[slot] != store {
+            planes[slot] = BitVector::new(targets, Some(0)); // the slot's old plane has expired
+            stamps[slot] = store;
+        }
+        planes[slot].or_mut(mask);
+    }
+
+    fn drive(&self, sources: &[usize], store: u32, weights: &[u32]) -> Vec<u32> {
+        let mut out = vec![0u32; self.targets];
+        for &i in sources {
+            let Some(Some((planes, stamps))) = self.rows.get(i) else { continue };
+            for (plane, &at) in planes.iter().zip(stamps) {
+                if at == u32::MAX || store.wrapping_sub(at) as usize >= weights.len() {
+                    continue;
+                }
+                let w = weights[(store - at) as usize];
+                for (wi, &word) in plane.as_words().iter().enumerate() {
+                    let mut word = word;
+                    while word != 0 {
+                        out[wi * 64 + word.trailing_zeros() as usize] += w;
+                        word &= word - 1;
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+enum Weights {
+    /// Bit-sliced counters, halved every `half_life` stores.
+    Counters(Pathway),
+    /// Delay line of age planes with an exact weight per age.
+    Ring(RingPathway),
+}
+
 pub struct Ca3Memory {
     pub k: usize,
     /// Stores per halving of every weight (decay ≈ 0.5^(1/half_life) per store).
@@ -130,9 +185,13 @@ pub struct Ca3Memory {
     /// (higher = sharper clean-up toward the single strongest memory).
     pub readout_fraction: f32,
     planes: usize,
-    ec_to_ca3: Pathway,
-    ca3_to_ca3: Pathway,
-    ca3_to_ec: Pathway,
+    /// Delay-line weight per age (empty when using counters).
+    age_weights: Vec<u32>,
+    ec_to_ca3: Weights,
+    ca3_to_ca3: Weights,
+    ca3_to_ec: Weights,
+    ec_bits: usize,
+    ca3_cells: usize,
     stores: u32,
 }
 
@@ -150,10 +209,39 @@ impl Ca3Memory {
             settle_steps,
             readout_fraction: 0.5,
             planes: 7,
-            ec_to_ca3: Pathway::new(ec_bits, ca3_cells),
-            ca3_to_ca3: Pathway::new(ca3_cells, ca3_cells),
-            ca3_to_ec: Pathway::new(ca3_cells, ec_bits),
+            age_weights: Vec::new(),
+            ec_to_ca3: Weights::Counters(Pathway::new(ec_bits, ca3_cells)),
+            ca3_to_ca3: Weights::Counters(Pathway::new(ca3_cells, ca3_cells)),
+            ca3_to_ec: Weights::Counters(Pathway::new(ca3_cells, ec_bits)),
+            ec_bits,
+            ca3_cells,
             stores: 0,
+        }
+    }
+
+    /// The same store with delay-line weights: each write goes into the plane for the
+    /// current store, weighted round(1024·decay^age) when read, until decay^age < 0.02.
+    pub fn new_delay_line(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self {
+        let mut m = Self::new(ec_bits, ca3_cells, k, decay, settle_steps);
+        let d = decay.clamp(0.01, 0.999);
+        m.age_weights = (0..).map(|a| d.powi(a)).take_while(|&w| w >= 0.02).map(|w| (1024.0 * w).round() as u32).collect();
+        m.ec_to_ca3 = Weights::Ring(RingPathway::new(ec_bits, ca3_cells));
+        m.ca3_to_ca3 = Weights::Ring(RingPathway::new(ca3_cells, ca3_cells));
+        m.ca3_to_ec = Weights::Ring(RingPathway::new(ca3_cells, ec_bits));
+        m
+    }
+
+    fn write(w: &mut Weights, i: usize, mask: &BitVector, amount: u32, planes: usize, epoch: u32, store: u32, len: usize) {
+        match w {
+            Weights::Counters(p) => p.strengthen(i, mask, amount, planes, epoch),
+            Weights::Ring(r) => r.strengthen(i, mask, store, len),
+        }
+    }
+
+    fn read(&self, w: &Weights, sources: &[usize]) -> Vec<u32> {
+        match w {
+            Weights::Counters(p) => p.drive(sources, self.epoch()),
+            Weights::Ring(r) => r.drive(sources, self.stores, &self.age_weights),
         }
     }
 
@@ -169,16 +257,17 @@ impl Ca3Memory {
         let phase = (self.stores % self.half_life) as f32 / self.half_life as f32;
         let amount = (16.0 * 2f32.powf(phase)).round() as u32;
         let c_idx: Vec<usize> = c.iter().map(|&j| j as usize).collect();
-        let c_mask = BitVector::from_bits(&c_idx, self.ca3_to_ca3.targets);
-        let x_mask = BitVector::from_bits(x, self.ca3_to_ec.targets);
+        let (store, len) = (self.stores, self.age_weights.len().max(1));
+        let c_mask = BitVector::from_bits(&c_idx, self.ca3_cells);
+        let x_mask = BitVector::from_bits(x, self.ec_bits);
         for &i in x {
-            self.ec_to_ca3.strengthen(i, &c_mask, amount, planes, epoch);
+            Self::write(&mut self.ec_to_ca3, i, &c_mask, amount, planes, epoch, store, len);
         }
         for &i in &c_idx {
             let mut others = c_mask.clone();
             others.bit_clear(i);
-            self.ca3_to_ca3.strengthen(i, &others, amount, planes, epoch);
-            self.ca3_to_ec.strengthen(i, &x_mask, amount, planes, epoch);
+            Self::write(&mut self.ca3_to_ca3, i, &others, amount, planes, epoch, store, len);
+            Self::write(&mut self.ca3_to_ec, i, &x_mask, amount, planes, epoch, store, len);
         }
     }
 
@@ -186,16 +275,15 @@ impl Ca3Memory {
     /// recurrent weights, read EC out. Returns the EC bits scoring at least
     /// `readout_fraction` of the best score, and that best score (0 if nothing was recalled).
     pub fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
-        let epoch = self.epoch();
-        let from_cue = self.ec_to_ca3.drive(cue, epoch);
+        let from_cue = self.read(&self.ec_to_ca3, cue);
         let mut c = top_k(from_cue.iter().map(|&v| v as f32), self.k);
         for _ in 0..self.settle_steps {
             let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
-            let rec = self.ca3_to_ca3.drive(&active, epoch);
+            let rec = self.read(&self.ca3_to_ca3, &active);
             c = top_k(rec.iter().zip(&from_cue).map(|(r, f)| (r + f) as f32), self.k);
         }
         let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
-        let out = self.ca3_to_ec.drive(&active, epoch);
+        let out = self.read(&self.ca3_to_ec, &active);
         let best = out.iter().copied().max().unwrap_or(0);
         if best == 0 {
             return (Vec::new(), 0.0);
@@ -204,9 +292,12 @@ impl Ca3Memory {
         ((0..ec_bits.min(out.len())).filter(|&b| out[b] as f32 >= floor).collect(), best as f32)
     }
 
-    /// Number of stored synapses (all three pathways).
+    /// Number of stored synapses (all three pathways; counters only, else 0).
     pub fn synapses(&self) -> usize {
-        self.ec_to_ca3.synapses() + self.ca3_to_ca3.synapses() + self.ca3_to_ec.synapses()
+        [&self.ec_to_ca3, &self.ca3_to_ca3, &self.ca3_to_ec]
+            .iter()
+            .map(|w| if let Weights::Counters(p) = w { p.synapses() } else { 0 })
+            .sum()
     }
 }
 
@@ -257,5 +348,17 @@ mod tests {
         assert!(has(22) && !has(20), "should recall the recent mary episode (office)");
         let (out, _) = m.recall(&word(2), 512);
         assert!(word(21).iter().all(|b| out.contains(b)));
+    }
+
+    #[test]
+    fn delay_line_ca3_completes_the_most_recent_episode() {
+        let dg = DentateGyrus::new(512, 4096, 64, 20, 1);
+        let mut m = Ca3Memory::new_delay_line(512, 4096, 20, 0.9, 2);
+        for ep in [episode(&[1, 10, 20]), episode(&[2, 10, 21]), episode(&[1, 10, 22])] {
+            m.store(&ep, &dg.separate(&ep));
+        }
+        let (out, _) = m.recall(&word(1), 512);
+        let has = |w: usize| word(w).iter().all(|b| out.contains(b));
+        assert!(has(22) && !has(20));
     }
 }

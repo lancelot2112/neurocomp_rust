@@ -37,6 +37,11 @@
 //! (q <= 2, v <= 6): facts are "X went to the P ." (place 4 after the name) or
 //! "X went all the way over to the P ." (8 after), and questions are
 //! "where is X right now ?" (name 3 before "?"). Correct routes: (3,4) and (3,8).
+//!
+//! JITTER=1 puts 0-4 random filler words ("then", "later", "so", "next", "after")
+//! before each story, so no fixed offset from the previous story's words lands on
+//! the answer (open discovery otherwise finds such cross-story shortcuts, e.g.
+//! "10 words after the previous where").
 
 mod common;
 
@@ -54,6 +59,7 @@ const BITS: usize = 512;
 const CHANNELS: usize = 4;
 const NAMES: &[&str] = &["mary", "john", "sandra", "daniel", "anna", "peter"];
 const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", "bedroom"];
+const FILLERS: &[&str] = &["then", "later", "so", "next", "after"];
 const TRAIN: usize = 3000;
 const TEST: usize = 1000;
 const REVIEW_EVERY: usize = 50; // stories between channel re-pointing (learned policy)
@@ -86,11 +92,17 @@ fn allowed(n: usize, p: usize) -> bool {
 /// shortcuts ("the answer is always k words after the last `?`"): only routing by
 /// content (the asked name) can find the answer.
 fn story(rng: &mut StdRng, max_facts: usize, long: bool, want_held_out: bool) -> Story {
+    let jitter = std::env::var("JITTER").is_ok();
     loop {
         let facts = rng.gen_range(1..=max_facts);
         let mut names: Vec<usize> = (0..NAMES.len()).collect();
         names.shuffle(rng);
         let mut words = Vec::new();
+        if jitter {
+            for _ in 0..rng.gen_range(0..=4) {
+                words.push(*FILLERS.choose(rng).unwrap());
+            }
+        }
         let mut loc = Vec::new();
         let mut ok = true;
         for &n in &names[..facts] {
@@ -141,6 +153,7 @@ struct Outcome {
 fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut vocab: Vec<&str> = vec!["went", "to", "the", ".", "where", "is", "?", "all", "way", "over", "right", "now"];
+    vocab.extend(FILLERS);
     vocab.extend(NAMES);
     vocab.extend(PLACES);
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
@@ -321,6 +334,9 @@ fn main() {
         println!("synapse-level credit on: generalize near misses matching >= {g} of their connections, after {after} confirmation(s)");
     }
     let long = std::env::var("TASK").as_deref() == Ok("long");
+    if std::env::var("JITTER").is_ok() {
+        println!("JITTER: 0-4 random filler words before each story");
+    }
     if long {
         println!("TASK=long: facts \"X went [all the way over] to the P .\", questions \"where is X right now ?\" (routes (3,4) and (3,8))");
     }
@@ -336,6 +352,7 @@ fn main() {
             Ok("oracle") => vec![Policy::Oracle],
             Ok("open_only") => vec![Policy::LearnedOpen],
             Ok("open") => vec![Policy::NoThalamus, Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
+            Ok("open_cmp") => vec![Policy::Oracle, Policy::LearnedProposed, Policy::LearnedOpen],
             Ok("main") => vec![Policy::NoThalamus, Policy::Oracle, Policy::FixedRandom, Policy::Learned, Policy::LearnedProposed],
             _ => vec![
                 Policy::NoThalamus,

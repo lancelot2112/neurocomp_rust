@@ -81,6 +81,7 @@ Concepts
 - [Credit assignment](concepts/credit-assignment.md)
 - [Hippocampal-formation functions: what we have and what's missing](concepts/hippocampal-functions.md)
 - [Basal ganglia and cerebellum: two more credit-assignment loops](concepts/basal-ganglia-and-cerebellum.md)
+- [Probability in bits: what is bitwise now, and how to keep it that way](concepts/probability-in-bits.md)
 
 Reference
 - [Bugs found and fixed](bugs-and-fixes.md)

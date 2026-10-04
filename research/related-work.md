@@ -219,6 +219,14 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
 - **Turrigiano, G. (2008).** *The self-tuning neuron: synaptic scaling of excitatory
   synapses.* Cell 135. Homeostatic plasticity, the idea behind
   `KernelClass::with_target_active`.
+- **Amit, D. & Fusi, S. (1994).** *Learning in neural networks with material synapses.*
+  Neural Computation 6. Binary synapses with stochastic transitions; memory as a
+  palimpsest. **Fusi, S., Drew, P. & Abbott, L. (2005).** *Cascade models of synaptically
+  stored memories.* Neuron 45.
+- **Gaines, B. (1969).** *Stochastic computing systems.* Advances in Information Systems
+  Science 2; **Alaghi, A. & Hayes, J. (2013).** *Survey of stochastic computing.* ACM TECS 12.
+  Values as densities of ones in bit streams; AND multiplies. See
+  [probability in bits](concepts/probability-in-bits.md).
 
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the

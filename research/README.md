@@ -24,6 +24,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Binding by inhibition over a route pool (1–2 facts) | context gate 100% (original), value gate 100% (long) | 4 channel slots 75% / 44.5% | [10](experiments/10-route-pool-inhibition.md) |
 | – | Binding by one-shot episodic memory, variable sentence shapes | **98%** held-out | best fixed routes 33–34% | [11](experiments/11-episodic-memory.md) |
 | – | Same, with dentate-gyrus expansion + Hebbian CA3 store | **99%** held-out (1–3 facts) | list memory 97.5% | [12](experiments/12-dentate-gyrus-ca3.md) |
+| – | Predictor fixes from diagnostics (copy-credit tags, scaled tolerance, trust floor at test) | list memory **100%** every seed; CA3 95% (1–3 facts) | 98.7% / 90–93% before | [12](experiments/12-dentate-gyrus-ca3.md) |
 | – | Two-hop questions ("where is the ball?") by big-loop recall | branching recall **80.8%** | single-cue chain 5.5%, one hop 0% | [13](experiments/13-big-loop.md) |
 | – | Storing what the predictor didn't predict (CA1 comparator) | 93% / 87% held-out (1 seed) | frequency habituation 98% | [14](experiments/14-ca1-comparator.md) |
 | – | Two-hop questions, learned choice of what to follow (basal ganglia) | **89.1%** held-out (5 seeds, bit-sliced counters) | branching recall 80.8% | [15](experiments/15-basal-ganglia-selector.md) |

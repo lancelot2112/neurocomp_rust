@@ -271,7 +271,29 @@ The three bugs, all in how a predictive class picks and prunes kernels:
 3. **Pruning before credit.** Copy bits must be tagged when the kernel is born (it is
    grown to predict this target), not only after a hit.
 
-Settings: `GENERALIZE=0.5 GENERALIZE_AFTER=1 STICKY=4 TRUST_AT_TEST=0.5`. Three-seed results (varied stories, held-out): list memory **100% / 100%** (1–2 / 1–3 facts, every seed; was 98.7% / 98.7%); CA3 FULL_FIX_CA3
+Settings: `GENERALIZE=0.5 GENERALIZE_AFTER=1 STICKY=4 TRUST_AT_TEST=0.5`. **Three seeds** (varied stories, held-out; same settings):
+
+| Memory | 1–2 facts, before | 1–2 facts, **fixed** | 1–3 facts, before | 1–3 facts, **fixed** |
+|---|---|---|---|---|
+| list memory | 98.7% | **100%** (100/100/100) | 98.7% | **100%** (100/100/100) |
+| CA3 delay line, settle 2 | 99.3% | 93.6% (99/99/82) | 92.7% | 94.9% (85/100/100) |
+| CA3 delay line, no settling | 99.5% | **99.2%** (99/99/99) | 90.0% | **95.0%** (85/100/100) |
+
+- **For the list memory the predictor fixes are complete:** 100% on every seed, both loads.
+- **For CA3 they help on average** (1–3 facts +2 to +5 points) but one seed per row still
+  fails, and *which* seed moves with every change (seed 1 → 2 → 0). Seed-2 diagnostic
+  (settle 2, 1–2 facts): the matching copy kernel was over-general, 1–2 memory bits left,
+  reliability 0.11 over 7.5k uses: a couple of bits of a sparse code are shared with other
+  words, so it fired on the wrong recalls.
+- **A minimum partial frame did not fix that.** 4 bits (tolerance 0): seed 2's 1–2 facts
+  82% → 98.8%, but a recall carries only ~95% of a place's bits, so all-4-must-match
+  failed on 1–3 facts (seed 1 77.6%, seed 2 90.8%). 6 bits (tolerance 1): 1–2 facts 91–99%,
+  1–3 facts 61.6–100% (seed 1 no settling 61.6%). Reverted.
+- So the remaining CA3 fragility is in **how few bits a kernel may key on**: too few and
+  other words trigger it, too many required and normal recall noise misses it. Pruning
+  to a fixed bit count can't satisfy both across seeds. Candidates: keep the whole tagged
+  place (prune only *untagged* bits, never tagged ones), or match on the fraction of the
+  recalled word present rather than a bit count.
 
 11. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.

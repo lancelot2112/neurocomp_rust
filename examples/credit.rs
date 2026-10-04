@@ -155,6 +155,7 @@ fn run(policy: Policy, k: usize, generalize: Option<f32>, patient: bool, guided:
         match_fraction: 0.8,
         surprise_fraction: 0.5,
         generalize,
+        generalize_after: 1,
     });
     let mut symbol_counts = vec![0f64; N_SYMBOLS];
     let (mut t, mut prev) = (0usize, None::<usize>);

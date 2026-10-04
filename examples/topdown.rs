@@ -38,6 +38,7 @@ fn predictive(bits: usize, frames: usize) -> KernelClass<SimpleKernel> {
         match_fraction: 0.8,
         surprise_fraction: 0.5,
         generalize: None,
+        generalize_after: 1,
     })
 }
 

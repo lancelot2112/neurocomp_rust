@@ -77,6 +77,10 @@ pub struct GrowthConfig {
     /// connections (but not its threshold) and whose prediction the target confirms
     /// drops the connections that were silent, becoming more general. None = off.
     pub generalize: Option<f32>,
+    /// How many such confirmations a silent connection needs before it is dropped
+    /// (a connection's count resets whenever it is active while its kernel is
+    /// right). 1 = drop on the first near miss.
+    pub generalize_after: u8,
 }
 
 impl Default for GrowthConfig {
@@ -89,6 +93,7 @@ impl Default for GrowthConfig {
             match_fraction: 0.8,
             surprise_fraction: 0.5,
             generalize: None,
+            generalize_after: 1,
         }
     }
 }
@@ -114,6 +119,7 @@ struct PredictiveState {
     last_target_prob: f32,    // see `target_probability`
     last_near: Vec<usize>,    // kernels that nearly matched on the last step (see `generalize`)
     growth_mask: Option<BitVector>, // if set, new kernels may only sample these input bits
+    silent_counts: std::collections::HashMap<usize, std::collections::HashMap<usize, u8>>, // kernel -> bit -> confirmations it was irrelevant
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
 }
@@ -228,6 +234,7 @@ impl KernelClass<SimpleKernel> {
             last_target_prob: 0.0,
             last_near: Vec::new(),
             growth_mask: None,
+            silent_counts: std::collections::HashMap::new(),
             last_hits: Vec::new(),
             last_misses: Vec::new(),
         });
@@ -496,22 +503,42 @@ impl KernelClass<SimpleKernel> {
         let Some(st) = self.predictive.as_mut() else { return };
         let near = std::mem::take(&mut st.last_near);
         let min_bits = cfg.sample_bits.max(2);
+        let need = cfg.generalize_after.max(1);
+        // A connection that is active while its kernel is right has proven compatible.
+        for &k in &st.last_hits {
+            if let Some(counts) = st.silent_counts.get_mut(&k) {
+                counts.retain(|&b, _| !input.bit_get(b));
+            }
+        }
         for k in near {
             if !predicts(&self.active_kernels[k], target) {
                 continue;
             }
             let old = set_bits(&self.active_kernels[k].input_mask);
-            let kept: Vec<usize> = old.iter().copied().filter(|&b| input.bit_get(b)).collect();
-            if kept.len() < min_bits {
+            let counts = st.silent_counts.entry(k).or_default();
+            let mut drop = Vec::new();
+            for &b in &old {
+                if input.bit_get(b) {
+                    counts.remove(&b);
+                } else {
+                    let c = counts.entry(b).or_insert(0);
+                    *c = c.saturating_add(1);
+                    if *c >= need {
+                        drop.push(b);
+                    }
+                }
+            }
+            if drop.is_empty() || old.len() - drop.len() < min_bits {
                 continue;
             }
-            for &b in old.iter().filter(|&&b| !input.bit_get(b)) {
+            for &b in &drop {
                 self.active_kernels[k].input_mask.bit_clear(b);
                 st.index[b].retain(|&x| x as usize != k);
+                counts.remove(&b);
             }
             let tolerance = (cfg.sample_bits as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
             let kern = &mut self.active_kernels[k];
-            kern.threshold = kept.len().saturating_sub(tolerance).max(1);
+            kern.threshold = (old.len() - drop.len()).saturating_sub(tolerance).max(1);
             kern.stats.hits += 1;
             kern.stats.last_useful = self.tick;
         }
@@ -570,6 +597,7 @@ impl KernelClass<SimpleKernel> {
             }
             st.last_matches.retain(|&x| x != victim);
             st.last_hits.retain(|&x| x != victim);
+            st.silent_counts.remove(&victim);
             st.last_misses.retain(|&x| x != victim);
             self.active_kernels[victim] = k;
             self.recycled += 1;
@@ -822,5 +850,26 @@ mod tests {
         kc.set_growth_mask(Some(BitVector::from_words(vec![0x0F])));
         step(&mut kc, &frames(&[0xFF]), &BitVector::from_words(vec![0xFF00]));
         assert_eq!(kc.kernels()[0].input_mask.as_words()[0], 0x0F);
+    }
+
+    #[test]
+    fn gradual_generalization_needs_repeated_evidence() {
+        let cfg = GrowthConfig {
+            frame_words: 1,
+            max_frames: 2,
+            sample_bits: 8,
+            generalize: Some(0.5),
+            generalize_after: 2,
+            ..GrowthConfig::default()
+        };
+        let b = BitVector::from_words(vec![0xFF00]);
+        let mut kc = KernelClass::predictive(cfg);
+        let mut rng = rand::thread_rng();
+        kc.grow(&frames(&[0xFF, 0x0F]), &b, 2, &mut rng); // A + filler1 -> B
+        let a_f2 = frames(&[0xFF, 0xF0]);
+        step(&mut kc, &a_f2, &b); // first confirmation: not yet dropped
+        assert_eq!(kc.kernels()[0].input_mask.as_words(), &[0xFF, 0x0F]);
+        step(&mut kc, &a_f2, &b); // second: filler connections dropped
+        assert_eq!(kc.kernels()[0].input_mask.as_words(), &[0xFF, 0]);
     }
 }

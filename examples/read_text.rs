@@ -497,6 +497,7 @@ fn run_predictive(enc: &Encoder, stream: &[usize], segs: &Segments, frames: usiz
         match_fraction: 0.8,
         surprise_fraction: 0.5,
         generalize: None,
+        generalize_after: 1,
     };
     let mut group = KernelGroup::new();
     group.add_class(KernelClass::predictive(cfg));

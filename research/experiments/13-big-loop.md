@@ -30,11 +30,11 @@ Random fillers between stories; 3,000 training, 1,000 test stories; chance 1/6.
 
 | Policy | Single seed | 5 seeds |
 |---|---|---|
-| no memory | 17.0% | LOOP_NOMEM |
-| one hop (list memory) | 0.0% | LOOP_EPISODIC |
-| Loop(1) | 0.0% | LOOP_1 |
-| Loop(2), single rarest-item cue | 1.4% | LOOP_2 |
-| **Branch(3)** | **81.8%** | LOOP_BRANCH |
+| no memory | 17.0% | 16.4% |
+| one hop (list memory) | 0.0% | 0.0% |
+| Loop(1) | 0.0% | 0.0% |
+| Loop(2), single rarest-item cue | 1.4% | 5.5% (1–14) |
+| **Branch(3)** | **81.8%** | **80.8%** (78–83) |
 
 Check on one-hop varied stories (does branching hurt?): Branch(3) 97.3% (1–2 facts; 3 seeds 95/99/98) and 95.5% (1–3 facts; 99/96/92) held-out, vs 99.0% and 97.5% for one hop: extra branches cost 2 points on one-hop questions.
 
@@ -45,7 +45,7 @@ Check on one-hop varied stories (does branching hurt?): Branch(3) 97.3% (1–2 f
    box", the rarest new items are filler words and "picked up" (frequencies 0.24–0.26),
    about as rare as names (0.15–0.16), so the loop often follows the wrong one.
    Frequency alone can't tell which part of a memory is the entity to follow.
-3. **Branching and letting learning choose works** (81.8%). This mirrors transformers:
+3. **Branching and letting learning choose works** (80.8% over 5 seeds, 78–83). This mirrors transformers:
    several heads retrieve different things, and later computation uses the right one.
    It is also the bit-vector version of the theta–gamma idea in
    [hippocampal functions](../concepts/hippocampal-functions.md#superposition-counts-and-phase):

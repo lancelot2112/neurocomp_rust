@@ -6,10 +6,12 @@ Ordered roughly by how much they matter for "reading like a transformer".
 - **Remaining per-word cost.** After event-based recall
   ([23](experiments/23-compaction.md#5-event-based-hippocampal-recall)), L2/3 matching is
   25–50% and learning 24–38%; kernels are now stored sparsely
-  ([23](experiments/23-compaction.md#6-sparse-kernel-storage)). Next: ideas from Hashlife
-  (Gosper 1984). Memoise interpretation (input hash → winner, invalidated when the
-  prior changes); hash-cons kernels at growth (canonical bit samples, so duplicates are
-  never created); and chunking, i.e. time-skipping through a hierarchy. Also the dense
+  ([23](experiments/23-compaction.md#6-sparse-kernel-storage)). Whole-input memoisation is built
+  ([23 §7](experiments/23-compaction.md#7-memoised-interpretation-after-hashlife)): exact,
+  but it hits only 4–21%. Next from Hashlife (Gosper 1984): memoise per frame (frame
+  content → kernels and counts) with per-kernel invalidation; hash-cons kernels at growth
+  (canonical bit samples, so duplicates are never created); and chunking, i.e.
+  time-skipping through a hierarchy. Also the dense
   8,192-bit frame copies L4 still builds every word.
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where

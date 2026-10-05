@@ -252,6 +252,13 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   neural circuits in an activity and complement-dependent manner* (Neuron 74). Weak,
   little-used synapses are tagged and removed.
 
+## Computation by memoisation
+- **Gosper, R. W. (1984).** *Exploiting regularities in large cellular spaces.* Physica D
+  10. Hashlife: a quadtree of hash-consed (canonical) nodes, each memoising its future,
+  so repeated structure in space and time is computed once. The memoised interpretation
+  of [23](experiments/23-compaction.md#7-memoised-interpretation-after-hashlife), and the
+  per-frame memo, canonical kernels and chunking proposed there.
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

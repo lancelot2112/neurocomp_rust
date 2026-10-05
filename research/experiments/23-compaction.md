@@ -191,6 +191,43 @@ Results are **identical** (same kernel counts, same accuracy on all five tasks, 
 Time per word is unchanged within noise; the dense masks were no longer read on the hot
 path after section 2. The model is now as small as the transformer baselines (0.1–3.2 MB).
 
+## 7. Memoised interpretation (after Hashlife)
+Hashlife (Gosper 1984) is fast because each distinct sub-pattern is stored once and its
+future is memoised. The cheapest analog here (`MEMO=1`, `KernelClass::set_memo`):
+- **Memo:** a hash of the L4 input maps to the winning kernel, stamped with a version of
+  the prior.
+- **Version bumps:** full-path learning (scoring, pruning, growth), sleep, trust-floor
+  changes, and counter halving.
+- **Why expected words don't invalidate:** with surprise gating, an expected word only
+  strengthens the winner, which keeps it the winner.
+- **On a hit:** matching is skipped. If the word then turns out to be a surprise,
+  learning recounts the matched kernels from the same input.
+- **Off when** fast inhibition or a top-down bias is active, since they change the winner
+  step by step.
+- **Exactness:** a test runs two predictors, with and without the memo, over 3,000 noisy
+  steps and checks they make identical predictions and end with the same kernels.
+
+Results are **identical** on every task (seed 0, with compaction and the surprise gate):
+
+| Task | Served from memo | Training µs/word | Answering µs/word |
+|---|---|---|---|
+| Varied, 1–2 / 1–3 facts | 7 / 8% | 49 / 57 → 52 / 59 | 44 / 44 → **37 / 37** |
+| Topic | 4% | 50 → 53 | 47 → 44 |
+| Give | 21% | 141 → 143 | 77 → **49** |
+| Two-hop | 12% | 145 → 151 | 104 → **76** |
+
+1. **Whole inputs rarely repeat.** L4 is the current word plus the recalled memory plus
+   the previous word, and that exact combination seldom recurs (4–21%).
+2. **Training gets nothing.** Every surprise, about a third of the words, changes the
+   prior and invalidates the whole memo, and hashing costs a little.
+3. **Answering gains 6–37%,** because the prior is fixed at test, so repeats pay off.
+4. **The truer Hashlife analog is per sub-pattern.** Hashlife memoises quadtree
+   *sub*-nodes, which repeat far more than whole boards. Here the sub-patterns are frames:
+   only ~40 distinct words fill the current-word frame. Memoising each frame's
+   contribution to the match counts (frame content → kernels and counts), and combining
+   the frames, would hit almost always. Invalidating per kernel rather than globally would
+   keep entries valid through training. Not built yet.
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the

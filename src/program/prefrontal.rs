@@ -6,8 +6,11 @@
 //! go / no-go choice. Its candidates are the two action codes bound to the current input
 //! (by bit rotation), so the striatum learns a value per (action, input). Reward arrives
 //! later, when what working memory held turns out to be useful (e.g. it cued a recall
-//! that contained the answer); the eligibility trace carries that credit back to the
-//! gating decisions made several inputs earlier.
+//! that contained the answer). As in PBWM, the credit goes to the **gating event whose
+//! content is held**: the load that put the current item into working memory, so the gate
+//! learns the value of holding each kind of input. Keeping is the default and needs no
+//! credit. (Spreading one reward over every load/keep choice in a trace muddled the
+//! values: loads at "." looked good, loads at names did not.)
 
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -64,6 +67,8 @@ pub struct PfcGate {
     bits: usize,
     load_code: BitVector,
     keep_code: BitVector,
+    /// Key of the input whose load put the current content into working memory.
+    held: Option<usize>,
 }
 
 impl PfcGate {
@@ -83,7 +88,7 @@ impl PfcGate {
         // balance in expectation (with gain 1.5 the +1 side is capped at probability 1 and
         // the drift is downward, eroding whichever action is chosen most)
         bg.gain = 1.0;
-        Self { bg, bits, load_code, keep_code }
+        Self { bg, bits, load_code, keep_code, held: None }
     }
 
     fn bound(&self, code: &BitVector, key: usize) -> BitVector {
@@ -99,7 +104,10 @@ impl PfcGate {
     pub fn decide<R: Rng>(&mut self, key: usize, rng: Option<&mut R>) -> Gate {
         let cands = [self.bound(&self.keep_code, key), self.bound(&self.load_code, key)];
         match self.bg.select(&cands, rng) {
-            Some(1) => Gate::Load,
+            Some(1) => {
+                self.held = Some(key);
+                Gate::Load
+            }
             _ => Gate::Keep,
         }
     }
@@ -110,9 +118,16 @@ impl PfcGate {
         self.bg.value(&self.bound(code, key))
     }
 
-    /// Reward the recent gating decisions (through the eligibility trace).
+    /// Reward the gating event whose content is held: the load of the current item.
+    /// Returns the error (0 if nothing was ever loaded).
     pub fn reward<R: Rng>(&mut self, reward: f32, rng: &mut R) -> f32 {
-        self.bg.reward(reward, rng)
+        match self.held {
+            Some(key) => {
+                let c = self.bound(&self.load_code, key);
+                self.bg.reward_candidate(&c, reward, rng)
+            }
+            None => 0.0,
+        }
     }
 }
 
@@ -147,6 +162,7 @@ mod tests {
             }
             gate.reward(if held == 1 { 1.0 } else { 0.0 }, &mut rng);
         }
+        // only the held item's load is credited: names gain, distractors lose
         assert!(gate.value(Gate::Load, 1) > gate.value(Gate::Keep, 1), "should load the name");
         assert!(gate.value(Gate::Keep, 2) > gate.value(Gate::Load, 2), "should keep over a distractor");
         assert!(gate.value(Gate::Keep, 3) > gate.value(Gate::Load, 3), "should keep over a distractor");

@@ -102,6 +102,32 @@ impl BasalGanglia {
         Some(best)
     }
 
+    /// Reward one specific `candidate` (not the trace): its counters step toward `reward`
+    /// by the error reward − its own value (a per-candidate, bandit-style estimate).
+    /// Returns the error.
+    pub fn reward_candidate<R: Rng>(&mut self, candidate: &BitVector, reward: f32, rng: &mut R) -> f32 {
+        let (s, m) = self.score(candidate);
+        let delta = reward as f64 - s as f64 / m as f64;
+        let p = (self.gain * delta.abs()).min(1.0);
+        let mut step = BitVector::new(self.bits, Some(0));
+        for (wi, &w) in candidate.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                let b = w.trailing_zeros() as usize;
+                w &= w - 1;
+                if rng.gen_bool(p) {
+                    step.bit_set(wi * 64 + b);
+                }
+            }
+        }
+        if delta > 0.0 {
+            self.go.increment(&step);
+        } else {
+            self.go.decrement(&step);
+        }
+        delta as f32
+    }
+
     /// Reward (0..=1) for the latest choice and, through the trace, earlier ones.
     /// Returns the reward-prediction error.
     pub fn reward<R: Rng>(&mut self, reward: f32, rng: &mut R) -> f32 {

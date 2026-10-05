@@ -727,7 +727,8 @@ impl KernelClass<SimpleKernel> {
             // Copy credit: an active input bit that carries the same bit (frame-relative)
             // as the target the kernel just predicted correctly gets a sticky tag.
             if st.sticky_factor > 0 {
-                for b in set_bits(&self.active_kernels[k].input_mask) {
+                for &b in &self.active_kernels[k].input_set {
+                    let b = b as usize;
                     let t = b % frame_bits;
                     if input.bit_get(b) && t < target.bit_len() && target.bit_get(t) {
                         st.sticky_tags.entry(k).or_default().insert(b);
@@ -739,7 +740,7 @@ impl KernelClass<SimpleKernel> {
             if !predicts(&self.active_kernels[k], target) {
                 continue;
             }
-            let old = set_bits(&self.active_kernels[k].input_mask);
+            let old: Vec<usize> = self.active_kernels[k].input_set.iter().map(|&b| b as usize).collect();
             let counts = st.silent_counts.entry(k).or_default();
             let tags = st.sticky_tags.get(&k);
             let mut drop = Vec::new();
@@ -851,7 +852,8 @@ impl KernelClass<SimpleKernel> {
                 .filter(|&i| Some(i) != st.last_winner)
                 .min_by_key(|&i| self.active_kernels[i].stats.last_useful)
                 .expect("budget must allow at least two kernels");
-            for b in set_bits(&self.active_kernels[victim].input_mask) {
+            for &b in &self.active_kernels[victim].input_set {
+                let b = b as usize;
                 st.index[b].retain(|&x| x as usize != victim);
             }
             st.last_matches.retain(|&x| x != victim);
@@ -871,7 +873,8 @@ impl KernelClass<SimpleKernel> {
             st.index.resize(input.bit_len(), Vec::new());
         }
         let frame_bits = cfg.frame_words * 64;
-        for b in set_bits(&self.active_kernels[slot].input_mask) {
+        for &b in &self.active_kernels[slot].input_set {
+            let b = b as usize;
             st.index[b].push(slot as u32);
             // Copy credit at birth: the kernel is grown to predict `target` from this
             // input, so its bits that carry the target's bits are tagged at once (before

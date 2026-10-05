@@ -54,9 +54,13 @@ pub struct SimpleKernel {
     pub plastic: bool,        // apply the local Hebbian rules (strengthen / search_remap) while firing
     pub context_frames: usize, // history frames the input mask spans (set by predictive growth)
     pub stats: KernelStats,
-    /// Cached `input_mask.count_ones()`. The Hebbian moves keep it (one bit cleared, one
-    /// set); code that clears or sets mask bits must call `sync_input_bits`.
+    /// Cached `input_mask.count_ones()`; code that clears or sets mask bits must call
+    /// `sync_input_bits`.
     pub input_bits: usize,
+    /// The input mask's set bits, relative to the mask (as `set_bits(&input_mask)`), kept
+    /// with `input_bits`: learning walks these few positions instead of scanning the whole
+    /// input width.
+    pub input_set: Vec<u32>,
     /// The output mask as absolute bit positions (the mask is fixed after construction):
     /// checking a prediction against a target touches only these ~32 bits, not the
     /// whole output width.
@@ -65,7 +69,8 @@ pub struct SimpleKernel {
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        let input_bits = input_mask.count_ones();
+        let input_set = Self::positions(&input_mask, 0);
+        let input_bits = input_set.len();
         let output_set = Self::positions(&output_mask, output_idx);
         Self {
             input_mask,
@@ -78,6 +83,7 @@ impl SimpleKernel {
             context_frames: 1,
             stats: KernelStats::default(),
             input_bits,
+            input_set,
             output_set,
         }
     }
@@ -96,7 +102,8 @@ impl SimpleKernel {
 
     /// Recompute `input_bits` after changing `input_mask` directly.
     pub fn sync_input_bits(&mut self) {
-        self.input_bits = self.input_mask.count_ones();
+        self.input_set = Self::positions(&self.input_mask, 0);
+        self.input_bits = self.input_set.len();
     }
 
     pub fn default(output_bit: usize) -> Self {
@@ -153,6 +160,7 @@ impl SimpleKernel {
         // If inhibited we SEARCH for a new pattern to connect to
         //  eg. [SEARCH] CLEAR a CONNECTED + ACTIVE bit and choose a random INACTIVE + UNCONNECTED bit to set.
         ctx.input.mask_move_random_connected_and_set(self.input_idx, &mut self.input_mask, rng);
+        self.sync_input_bits();
     }
 
     #[inline]
@@ -161,6 +169,7 @@ impl SimpleKernel {
         //If not inhibited we STRENGTHEN our active pattern
         // eg. [STRENGTHEN] CLEAR a CONNECTED + INACTIVE bit and choose a random ACTIVE + UNCONNECTED bit to SET.
         ctx.input.mask_move_random_connected_and_not_set(self.input_idx, &mut self.input_mask, rng);
+        self.sync_input_bits();
     }
 
     #[inline]

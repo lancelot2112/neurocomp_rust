@@ -318,6 +318,53 @@ not a same-build comparison). The mean is about the same, within this task's usu
    word, so a collision with another word's code would affect every use. No accuracy loss
    on these tasks.
 
+## 10. Chunking (Hashlife's time-skipping)
+Hashlife jumps many generations at once for a pattern it has seen evolve. The analog here
+is a chunk: a predictable run of words that executes without full inference (`CHUNK=n`,
+`KernelClass::set_chunking`).
+- **Learning a link:** the predictor learns which kernel usually takes over after
+  another. After `n` identical confirmed hand-overs, *a → b* is a solid link.
+- **Using it:** next time *a*'s prediction is confirmed, *b* answers directly and
+  matching is skipped. Links chain, so "went → to → the" runs as one chunk.
+- **Confirmation** is read off the input itself: frame 0, the current word, is what the
+  previous winner predicted. So chunks also run at test, without learning.
+- **Breaking:** a chunk breaks on the first surprise. The link is reset and full
+  inference resumes.
+- **Recycled slots** carry a generation number, so a link never jumps to a replaced
+  kernel.
+- **Test:** on a repeating sequence most steps are chunked, with predictions identical to
+  no chunking, and a one-off surprise breaks the chunk.
+
+Unlike the memos, chunks are **not exact**: within a chunk the memory and relay frames
+are ignored, as by a habit. A habits-only variant (`CHUNK_LOCAL=1`) lets a link hand over
+only to kernels that read the current word alone, so any step that depends on memory,
+relays or older context stays goal-directed.
+
+Results with canonical kernels, `CHUNK=4`, seeds 0 / 1 / 2:
+
+| Task | Steps chunked: all / habits only | Held-out: no chunks | Chunks | Habits only |
+|---|---|---|---|---|
+| Varied (1–2 and 1–3 facts) | 31–33% / 8–24% | 100% | 99.0–99.8% | **100%** |
+| Topic | 38–41% / 5–19% | 100% | 99.2–100% | **100%** |
+| Give | 16–18% / 1–10% | 99.8 / 99.8 / 100% | 99.0 / 99.6 / 99.4% | 100 / 98.4 / 100% |
+| Two-hop | 26–27% / 9–10% | 93.0 / 83.6 / 80.4% | 92.8 / 84.0 / 82.4% | 93.0 / 84.0 / 80.4% |
+
+1. **Chunks trade a little accuracy for a little speed.** A third of the steps run as
+   chunks, about 5–20% faster in training and answering, at a cost of 0.2–1 point. Within
+   a chunk the recalled memory is ignored, so the occasional chunk runs into an answer
+   that needed it.
+2. **Habits only restore accuracy** on varied and topic (100% on every seed); two-hop is
+   unchanged. Give seed 1 lost 1.6 points with only 1% of steps chunked, which looks like
+   learning-path noise more than chunking. But it chunks far fewer steps (1–24%), and the
+   speed gain disappears within this batch's timing noise.
+3. **Why the gain is small either way:** a chunk skips only matching. After the earlier
+   sections, matching is no longer most of the cost: recall, learning and L4's frame
+   assembly still run on every step. Hashlife's time-skip pays because a jump skips
+   *all* the work for many generations. A chunk here would pay only if it also skipped
+   recall and frame assembly within the chunk, i.e. the column stopped attending to
+   memory while running a habit.
+4. Both are left off by default.
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the
@@ -326,5 +373,9 @@ not a same-build comparison). The mean is about the same, within this task's usu
   sleep scales them down, and weak ones are pruned.
 - **Replay** (sleep reactivation, as in [17](17-consolidation.md)): reactivated patterns
   expose which units carry the same information. Here that is used to merge them.
+- **Chunking and habits** (Graybiel 1998): the basal ganglia chunk action sequences
+  into units that run as a whole; habitual (dorsolateral striatum) control is fast but
+  ignores goals, while goal-directed control consults the current state. The
+  habits-only variant keeps every memory-dependent step goal-directed.
 - **Pruning of unused synapses** by microglia (Stevens et al. 2007; Schafer et al. 2012)
   corresponds to the "only fails" prune and to least-recently-used recycling.

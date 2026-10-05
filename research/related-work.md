@@ -259,6 +259,11 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   of [23](experiments/23-compaction.md#7-memoised-interpretation-after-hashlife), and the
   per-frame memo, canonical kernels and chunking proposed there.
 
+- **Graybiel, A. M. (1998).** *The basal ganglia and chunking of action repertoires.*
+  Neurobiology of Learning and Memory 70. Sequences become chunks that run as units;
+  habits versus goal-directed control. The chunks of
+  [23](experiments/23-compaction.md#10-chunking-hashlifes-time-skipping).
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

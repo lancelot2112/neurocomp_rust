@@ -22,8 +22,13 @@ Ordered roughly by how much they matter for "reading like a transformer".
 - **Arbitration in L2/3** ([24](experiments/24-cortical-hierarchy.md#a-thalamic-gate-on-the-top-down-frame)):
   growth stops at an empty frame and winners are ranked by depth before reliability, so
   frame order, not reliability, decides between memory and top-down, and no thalamic gate
-  on the top-down frame helped (use, reliability, confidence). Let growth skip empty
-  frames and rank sources by reliability; then retry the gate.
+  on the top-down frame helped (use, reliability, confidence). Reliability-first ranking
+  plus growth past empty frames plus the confidence gate
+  ([24](experiments/24-cortical-hierarchy.md#reliability-first-ranking-in-l23)) makes
+  early top-down work (topic 94%, 3–6× fewer kernels on habit) and memory + top-down reaches
+  81–86%. But reliability alone over-trusts established shallow kernels against fresh deep
+  ones. Next: rank by reliability only once a kernel has enough evidence, or score all
+  matches on expected steps.
 - **The hierarchy's next steps**: run the higher area on a truly slower clock (only on
   the column's surprises, or once per sentence) to remove its cost; a third level;
   several columns side by side; then real text again

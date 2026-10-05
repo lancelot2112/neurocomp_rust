@@ -147,6 +147,55 @@ were tried (`HIER_GATE`, `HIER_GATE_SIGNAL`, `HIER_GATE_CONF`), each with the fr
    sources by reliability. That is the next step. Late placement without a gate stays
    the default.
 
+## Reliability-first ranking in L2/3
+Two options in `KernelClass` (`src/kernel/class.rs`), both off by default:
+- **`set_reliability_first`** (`RANK=reliability`): the matching kernel with the highest hit
+  rate wins, and depth only breaks ties. Every matching kernel is scored at feedback,
+  winner or not, so a deep kernel can earn the record to win later. (Under the surprise
+  gate, a correct guess credits only the winner. The other kernels are scored only when
+  it misses.)
+- **`set_skip_empty`** (`SKIP_EMPTY=1`): deepening growth skips frames that are empty now,
+  so a kernel can reach the memory frame behind a gated-off top-down frame.
+
+Held-out, same settings as above (habit seeds 0 / 1 / 2; the rest seed 0):
+
+| | Depth-first, late (default) | Reliability-first, late | Reliability-first, early | + skip empty, early | + skip empty + confidence gate, early |
+|---|---|---|---|---|---|
+| Habit, no memory | **81 / 82 / 80%** | 75 / 73 / 82% | 75 / 73 / 82% | 73 / 75 / 82% | 72 / 79 / 72% (passed 72–82%) |
+| Habit + memory | 70 / 79 / 80% | 80 / 73 / 83% | **81 / 80 / 86%** | 83 / 67 / 84% | 77 / 67 / 80% (passed 47–73%) |
+| Topic | **100%** | 90.4% | 46% | 49% | 94% (passed 13%) |
+| Two-hop | **94.4%** | 90.4% | 93.8% | 93.8% | 94.0% |
+| Give | 99.6% | 92.4% | 99.0% | 100% | **100%** |
+| Varied, both | 100% | 100% | 100% | 100% | 100% |
+| Column kernels (habit / give) | 416 / 4,202 | 412 / 4,331 | 412 / 4,494 | 497 / 4,381 | **126 / 3,301** |
+
+1. **Reliability decides memory against top-down better than frame order does.** With
+   both sources, habit + memory rises to 81 / 80 / 86% (early) from 70 / 79 / 80%, the
+   best result for that combination so far. The column now picks the habit when the
+   recalled trip has proved unreliable for this context.
+2. **Reliability alone over-trusts shallow kernels.** A proven shallow kernel (hit rate
+   0.8 over many uses) beats a fresh deep one (1/2 until it has a record), and under the
+   surprise gate the deep one gets credit only when the shallow one misses. Specific
+   contexts are learned more slowly, and topic (90%), two-hop (90%) and give (92%) lose a
+   few points with top-down late.
+3. **Skipping empty frames does not rescue early top-down by itself** (topic 49%). Without
+   a gate the top-down frame is never empty. The cost is that every kernel deeper than it
+   must also match its (varying) contents, so memory-copy kernels fragment by top-down
+   word. Empty frames only matter once a gate empties them.
+4. **All three together (reliability-first, skip empty, confidence gate) make early
+   placement work.** Topic is back to 94% from 37–59%; two-hop, give and varied are at or
+   above the default; the column needs 3–6× fewer kernels on habit and 20% fewer on give,
+   because an empty top-down frame no longer splits kernels. Habit is 67–80%, a few
+   points below late placement, because the gate also blocks some correct, less
+   confident predictions.
+5. **No variant wins everywhere yet.** Late depth-first stays the default. The open
+   problem is how a fresh, specific kernel should compete with an established, general
+   one. Candidates:
+   - rank by reliability only among kernels with enough evidence (a minimum count, as
+     the trust floor does), and by depth otherwise;
+   - score every matching kernel on expected steps too, so deep kernels earn their record
+     as fast as shallow ones (at some cost in speed).
+
 ## Biology
 - **Hierarchy and predictive coding:** each level predicts the activity of the level below
   and is driven by its prediction errors (Rao & Ballard 1999; Friston 2005). Here the

@@ -87,10 +87,13 @@ impl PfcGate {
     }
 
     /// Decide for the input identified by `key` (e.g. its word index). With `rng`, explore.
+    /// Maintenance is the default: keep is the first candidate, so it wins ties, and a load
+    /// ("go") has to earn a higher value. (With load first, an untrained gate loads every
+    /// input, never holds anything to the payoff, and so never sees a reward.)
     pub fn decide<R: Rng>(&mut self, key: usize, rng: Option<&mut R>) -> Gate {
-        let cands = [self.bound(&self.load_code, key), self.bound(&self.keep_code, key)];
+        let cands = [self.bound(&self.keep_code, key), self.bound(&self.load_code, key)];
         match self.bg.select(&cands, rng) {
-            Some(0) => Gate::Load,
+            Some(1) => Gate::Load,
             _ => Gate::Keep,
         }
     }

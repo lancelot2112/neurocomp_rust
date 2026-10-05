@@ -1100,6 +1100,7 @@ fn main() {
                 Ok("consolidate") => vec![Policy::NoMemory, Policy::Episodic, Policy::Consolidate],
                 Ok("consolidate_only") => vec![Policy::Consolidate],
                 Ok("pfc") => vec![Policy::NoMemory, Policy::Episodic, Policy::Pfc { learned: false }, Policy::Pfc { learned: true }],
+                Ok("pfc_learned") => vec![Policy::Pfc { learned: true }],
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],

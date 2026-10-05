@@ -73,6 +73,10 @@ enum Policy {
     /// hop 1 to follow, learned from reward (did hop 2 recall the next word?).
     /// Frames: hop 1, hop 2.
     Select,
+    /// Thalamic gate driven by the basal ganglia: the relay routes and memory recall are
+    /// channels; `BasalGanglia` releases one per step, valued per (channel, current word);
+    /// reward = the released content contained the next word. One frame.
+    ThalamicGate,
 }
 
 struct Story {
@@ -203,9 +207,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         Policy::Loop(hops) => hops,
         Policy::Branch(b) => b + 1,
         Policy::Select => 2,
+        Policy::ThalamicGate => 1,
         Policy::FixedRelay => routes.len(),
     };
-    let mut th = Thalamus::new(BITS, 60, routes);
+    let mut th = Thalamus::new(BITS, 60, routes.clone());
     let mut memory = EpisodicMemory::new(BITS, 200); // also keeps the habituation statistics
     let (dg, mut ca3) = match policy {
         Policy::Ca3 { cells, k, settle } => {
@@ -227,6 +232,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut bg = BasalGanglia::new(BITS);
     bg.trace_len = std::env::var("BG_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut bg_pending: Option<BitVector> = None; // hop-2 content of the latest choice, awaiting reward
+    // ThalamicGate: channel identity codes (routes, then memory), bound to the current word
+    // by rotation, so the striatum holds a value per (channel, context)
+    let mut gate_bg = BasalGanglia::new(BITS);
+    let channel_codes: Vec<BitVector> = {
+        let mut crng = StdRng::seed_from_u64(seed + 7);
+        let all: Vec<usize> = (0..BITS).collect();
+        (0..routes.len() + 1).map(|_| BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)).collect()
+    };
+    let mut gate_pending: Option<BitVector> = None; // released content, awaiting reward
+    let mut gate_chosen_at_answer = vec![0usize; routes.len() + 1];
     // CA1-style comparator (NOVELTY=prediction): store, cue and read out only what the
     // predictor failed to predict, instead of frequency habituation.
     let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
@@ -368,6 +383,49 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 match policy {
                     Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
                     Policy::FixedRelay => words.extend_from_slice(th.relay().as_words()),
+                    Policy::ThalamicGate => {
+                        // channel contents: each relay route, then memory recall
+                        let mut contents: Vec<(usize, BitVector)> = Vec::new();
+                        for (i, r) in routes.iter().enumerate() {
+                            if let Some(v) = th.relay_channel(*r) {
+                                contents.push((i, v.clone()));
+                            }
+                        }
+                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        if cue.count_ones() > 0 {
+                            let need = ((cue.count_ones() as f32 * 0.7) as u32).max(min_overlap);
+                            if let Some(ep) = memory.recall(&cue, need) {
+                                let mut recalled = memory.novel(ep, habituation);
+                                for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {
+                                    *r &= !c;
+                                }
+                                if recalled.count_ones() > 0 {
+                                    contents.push((routes.len(), recalled));
+                                }
+                            }
+                        }
+                        let mut released = BitVector::new(BITS, Some(0));
+                        if !contents.is_empty() {
+                            // candidate = channel code bound to the current word (rotation)
+                            let cands: Vec<BitVector> = contents
+                                .iter()
+                                .map(|(c, _)| {
+                                    let mut code = channel_codes[*c].clone();
+                                    code.rotl_mut((ids[t] * 131) % BITS);
+                                    code
+                                })
+                                .collect();
+                            let explore = if testing { None } else { Some(&mut rng) };
+                            if let Some(i) = gate_bg.select(&cands, explore) {
+                                released = contents[i].1.clone();
+                                gate_pending = Some(released.clone());
+                                if testing && t + 1 == s.answer_at {
+                                    gate_chosen_at_answer[contents[i].0] += 1;
+                                }
+                            }
+                        }
+                        words.extend_from_slice(released.as_words());
+                    }
                     Policy::Loop(hops) => {
                         let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
                         let chain = memory.recall_chain(&cue, hops, habituation, 0.1, rarity_ratio);
@@ -625,12 +683,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if !testing {
                     class.feedback(&input, &enc.codes[next], &mut rng);
                     // dopamine: did the followed item's recall contain what came next?
+                    if let Some(rel) = gate_pending.take() {
+                        let hit = rel.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
+                        gate_bg.reward(hit as u32 as f32, &mut rng);
+                    }
                     if let Some(hop2) = bg_pending.take() {
                         let hit = hop2.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
                         bg.reward(hit as u32 as f32, &mut rng);
                     }
                 }
                 bg_pending = None;
+                gate_pending = None;
             }
 
             if ids[t] == full_stop {
@@ -652,6 +715,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
+    if policy == Policy::ThalamicGate {
+        let total = gate_chosen_at_answer.iter().sum::<usize>().max(1) as f64;
+        let names: Vec<String> = routes.iter().map(|r| format!("({},{})", r.query_lag, r.value_offset)).chain(["memory".to_string()]).collect();
+        let shares: Vec<String> = names.iter().zip(&gate_chosen_at_answer).map(|(n, &c)| format!("{n} {:.0}%", 100.0 * c as f64 / total)).collect();
+        eprintln!("  GATE seed {seed} channel released at test answers: {}", shares.join(", "));
+    }
     if std::env::var("DIAG").is_ok() {
         let c = cover[1].max(1) as f64;
         eprintln!(
@@ -726,6 +795,7 @@ fn main() {
                 Ok("select") => vec![Policy::Select],
                 Ok("bg") => vec![Policy::Loop(2), Policy::Branch(3), Policy::Select],
                 Ok("twohop_learned") => vec![Policy::Branch(3), Policy::Select],
+                Ok("gate") => vec![Policy::FixedRelay, Policy::Episodic, Policy::ThalamicGate],
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],

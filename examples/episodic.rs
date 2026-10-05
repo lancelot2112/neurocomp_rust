@@ -369,6 +369,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
     let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
     let mut pfc_loads = HashMap::<&str, (usize, usize)>::new(); // word -> (loads, decisions) at test
+    let (mut pfc_rewards, mut pfc_questions) = (0usize, 0usize); // training
     let names_set: std::collections::HashSet<usize> = NAMES.iter().map(|n| index[n]).collect();
     let mut tagged_or_replayed = 0usize;
     let mut from_cortex = 0usize; // test answers where the memory frame came from the cortex
@@ -916,6 +917,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Policy::Pfc { learned: true } = policy {
                         // dopamine: the recall that working memory cued contained the answer
                         pfc_gate.reward(recall_had_answer as u32 as f32, &mut rng);
+                        pfc_rewards += recall_had_answer as usize;
+                        pfc_questions += 1;
                     }
                 }
                 last_recall_id = None;
@@ -992,6 +995,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         rows.sort_by(|a, b| (b.1 .0 * 1000 / b.1 .1.max(1)).cmp(&(a.1 .0 * 1000 / a.1 .1.max(1))));
         let shown: Vec<String> = rows.iter().take(12).map(|(w, (l, d))| format!("{w} {:.0}%", 100.0 * *l as f64 / (*d).max(1) as f64)).collect();
         eprintln!("  PFC seed {seed} ({}): words loaded into working memory at test (share of occurrences): {}", if learned { "learned gate" } else { "load names" }, shown.join(", "));
+        if learned {
+            let vals: Vec<String> = ["mary", "went", "to", "kitchen", ".", "cat", "where", "person", "?"]
+                .iter()
+                .map(|w| format!("{w} load {:.2} keep {:.2}", pfc_gate.value(Gate::Load, index[w]), pfc_gate.value(Gate::Keep, index[w])))
+                .collect();
+            eprintln!("  PFC seed {seed}: training rewards {pfc_rewards}/{pfc_questions}; values: {}", vals.join("; "));
+        }
     }
     if policy == Policy::Consolidate {
         eprintln!(

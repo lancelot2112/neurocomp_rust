@@ -534,7 +534,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     });
 
     // TRUST=f: depth only outranks reliability among kernels at least f reliable
-    class.set_trust_floor(std::env::var("TRUST").ok().and_then(|v| v.parse().ok()));
+    class.set_trust_floor(ratio_env("TRUST"));
     // STICKY=f: credit-tagged synapses (input bits that carried the correctly predicted
     // word) need f times as many silent confirmations before pruning
     if let Some(f) = std::env::var("STICKY").ok().and_then(|v| v.parse().ok()) {
@@ -555,7 +555,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         fast.reliable_shift = std::env::var("FAST_RELSHIFT").ok().and_then(|v| v.parse().ok());
         class.set_fast_inhibition(Some(fast));
     }
-    class.set_growth_trust(std::env::var("GROW_TRUST").ok().and_then(|v| v.parse().ok()));
+    class.set_growth_trust(ratio_env("GROW_TRUST"));
     // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /
     // confidence / surprise, L6 context (`th`, whose match rules the thalamus gates)
     let mut column = CorticalColumn::new(BITS, class, th);
@@ -624,7 +624,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if s_i == TRAIN {
             // TRUST_AT_TEST=f: reliability-aware ranking only when answering, so training
             // keeps the depth-first ranking that drives growth
-            if let Some(f) = std::env::var("TRUST_AT_TEST").ok().and_then(|v| v.parse().ok()) {
+            if let Some(f) = ratio_env("TRUST_AT_TEST") {
                 column.l23.set_trust_floor(Some(f));
             }
         }
@@ -1285,6 +1285,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     Outcome { seen: pct(seen), held_out: pct(held), recall: 100.0 * recall_has_answer as f64 / TEST as f64, places: recall_places as f64 / TEST as f64 }
+}
+
+/// An environment setting as an integer ratio, read from its text with no float in
+/// between: "p/q", or a decimal such as "0.5" (= 5/10) or "0.75" (= 75/100).
+fn ratio_env(name: &str) -> Option<(u32, u32)> {
+    let v = std::env::var(name).ok()?;
+    if let Some((p, q)) = v.split_once('/') {
+        return Some((p.trim().parse().ok()?, q.trim().parse().ok()?));
+    }
+    let (int, frac) = v.split_once('.').unwrap_or((v.as_str(), ""));
+    let den = 10u32.checked_pow(frac.len() as u32)?;
+    let int: u32 = if int.is_empty() { 0 } else { int.parse().ok()? };
+    let frac: u32 = if frac.is_empty() { 0 } else { frac.parse().ok()? };
+    Some((int * den + frac, den))
 }
 
 fn set_bits(bv: &BitVector) -> Vec<usize> {

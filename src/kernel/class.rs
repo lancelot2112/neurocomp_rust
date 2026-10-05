@@ -133,10 +133,10 @@ struct PredictiveState {
     sticky_blame: bool,
     /// Winner ranking: a kernel's depth only counts if its reliability is at least this
     /// (deeper-but-unreliable kernels no longer outrank reliable shallower ones). None = off.
-    trust_floor: Option<f32>,
+    trust_floor: Option<Rate>,
     /// Growth: only kernels at least this reliable count as "this depth already
     /// predicts the target" (None = any kernel does).
-    growth_trust: Option<f32>,
+    growth_trust: Option<Rate>,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
     /// Fast inhibitory loop (see `set_fast_inhibition`). None = off.
@@ -375,7 +375,7 @@ impl KernelClass<SimpleKernel> {
         let agrees = |k: &SimpleKernel| bias.map_or(false, |(b, _)| predicts(k, b));
         // (not inhibited, agree-first, trusted, depth, agree-within-depth, reliability, count)
         let trust_floor = st.trust_floor;
-        let mut best: Option<((bool, bool, bool, usize, bool, f32, u32), usize)> = None;
+        let mut best: Option<((bool, bool, bool, usize, bool, Rate, u32), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -393,7 +393,7 @@ impl KernelClass<SimpleKernel> {
             let a = agrees(kern);
             let prefer = matches!(mode, Some(BiasMode::Prefer | BiasMode::PreferAndFallback)) && a;
             let tie = mode == Some(BiasMode::SameDepth) && a;
-            let r = reliability(&kern.stats);
+            let r = Rate::of(&kern.stats);
             let trusted = trust_floor.map_or(true, |f| r >= f);
             let free = st.fast.as_ref().map_or(true, |f| !f.tags.contains_key(&k));
             let key = (free, prefer, trusted, kern.context_frames, tie, r, count);
@@ -441,10 +441,10 @@ impl KernelClass<SimpleKernel> {
             .filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold)
             .map(|(k, c)| {
                 let kern = &self.active_kernels[k as usize];
-                ((kern.context_frames, reliability(&kern.stats), c), k as usize)
+                ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
             })
-            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)))
-            .map(|((_, rel, _), k)| (&self.active_kernels[k].output_mask, rel))
+            .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|((_, rel, _), k)| (&self.active_kernels[k].output_mask, rel.value()))
     }
 
     /// Restrict which input bits newly grown kernels may sample (None = all).
@@ -508,12 +508,13 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
-    /// Winner ranking: with `Some(f)`, kernels with reliability below `f` rank below every
-    /// trusted kernel, whatever their depth (longest context wins only among kernels
-    /// that have earned trust). None restores pure longest-context ranking.
-    pub fn set_trust_floor(&mut self, floor: Option<f32>) {
+    /// Winner ranking: with `Some((p, q))`, kernels whose hit rate is below p/q rank below
+    /// every trusted kernel, whatever their depth (longest context wins only among kernels
+    /// that have earned trust). None restores pure longest-context ranking. The floor is a
+    /// ratio of integers and is compared by cross-multiplication (see `Rate`).
+    pub fn set_trust_floor(&mut self, floor: Option<(u32, u32)>) {
         if let Some(st) = self.predictive.as_mut() {
-            st.trust_floor = floor;
+            st.trust_floor = floor.map(|(p, q)| Rate::new(p as u64, q as u64));
         }
     }
 
@@ -570,9 +571,10 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().and_then(|st| st.fast.as_ref()).map_or(0, |f| f.tags.len())
     }
 
-    pub fn set_growth_trust(&mut self, floor: Option<f32>) {
+    /// Growth trust as an integer ratio p/q (see `set_trust_floor`).
+    pub fn set_growth_trust(&mut self, floor: Option<(u32, u32)>) {
         if let Some(st) = self.predictive.as_mut() {
-            st.growth_trust = floor;
+            st.growth_trust = floor.map(|(p, q)| Rate::new(p as u64, q as u64));
         }
     }
 
@@ -629,11 +631,11 @@ impl KernelClass<SimpleKernel> {
         let matches = st.last_matches.clone();
         let trust_floor = st.growth_trust;
         let mut depth_has_target = vec![false; cfg.max_frames + 2];
-        let mut expected: Option<(usize, f32)> = None;
+        let mut expected: Option<(usize, Rate)> = None;
         for &m in &matches {
             let k = &self.active_kernels[m];
             if predicts(k, target) {
-                let key = (k.context_frames, reliability(&k.stats));
+                let key = (k.context_frames, Rate::of(&k.stats));
                 if expected.map_or(true, |e| key > e) {
                     expected = Some(key);
                 }
@@ -647,7 +649,7 @@ impl KernelClass<SimpleKernel> {
                 // A kernel that was right blocks same-depth growth only if it is trusted:
                 // a lucky guess by an unreliable kernel must not stop a better kernel
                 // from being grown for this case.
-                let trusted = trust_floor.map_or(true, |f| reliability(&k.stats) >= f);
+                let trusted = trust_floor.map_or(true, |f| Rate::of(&k.stats) >= f);
                 k.stats.hits += 1;
                 k.stats.last_useful = self.tick;
                 if trusted {
@@ -660,7 +662,7 @@ impl KernelClass<SimpleKernel> {
             }
         }
         if let Some(st) = self.predictive.as_mut() {
-            st.last_target_prob = expected.map_or(0.0, |e| e.1);
+            st.last_target_prob = expected.map_or(0.0, |e| e.1.value());
             if let Some(f) = st.fast.as_mut() {
                 let gate = |v: &Vec<usize>| -> Vec<usize> {
                     v.iter().copied().filter(|&k| f.reliable_shift.map_or(true, |sh| unreliable(&self.active_kernels[k].stats, sh))).collect()
@@ -894,7 +896,53 @@ fn unreliable(s: &KernelStats, k: u32) -> bool {
 }
 
 fn reliability(s: &KernelStats) -> f32 {
-    (s.hits as f32 + 1.0) / ((s.hits + s.misses) as f32 + 2.0)
+    Rate::of(s).value()
+}
+
+/// A hit rate kept as an exact fraction of integers, num / den. Rates are compared by
+/// cross-multiplication (a/b < c/d ⇔ a·d < c·b, both denominators positive), so ranking
+/// and thresholds need no divide and no floats. `value` converts to f32 for readouts only
+/// (confidence, target probability).
+#[derive(Clone, Copy, Debug)]
+pub struct Rate {
+    num: u64,
+    den: u64,
+}
+
+impl Rate {
+    pub fn new(num: u64, den: u64) -> Self {
+        Self { num, den: den.max(1) }
+    }
+
+    /// A kernel's smoothed hit rate, (hits + 1) / (hits + misses + 2).
+    pub fn of(s: &KernelStats) -> Self {
+        Self::new(s.hits as u64 + 1, s.hits as u64 + s.misses as u64 + 2)
+    }
+
+    /// The rate as a float, for readouts (never used in a comparison).
+    pub fn value(self) -> f32 {
+        self.num as f32 / self.den as f32
+    }
+}
+
+impl PartialEq for Rate {
+    fn eq(&self, other: &Self) -> bool {
+        self.num * other.den == other.num * self.den
+    }
+}
+
+impl Eq for Rate {}
+
+impl PartialOrd for Rate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Rate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.num * other.den).cmp(&(other.num * self.den))
+    }
 }
 
 /// True if `target` confirms at least half of `k`'s output bits.
@@ -916,6 +964,24 @@ fn set_bits(bv: &BitVector) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rates_order_like_the_fractions_they_hold() {
+        // cross-multiplication gives the exact order of (hits+1)/(hits+misses+2)
+        let stats: Vec<KernelStats> = (0..40u32)
+            .flat_map(|h| (0..40u32).map(move |m| KernelStats { hits: h, misses: m, ..Default::default() }))
+            .collect();
+        for a in stats.iter().step_by(7) {
+            for b in &stats {
+                let (fa, fb) = ((a.hits as f64 + 1.0) / ((a.hits + a.misses) as f64 + 2.0), (b.hits as f64 + 1.0) / ((b.hits + b.misses) as f64 + 2.0));
+                assert_eq!(Rate::of(a).cmp(&Rate::of(b)), fa.partial_cmp(&fb).unwrap());
+            }
+        }
+        // a floor of 1/2: equal rates pass (≥), lower ones do not
+        let half = Rate::new(1, 2);
+        assert!(Rate::of(&KernelStats { hits: 3, misses: 3, ..Default::default() }) >= half);
+        assert!(Rate::of(&KernelStats { hits: 2, misses: 3, ..Default::default() }) < half);
+    }
+
     #[test]
     fn integer_reliability_gate_matches_the_ratio() {
         // (misses+1) << k > hits+1  ⇔  (hits+1)/(hits+misses+2) < 2^k/(2^k+1), exactly

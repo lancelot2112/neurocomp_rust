@@ -516,7 +516,9 @@ impl KernelClass<SimpleKernel> {
         let agrees = |k: &SimpleKernel| bias.map_or(false, |(b, _)| predicts(k, b));
         // (not inhibited, agree-first, trusted, depth, agree-within-depth, reliability, count)
         let trust_floor = st.trust_floor;
-        let mut best: Option<((bool, bool, bool, usize, bool, Rate, u32), usize)> = None;
+        // ... then the older kernel (lower id): ties must not depend on the order kernels
+        // are visited, which differs between the index fan-out and the frame memo
+        let mut best: Option<((bool, bool, bool, usize, bool, Rate, u32, std::cmp::Reverse<usize>), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -537,7 +539,7 @@ impl KernelClass<SimpleKernel> {
             let r = Rate::of(&kern.stats);
             let trusted = trust_floor.map_or(true, |f| r >= f);
             let free = st.fast.as_ref().map_or(true, |f| !f.inhibits(k));
-            let key = (free, prefer, trusted, kern.context_frames, tie, r, count);
+            let key = (free, prefer, trusted, kern.context_frames, tie, r, count, std::cmp::Reverse(k));
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
             }

@@ -396,6 +396,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut sentence = BitVector::new(BITS, Some(0)); // bag of the current sentence so far
     let mut bg = BasalGanglia::new(BITS);
     bg.trace_len = std::env::var("BG_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    // BG_BASELINE=rate: the selector's error is reward − a running-average reward
+    bg.baseline_rate = std::env::var("BG_BASELINE").ok().and_then(|v| v.parse().ok());
     let mut bg_pending: Option<BitVector> = None; // hop-2 content of the latest choice, awaiting reward
     // ThalamicGate: channel identity codes (routes, then memory), bound to the current word
     // by rotation, so the striatum holds a value per (channel, context)

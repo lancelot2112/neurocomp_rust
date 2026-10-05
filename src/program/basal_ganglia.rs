@@ -102,12 +102,23 @@ impl BasalGanglia {
         Some(best)
     }
 
-    /// Reward one specific `candidate` (not the trace): its counters step toward `reward`
-    /// by the error reward − its own value (a per-candidate, bandit-style estimate).
+    /// Reward one specific `candidate` (not the trace). Without a baseline its counters step
+    /// toward `reward` by the error reward − its own value (a per-candidate, bandit-style
+    /// estimate). With `baseline_rate`, the error is reward − the running average reward (an
+    /// advantage): the candidate gains when it did better than usual, so a graded reward
+    /// that starts low (e.g. the cortex's L5 outcome before it has learned to use the
+    /// choice) still ranks candidates instead of dragging them all below the default.
     /// Returns the error.
     pub fn reward_candidate<R: Rng>(&mut self, candidate: &BitVector, reward: f32, rng: &mut R) -> f32 {
         let (s, m) = self.score(candidate);
-        let delta = reward as f64 - s as f64 / m as f64;
+        let delta = match self.baseline_rate {
+            Some(rate) => {
+                let d = reward as f64 - self.baseline;
+                self.baseline += rate * d;
+                d
+            }
+            None => reward as f64 - s as f64 / m as f64,
+        };
         let p = (self.gain * delta.abs()).min(1.0);
         let mut step = BitVector::new(self.bits, Some(0));
         for (wi, &w) in candidate.as_words().iter().enumerate() {

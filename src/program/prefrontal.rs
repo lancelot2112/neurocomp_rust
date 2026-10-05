@@ -82,7 +82,7 @@ impl PfcGate {
         let mut bg = BasalGanglia::new(bits);
         bg.trace_len = trace_len;
         bg.trace_decay = trace_decay;
-        // one reward per episode credits a long trace: use a running-average baseline
+        // credit is an advantage: the held item's reward − the running-average reward
         bg.baseline_rate = Some(0.01);
         // step probability = |error| exactly, so a rare +1 and frequent small −errors
         // balance in expectation (with gain 1.5 the +1 side is capped at probability 1 and

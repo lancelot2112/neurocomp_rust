@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 
 use crate::bitvec::BitVector;
-use crate::kernel::{KernelClass, SimpleKernel};
+use crate::kernel::{BiasMode, KernelClass, SimpleKernel};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RelayChannel {
@@ -283,6 +283,17 @@ impl CorticalColumn {
     pub fn predict(&mut self, l4: &BitVector) -> &BitVector {
         let mut out = BitVector::new(self.bits, Some(0));
         self.l23.process_predictive(l4, &mut out);
+        self.prediction = out;
+        self.confidence = self.l23.confidence().unwrap_or(0.0);
+        &self.prediction
+    }
+
+    /// L2/3 → L5 with a basal-ganglia bias: among the matching kernels, one predicting
+    /// the selected source's content (`bias`) wins over any that doesn't (depth and
+    /// reliability decide within each group). None: the plain `predict`.
+    pub fn predict_biased(&mut self, l4: &BitVector, bias: Option<&BitVector>) -> &BitVector {
+        let mut out = BitVector::new(self.bits, Some(0));
+        self.l23.process_predictive_biased(l4, &mut out, bias.map(|b| (b, BiasMode::Prefer)));
         self.prediction = out;
         self.confidence = self.l23.confidence().unwrap_or(0.0);
         &self.prediction

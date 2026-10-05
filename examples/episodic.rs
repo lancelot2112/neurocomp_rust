@@ -526,6 +526,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
     };
     let mut gate_pending: Option<BitVector> = None; // released content, awaiting reward
+    // ARBITRATE=1: a basal-ganglia selector per context (previous word, current word)
+    // chooses which source the column follows where memory and top-down offer different
+    // words: 0 = neither (the column's own ranking), 1 = memory, 2 = top-down. Its choice
+    // biases L2/3 towards kernels predicting that source's content; it learns from whether
+    // the prediction came true, so it holds each source's reliability per context
+    let arbitrate = std::env::var("ARBITRATE").is_ok();
+    let mut arb_bg = BasalGanglia::new(BITS);
+    let action_code = |a: usize| -> BitVector {
+        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(2_000_003) ^ (a as u64 + 1000));
+        let all: Vec<usize> = (0..BITS).collect();
+        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
+    };
+    // test answers: [conflicts, then (chosen, right) per action]
+    let mut arb_stats = [0usize; 7];
     // L6Gate: the corticothalamic gate, this step's context and which channels were open
     // with content; test counts: open channels per word, and per channel at answers
     let mut l6_gate = CorticothalamicGate::new(BITS, routes.len() + 1, seed + 21);
@@ -599,21 +613,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_frame_memo(std::env::var("FRAME_MEMO").is_ok());
     // CANON=1: canonical kernels (deterministic sampling + hash-consing at growth)
     class.set_canonical(std::env::var("CANON").is_ok());
-    // RANK=reliability: L2/3 winners ranked by reliability before depth (sources arbitrated
-    // by how often each has been right, not by frame order); SKIP_EMPTY=1: growth deepens
-    // past empty frames
-    // RANK_MIN=n: evidence gate, kernels with fewer than n scored predictions rank as fully
-    // reliable (default 0: rate from the start)
-    let rank_min: u16 = std::env::var("RANK_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    class.set_reliability_first(std::env::var("RANK").ok().filter(|v| v == "reliability").map(|_| rank_min));
-    class.set_skip_empty(std::env::var("SKIP_EMPTY").is_ok());
-    // SCORE_ALL=1: score every matched kernel on expected steps too (not only the winner)
-    class.set_score_all(std::env::var("SCORE_ALL").is_ok());
-    // PROBATION=f: a kernel changes answers only once its hit rate has reached f
-    class.set_probation(ratio_env("PROBATION"));
-    // PROBATION_BEAT=n: probation is also passed by beating the (wrong) winner's rate, with
-    // at least n hits
-    class.set_probation_beat(std::env::var("PROBATION_BEAT").ok().and_then(|v| v.parse().ok()));
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
@@ -1103,6 +1102,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // the higher area: [sentence bag | slow state] -> top-down frame, through a
                 // thalamic gate (HIER_GATE) and placed after the memory / relay frames, or right
                 // after the current word with HIER_EARLY
+                let mut td_src: Option<BitVector> = None;
+                // the column's own memory / relay frames, for arbitration
+                let mem_src = {
+                    let frame = BITS / 64;
+                    let mut m = vec![0u64; frame];
+                    for f in 1..words.len() / frame {
+                        for (a, b) in m.iter_mut().zip(&words[frame * f..frame * (f + 1)]) {
+                            *a |= b;
+                        }
+                    }
+                    BitVector::from_words(m)
+                };
                 if hier {
                     let hin = area.input(&sentence, &surprising);
                     let td = area.predict(&hin);
@@ -1134,6 +1145,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         true
                     };
                     let has = td.count_ones() > 0;
+                    td_src = has.then(|| td.clone());
                     if testing && t + 1 == s.answer_at {
                         topdown_passed_at_answer += (passed && has) as usize;
                     }
@@ -1186,8 +1198,37 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 prof_t = std::time::Instant::now();
                 let input = BitVector::from_words(words);
 
+                // basal-ganglia arbitration between memory and top-down, where they disagree
+                let mut arb_choice: Option<usize> = None;
+                let mut bias: Option<BitVector> = None;
+                if let (true, Some(td)) = (arbitrate, td_src.as_ref()) {
+                    let words_of = |bv: &BitVector| -> Vec<usize> {
+                        (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).collect()
+                    };
+                    let (mw, tw) = (words_of(&mem_src), words_of(td));
+                    if !mw.is_empty() && tw.iter().any(|w| !mw.contains(w)) {
+                        let prev = if t > 0 { ids[t - 1] } else { vocab.len() };
+                        let ctx = (prev * 131 + ids[t] * 7919) % BITS;
+                        let cands: Vec<BitVector> = (0..3)
+                            .map(|a| {
+                                let mut c = action_code(a);
+                                c.rotl_mut(ctx);
+                                c
+                            })
+                            .collect();
+                        let explore = if testing { None } else { Some(&mut rng) };
+                        if let Some(a) = arb_bg.select(&cands, explore) {
+                            bias = match a {
+                                1 => Some(mem_src.clone()),
+                                2 => Some(td.clone()),
+                                _ => None,
+                            };
+                            arb_choice = Some(a);
+                        }
+                    }
+                }
                 let mut out = BitVector::new(BITS, Some(0));
-                out.or_mut(column.predict(&input));
+                out.or_mut(column.predict_biased(&input, bias.as_ref()));
                 // PROF: [1] L2/3 prediction
                 prof[1] += prof_t.elapsed().as_secs_f64();
                 prof_t = std::time::Instant::now();
@@ -1202,6 +1243,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         enc.decode(&out).map(|i| vocab[i]),
                         vocab[next]
                     );
+                }
+                if let Some(a) = arb_choice {
+                    let right = enc.decode(&out) == Some(next);
+                    if !testing {
+                        arb_bg.reward(right as u32 as f32, &mut rng);
+                    } else if t + 1 == s.answer_at {
+                        arb_stats[0] += 1;
+                        arb_stats[1 + 2 * a] += 1;
+                        arb_stats[2 + 2 * a] += right as usize;
+                    }
                 }
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
@@ -1593,6 +1644,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             1e6 * train_secs / train_words.max(1) as f64,
             train_words,
             1e6 * test_secs / test_words.max(1) as f64
+        );
+    }
+    if arbitrate {
+        let pct = |r: usize, n: usize| if n > 0 { format!("{:.0}% right of {n}", 100.0 * r as f64 / n as f64) } else { "-".to_string() };
+        eprintln!(
+            "  ARB seed {seed}: memory and top-down disagreed at {:.1}% of test answers; chosen: neither {}, memory {}, top-down {}",
+            100.0 * arb_stats[0] as f64 / TEST as f64,
+            pct(arb_stats[2], arb_stats[1]),
+            pct(arb_stats[4], arb_stats[3]),
+            pct(arb_stats[6], arb_stats[5])
         );
     }
     {

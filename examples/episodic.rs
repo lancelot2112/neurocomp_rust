@@ -611,6 +611,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_score_all(std::env::var("SCORE_ALL").is_ok());
     // PROBATION=f: a kernel changes answers only once its hit rate has reached f
     class.set_probation(ratio_env("PROBATION"));
+    // PROBATION_BEAT=n: probation is also passed by beating the (wrong) winner's rate, with
+    // at least n hits
+    class.set_probation_beat(std::env::var("PROBATION_BEAT").ok().and_then(|v| v.parse().ok()));
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));

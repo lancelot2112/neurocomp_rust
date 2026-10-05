@@ -33,6 +33,14 @@ track the probability of being right (Kepecs et al. 2008; Kiani & Shadlen 2009).
 
 **Test.** ECE below 0.05 on every task, with no loss of accuracy against the default.
 
+**Status** ([24](experiments/24-cortical-hierarchy.md#scoring-every-kernel-probation-and-calibration)):
+scoring every kernel, probation and the calibration report are built.
+- `SCORE_ALL=1 PROBATION=0.8 PROBATION_BEAT=1` matches the default everywhere with fewer
+  kernels.
+- The absolute floor alone lifts habit to 93–95% but breaks memory copying.
+- Answering only at confidence 0.8 or above already gives 93–100% accuracy.
+- Memory-derived answers are underconfident (topic ECE 0.21). Abstention is not built.
+
 ## 2. Learned source arbitration
 **Why.** Memory, top-down and the column's own context compete inside the kernel
 ranking, so frame order or kernel age decides between them

@@ -228,6 +228,72 @@ else gets worse, often by 20–40 points.
    a kernel that doesn't win is scored only on the winner's misses. The next test is
    to score every matching kernel on expected steps too.
 
+## Scoring every kernel, probation, and calibration
+Three more options in `KernelClass`, all off by default:
+- **`set_score_all`** (`SCORE_ALL=1`). Under the surprise gate, a correct guess scores
+  every matching kernel, not only the winner. Rates are measured, not inferred from the
+  winner's misses.
+- **`set_probation`** (`PROBATION=0.8`). A new kernel persists, matches, is scored and
+  blocks re-growth of itself, but ranks below every proven kernel. So it changes an answer
+  only where no proven kernel matches, until its smoothed rate has reached 0.8 once
+  (three hits without a miss). After that it competes normally.
+- **`set_probation_beat`** (`PROBATION_BEAT=n`). Probation can also be passed by beating
+  the incumbent. A kernel that was right where the winner was wrong passes if it has at
+  least `n` hits and its rate now exceeds the winner's.
+
+`CALIB` in the example reports test-answer accuracy per confidence bucket and the expected
+calibration error (ECE). It also gives accuracy and coverage if the column answered only
+at confidence 0.8 or above.
+
+Held-out accuracy, mean of seeds 0 / 1 / 2 (varied: seed 0, 100% in every row unless
+noted). Settings as above; all probation rows also score every kernel:
+
+| | Habit | Habit + memory | Topic | Give | Two-hop | Column kernels (habit / topic / give / two-hop) |
+|---|---|---|---|---|---|---|
+| Default (depth-first, late) | 81.0 | 76.3 | **97.1** | 99.5 | 79.3 | 473 / 2,614 / 4,169 / 5,719 |
+| Score all (seed 0 except habit) | 74.6 | 79.3 | 88.2 | 100 | 92.0 | 397 / 2,807 / 4,257 / 6,307 |
+| Probation 0.8 | 85.3 | 79.5 | 81.5 | 78.3 | 68.1 | 218 / 1,289 / 1,791 / 2,857 |
+| **Probation 0.8 or beat the winner (n = 1)** | 80.5 | 78.1 | **97.3** | **99.8** | **80.0** | 219 / 2,235 / 3,370 / 5,074 |
+| Probation 0.8 or beat the winner (n = 3) | 82.1 | 84.1 | 94.7 | 97.3 | 74.9 | 197 / 1,956 / 2,701 / 4,732 |
+| Probation 0.8 + reliability-first, early | 93.9 | 84.6 | 39.3 | 74.6 | 70.4 | 173 / 1,431 / 1,832 / 3,383 |
+| … + skip empty + confidence gate | 88.1 | **89.5** | 22.5 | 58.9 | **87.7** | 90 / 951 / 1,457 / 1,981 |
+
+(Two-hop with the hierarchy on varies a lot between seeds: default 94 / 81 / 62%.)
+
+1. **Probation is the strongest result on habit so far.** With reliability-first ranking
+   and top-down early, habit reaches 93–95% on all three seeds (from 80–82%), with
+   2.5–3× fewer kernels and well-calibrated confidence (ECE 0.015–0.09). With the
+   confidence gate too, habit + memory reaches 92 / 81 / 96% at ECE 0.003 on two seeds.
+   A kernel that is right by luck can no longer take over a context, so the top-down
+   habit kernels keep the answer.
+2. **An absolute floor breaks sources that are right less than 80% of the time.** A
+   kernel that copies a recalled place is only as right as recall (about 70% early in
+   training). It never reaches 0.8, so it never displaces a proven guess: give falls to
+   12–98% and topic to 17–84%.
+3. **Beating the winner is the relative test those sources need.** With `n = 1`, every
+   task matches the default within noise (topic 97.3, give 99.8, two-hop 80.0) with 2.2×
+   fewer kernels on habit and 11–19% fewer on the others. But the habit gain is gone:
+   a kernel right once, where a reliable winner happened to miss, passes. With `n = 3`
+   habit + memory gains 8 points (84.1) and the others lose 2–4.
+4. **Calibration.** The default is reasonably calibrated where answers come from
+   learned habits (ECE 0.03–0.08) but underconfident where they come from memory (topic
+   ECE 0.21: right 100% at confidence 0.7–0.9). A copy kernel's rate counts the
+   training-time failures of recall, not its own. Answering only at confidence 0.8 or
+   above gives 93–100% accuracy on every task and setting, at 15–100% coverage. That
+   is the abstention lever of the [roadmap](../roadmap.md), already usable.
+5. **Scoring every kernel alone does not decide much:** habit −6, habit + memory +3,
+   topic −9, two-hop +13 (one seed). It costs nothing measurable in speed; it matters as
+   the basis for probation, whose rates must include the misses of kernels that do not
+   win.
+
+**Recommended L2/3 setting:** `SCORE_ALL=1 PROBATION=0.8 PROBATION_BEAT=1`. It is as
+accurate as the default on every task and half the size on habit. The defaults stay
+unchanged so earlier pages reproduce. The best habit results need the absolute floor,
+which breaks memory copying. The open problem is a probation test that tells a source
+that is reliably better than the incumbent from a lucky kernel. Per-source arbitration
+(stage 2 of the [roadmap](../roadmap.md)) is the next candidate: the selector, not each
+kernel, would carry the "how reliable is memory here" statistic.
+
 ## Biology
 - **Hierarchy and predictive coding:** each level predicts the activity of the level below
   and is driven by its prediction errors (Rao & Ballard 1999; Friston 2005). Here the

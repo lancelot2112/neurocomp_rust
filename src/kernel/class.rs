@@ -165,6 +165,9 @@ struct PredictiveState {
     probation: Option<Rate>,
     /// Per kernel: its rate has reached the probation floor at least once.
     proven: Vec<bool>,
+    /// Probation can also be passed by beating the incumbent with at least this many hits
+    /// (see `set_probation_beat`).
+    probation_beat: Option<u8>,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -441,6 +444,7 @@ impl KernelClass<SimpleKernel> {
             score_all: false,
             probation: None,
             proven: Vec::new(),
+            probation_beat: None,
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -887,6 +891,17 @@ impl KernelClass<SimpleKernel> {
         if let Some(st) = self.predictive.as_mut() {
             st.probation = floor.map(|(p, q)| Rate::new(p, q));
             st.version += 1;
+        }
+    }
+
+    /// Probation, relative: with `Some(n)`, a kernel on probation is also proven when it was
+    /// right where the winner was wrong, has at least `n` hits, and its rate now exceeds
+    /// the winner's. A source that is right 70% of the time then takes over from a guess
+    /// that is right 20%, without ever reaching the absolute floor; `n` keeps a kernel that
+    /// was right once by luck from displacing a briefly wrong winner.
+    pub fn set_probation_beat(&mut self, min_hits: Option<u8>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.probation_beat = min_hits;
         }
     }
 
@@ -1426,6 +1441,22 @@ impl KernelClass<SimpleKernel> {
         if let Some(st) = self.predictive.as_mut() {
             for &m in &hits {
                 Self::note_proven(st, &self.active_kernels, m);
+            }
+            // relative probation: right where the (wrong) winner was wrong, and now more
+            // reliable than it
+            if let (Some(n), true, Some(w)) = (st.probation_beat, st.probation.is_some(), winner) {
+                if misses.contains(&w) {
+                    let wr = Rate::of(&self.active_kernels[w].stats);
+                    if st.proven.len() < self.active_kernels.len() {
+                        st.proven.resize(self.active_kernels.len(), false);
+                    }
+                    for &m in &hits {
+                        let ks = &self.active_kernels[m].stats;
+                        if ks.hits >= n && Rate::of(ks) > wr {
+                            st.proven[m] = true;
+                        }
+                    }
+                }
             }
             st.last_target_prob = expected.map_or(0.0, |e| e.1.value());
             if let Some(f) = st.fast.as_mut() {
@@ -2261,6 +2292,30 @@ mod tests {
             assert_eq!(step(&mut kc, &xa, &c), 0xFF00);
         }
         assert_eq!(step(&mut kc, &xa, &c), 0xFF0000);
+    }
+
+    #[test]
+    fn probation_can_be_passed_by_beating_a_weaker_winner() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        let a = frames(&[0xFF, 0]);
+        let xa = frames(&[0xFF, 0xF000_0000_0000_0000]);
+        // steps on "xA -> C" until the new kernel answers: absolute floor 4/5 needs three
+        // scored hits; beating the winner (proven "A -> B", now missing) needs one
+        for (beat, wrong_steps) in [(None, 3), (Some(1), 1)] {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_probation(Some((4, 5)));
+            kc.set_probation_beat(beat);
+            for _ in 0..4 {
+                step(&mut kc, &a, &b); // grown, then three hits: proven at 4/5
+            }
+            step(&mut kc, &xa, &c); // grows "xA -> C"
+            for _ in 0..wrong_steps {
+                assert_eq!(step(&mut kc, &xa, &c), 0xFF00);
+            }
+            assert_eq!(step(&mut kc, &xa, &c), 0xFF0000);
+        }
     }
 
     #[test]

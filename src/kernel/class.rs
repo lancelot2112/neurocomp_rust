@@ -147,6 +147,10 @@ struct PredictiveState {
     gated: usize,
     /// Slots of kernels removed by `sleep`, reused by growth.
     free: Vec<usize>,
+    /// Surprise-gated learning (see `set_surprise_gate`).
+    surprise_gate: bool,
+    /// Feedback steps that took the expected (no-surprise) path.
+    expected_steps: usize,
     /// Recent inputs (active bits only), replayed by `sleep` to find kernels that respond
     /// to exactly the same inputs. Capacity `replay_len` (0 = off).
     replay: std::collections::VecDeque<Vec<u32>>,
@@ -337,6 +341,8 @@ impl KernelClass<SimpleKernel> {
             free: Vec::new(),
             replay: std::collections::VecDeque::new(),
             replay_len: 0,
+            surprise_gate: false,
+            expected_steps: 0,
         });
         kc
     }
@@ -593,6 +599,69 @@ impl KernelClass<SimpleKernel> {
         if let Some(f) = self.predictive.as_mut().and_then(|st| st.fast.as_mut()) {
             f.tag(&hits, &misses);
         }
+    }
+
+    /// The no-surprise path of `feedback` (see `set_surprise_gate`).
+    fn confirm_expected(&mut self, w: usize, input: &BitVector, target: &BitVector, cfg: &GrowthConfig) {
+        let tick = self.tick;
+        let before = Rate::of(&self.active_kernels[w].stats);
+        let k = &mut self.active_kernels[w];
+        k.stats.record_hit();
+        k.stats.last_useful = tick;
+        let Some(st) = self.predictive.as_mut() else { return };
+        st.last_target_prob = before.value();
+        // fast inhibition still sees what happened (adaptation tags every kernel that
+        // predicted it; error tags every kernel that did not), as on the full path
+        if let Some(f) = st.fast.as_mut() {
+            let gate = |m: usize| f.reliable_shift.map_or(true, |sh| unreliable(&self.active_kernels[m].stats, sh));
+            let (mut h, mut m) = (Vec::new(), Vec::new());
+            if f.on_hits || f.on_misses {
+                for &x in &st.last_matches {
+                    if !gate(x) {
+                        continue;
+                    }
+                    if predicts(&self.active_kernels[x], target) {
+                        h.push(x);
+                    } else {
+                        m.push(x);
+                    }
+                }
+            }
+            f.tag(&h, &m);
+        }
+        st.last_hits = vec![w];
+        st.last_misses.clear();
+        st.last_near.clear();
+        st.expected_steps += 1;
+        // the winner's active connections proved compatible; copy credit for its bits
+        // that carry the target
+        if let Some(counts) = st.silent_counts.get_mut(&w) {
+            counts.retain(|&b, _| !input.bit_get(b));
+        }
+        if st.sticky_factor > 0 {
+            let fb = cfg.frame_words * 64;
+            for &b in &self.active_kernels[w].input_set {
+                let b = b as usize;
+                let t = b % fb;
+                if input.bit_get(b) && t < target.bit_len() && target.bit_get(t) {
+                    st.sticky_tags.entry(w).or_default().insert(b);
+                }
+            }
+        }
+    }
+
+    /// Surprise-gated learning: when the winner predicted the target, confirm only the
+    /// winner (no re-scoring of other kernels, no pruning, no growth); learn fully only
+    /// on surprise.
+    pub fn set_surprise_gate(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.surprise_gate = on;
+        }
+    }
+
+    /// Feedback steps that took the expected (no-surprise) path.
+    pub fn expected_steps(&self) -> usize {
+        self.predictive.as_ref().map_or(0, |st| st.expected_steps)
     }
 
     /// Uncertainty-gated growth (None = off). With `Some((k, min))`, a miss grows nothing
@@ -862,6 +931,16 @@ impl KernelClass<SimpleKernel> {
         }
 
         let winner = st.last_winner;
+        // Surprise-gated learning: an expected input (the winner predicted it) carries no
+        // error, so only the winner is confirmed: its hit, its recency and its copy-credit
+        // tags. The other matched kernels are not re-scored, nothing is pruned or grown.
+        // A surprise (wrong winner, or none) takes the full path below.
+        if st.surprise_gate {
+            if let Some(w) = winner.filter(|&w| predicts(&self.active_kernels[w], target)) {
+                self.confirm_expected(w, input, target, &cfg);
+                return;
+            }
+        }
         let matches = st.last_matches.clone();
         let trust_floor = st.growth_trust;
         let mut depth_has_target = vec![false; cfg.max_frames + 2];
@@ -1387,6 +1466,24 @@ mod tests {
         // (the pile-up it prevents needs real history; see experiment 23)
         assert!(suppressed > 0);
         assert!(gated <= open, "gated {gated} vs open {open}");
+    }
+
+    #[test]
+    fn surprise_gate_confirms_expected_words_and_learns_from_surprises() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        kc.set_surprise_gate(true);
+        let (a, b, c) = (frames(&[0xFF]), BitVector::from_words(vec![0xFF00]), BitVector::from_words(vec![0xFF_0000]));
+        assert_eq!(step(&mut kc, &a, &b), 0); // surprise: grow A -> B
+        for _ in 0..5 {
+            assert_eq!(step(&mut kc, &a, &b), 0xFF00); // expected: confirm only
+        }
+        assert_eq!(kc.expected_steps(), 5);
+        assert_eq!(kc.kernels()[0].stats.hits, 5);
+        let before = kc.live();
+        step(&mut kc, &a, &c); // surprise: the full path scores and grows
+        assert!(kc.live() > before);
+        assert_eq!(kc.kernels()[0].stats.misses, 1);
     }
 
     #[test]

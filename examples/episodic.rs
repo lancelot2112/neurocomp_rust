@@ -556,6 +556,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         class.set_fast_inhibition(Some(fast));
     }
     class.set_growth_trust(ratio_env("GROW_TRUST"));
+    // SURPRISE_GATE=1: learn fully only on surprise; an expected word confirms the winner
+    class.set_surprise_gate(std::env::var("SURPRISE_GATE").is_ok());
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
@@ -1351,6 +1353,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if dump.is_none() {
         // COST: what the column stores, densely as now and as sparse indices
         let kernels = column.l23.kernels();
+        if column.l23.expected_steps() > 0 {
+            eprintln!(
+                "  SURPRISE seed {seed}: {} of {} training words were expected (winner right): confirmed only",
+                column.l23.expected_steps(),
+                train_words
+            );
+        }
         if sleeps > 0 || column.l23.gated_growth() > 0 {
             eprintln!(
                 "  SLEEP seed {seed}: {sleeps} sleeps pruned {slept_pruned} and merged {slept_merged} kernels; growth suppressed by the uncertainty gate {} times; {} live kernels",

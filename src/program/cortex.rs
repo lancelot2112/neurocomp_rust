@@ -407,10 +407,11 @@ mod tests {
         assert_eq!(step(&mut col, &b).as_words(), b.as_words()); // so x now predicts b
         assert_eq!(step(&mut col, &a).as_words(), a.as_words()); // b inhibited in turn, a's 2-step tag has faded
 
-        // gated by reliability: x → a / x → b are each right about half the time, so a
-        // gate at 0.3 tags nothing (a reliable prediction is not inhibited)
+        // gated by reliability, in integers: k = 0 tags only kernels right less than half
+        // the time ((misses + 1) << 0 > hits + 1); x → a has been right about half the
+        // time and was just confirmed, so it is not inhibited
         let mut fast = crate::kernel::FastInhibition::new(2, true, false);
-        fast.max_reliability = Some(0.3);
+        fast.reliable_shift = Some(0);
         col.l23.set_fast_inhibition(Some(fast));
         step(&mut col, &a);
         assert_eq!(col.l23.inhibited(), 0);

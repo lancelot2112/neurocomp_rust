@@ -156,16 +156,18 @@ pub struct FastInhibition {
     /// Tag the kernels the target contradicted (error-driven: a prediction that just
     /// failed is not repeated while the tag lasts).
     pub on_misses: bool,
-    /// Gate: only kernels less reliable than this are tagged (None = all). Inhibition then
-    /// acts where the context is unpredictable (several continuations, none dominant) and
-    /// leaves reliable predictions ("went → to", memory copies) alone.
-    pub max_reliability: Option<f32>,
+    /// Gate, in integers: with `Some(k)`, only kernels whose smoothed hit rate is below
+    /// 2^k / (2^k + 1) are tagged (k = 3: 8/9 ≈ 0.89; k = 4: 16/17 ≈ 0.94), tested as
+    /// `(misses + 1) << k > hits + 1` (one shift and a compare; see `unreliable`). None = all.
+    /// Inhibition then acts where the context is unpredictable (several continuations,
+    /// none dominant) and leaves reliable predictions ("went → to", memory copies) alone.
+    pub reliable_shift: Option<u32>,
     tags: std::collections::HashMap<usize, u8>,
 }
 
 impl FastInhibition {
     pub fn new(ttl: u8, on_hits: bool, on_misses: bool) -> Self {
-        Self { ttl, on_hits, on_misses, max_reliability: None, tags: std::collections::HashMap::new() }
+        Self { ttl, on_hits, on_misses, reliable_shift: None, tags: std::collections::HashMap::new() }
     }
 
     fn tag(&mut self, hits: &[usize], misses: &[usize]) {
@@ -532,10 +534,10 @@ impl KernelClass<SimpleKernel> {
         if st.fast.is_none() {
             return;
         }
-        let max_rel = st.fast.as_ref().and_then(|f| f.max_reliability);
+        let shift = st.fast.as_ref().and_then(|f| f.reliable_shift);
         let (mut hits, mut misses) = (Vec::new(), Vec::new());
         for &m in &st.last_matches {
-            if max_rel.map_or(false, |r| reliability(&self.active_kernels[m].stats) >= r) {
+            if shift.map_or(false, |sh| !unreliable(&self.active_kernels[m].stats, sh)) {
                 continue;
             }
             if predicts(&self.active_kernels[m], target) {
@@ -661,7 +663,7 @@ impl KernelClass<SimpleKernel> {
             st.last_target_prob = expected.map_or(0.0, |e| e.1);
             if let Some(f) = st.fast.as_mut() {
                 let gate = |v: &Vec<usize>| -> Vec<usize> {
-                    v.iter().copied().filter(|&k| f.max_reliability.map_or(true, |m| reliability(&self.active_kernels[k].stats) < m)).collect()
+                    v.iter().copied().filter(|&k| f.reliable_shift.map_or(true, |sh| unreliable(&self.active_kernels[k].stats, sh))).collect()
                 };
                 let (h, m) = (gate(&hits), gate(&misses));
                 f.tag(&h, &m);
@@ -885,6 +887,12 @@ fn frame_has_bits(input: &BitVector, f: usize, frame_words: usize) -> bool {
 }
 
 /// Smoothed hit rate of a predictive kernel.
+/// Integer form of `reliability(s) < 2^k / (2^k + 1)`, with no divide:
+/// (h+1)/(h+m+2) < 2^k/(2^k+1)  ⇔  (h+1)(2^k+1) < 2^k (h+m+2)  ⇔  h+1 < 2^k (m+1).
+fn unreliable(s: &KernelStats, k: u32) -> bool {
+    ((s.misses as u64 + 1) << k) > s.hits as u64 + 1
+}
+
 fn reliability(s: &KernelStats) -> f32 {
     (s.hits as f32 + 1.0) / ((s.hits + s.misses) as f32 + 2.0)
 }
@@ -908,6 +916,21 @@ fn set_bits(bv: &BitVector) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn integer_reliability_gate_matches_the_ratio() {
+        // (misses+1) << k > hits+1  ⇔  (hits+1)/(hits+misses+2) < 2^k/(2^k+1), exactly
+        for k in 0..6u32 {
+            let cut = (1u64 << k) as f64 / ((1u64 << k) + 1) as f64;
+            for hits in 0..200u32 {
+                for misses in 0..60u32 {
+                    let s = KernelStats { hits, misses, ..Default::default() };
+                    let rate = (hits as f64 + 1.0) / ((hits + misses) as f64 + 2.0);
+                    assert_eq!(unreliable(&s, k), rate < cut, "k={k} hits={hits} misses={misses}");
+                }
+            }
+        }
+    }
+
     use super::*;
 
     fn kernel(in_bits: &[usize], out_bit: usize, threshold: usize) -> SimpleKernel {

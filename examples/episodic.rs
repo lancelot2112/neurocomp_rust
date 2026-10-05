@@ -550,8 +550,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let ttl: u8 = std::env::var("FAST_TTL").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
         let (h, m) = (mode == "hits" || mode == "both", mode == "misses" || mode == "both");
         let mut fast = neurocomp::kernel::FastInhibition::new(ttl, h, m);
-        // FAST_MAXREL=r: only kernels with reliability below r are tagged
-        fast.max_reliability = std::env::var("FAST_MAXREL").ok().and_then(|v| v.parse().ok());
+        // FAST_RELSHIFT=k: only kernels with hit rate below 2^k/(2^k+1) are tagged
+        // (integer test (misses+1) << k > hits+1; k = 3 ≈ 0.89)
+        fast.reliable_shift = std::env::var("FAST_RELSHIFT").ok().and_then(|v| v.parse().ok());
         class.set_fast_inhibition(Some(fast));
     }
     class.set_growth_trust(std::env::var("GROW_TRUST").ok().and_then(|v| v.parse().ok()));

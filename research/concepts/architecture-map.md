@@ -7,9 +7,9 @@ connections between them exist. "Not modelled" is as important as what is.
 
 | System | Biology | Here (code) | Status |
 |---|---|---|---|
-| **Cortex** (column) | Columns that predict their input; layers 2/3 (cortico-cortical), 4 (thalamic input), 5 (output to subcortex), 6 (feedback to thalamus) | `CorticalColumn` (`program::cortex`): **L4** `assemble` (current input, thalamic / memory frames, previous input), **L2/3** the predictive `KernelClass` (`predict`, `learn`), **L5** `prediction` / `confidence` / `surprise`, **L6** `ContextBuffer` (context and match rules) | Built as one column; the episodic experiment runs through it (results identical to before). **L5 → basal ganglia** built: `outcome` / `outcome_via` is the shared reward for every selector ([19](../experiments/19-l5-shared-reward.md)). Not yet: several columns / areas, L6 → thalamus gating |
+| **Cortex** (column) | Columns that predict their input; layers 2/3 (cortico-cortical), 4 (thalamic input), 5 (output to subcortex), 6 (feedback to thalamus) | `CorticalColumn` (`program::cortex`): **L4** `assemble` (current input, thalamic / memory frames, previous input), **L2/3** the predictive `KernelClass` (`predict`, `learn`), **L5** `prediction` / `confidence` / `surprise`, **L6** `ContextBuffer` (context and match rules) | Built as one column; the episodic experiment runs through it (results identical to before). **L5 → basal ganglia** built: `outcome` / `outcome_via` is the shared reward for every selector ([19](../experiments/19-l5-shared-reward.md)). **L6 → thalamus** built: `CorticothalamicGate` opens relays per context, learned from use ([20](../experiments/20-l6-corticothalamic-gating.md)). Not yet: several columns / areas |
 | **Cerebellum** | Granule expansion + Purkinje cells, each corrected by its own climbing-fibre error | Not separate. The predictor is cerebellum-like: per-output teaching signal (`feedback`), growth on error, and now copy credit = input ∧ target ([12](../experiments/12-dentate-gyrus-ca3.md)) | Implicit |
-| **Thalamus** | Relay nuclei gated by cortex and basal ganglia; pulvinar / MD route between cortical areas | Gates only (`program::thalamus`: `RouteGate`, `KernelGate`, and the BG-driven gate of [16](../experiments/16-thalamic-gate-memory-channel.md)). The match rules over stored context moved to `program::cortex` (`ContextBuffer`, `RelayChannel`, `RouteScores`) | Built |
+| **Thalamus** | Relay nuclei gated by cortex and basal ganglia; pulvinar / MD route between cortical areas | Gates only (`program::thalamus`: `RouteGate`, `KernelGate`, the BG-driven gate of [16](../experiments/16-thalamic-gate-memory-channel.md), and the L6-driven `CorticothalamicGate` of [20](../experiments/20-l6-corticothalamic-gating.md)). The match rules over stored context moved to `program::cortex` (`ContextBuffer`, `RelayChannel`, `RouteScores`) | Built |
 | **Basal ganglia** | Striatum selects one channel by disinhibiting thalamus; dopamine = reward-prediction error | `BasalGanglia`: per-bit go counters (bit-sliced), winner-take-one release, three-factor update ([15](../experiments/15-basal-ganglia-selector.md)) | Built; used for which recalled item to follow. The route gate of [10](../experiments/10-route-pool-inhibition.md) is BG-like but separate |
 | **Entorhinal cortex** | Input/output of the hippocampus; lateral = content, medial = grid/structure | Sparse word codes as the EC pattern; habituation (`novel`) and the rarity cue (`rarest`) | Content only; **no grid / structure code** |
 | **Dentate gyrus** | Sparse expansion, pattern separation | `DentateGyrus` (random projection + k-WTA) | Built ([12](../experiments/12-dentate-gyrus-ca3.md)) |
@@ -44,6 +44,8 @@ connections between them exist. "Not modelled" is as important as what is.
 - Thalamus → cortex: relayed words are input frames; the gate is learned from whether the
   relay helped predict.
 - Basal ganglia → hippocampal loop: chooses what the second hop follows.
+- Cortex L6 → thalamus: per-context gain on each relay channel, Hebbian from use
+  ([20](../experiments/20-l6-corticothalamic-gating.md)).
 - Cortex L5 → basal ganglia: the column's outcome (attributed to the frame it read) is the
   shared reward ([19](../experiments/19-l5-shared-reward.md)).
 - Basal ganglia → prefrontal → hippocampus: the gate loads a word into working memory; its
@@ -57,7 +59,9 @@ connections between them exist. "Not modelled" is as important as what is.
   With `REWARD=l5_used` every selector learns from the column's outcome, credited only if
   the prediction read the selector's frame. It is not yet the default; the hop-2 selector
   is still 4 points behind its own reward on average.
-- **Cortex → thalamus** (layer 6 feedback): L6 does not gate the thalamus.
+- ~~Cortex → thalamus~~ (layer 6 feedback): done in [20](../experiments/20-l6-corticothalamic-gating.md).
+  Not yet combined with the basal-ganglia gate, and not yet tested where several routes are
+  useful.
 - **Cerebellum → red nucleus / thalamus → output**: there are no actions; the system only
   reads and predicts.
 - **Structure code** (medial EC grid / position) for word order.

@@ -33,6 +33,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Small replay budget: replay chosen by questions (tagged or awake) | **100%** every seed | random replay 34–66% | [17](experiments/17-consolidation.md#prioritised-replay-questions-decide-what-is-consolidated) |
 | – | Question names no one: recall cued by a working-memory slot, loaded by a learned basal-ganglia gate | **100%** every seed | cue at the question 15–17%; trace-credited gate 16–21% | [18](experiments/18-prefrontal-working-memory.md) |
 | – | One shared reward from cortical layer 5 (the column's outcome, credited only if the prediction read the choice) for every selector | gates **100%** every seed; hop-2 selector 91 / 69 / 82% | each selector's own answer key: 100% / 86 / 83 / 86%; unattributed outcome: down to 18% / 32% | [19](experiments/19-l5-shared-reward.md) |
+| – | Cortical layer 6 gates the thalamic relays (per context, learned from use, no reward) | **100%** every seed, 0.04–0.19 channels per word, 2.4× faster | all channels open: 100%, 3.5 channels per word | [20](experiments/20-l6-corticothalamic-gating.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -81,6 +82,7 @@ Experiments (chronological)
 17. [Consolidation: hippocampal replay into a cortical semantic store](experiments/17-consolidation.md)
 18. [Prefrontal working memory: a gated slot that cues recall](experiments/18-prefrontal-working-memory.md)
 19. [Layer 5 as the shared reward: one dopamine signal for every selector](experiments/19-l5-shared-reward.md)
+20. [Layer 6 corticothalamic gating: cortex learns which relays to let through](experiments/20-l6-corticothalamic-gating.md)
 
 Concepts
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)

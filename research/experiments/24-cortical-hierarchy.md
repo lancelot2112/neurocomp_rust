@@ -196,6 +196,38 @@ Held-out, same settings as above (habit seeds 0 / 1 / 2; the rest seed 0):
    - score every matching kernel on expected steps too, so deep kernels earn their record
      as fast as shallow ones (at some cost in speed).
 
+### Evidence-gated ranking (`RANK_MIN`): worse
+`set_reliability_first(Some(min))`. A kernel with fewer than `min` scored predictions
+(hits + misses) has no record yet and ranks as fully reliable (rate 1/1). Among new
+kernels the deepest wins, as by default, and a fresh specific kernel gets to fire and
+earn its record before it competes on its rate.
+
+| | Reliability-first (min 0), late | min 8, late | min 16, late | min 8, early | min 8 + skip empty + confidence gate, early |
+|---|---|---|---|---|---|
+| Habit, no memory | 75 / 73 / 82% | 76 / 76 / 81% | 74 / 81 / 76% | 76 / 76 / 81% | 73 / 77 / 71% |
+| Habit + memory | 80 / 73 / 83% | 73 / 67 / 79% | 68 / 78 / 46% | **84 / 86 / 81%** | 69 / 77 / 78% |
+| Topic | 90.4% | 76.6% | 60.8% | 15.6% | 55.2% |
+| Two-hop | 90.4% | 65.0% | 68.4% | 87.2% | 94.2% |
+| Give | 92.4% | 61.4% | 93.2% | 89.8% | 93.8% |
+| Varied (two settings) | 100 / 100% | 98.8 / 92.2% | 100 / 100% | 69 / 73% | 100 / 100% |
+| Column kernels (habit + memory, seed 0) | 703 | 1,236 | 1,103 | 1,067 | 597 |
+
+Habit + memory with top-down early reaches 84 / 86 / 81%, the best so far. Everything
+else gets worse, often by 20–40 points.
+1. **Optimism floods the ranking with new kernels.** Every surprise grows kernels, and
+   each new one outranks every proven kernel it matches alongside until it has `min`
+   records. Kernels that match rarely never reach `min` at all (and halving can push a
+   record back below it), so they stay optimistic for good. The memory tasks, where a
+   proven copy kernel must win at the answer, lose most: topic 15–77%, give 61–93%.
+2. **The churn feeds itself.** Each wrongly preferred new kernel misses, which grows more
+   new kernels. The column ends with about 1.5–2× the kernels of plain reliability-first
+   (habit + memory 1,236 against 703).
+3. **So neither extreme works.** No optimism (min 0) under-trusts specific kernels, and
+   optimism until `min` over-trusts them. How a new kernel should compete is a question
+   of how fast it is *scored*, not how it is ranked meanwhile. Under the surprise gate,
+   a kernel that doesn't win is scored only on the winner's misses. The next test is
+   to score every matching kernel on expected steps too.
+
 ## Biology
 - **Hierarchy and predictive coding:** each level predicts the activity of the level below
   and is driven by its prediction errors (Rao & Ballard 1999; Friston 2005). Here the

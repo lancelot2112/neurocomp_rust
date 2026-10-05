@@ -27,8 +27,9 @@ Ordered roughly by how much they matter for "reading like a transformer".
   ([24](experiments/24-cortical-hierarchy.md#reliability-first-ranking-in-l23)) makes
   early top-down work (topic 94%, 3–6× fewer kernels on habit) and memory + top-down reaches
   81–86%. But reliability alone over-trusts established shallow kernels against fresh deep
-  ones. Next: rank by reliability only once a kernel has enough evidence, or score all
-  matches on expected steps.
+  ones. Ranking kernels without a record optimistically (`RANK_MIN`) made it much worse
+  (new kernels flood the ranking; topic 15–77%). Next: score all matches on expected
+  steps, so specific kernels earn their record as fast as general ones.
 - **The hierarchy's next steps**: run the higher area on a truly slower clock (only on
   the column's surprises, or once per sentence) to remove its cost; a third level;
   several columns side by side; then real text again

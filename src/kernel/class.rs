@@ -383,7 +383,7 @@ impl KernelClass<SimpleKernel> {
             let kern = &self.active_kernels[k];
             if (count as usize) < kern.threshold {
                 if let Some(frac) = st.cfg.generalize {
-                    if count as f32 >= frac * kern.input_mask.count_ones() as f32 {
+                    if count as f32 >= frac * kern.input_bits as f32 {
                         st.last_near.push(k);
                     }
                 }
@@ -768,6 +768,7 @@ impl KernelClass<SimpleKernel> {
                 st.index[b].retain(|&x| x as usize != k);
                 counts.remove(&b);
             }
+            self.active_kernels[k].sync_input_bits();
             // The match tolerance scales with the kernel's smallest remaining frame, so a
             // frame pruned to a few bits must still be (almost) fully present: otherwise
             // the kernel could fire with that frame absent and turn into a guesser.
@@ -951,7 +952,9 @@ impl Ord for Rate {
 
 /// True if `target` confirms at least half of `k`'s output bits.
 fn predicts(k: &SimpleKernel, target: &BitVector) -> bool {
-    target.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 >= k.output_mask.count_ones()
+    // only the output's own bits are checked (event-style: ~32 bit tests, not a full-width AND)
+    let hit = k.output_set.iter().filter(|&&b| (b as usize) < target.bit_len() && target.bit_get(b as usize)).count();
+    hit * 2 >= k.output_set.len()
 }
 
 fn set_bits(bv: &BitVector) -> Vec<usize> {

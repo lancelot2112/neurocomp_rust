@@ -54,10 +54,19 @@ pub struct SimpleKernel {
     pub plastic: bool,        // apply the local Hebbian rules (strengthen / search_remap) while firing
     pub context_frames: usize, // history frames the input mask spans (set by predictive growth)
     pub stats: KernelStats,
+    /// Cached `input_mask.count_ones()`. The Hebbian moves keep it (one bit cleared, one
+    /// set); code that clears or sets mask bits must call `sync_input_bits`.
+    pub input_bits: usize,
+    /// The output mask as absolute bit positions (the mask is fixed after construction):
+    /// checking a prediction against a target touches only these ~32 bits, not the
+    /// whole output width.
+    pub output_set: Vec<u32>,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
+        let input_bits = input_mask.count_ones();
+        let output_set = Self::positions(&output_mask, output_idx);
         Self {
             input_mask,
             input_idx,
@@ -68,21 +77,39 @@ impl SimpleKernel {
             plastic: true,
             context_frames: 1,
             stats: KernelStats::default(),
+            input_bits,
+            output_set,
         }
     }
 
-    pub fn default(output_bit: usize) -> Self {
-        Self {
-            input_mask: BitVector::new(64, Some(0xF0F0_F0F0_F0F0_F0F0)),
-            input_idx: 0,
-            output_mask: BitVector::from_bits(&[output_bit&63],1),
-            output_idx: output_bit >> 6,
-            threshold: 16,
-            op: KernelOp::Or,
-            plastic: true,
-            context_frames: 1,
-            stats: KernelStats::default(),
+    fn positions(mask: &BitVector, word_offset: usize) -> Vec<u32> {
+        let mut out = Vec::new();
+        for (wi, &w) in mask.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                out.push(((word_offset + wi) * 64 + w.trailing_zeros() as usize) as u32);
+                w &= w - 1;
+            }
         }
+        out
+    }
+
+    /// Recompute `input_bits` after changing `input_mask` directly.
+    pub fn sync_input_bits(&mut self) {
+        self.input_bits = self.input_mask.count_ones();
+    }
+
+    pub fn default(output_bit: usize) -> Self {
+        let mut k = Self::new(
+            BitVector::new(64, Some(0xF0F0_F0F0_F0F0_F0F0)),
+            0,
+            BitVector::from_bits(&[output_bit & 63], 1),
+            output_bit >> 6,
+            16,
+            KernelOp::Or,
+        );
+        k.plastic = true;
+        k
     }
 
     #[inline]

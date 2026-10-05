@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, DentateGyrus, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, DentateGyrus, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -411,8 +411,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // predictor failed to predict, instead of frequency habituation.
     let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
     let mut surprising = BitVector::new(BITS, Some(0)); // unpredicted bits of the sentence so far
-    let mut last_out = BitVector::new(BITS, Some(0)); // the predictor's last prediction
-    let mut last_confidence = 0f32; // reliability of the kernel that made it
     let predicted_share: f32 = std::env::var("PREDICTED_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
     // recalled content: drop bits in more than 40% of episodes (all kept with prediction novelty)
     let habituation = if predictive_novelty { 1.0 } else { 0.4 };
@@ -447,6 +445,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_copy_growth(std::env::var("COPY_GROW").is_ok());
     // GROW_TRUST=f: a lucky unreliable kernel (< f) does not block growth of a better one
     class.set_growth_trust(std::env::var("GROW_TRUST").ok().and_then(|v| v.parse().ok()));
+    // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /
+    // confidence / surprise, L6 context (`th`, whose match rules the thalamus gates)
+    let mut column = CorticalColumn::new(BITS, class, th);
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     let mut recall_has_answer = 0usize;
@@ -478,7 +479,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             for p in PLACES {
                 let code = &enc.codes[index[p]];
                 let (mut copy_q, mut blind_q, mut best_rel) = (0usize, 0usize, 0f32);
-                for k in class.kernels() {
+                for k in column.l23.kernels() {
                     if code.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 < k.output_mask.count_ones() {
                         continue;
                     }
@@ -513,7 +514,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // TRUST_AT_TEST=f: reliability-aware ranking only when answering, so training
             // keeps the depth-first ranking that drives growth
             if let Some(f) = std::env::var("TRUST_AT_TEST").ok().and_then(|v| v.parse().ok()) {
-                class.set_trust_floor(Some(f));
+                column.l23.set_trust_floor(Some(f));
             }
         }
         let s = if task == Task::Topic {
@@ -526,26 +527,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         for t in 0..ids.len() {
             let code = &enc.codes[ids[t]];
-            th.observe(code);
+            column.observe(code);
             sentence.or_mut(code);
             // Comparator: was this word predicted? Graded, at the word level: the share of
             // the prediction that this word accounts for. A prediction that superimposes a
             // whole class ("some name", "some place") gives each member a small share, so
             // the actual member still counts as unpredicted. Bitwise mismatch would not.
-            let predicted_bits = last_out.count_ones();
-            let share = if predicted_bits == 0 {
-                0.0
-            } else {
-                code.as_words().iter().zip(last_out.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() as f32 / predicted_bits as f32
-            };
-            // probability the predictor gave this word: its share of the prediction times
-            // the predicting kernel's reliability (a lucky guess is still a surprise)
-            let share = share * last_confidence;
+            // L5: the probability the column gave this word (its share of the prediction
+            // times the predicting kernel's reliability); a lucky guess is still a surprise
+            let share = 1.0 - column.surprise(code);
             if share < predicted_share {
                 surprising.or_mut(code);
             }
             if std::env::var("TRACE_SHARE").is_ok() && testing && s_i < TRAIN + 3 {
-                eprint!("{}:{share:.2}/{predicted_bits} ", s.words[t]);
+                eprint!("{}:{share:.2} ", s.words[t]);
                 if t + 1 == ids.len() {
                     eprintln!();
                 }
@@ -572,12 +567,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let mut words = code.as_words().to_vec();
                 match policy {
                     Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
-                    Policy::FixedRelay => words.extend_from_slice(th.relay().as_words()),
+                    Policy::FixedRelay => words.extend_from_slice(column.l6.relay().as_words()),
                     Policy::ThalamicGate | Policy::LearnedGate => {
                         // channel contents: each relay route, then memory recall (None)
                         let mut contents: Vec<(Option<RelayChannel>, BitVector)> = Vec::new();
                         for r in &gate_routes {
-                            if let Some(v) = th.relay_channel(*r) {
+                            if let Some(v) = column.l6.relay_channel(*r) {
                                 contents.push((Some(*r), v.clone()));
                             }
                         }
@@ -760,7 +755,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(recalled.as_words());
                     }
                 }
-                words.extend_from_slice(prev.map_or(&[0u64; BITS / 64][..], |p| enc.codes[p].as_words()));
+                words.extend_from_slice(column.previous().as_words()); // L6: the previous input
                 if testing && t + 1 == s.answer_at {
                     // memory diagnostic: does any recalled frame contain the answer word?
                     let frame = BITS / 64;
@@ -797,9 +792,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let input = BitVector::from_words(words);
 
                 let mut out = BitVector::new(BITS, Some(0));
-                class.process_predictive(&input, &mut out);
-                last_out = out.clone();
-                last_confidence = class.confidence().unwrap_or(0.0);
+                out.or_mut(column.predict(&input));
                 let next = ids[t + 1];
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
@@ -808,7 +801,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let frame = BITS / 64;
                         let answer = &enc.codes[next];
                         let mut best: Option<(f32, [usize; 3], f32, u32)> = None;
-                        for k in class.kernels() {
+                        for k in column.l23.kernels() {
                             let out_ok = answer.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 >= k.output_mask.count_ones();
                             if !out_ok {
                                 continue;
@@ -855,7 +848,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if s.held_out && std::env::var("DIAG").is_ok() {
                         let kd = &mut kdiag[right as usize];
                         kd[6] += 1;
-                        match class.winner() {
+                        match column.l23.winner() {
                             None => kd[0] += 1,
                             Some(k) => {
                                 // which input frames the kernel's mask covers
@@ -870,7 +863,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 for i in 0..3 {
                                     kd[2 + i] += per[i];
                                 }
-                                kd[5] += (1000.0 * class.confidence().unwrap_or(0.0)) as usize;
+                                kd[5] += (1000.0 * column.l23.confidence().unwrap_or(0.0)) as usize;
                             }
                         }
                     }
@@ -928,11 +921,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 last_recall_id = None;
                 last_recall_cue = None;
                 if !testing {
-                    class.feedback(&input, &enc.codes[next], &mut rng);
+                    column.learn(&input, &enc.codes[next], &mut rng);
                     // dopamine: did the followed item's recall contain what came next?
                     if policy == Policy::LearnedGate && enc.decode(&out) != Some(next) {
                         // surprise: discover and score routes that would have relayed `next`
-                        route_scores.observe_surprise(&th, &enc.codes[next], 3, 8);
+                        route_scores.observe_surprise(&column.l6, &enc.codes[next], 3, 8);
                     }
                     if let Some(rel) = gate_pending.take() {
                         let hit = rel.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;

@@ -125,6 +125,22 @@ but only as a source in the mix, and accuracy stays low (9–38%).
   ([plan](concepts/output-and-self-supervision.md)). It comes before the event-driven
   clock.
 
+**Growing areas by need (proposed).** Instead of fixing the number of areas, grow
+one where the top area cannot contain its surprise:
+- **A bud.** The top area keeps a candidate area above it, with a window 4× longer. The
+  bud runs only on the top area's residual (event-driven, so it is cheap) and votes in the
+  mix in shadow, without affecting answers.
+- **Promotion.** If the bud's learned reliability on that residual rises clearly above
+  chance (its `SourceMix` weight), the surprise was structure out of reach, not noise,
+  and the bud becomes a full area with a bud of its own.
+- **Pruning.** If it stays at chance, the surprise is irreducible (random names, say),
+  and the bud is pruned. This is kernel growth and probation one level up.
+- **Brain.** Adult cortex does not grow new areas. It recruits and repurposes existing
+  cortex for new skills; reading, for example, recruits the visual word form area
+  (Dehaene & Cohen 2007). So a bud is uncommitted cortex being recruited.
+- **Test.** On the season task the chain should grow to about three higher areas, and
+  on topic or give it should stay at one or none.
+
 ## 6. A ladder of harder tasks
 Each new stage is measured on accuracy, calibration and abstention, plus cost against
 the transformer baseline ([comparison](concepts/brain-transformer-comparison.md)):

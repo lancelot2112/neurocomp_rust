@@ -34,6 +34,9 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   - more teaching signal for the upper areas, from self-supervised read-back
     ([output and self-supervision](concepts/output-and-self-supervision.md));
   - an event-driven clock (cost now 6× for three higher areas).
+- **Grow areas by need** ([roadmap](roadmap.md)): a shadow bud above the top area,
+  learning its residual, promoted when it predicts that residual above chance and pruned
+  when not. The number of areas would then follow the task.
 - **Output** ([plan](concepts/output-and-self-supervision.md)): answering by speaking
   with abstention, recitation, and read-back with an efference copy ("self" frame).
 - **Basal ganglia and L6 together** on the same relays (select by reward among what L6

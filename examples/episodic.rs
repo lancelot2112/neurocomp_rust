@@ -576,8 +576,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut cover = [0usize; 8]; // + [6] best kernel's reliability ×100 summed, [7] its hits+misses summed
     let mut pending_diag = [0usize; 3];
     let full_stop = index["."];
+    // DUMP_STORIES=dir: write this task's stories (train, then test) for outside baselines
+    // and skip the network entirely
+    let mut dump = std::env::var("DUMP_STORIES").ok().map(|dir| {
+        let path = format!("{dir}/{task:?}_{max_facts}_{seed}.txt").to_lowercase();
+        std::io::BufWriter::new(std::fs::File::create(path).expect("dump file"))
+    });
+    // COST: wall time and words for training and test
+    let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
+    let mut phase_start = std::time::Instant::now();
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
+        if s_i == TRAIN {
+            train_secs = phase_start.elapsed().as_secs_f64();
+            phase_start = std::time::Instant::now();
+        }
         if policy == Policy::LearnedGate && !testing && s_i % 50 == 0 && s_i > 0 {
             gate_routes = route_scores.top(8, 2.0);
         }
@@ -639,6 +652,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         } else {
             story(&mut rng, task, max_facts, testing && s_i % 2 == 1)
         };
+        if let Some(out) = dump.as_mut() {
+            use std::io::Write;
+            writeln!(out, "{}\t{}\t{}\t{}", if testing { "test" } else { "train" }, s.held_out as u8, s.answer_at, s.words.join(" ")).unwrap();
+            continue;
+        }
+        if testing {
+            test_words += s.words.len();
+        } else {
+            train_words += s.words.len();
+        }
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         for t in 0..ids.len() {
             let code = &enc.codes[ids[t]];
@@ -1283,6 +1306,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 d[2] as f64 / n
             );
         }
+    }
+    test_secs = phase_start.elapsed().as_secs_f64();
+    if dump.is_none() {
+        // COST: what the column stores, densely as now and as sparse indices
+        let kernels = column.l23.kernels();
+        let dense: usize = kernels.iter().map(|k| (k.input_mask.word_len() + k.output_mask.word_len()) * 8).sum();
+        let set: usize = kernels.iter().map(|k| (k.input_mask.count_ones() + k.output_mask.count_ones()) as usize).sum();
+        let sparse = set * 2 + kernels.len() * 8; // u16 bit indices + offsets, threshold, 2 × u8 counters
+        eprintln!(
+            "  COST seed {seed}: {} kernels; masks stored {:.1} MB dense, {} set bits ({:.2} MB as u16 indices, + {:.2} MB inverted index); {} episodes × {} B; train {:.1} µs/word over {} words, test {:.1} µs/word",
+            kernels.len(),
+            dense as f64 / 1e6,
+            set,
+            sparse as f64 / 1e6,
+            (set * 4) as f64 / 1e6,
+            memory.len(),
+            BITS / 8,
+            1e6 * train_secs / train_words.max(1) as f64,
+            train_words,
+            1e6 * test_secs / test_words.max(1) as f64
+        );
     }
     Outcome { seen: pct(seen), held_out: pct(held), recall: 100.0 * recall_has_answer as f64 / TEST as f64, places: recall_places as f64 / TEST as f64 }
 }

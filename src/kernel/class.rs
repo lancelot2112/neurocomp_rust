@@ -913,6 +913,27 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Would the next step be taken by a chunk, given the current word (frame 0)? Read-only;
+    /// lets a caller skip assembling the rest of the input (recall, relays) for that step.
+    /// Only meaningful with habits-only chunking, whose chunk kernels read frame 0 alone.
+    pub fn chunk_would_jump(&self, current: &BitVector) -> bool {
+        let Some(st) = self.predictive.as_ref() else { return false };
+        let Some(ch) = st.chunk.as_ref() else { return false };
+        if st.fast.is_some() {
+            return false;
+        }
+        let Some(p) = st.last_winner else { return false };
+        let fb = st.cfg.frame_words * 64;
+        if !confirmed_in_frame0(&self.active_kernels[p], current, fb) {
+            return false;
+        }
+        let Some(&(next, g, n)) = ch.links.get(&(p as u32)) else { return false };
+        let next = next as usize;
+        let Some(k) = self.active_kernels.get(next) else { return false };
+        let local_ok = !ch.local || k.input_set.last().map_or(false, |&b| (b as usize) < fb);
+        n >= ch.min && local_ok && g == ch.gen_of(next) && !k.output_set.is_empty()
+    }
+
     /// (steps, chunk jumps, chunk breaks) so far.
     pub fn chunk_stats(&self) -> (usize, usize, usize) {
         self.predictive.as_ref().and_then(|st| st.chunk.as_ref()).map_or((0, 0, 0), |c| (c.steps, c.jumps, c.breaks))

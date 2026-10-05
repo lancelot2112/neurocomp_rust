@@ -608,6 +608,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
     let mut phase_start = std::time::Instant::now();
     let mut prof = [0f64; 6];
+    // CHUNK_SKIP=1: steps taken by a chunk skip recall and frame assembly
+    let chunk_skip = std::env::var("CHUNK_SKIP").is_ok();
+    let (mut chunk_skipped, mut chunk_unlearned) = (0usize, 0usize);
     let sleep_every: Option<usize> = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok());
     let (mut sleeps, mut slept_pruned, mut slept_merged) = (0usize, 0usize, 0usize);
     let mut prof_t = std::time::Instant::now();
@@ -742,6 +745,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             prof_t = std::time::Instant::now();
             if t + 1 < ids.len() {
                 let mut words = code.as_words().to_vec();
+                // CHUNK_SKIP: a step a habit chunk will take needs neither recall nor relays
+                let chunk_step = chunk_skip && column.l23.chunk_would_jump(code);
+                if chunk_step {
+                    words.extend(std::iter::repeat(0).take(mid_frames * BITS / 64));
+                    chunk_skipped += 1;
+                    l6_step = None;
+                } else {
                 match policy {
                     Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
                     Policy::FixedRelay => words.extend_from_slice(column.l6.relay().as_words()),
@@ -989,6 +999,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(recalled.as_words());
                     }
                 }
+                }
                 words.extend_from_slice(column.previous().as_words()); // L6: the previous input
                 if testing && t + 1 == s.answer_at {
                     // memory diagnostic: does any recalled frame contain the answer word?
@@ -1189,7 +1200,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // the fast inhibitory loop keeps running when slow learning is off
                     column.fast_inhibit(&enc.codes[next]);
                 }
-                if !testing {
+                // a chunk step that turned out a surprise never saw its full input: no learning
+                let skip_learn = chunk_step && enc.decode(&out) != Some(next);
+                chunk_unlearned += (skip_learn && !testing) as usize;
+                if !testing && !skip_learn {
                     // PROF: [2] evaluation, diagnostics, rewards
                     prof[2] += prof_t.elapsed().as_secs_f64();
                     prof_t = std::time::Instant::now();
@@ -1364,7 +1378,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let kernels = column.l23.kernels();
         let (cs, cj, cb) = column.l23.chunk_stats();
         if cs > 0 {
-            eprintln!("  CHUNK seed {seed}: {cj} of {cs} steps taken by a chunk ({:.0}%), {cb} chunk breaks", 100.0 * cj as f64 / cs as f64);
+            eprintln!("  CHUNK seed {seed}: {cj} of {cs} steps taken by a chunk ({:.0}%), {cb} chunk breaks; recall and assembly skipped on {chunk_skipped} steps, learning skipped on {chunk_unlearned} surprised chunk steps", 100.0 * cj as f64 / cs as f64);
         }
         if column.l23.canon_reused() > 0 {
             eprintln!("  CANON seed {seed}: {} growths found an identical kernel already present", column.l23.canon_reused());

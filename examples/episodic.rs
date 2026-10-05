@@ -725,6 +725,7 @@ fn main() {
                 Ok("branch") => vec![Policy::Branch(3)],
                 Ok("select") => vec![Policy::Select],
                 Ok("bg") => vec![Policy::Loop(2), Policy::Branch(3), Policy::Select],
+                Ok("twohop_learned") => vec![Policy::Branch(3), Policy::Select],
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],

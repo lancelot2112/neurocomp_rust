@@ -406,6 +406,14 @@ mod tests {
         assert_eq!(col.l23.inhibited(), 1);
         assert_eq!(step(&mut col, &b).as_words(), b.as_words()); // so x now predicts b
         assert_eq!(step(&mut col, &a).as_words(), a.as_words()); // b inhibited in turn, a's 2-step tag has faded
+
+        // gated by reliability: x → a / x → b are each right about half the time, so a
+        // gate at 0.3 tags nothing (a reliable prediction is not inhibited)
+        let mut fast = crate::kernel::FastInhibition::new(2, true, false);
+        fast.max_reliability = Some(0.3);
+        col.l23.set_fast_inhibition(Some(fast));
+        step(&mut col, &a);
+        assert_eq!(col.l23.inhibited(), 0);
     }
 
     fn sym(i: usize) -> BitVector {

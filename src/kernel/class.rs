@@ -156,12 +156,16 @@ pub struct FastInhibition {
     /// Tag the kernels the target contradicted (error-driven: a prediction that just
     /// failed is not repeated while the tag lasts).
     pub on_misses: bool,
+    /// Gate: only kernels less reliable than this are tagged (None = all). Inhibition then
+    /// acts where the context is unpredictable (several continuations, none dominant) and
+    /// leaves reliable predictions ("went → to", memory copies) alone.
+    pub max_reliability: Option<f32>,
     tags: std::collections::HashMap<usize, u8>,
 }
 
 impl FastInhibition {
     pub fn new(ttl: u8, on_hits: bool, on_misses: bool) -> Self {
-        Self { ttl, on_hits, on_misses, tags: std::collections::HashMap::new() }
+        Self { ttl, on_hits, on_misses, max_reliability: None, tags: std::collections::HashMap::new() }
     }
 
     fn tag(&mut self, hits: &[usize], misses: &[usize]) {
@@ -528,8 +532,12 @@ impl KernelClass<SimpleKernel> {
         if st.fast.is_none() {
             return;
         }
+        let max_rel = st.fast.as_ref().and_then(|f| f.max_reliability);
         let (mut hits, mut misses) = (Vec::new(), Vec::new());
         for &m in &st.last_matches {
+            if max_rel.map_or(false, |r| reliability(&self.active_kernels[m].stats) >= r) {
+                continue;
+            }
             if predicts(&self.active_kernels[m], target) {
                 hits.push(m);
             } else {
@@ -652,7 +660,11 @@ impl KernelClass<SimpleKernel> {
         if let Some(st) = self.predictive.as_mut() {
             st.last_target_prob = expected.map_or(0.0, |e| e.1);
             if let Some(f) = st.fast.as_mut() {
-                f.tag(&hits, &misses);
+                let gate = |v: &Vec<usize>| -> Vec<usize> {
+                    v.iter().copied().filter(|&k| f.max_reliability.map_or(true, |m| reliability(&self.active_kernels[k].stats) < m)).collect()
+                };
+                let (h, m) = (gate(&hits), gate(&misses));
+                f.tag(&h, &m);
             }
             st.last_hits = hits;
             st.last_misses = misses;

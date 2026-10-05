@@ -549,7 +549,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if let Ok(mode) = std::env::var("FAST_INHIBIT") {
         let ttl: u8 = std::env::var("FAST_TTL").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
         let (h, m) = (mode == "hits" || mode == "both", mode == "misses" || mode == "both");
-        class.set_fast_inhibition(Some(neurocomp::kernel::FastInhibition::new(ttl, h, m)));
+        let mut fast = neurocomp::kernel::FastInhibition::new(ttl, h, m);
+        // FAST_MAXREL=r: only kernels with reliability below r are tagged
+        fast.max_reliability = std::env::var("FAST_MAXREL").ok().and_then(|v| v.parse().ok());
+        class.set_fast_inhibition(Some(fast));
     }
     class.set_growth_trust(std::env::var("GROW_TRUST").ok().and_then(|v| v.parse().ok()));
     // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /

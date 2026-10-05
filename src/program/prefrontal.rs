@@ -79,6 +79,10 @@ impl PfcGate {
         bg.trace_decay = trace_decay;
         // one reward per episode credits a long trace: use a running-average baseline
         bg.baseline_rate = Some(0.01);
+        // step probability = |error| exactly, so a rare +1 and frequent small −errors
+        // balance in expectation (with gain 1.5 the +1 side is capped at probability 1 and
+        // the drift is downward, eroding whichever action is chosen most)
+        bg.gain = 1.0;
         Self { bg, bits, load_code, keep_code }
     }
 

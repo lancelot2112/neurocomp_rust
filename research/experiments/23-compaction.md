@@ -318,7 +318,11 @@ not a same-build comparison). The mean is about the same, within this task's usu
    word, so a collision with another word's code would affect every use. No accuracy loss
    on these tasks.
 
-## 10. Chunking (Hashlife's time-skipping)
+## 10. Chunking (Hashlife's time-skipping) — removed from the code
+*Chunking (`CHUNK`, `CHUNK_LOCAL`, `CHUNK_SKIP`) was later removed as premature
+optimisation: a small, task-dependent gain for extra machinery. The results below stay on
+record.*
+
 Hashlife jumps many generations at once for a pattern it has seen evolve. The analog here
 is a chunk: a predictable run of words that executes without full inference (`CHUNK=n`,
 `KernelClass::set_chunking`).

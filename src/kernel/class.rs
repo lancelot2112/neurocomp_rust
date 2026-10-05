@@ -149,8 +149,6 @@ struct PredictiveState {
     free: Vec<usize>,
     /// Per-frame memo of match counts (see `set_frame_memo`).
     frame_memo: Option<FrameMemo>,
-    /// Chunking (see `set_chunking`): kernel -> its solid successor.
-    chunk: Option<Chunking>,
     /// Canonical kernels (see `set_canonical`): connection-set hash -> kernel.
     canon: Option<std::collections::HashMap<u64, u32>>,
     /// Growth events that found an identical kernel already present.
@@ -171,67 +169,6 @@ struct PredictiveState {
     /// to exactly the same inputs. Capacity `replay_len` (0 = off).
     replay: std::collections::VecDeque<Vec<u32>>,
     replay_len: usize,
-}
-
-/// Chunking, after Hashlife's time-skipping: when kernel `a`'s prediction is confirmed and
-/// the next winner has been `b` every one of the last `min` times, the link a → b is solid,
-/// and the next step skips matching and lets `b` answer directly. Links chain into
-/// multi-word chunks ("went → to → the"). A chunk breaks on the first surprise (the link
-/// that led there is reset). Confirmation is read off the input itself (frame 0, the
-/// current word, is what the previous winner predicted), so chunks run at test too.
-struct Chunking {
-    /// Repeats needed before a link is used.
-    min: u8,
-    /// Habits only: a link may only hand over to a kernel that reads nothing but frame 0
-    /// (the current word). Steps that depend on memory, relays or older context stay
-    /// goal-directed (full matching), so a chunk ends before them.
-    local: bool,
-    /// kernel -> (successor, successor's slot generation, consecutive confirmations).
-    links: std::collections::HashMap<u32, (u32, u32, u8)>,
-    /// Slot generations (bumped when a slot is reused), so a link never jumps to a kernel
-    /// that has since been replaced.
-    generation: Vec<u32>,
-    /// The kernel whose link produced this step's winner (checked on the next step).
-    jumped_from: Option<u32>,
-    /// A confirmed previous winner whose successor the full path should record.
-    pending: Option<u32>,
-    steps: usize,
-    jumps: usize,
-    breaks: usize,
-}
-
-impl Chunking {
-    /// Record that after `p` was confirmed, `w` won.
-    fn learn(&mut self, p: u32, w: usize) {
-        let g = self.gen_of(w);
-        let e = self.links.entry(p).or_insert((w as u32, g, 0));
-        if e.0 == w as u32 && e.1 == g {
-            e.2 = e.2.saturating_add(1);
-        } else {
-            *e = (w as u32, g, 1);
-        }
-    }
-
-    fn gen_of(&self, k: usize) -> u32 {
-        self.generation.get(k).copied().unwrap_or(0)
-    }
-
-    fn bump(&mut self, k: usize) {
-        if self.generation.len() <= k {
-            self.generation.resize(k + 1, 0);
-        }
-        self.generation[k] = self.generation[k].wrapping_add(1);
-        self.links.remove(&(k as u32));
-    }
-}
-
-/// Did the input's frame 0 (the current word) carry kernel `k`'s prediction?
-fn confirmed_in_frame0(k: &SimpleKernel, input: &BitVector, frame_bits: usize) -> bool {
-    if k.output_set.is_empty() {
-        return false;
-    }
-    let hit = k.output_set.iter().filter(|&&b| (b as usize) < frame_bits && (b as usize) < input.bit_len() && input.bit_get(b as usize)).count();
-    hit * 2 >= k.output_set.len()
 }
 
 /// Per-frame memo of match counts, after Hashlife's memoised sub-nodes: the input is a
@@ -487,7 +424,6 @@ impl KernelClass<SimpleKernel> {
             frame_memo: None,
             canon: None,
             canon_reused: 0,
-            chunk: None,
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -526,8 +462,7 @@ impl KernelClass<SimpleKernel> {
         bias: Option<(&BitVector, BiasMode)>,
     ) -> usize {
         let st = self.predictive.as_mut().expect("process_predictive on a non-predictive class");
-        let prev = st.last_winner.take();
-        if let Some(w) = prev {
+        if let Some(w) = st.last_winner.take() {
             self.active_kernels[w].stats.fired_last = false;
         }
         st.last_matches.clear();
@@ -550,45 +485,6 @@ impl KernelClass<SimpleKernel> {
             st.counts.resize(self.active_kernels.len(), 0);
         }
         st.matches_stale = false;
-        // Chunking: a confirmed previous winner with a solid link hands over directly
-        if let Some(ch) = st.chunk.as_mut().filter(|_| bias.is_none() && st.fast.is_none()) {
-            ch.steps += 1;
-            ch.pending = None;
-            let fb = st.cfg.frame_words * 64;
-            let confirmed = prev.map_or(false, |p| confirmed_in_frame0(&self.active_kernels[p], input, fb));
-            if let Some(src) = ch.jumped_from.take() {
-                if !confirmed {
-                    // the chunk's prediction failed: the link is no longer solid
-                    if let Some(l) = ch.links.get_mut(&src) {
-                        l.2 = 0;
-                    }
-                    ch.breaks += 1;
-                }
-            }
-            if let (true, Some(p)) = (confirmed, prev) {
-                let link = ch.links.get(&(p as u32)).copied();
-                if let Some((next, g, n)) = link {
-                    let next = next as usize;
-                    let local_ok = !ch.local || self.active_kernels.get(next).map_or(false, |k| k.input_set.last().map_or(false, |&b| (b as usize) < fb));
-                    if n >= ch.min && local_ok && g == ch.gen_of(next) && next < self.active_kernels.len() && !self.active_kernels[next].output_set.is_empty() {
-                        ch.jumped_from = Some(p as u32);
-                        ch.jumps += 1;
-                        st.matches_stale = true;
-                        let k = &mut self.active_kernels[next];
-                        for &b in &k.output_set {
-                            if (b as usize) < output.bit_len() {
-                                output.bit_set(b as usize);
-                            }
-                        }
-                        k.stats.fired_last = true;
-                        k.stats.fires += 1;
-                        st.last_winner = Some(next);
-                        return 1;
-                    }
-                }
-                ch.pending = Some(p as u32);
-            }
-        }
         // Memoised interpretation (Hashlife-style): the same input under the same prior has
         // the same winner, so a repeated input skips matching. Off with fast inhibition or
         // a top-down bias, which change the winner step by step.
@@ -610,11 +506,6 @@ impl KernelClass<SimpleKernel> {
                     k.stats.fired_last = true;
                     k.stats.fires += 1;
                     st.last_winner = Some(w);
-                    if let Some(ch) = st.chunk.as_mut() {
-                        if let Some(p) = ch.pending.take() {
-                            ch.learn(p, w);
-                        }
-                    }
                     return 1;
                 }
             }
@@ -673,11 +564,6 @@ impl KernelClass<SimpleKernel> {
             }
             return 0;
         };
-        if let Some(ch) = st.chunk.as_mut() {
-            if let Some(p) = ch.pending.take() {
-                ch.learn(p, w);
-            }
-        }
         let k = &mut self.active_kernels[w];
         for &b in &k.output_set {
             if (b as usize) < output.bit_len() {
@@ -893,50 +779,6 @@ impl KernelClass<SimpleKernel> {
     /// (lookups, hits) of the memo so far.
     pub fn memo_stats(&self) -> (usize, usize) {
         self.predictive.as_ref().map_or((0, 0), |st| (st.memo_lookups, st.memo_hits))
-    }
-
-    /// Chunking (after Hashlife's time-skipping; see `Chunking`): a link a → b becomes solid
-    /// after `min` identical confirmed hand-overs, and then skips matching. None = off.
-    pub fn set_chunking(&mut self, min: Option<u8>, local: bool) {
-        if let Some(st) = self.predictive.as_mut() {
-            st.chunk = min.map(|m| Chunking {
-                min: m.max(1),
-                local,
-                links: std::collections::HashMap::new(),
-                generation: Vec::new(),
-                jumped_from: None,
-                pending: None,
-                steps: 0,
-                jumps: 0,
-                breaks: 0,
-            });
-        }
-    }
-
-    /// Would the next step be taken by a chunk, given the current word (frame 0)? Read-only;
-    /// lets a caller skip assembling the rest of the input (recall, relays) for that step.
-    /// Only meaningful with habits-only chunking, whose chunk kernels read frame 0 alone.
-    pub fn chunk_would_jump(&self, current: &BitVector) -> bool {
-        let Some(st) = self.predictive.as_ref() else { return false };
-        let Some(ch) = st.chunk.as_ref() else { return false };
-        if st.fast.is_some() {
-            return false;
-        }
-        let Some(p) = st.last_winner else { return false };
-        let fb = st.cfg.frame_words * 64;
-        if !confirmed_in_frame0(&self.active_kernels[p], current, fb) {
-            return false;
-        }
-        let Some(&(next, g, n)) = ch.links.get(&(p as u32)) else { return false };
-        let next = next as usize;
-        let Some(k) = self.active_kernels.get(next) else { return false };
-        let local_ok = !ch.local || k.input_set.last().map_or(false, |&b| (b as usize) < fb);
-        n >= ch.min && local_ok && g == ch.gen_of(next) && !k.output_set.is_empty()
-    }
-
-    /// (steps, chunk jumps, chunk breaks) so far.
-    pub fn chunk_stats(&self) -> (usize, usize, usize) {
-        self.predictive.as_ref().and_then(|st| st.chunk.as_ref()).map_or((0, 0, 0), |c| (c.steps, c.jumps, c.breaks))
     }
 
     /// Canonical kernels (after Hashlife's hash-consed nodes): growth samples each frame's
@@ -1309,9 +1151,6 @@ impl KernelClass<SimpleKernel> {
                 st.free.push(k);
                 if let Some(f) = st.frame_memo.as_mut() {
                     f.note(k);
-                }
-                if let Some(ch) = st.chunk.as_mut() {
-                    ch.bump(k);
                 }
             }
         }
@@ -1765,9 +1604,6 @@ impl KernelClass<SimpleKernel> {
         if let Some(f) = st.frame_memo.as_mut() {
             f.note(slot);
         }
-        if let Some(ch) = st.chunk.as_mut() {
-            ch.bump(slot);
-        }
         if let Some(canon) = st.canon.as_mut() {
             let kern = &self.active_kernels[slot];
             canon.insert(connection_key(&kern.input_set, &kern.output_set), slot as u32);
@@ -2046,35 +1882,6 @@ mod tests {
         // (the pile-up it prevents needs real history; see experiment 23)
         assert!(suppressed > 0);
         assert!(gated <= open, "gated {gated} vs open {open}");
-    }
-
-    #[test]
-    fn chunks_skip_matching_on_a_learned_sequence_and_break_on_surprise() {
-        use rand::SeedableRng;
-        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
-        let words: Vec<u64> = (0..4).map(|i| 0xFFu64 << (8 * i)).collect();
-        // A B C D repeating; once, at step 302, B is followed by A instead of C
-        let seq: Vec<usize> = (0..400).map(|i| if i == 302 { 0 } else { i % 4 }).collect();
-        let run = |chunk: Option<u8>| {
-            let mut kc = KernelClass::predictive(cfg);
-            kc.set_surprise_gate(true);
-            kc.set_chunking(chunk, false);
-            let mut rng = rand::rngs::StdRng::seed_from_u64(1);
-            let mut outs = Vec::new();
-            for t in 1..seq.len() {
-                let ctx = frames(&[words[seq[t - 1]]]);
-                let mut out = BitVector::new(64, Some(0));
-                kc.process(&ctx, &mut out, 0, 0);
-                kc.feedback(&ctx, &frames(&[words[seq[t]]]), &mut rng);
-                outs.push(out.as_words()[0]);
-            }
-            (outs, kc.chunk_stats())
-        };
-        let (plain, _) = run(None);
-        let (chunked, (steps, jumps, breaks)) = run(Some(4));
-        assert_eq!(plain, chunked); // on a deterministic sequence chunks predict the same
-        assert!(jumps > steps / 2, "jumps {jumps} of {steps}");
-        assert!(breaks >= 1); // the surprise at step 302 broke a chunk
     }
 
     #[test]

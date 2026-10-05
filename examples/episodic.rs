@@ -597,9 +597,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_frame_memo(std::env::var("FRAME_MEMO").is_ok());
     // CANON=1: canonical kernels (deterministic sampling + hash-consing at growth)
     class.set_canonical(std::env::var("CANON").is_ok());
-    // CHUNK=n: chunking; a kernel-to-kernel hand-over seen n times in a row skips matching
-    // CHUNK_LOCAL=1: habits only (hand over only to kernels reading the current word alone)
-    class.set_chunking(std::env::var("CHUNK").ok().and_then(|v| v.parse().ok()), std::env::var("CHUNK_LOCAL").is_ok());
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
@@ -679,9 +676,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
     let mut phase_start = std::time::Instant::now();
     let mut prof = [0f64; 6];
-    // CHUNK_SKIP=1: steps taken by a chunk skip recall and frame assembly
-    let chunk_skip = std::env::var("CHUNK_SKIP").is_ok();
-    let (mut chunk_skipped, mut chunk_unlearned) = (0usize, 0usize);
     let sleep_every: Option<usize> = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok());
     let (mut sleeps, mut slept_pruned, mut slept_merged) = (0usize, 0usize, 0usize);
     let mut prof_t = std::time::Instant::now();
@@ -824,13 +818,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             prof_t = std::time::Instant::now();
             if t + 1 < ids.len() {
                 let mut words = code.as_words().to_vec();
-                // CHUNK_SKIP: a step a habit chunk will take needs neither recall nor relays
-                let chunk_step = chunk_skip && column.l23.chunk_would_jump(code);
-                if chunk_step {
-                    words.extend(std::iter::repeat(0).take(base_frames * BITS / 64));
-                    chunk_skipped += 1;
-                    l6_step = None;
-                } else {
                 match policy {
                     // (with HIER the top-down frame takes the empty frame's place: growth
                     // deepens one frame at a time and would stop at an always-empty frame)
@@ -1080,36 +1067,30 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(recalled.as_words());
                     }
                 }
-                }
                 // the higher area: [sentence bag | slow state] -> top-down frame, after the
                 // memory / relay frames (so the column first learns to use its own frames,
                 // and top-down context only where they do not suffice)
                 if hier {
-                    if chunk_step {
-                        words.extend(std::iter::repeat(0).take(BITS / 64));
-                        hier_in = None;
-                    } else {
-                        let hin = area.input(&sentence, &surprising);
-                        let td = area.predict(&hin);
-                        if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
-                            let names = |bv: &BitVector| -> Vec<&str> {
-                                (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
-                            };
-                            eprintln!(
-                                "  HIERDIAG {:?}\n    state {:?} -> top-down {:?} (confidence {:.2}), answer {}",
-                                s.words,
-                                names(&area.state(&surprising)),
-                                names(&td),
-                                area.column.confidence(),
-                                s.words[t + 1]
-                            );
-                        }
-                        if testing && t + 1 == s.answer_at {
-                            topdown_has_answer += (td.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
-                        }
-                        words.extend_from_slice(td.as_words());
-                        hier_in = Some(hin);
+                    let hin = area.input(&sentence, &surprising);
+                    let td = area.predict(&hin);
+                    if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
+                        let names = |bv: &BitVector| -> Vec<&str> {
+                            (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
+                        };
+                        eprintln!(
+                            "  HIERDIAG {:?}\n    state {:?} -> top-down {:?} (confidence {:.2}), answer {}",
+                            s.words,
+                            names(&area.state(&surprising)),
+                            names(&td),
+                            area.column.confidence(),
+                            s.words[t + 1]
+                        );
                     }
+                    if testing && t + 1 == s.answer_at {
+                        topdown_has_answer += (td.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
+                    }
+                    words.extend_from_slice(td.as_words());
+                    hier_in = Some(hin);
                 }
                 words.extend_from_slice(column.previous().as_words()); // L6: the previous input
                 if testing && t + 1 == s.answer_at {
@@ -1311,10 +1292,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // the fast inhibitory loop keeps running when slow learning is off
                     column.fast_inhibit(&enc.codes[next]);
                 }
-                // a chunk step that turned out a surprise never saw its full input: no learning
-                let skip_learn = chunk_step && enc.decode(&out) != Some(next);
-                chunk_unlearned += (skip_learn && !testing) as usize;
-                if !testing && !skip_learn {
+                if !testing {
                     // PROF: [2] evaluation, diagnostics, rewards
                     prof[2] += prof_t.elapsed().as_secs_f64();
                     prof_t = std::time::Instant::now();
@@ -1497,10 +1475,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if dump.is_none() {
         // COST: what the column stores, densely as now and as sparse indices
         let kernels = column.l23.kernels();
-        let (cs, cj, cb) = column.l23.chunk_stats();
-        if cs > 0 {
-            eprintln!("  CHUNK seed {seed}: {cj} of {cs} steps taken by a chunk ({:.0}%), {cb} chunk breaks; recall and assembly skipped on {chunk_skipped} steps, learning skipped on {chunk_unlearned} surprised chunk steps", 100.0 * cj as f64 / cs as f64);
-        }
         if column.l23.canon_reused() > 0 {
             eprintln!("  CANON seed {seed}: {} growths found an identical kernel already present", column.l23.canon_reused());
         }

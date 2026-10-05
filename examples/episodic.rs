@@ -558,6 +558,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_growth_trust(ratio_env("GROW_TRUST"));
     // SURPRISE_GATE=1: learn fully only on surprise; an expected word confirms the winner
     class.set_surprise_gate(std::env::var("SURPRISE_GATE").is_ok());
+    // MEMO=1: memoised interpretation (input hash -> winner while the prior is unchanged)
+    class.set_memo(std::env::var("MEMO").is_ok());
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
@@ -1353,6 +1355,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if dump.is_none() {
         // COST: what the column stores, densely as now and as sparse indices
         let kernels = column.l23.kernels();
+        let (lookups, hits) = column.l23.memo_stats();
+        if lookups > 0 {
+            eprintln!("  MEMO seed {seed}: {hits} of {lookups} interpretations served from the memo ({:.0}%)", 100.0 * hits as f64 / lookups as f64);
+        }
         if column.l23.expected_steps() > 0 {
             eprintln!(
                 "  SURPRISE seed {seed}: {} of {} training words were expected (winner right): confirmed only",

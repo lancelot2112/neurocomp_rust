@@ -147,6 +147,14 @@ struct PredictiveState {
     gated: usize,
     /// Slots of kernels removed by `sleep`, reused by growth.
     free: Vec<usize>,
+    /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
+    memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
+    /// Bumped whenever the prior changes in a way that could change a winner.
+    version: u64,
+    /// The last step's matches were not computed (memo hit); `feedback` recounts them.
+    matches_stale: bool,
+    memo_lookups: usize,
+    memo_hits: usize,
     /// Surprise-gated learning (see `set_surprise_gate`).
     surprise_gate: bool,
     /// Feedback steps that took the expected (no-surprise) path.
@@ -343,6 +351,11 @@ impl KernelClass<SimpleKernel> {
             replay_len: 0,
             surprise_gate: false,
             expected_steps: 0,
+            memo: None,
+            version: 0,
+            matches_stale: false,
+            memo_lookups: 0,
+            memo_hits: 0,
         });
         kc
     }
@@ -399,6 +412,32 @@ impl KernelClass<SimpleKernel> {
         if st.counts.len() < self.active_kernels.len() {
             st.counts.resize(self.active_kernels.len(), 0);
         }
+        st.matches_stale = false;
+        // Memoised interpretation (Hashlife-style): the same input under the same prior has
+        // the same winner, so a repeated input skips matching. Off with fast inhibition or
+        // a top-down bias, which change the winner step by step.
+        let memo_key = if st.memo.is_some() && bias.is_none() && st.fast.is_none() { Some(input_hash(input)) } else { None };
+        if let (Some(key), Some(memo)) = (memo_key, st.memo.as_ref()) {
+            st.memo_lookups += 1;
+            if let Some(&(v, w)) = memo.get(&key) {
+                if v == st.version {
+                    st.memo_hits += 1;
+                    st.matches_stale = true;
+                    let Some(w) = w else { return 0 };
+                    let w = w as usize;
+                    let k = &mut self.active_kernels[w];
+                    for &b in &k.output_set {
+                        if (b as usize) < output.bit_len() {
+                            output.bit_set(b as usize);
+                        }
+                    }
+                    k.stats.fired_last = true;
+                    k.stats.fires += 1;
+                    st.last_winner = Some(w);
+                    return 1;
+                }
+            }
+        }
 
         for (wi, &w) in input.as_words().iter().enumerate() {
             let mut w = w;
@@ -452,6 +491,12 @@ impl KernelClass<SimpleKernel> {
         }
         st.touched.clear();
 
+        if let (Some(key), Some(memo)) = (memo_key, st.memo.as_mut()) {
+            if memo.len() > 500_000 {
+                memo.clear();
+            }
+            memo.insert(key, (st.version, best.map(|(_, w)| w as u32)));
+        }
         let Some((_, w)) = best else {
             if let Some((b, BiasMode::Fallback | BiasMode::PreferAndFallback)) = bias {
                 output.mask_mut(0, b, |a, b| a | b);
@@ -568,6 +613,7 @@ impl KernelClass<SimpleKernel> {
     pub fn set_trust_floor(&mut self, floor: Option<(u16, u16)>) {
         if let Some(st) = self.predictive.as_mut() {
             st.trust_floor = floor.map(|(p, q)| Rate::new(p, q));
+            st.version += 1;
         }
     }
 
@@ -610,9 +656,13 @@ impl KernelClass<SimpleKernel> {
         let tick = self.tick;
         let before = Rate::of(&self.active_kernels[w].stats);
         let k = &mut self.active_kernels[w];
+        let halves = k.stats.hits == u8::MAX;
         k.stats.record_hit();
         k.stats.last_useful = tick;
         let Some(st) = self.predictive.as_mut() else { return };
+        if halves {
+            st.version += 1; // halving can shift a rate by rounding: re-rank
+        }
         st.last_target_prob = before.value();
         // fast inhibition still sees what happened (adaptation tags every kernel that
         // predicted it; error tags every kernel that did not), as on the full path
@@ -652,6 +702,65 @@ impl KernelClass<SimpleKernel> {
                 }
             }
         }
+    }
+
+    /// Memoised interpretation (after Hashlife's memoised node results): a hash of the input
+    /// maps to the winner it produced, valid while the prior is unchanged (the version is
+    /// bumped by full-path learning, growth, sleep, trust-floor changes and counter
+    /// halving). A repeated input under the same prior skips matching. Results are exactly
+    /// those without the memo.
+    pub fn set_memo(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.memo = if on { Some(std::collections::HashMap::new()) } else { None };
+        }
+    }
+
+    /// (lookups, hits) of the memo so far.
+    pub fn memo_stats(&self) -> (usize, usize) {
+        self.predictive.as_ref().map_or((0, 0), |st| (st.memo_lookups, st.memo_hits))
+    }
+
+    /// Recompute the last step's matched and near-matched kernels for `input` (after a memo
+    /// hit skipped matching), without changing the winner or any statistics.
+    fn recount(&mut self, input: &BitVector) {
+        let Some(st) = self.predictive.as_mut() else { return };
+        st.matches_stale = false;
+        st.last_matches.clear();
+        st.last_near.clear();
+        if st.counts.len() < self.active_kernels.len() {
+            st.counts.resize(self.active_kernels.len(), 0);
+        }
+        for (wi, &w) in input.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                let b = wi * 64 + w.trailing_zeros() as usize;
+                w &= w - 1;
+                if let Some(ks) = st.index.get(b) {
+                    for &k in ks {
+                        if st.counts[k as usize] == 0 {
+                            st.touched.push(k);
+                        }
+                        st.counts[k as usize] += 1;
+                    }
+                }
+            }
+        }
+        for &k in &st.touched {
+            let k = k as usize;
+            let count = st.counts[k];
+            st.counts[k] = 0;
+            let kern = &self.active_kernels[k];
+            if (count as usize) < kern.threshold {
+                if let Some(frac) = st.cfg.generalize {
+                    if count as f32 >= frac * kern.input_bits as f32 {
+                        st.last_near.push(k);
+                    }
+                }
+                continue;
+            }
+            st.last_matches.push(k);
+        }
+        st.touched.clear();
     }
 
     /// Surprise-gated learning: when the winner predicted the target, confirm only the
@@ -710,6 +819,8 @@ impl KernelClass<SimpleKernel> {
     /// rebuilt once.
     pub fn sleep(&mut self) -> (usize, usize) {
         let Some(st) = self.predictive.as_mut() else { return (0, 0) };
+        st.version += 1;
+        st.matches_stale = false;
         if let Some(w) = st.last_winner.take() {
             self.active_kernels[w].stats.fired_last = false;
         }
@@ -945,6 +1056,13 @@ impl KernelClass<SimpleKernel> {
                 return;
             }
         }
+        // the full path changes the prior: memoised winners are no longer valid, and if
+        // matching was skipped (memo hit) the matched kernels are recounted from `input`
+        if st.matches_stale {
+            self.recount(input);
+        }
+        let Some(st) = self.predictive.as_mut() else { return };
+        st.version += 1;
         let matches = st.last_matches.clone();
         let trust_floor = st.growth_trust;
         let mut depth_has_target = vec![false; cfg.max_frames + 2];
@@ -1126,6 +1244,7 @@ impl KernelClass<SimpleKernel> {
         let tick = self.tick;
         let Some(st) = self.predictive.as_mut() else { return };
         let cfg = st.cfg;
+        st.version += 1;
 
         let mut input_set: Vec<u32> = Vec::new();
         let mut sampled = 0;
@@ -1265,6 +1384,18 @@ fn target_in_frames(input: &BitVector, target: &BitVector, frame_words: usize) -
         return false;
     }
     (0..input.bit_len() / fb).any(|f| bits.iter().filter(|&&b| input.bit_get(f * fb + b)).count() * 2 >= bits.len())
+}
+
+/// A 64-bit hash of an input's active bits (word index and word, mixed).
+fn input_hash(input: &BitVector) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (wi, &w) in input.as_words().iter().enumerate() {
+        if w != 0 {
+            h = (h ^ (wi as u64)).wrapping_mul(0x0100_0000_01b3);
+            h = (h ^ w).wrapping_mul(0x0100_0000_01b3).rotate_left(29);
+        }
+    }
+    h
 }
 
 /// Sorted-list subset test.
@@ -1481,6 +1612,36 @@ mod tests {
         // (the pile-up it prevents needs real history; see experiment 23)
         assert!(suppressed > 0);
         assert!(gated <= open, "gated {gated} vs open {open}");
+    }
+
+    #[test]
+    fn memo_gives_exactly_the_same_predictions_and_learning() {
+        use rand::{Rng, SeedableRng};
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, generalize: Some(0.5), ..GrowthConfig::default() };
+        let words: Vec<u64> = (0..6).map(|i| 0xFFu64 << (8 * i)).collect();
+        // a sequence that is mostly predictable with some noise
+        let mut src = rand::rngs::StdRng::seed_from_u64(11);
+        let seq: Vec<usize> = (0..3000).map(|i| if src.gen_bool(0.85) { i % 6 } else { src.gen_range(0..6) }).collect();
+        let run = |memo: bool| {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_surprise_gate(true);
+            kc.set_memo(memo);
+            let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+            let mut outs = Vec::new();
+            for t in 2..seq.len() {
+                let ctx = frames(&[words[seq[t - 1]], words[seq[t - 2]]]);
+                let mut out = BitVector::new(64, Some(0));
+                kc.process(&ctx, &mut out, 0, 0);
+                kc.feedback(&ctx, &frames(&[words[seq[t]]]), &mut rng);
+                outs.push(out.as_words()[0]);
+            }
+            (outs, kc.len(), kc.memo_stats())
+        };
+        let (plain, n_plain, _) = run(false);
+        let (memo, n_memo, (lookups, hits)) = run(true);
+        assert_eq!(plain, memo);
+        assert_eq!(n_plain, n_memo);
+        assert!(hits > lookups / 4, "hits {hits} of {lookups}");
     }
 
     #[test]

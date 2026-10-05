@@ -402,7 +402,7 @@ Held-out, seeds 0 / 1 / 2 (varied: seed 0, 100% throughout):
 | + mixing | – | 77 / 74 / 83% (77.9) | 37 / 35 / 51% | 99.8 / 99.8 / 100% | 90 / 80 / 80% |
 | No hierarchy (column + memory) | – | – | 100 / 100 / 100% | 99.8 / 99.8 / 100% | 93 / 84 / 80% |
 | + mixing | – | – | 100 / 100 / 100% | 99.8 / 99.8 / 100% | 93 / 84 / 80% |
-| + mixing keyed by candidate word too | – | 80 / 80 / 81% | 100 / 97 / 97% (with hierarchy) | 86–95% | 43–92% |
+| + mixing keyed by candidate word too | – | 80 / 80 / 81% | 100 / 97 / 97% (with hierarchy) | 86–100% | 43–92% |
 
 1. **Mixing helps where it should and nowhere hurts.** It changes the column's answer
    only where the column is weak. On habit + memory seed 0 it changed 16% of answers,
@@ -421,7 +421,7 @@ Held-out, seeds 0 / 1 / 2 (varied: seed 0, 100% throughout):
 4. **Keying reliability by the candidate word breaks generalisation.** With `p` per
    (source, context, word), memory does learn "the place word, not the name". But it also
    learns which places tend to be answers, which pulls held-out questions back towards
-   the pairs seen in training: give 86–95%, two-hop 43–92%. This is the binding failure
+   the pairs seen in training: give 86–100%, two-hop 43–92%. This is the binding failure
    the hippocampus was built to avoid ([06](06-meaning.md), [11](11-episodic-memory.md)).
    Removed.
 5. **Calibration needs independent sources.** Summing evidence assumes the sources err

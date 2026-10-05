@@ -438,7 +438,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // HIER=1: a higher cortical area above the column; its prediction is one more frame
     let hier = std::env::var("HIER").is_ok();
     let base_frames = match policy {
-        Policy::NoMemory | Policy::Episodic | Policy::Consolidate | Policy::Pfc { .. } | Policy::Ca3 { .. } => 1,
+        Policy::NoMemory => !hier as usize,
+        Policy::Episodic | Policy::Consolidate | Policy::Pfc { .. } | Policy::Ca3 { .. } => 1,
         Policy::Loop(hops) => hops,
         Policy::Branch(b) => b + 1,
         Policy::Select => 2,
@@ -481,7 +482,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // REWARD=l5_used: only if the prediction read the chosen content's L4 frame
     let l5_used = std::env::var("REWARD").map_or(false, |v| v == "l5_used");
     // L4 frame that the selector's choice fills: hop 2 for Select, else the memory frame
-    let choice_frame = if policy == Policy::Select { 2 } else { 1 } + hier as usize;
+    let choice_frame = if policy == Policy::Select { 2 } else { 1 };
     let mut l5_sum = [0f64; 2]; // training: summed L5 reward, count
     let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
     let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
@@ -633,6 +634,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         c.set_canonical(true);
         // HIER_GROW_TRUST=p/q: growth trust floor in the higher area (did not help)
         c.set_growth_trust(ratio_env("HIER_GROW_TRUST"));
+        // the same compaction as the column: uncertainty-gated growth, and sleep (below)
+        if let Some(k) = std::env::var("GROW_GATE").ok().and_then(|v| v.parse().ok()) {
+            c.set_growth_gate(Some((k, std::env::var("UNC_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(16))));
+        }
+        if std::env::var("SLEEP_EVERY").is_ok() {
+            c.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
+        }
         let mut a = HigherArea::new(BITS, c, hier_span);
         // HIER_SEPARATE=1: one slow-state frame per recent sentence (worse: deep kernels at
         // varying lags); default: one frame with all recent surprises
@@ -682,6 +690,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
         if !testing && s_i > 0 && sleep_every.map_or(false, |n| s_i % n == 0) {
             let (p, m) = column.l23.sleep();
+            if hier {
+                area.column.l23.sleep();
+            }
             sleeps += 1;
             slept_pruned += p;
             slept_merged += m;
@@ -815,43 +826,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let mut words = code.as_words().to_vec();
                 // CHUNK_SKIP: a step a habit chunk will take needs neither recall nor relays
                 let chunk_step = chunk_skip && column.l23.chunk_would_jump(code);
-                // the higher area: [sentence bag | slow state] -> top-down frame, placed right
-                // after the current word (growth deepens one frame at a time and stops at an
-                // empty frame, so top-down context must come before memory / relays)
-                if hier {
-                    if chunk_step {
-                        words.extend(std::iter::repeat(0).take(BITS / 64));
-                        hier_in = None;
-                    } else {
-                        let hin = area.input(&sentence, &surprising);
-                        let td = area.predict(&hin);
-                        if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
-                            let names = |bv: &BitVector| -> Vec<&str> {
-                                (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
-                            };
-                            eprintln!(
-                                "  HIERDIAG {:?}\n    state {:?} -> top-down {:?} (confidence {:.2}), answer {}",
-                                s.words,
-                                names(&area.state(&surprising)),
-                                names(&td),
-                                area.column.confidence(),
-                                s.words[t + 1]
-                            );
-                        }
-                        if testing && t + 1 == s.answer_at {
-                            topdown_has_answer += (td.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
-                        }
-                        words.extend_from_slice(td.as_words());
-                        hier_in = Some(hin);
-                    }
-                }
                 if chunk_step {
                     words.extend(std::iter::repeat(0).take(base_frames * BITS / 64));
                     chunk_skipped += 1;
                     l6_step = None;
                 } else {
                 match policy {
-                    Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
+                    // (with HIER the top-down frame takes the empty frame's place: growth
+                    // deepens one frame at a time and would stop at an always-empty frame)
+                    Policy::NoMemory => words.extend(std::iter::repeat(0).take(base_frames * BITS / 64)),
                     Policy::FixedRelay => words.extend_from_slice(column.l6.relay().as_words()),
                     Policy::ThalamicGate | Policy::LearnedGate => {
                         // channel contents: each relay route, then memory recall (None)
@@ -1098,6 +1081,36 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 }
+                // the higher area: [sentence bag | slow state] -> top-down frame, after the
+                // memory / relay frames (so the column first learns to use its own frames,
+                // and top-down context only where they do not suffice)
+                if hier {
+                    if chunk_step {
+                        words.extend(std::iter::repeat(0).take(BITS / 64));
+                        hier_in = None;
+                    } else {
+                        let hin = area.input(&sentence, &surprising);
+                        let td = area.predict(&hin);
+                        if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
+                            let names = |bv: &BitVector| -> Vec<&str> {
+                                (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
+                            };
+                            eprintln!(
+                                "  HIERDIAG {:?}\n    state {:?} -> top-down {:?} (confidence {:.2}), answer {}",
+                                s.words,
+                                names(&area.state(&surprising)),
+                                names(&td),
+                                area.column.confidence(),
+                                s.words[t + 1]
+                            );
+                        }
+                        if testing && t + 1 == s.answer_at {
+                            topdown_has_answer += (td.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
+                        }
+                        words.extend_from_slice(td.as_words());
+                        hier_in = Some(hin);
+                    }
+                }
                 words.extend_from_slice(column.previous().as_words()); // L6: the previous input
                 if testing && t + 1 == s.answer_at {
                     // memory diagnostic: does any recalled frame contain the answer word?
@@ -1276,7 +1289,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // L5 attribution for the L6 gate, read before L2/3 learns: per channel passed,
                 // did the prediction read its frame and come true?
                 let l6_used: Vec<bool> = match &l6_step {
-                    Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + hier as usize + c, &enc.codes[next]) >= 0.5).collect(),
+                    Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + c, &enc.codes[next]) >= 0.5).collect(),
                     None => Vec::new(),
                 };
                 let l5 = if l5_used { column.outcome_via(choice_frame, &enc.codes[next]) } else { column.outcome(&enc.codes[next]) };

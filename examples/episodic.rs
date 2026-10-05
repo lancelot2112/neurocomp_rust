@@ -556,6 +556,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         class.set_fast_inhibition(Some(fast));
     }
     class.set_growth_trust(ratio_env("GROW_TRUST"));
+    // GROW_GATE=k: uncertainty-gated growth (no growth on misses in contexts known to be
+    // random, hit rate < 2^k/(2^k+1) over at least UNC_MIN observations, when no input
+    // frame carries the target)
+    if let Some(k) = std::env::var("GROW_GATE").ok().and_then(|v| v.parse().ok()) {
+        let min: u16 = std::env::var("UNC_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
+        class.set_growth_gate(Some((k, min)));
+    }
     // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /
     // confidence / surprise, L6 context (`th`, whose match rules the thalamus gates)
     let mut column = CorticalColumn::new(BITS, class, th);
@@ -586,9 +593,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
     let mut phase_start = std::time::Instant::now();
     let mut prof = [0f64; 6];
+    let sleep_every: Option<usize> = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok());
+    let (mut sleeps, mut slept_pruned, mut slept_merged) = (0usize, 0usize, 0usize);
     let mut prof_t = std::time::Instant::now();
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
+        // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
+        if !testing && s_i > 0 && sleep_every.map_or(false, |n| s_i % n == 0) {
+            let (p, m) = column.l23.sleep();
+            sleeps += 1;
+            slept_pruned += p;
+            slept_merged += m;
+        }
         if s_i == TRAIN {
             train_secs = phase_start.elapsed().as_secs_f64();
             phase_start = std::time::Instant::now();
@@ -1331,12 +1347,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if dump.is_none() {
         // COST: what the column stores, densely as now and as sparse indices
         let kernels = column.l23.kernels();
+        if sleeps > 0 || column.l23.gated_growth() > 0 {
+            eprintln!(
+                "  SLEEP seed {seed}: {sleeps} sleeps pruned {slept_pruned} and merged {slept_merged} kernels; growth suppressed by the uncertainty gate {} times; {} live kernels",
+                column.l23.gated_growth(),
+                column.l23.live()
+            );
+        }
         let dense: usize = kernels.iter().map(|k| (k.input_mask.word_len() + k.output_mask.word_len()) * 8).sum();
         let set: usize = kernels.iter().map(|k| (k.input_mask.count_ones() + k.output_mask.count_ones()) as usize).sum();
         let sparse = set * 2 + kernels.len() * 8; // u16 bit indices + offsets, threshold, 2 × u8 counters
         eprintln!(
-            "  COST seed {seed}: {} kernels; masks stored {:.1} MB dense, {} set bits ({:.2} MB as u16 indices, + {:.2} MB inverted index); {} episodes × {} B; train {:.1} µs/word over {} words, test {:.1} µs/word",
-            kernels.len(),
+            "  COST seed {seed}: {} live kernels; masks stored {:.1} MB dense, {} set bits ({:.2} MB as u16 indices, + {:.2} MB inverted index); {} episodes × {} B; train {:.1} µs/word over {} words, test {:.1} µs/word",
+            column.l23.live(),
             dense as f64 / 1e6,
             set,
             sparse as f64 / 1e6,

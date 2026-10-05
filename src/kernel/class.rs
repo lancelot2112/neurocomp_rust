@@ -141,6 +141,12 @@ struct PredictiveState {
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
     /// Fast inhibitory loop (see `set_fast_inhibition`). None = off.
     fast: Option<FastInhibition>,
+    /// Uncertainty-gated growth (see `set_growth_gate`): (shift k, minimum evidence).
+    growth_gate: Option<(u32, u16)>,
+    /// Growth events the gate suppressed.
+    gated: usize,
+    /// Slots of kernels removed by `sleep`, reused by growth.
+    free: Vec<usize>,
 }
 
 /// A fast-learning inhibitory loop on the winner competition: one-shot inhibitory tags on
@@ -322,6 +328,9 @@ impl KernelClass<SimpleKernel> {
             last_hits: Vec::new(),
             last_misses: Vec::new(),
             fast: None,
+            growth_gate: None,
+            gated: 0,
+            free: Vec::new(),
         });
         kc
     }
@@ -566,6 +575,135 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Uncertainty-gated growth (None = off). With `Some((k, min))`, a miss grows nothing
+    /// when the winning kernel has at least `min` observations, its hit rate is below
+    /// 2^k / (2^k + 1) (integer test, see `unreliable`), and no input frame carries the
+    /// target: the context is known to be noisy and nothing in the input could explain the
+    /// outcome, so a new kernel would only be another guess.
+    pub fn set_growth_gate(&mut self, gate: Option<(u32, u16)>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.growth_gate = gate;
+        }
+    }
+
+    /// Growth events suppressed by the gate so far.
+    pub fn gated_growth(&self) -> usize {
+        self.predictive.as_ref().map_or(0, |st| st.gated)
+    }
+
+    /// Kernels in use (removed ones excluded).
+    pub fn live(&self) -> usize {
+        self.active_kernels.len() - self.predictive.as_ref().map_or(0, |st| st.free.len())
+    }
+
+    /// Sleep (synaptic homeostasis, after Tononi & Cirelli): an offline pass that keeps the
+    /// prior compact. Returns (pruned, merged).
+    /// 1. Downscale: every kernel's hit and miss counts shift right by one (relative
+    ///    strengths kept; old evidence weighs less).
+    /// 2. Prune: kernels that have only failed (no hits left, some misses) are removed.
+    /// 3. Merge: a kernel is redundant if another kernel with the same output reads a
+    ///    strict subset of its inputs (so it matches whenever this one does) and is at
+    ///    least as reliable; the specific one is removed and the general one predicts for
+    ///    both.
+    /// Removed kernels' slots go to a free list that growth reuses; the inverted index is
+    /// rebuilt once.
+    pub fn sleep(&mut self) -> (usize, usize) {
+        let Some(st) = self.predictive.as_mut() else { return (0, 0) };
+        if let Some(w) = st.last_winner.take() {
+            self.active_kernels[w].stats.fired_last = false;
+        }
+        st.last_matches.clear();
+        st.last_hits.clear();
+        st.last_misses.clear();
+        st.last_near.clear();
+        let live: Vec<usize> = (0..self.active_kernels.len()).filter(|&k| !self.active_kernels[k].input_set.is_empty()).collect();
+        // 1. downscale
+        for &k in &live {
+            self.active_kernels[k].stats.halve();
+        }
+        let mut remove = vec![false; self.active_kernels.len()];
+        // 2. prune what only fails
+        let mut pruned = 0;
+        for &k in &live {
+            let s = &self.active_kernels[k].stats;
+            if s.hits == 0 && s.misses > 0 {
+                remove[k] = true;
+                pruned += 1;
+            }
+        }
+        // 3. merge: within each output, a kernel whose inputs contain a more general,
+        // at-least-as-reliable kernel's inputs is redundant. Candidates are found through
+        // the general kernel's lowest input bit, which the specific kernel must contain.
+        let mut merged = 0;
+        let mut by_output: std::collections::HashMap<&[u32], Vec<usize>> = std::collections::HashMap::new();
+        for &k in &live {
+            if !remove[k] {
+                by_output.entry(self.active_kernels[k].output_set.as_slice()).or_default().push(k);
+            }
+        }
+        let mut redundant = Vec::new();
+        for group in by_output.values() {
+            if group.len() < 2 {
+                continue;
+            }
+            let mut by_first: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
+            for &k in group {
+                by_first.entry(self.active_kernels[k].input_set[0]).or_default().push(k);
+            }
+            for &a in group {
+                let ka = &self.active_kernels[a];
+                let ra = Rate::of(&ka.stats);
+                let general = ka.input_set.iter().filter_map(|b| by_first.get(b)).flatten().any(|&b| {
+                    let kb = &self.active_kernels[b];
+                    b != a
+                        && kb.input_set.len() < ka.input_set.len()
+                        && Rate::of(&kb.stats) >= ra
+                        && is_subset(&kb.input_set, &ka.input_set)
+                });
+                if general {
+                    redundant.push(a);
+                }
+            }
+        }
+        for a in redundant {
+            if !remove[a] {
+                remove[a] = true;
+                merged += 1;
+            }
+        }
+        // free the removed kernels and rebuild the index from the survivors
+        for k in 0..remove.len() {
+            if remove[k] {
+                let kern = &mut self.active_kernels[k];
+                kern.input_mask = BitVector::new(64, Some(0));
+                kern.output_mask = BitVector::new(64, Some(0));
+                kern.input_set.clear();
+                kern.output_set.clear();
+                kern.input_bits = 0;
+                kern.threshold = usize::MAX;
+                st.silent_counts.remove(&k);
+                st.sticky_tags.remove(&k);
+                if let Some(f) = st.fast.as_mut() {
+                    if let Some(u) = f.until.get_mut(k) {
+                        *u = 0;
+                    }
+                }
+                st.free.push(k);
+            }
+        }
+        for list in st.index.iter_mut() {
+            list.clear();
+        }
+        for (k, kern) in self.active_kernels.iter().enumerate() {
+            for &b in &kern.input_set {
+                if let Some(list) = st.index.get_mut(b as usize) {
+                    list.push(k as u32);
+                }
+            }
+        }
+        (pruned, merged)
+    }
+
     /// Kernels that matched on the last predictive step.
     pub fn matched(&self) -> usize {
         self.predictive.as_ref().map_or(0, |st| st.last_matches.len())
@@ -700,6 +838,21 @@ impl KernelClass<SimpleKernel> {
         };
         if (unpredicted as f32) <= cfg.surprise_fraction * target_bits as f32 {
             return;
+        }
+
+        // Expected uncertainty (acetylcholine-like): if the winner's context is known to be
+        // unpredictable (enough evidence, hit rate below the gate) and no input frame
+        // carries the target (nothing a new kernel could copy or key on), the miss is the
+        // context's normal noise: count it, but grow nothing.
+        if let (Some((shift, min)), Some(w)) = (self.predictive.as_ref().and_then(|st| st.growth_gate), winner) {
+            let s = &self.active_kernels[w].stats;
+            let known_random = s.hits as u16 + s.misses as u16 >= min && unreliable(s, shift);
+            if known_random && !target_in_frames(input, target, cfg.frame_words) {
+                if let Some(st) = self.predictive.as_mut() {
+                    st.gated += 1;
+                }
+                return;
+            }
         }
 
         let depth = winner.map_or(1, |w| self.active_kernels[w].context_frames);
@@ -857,7 +1010,19 @@ impl KernelClass<SimpleKernel> {
         k.context_frames = reach;
         k.stats.last_useful = tick;
 
-        let slot = if self.active_kernels.len() < cfg.max_kernels {
+        let slot = if let Some(free) = st.free.pop() {
+            // a slot emptied by sleep: nothing points to it any more
+            st.silent_counts.remove(&free);
+            st.sticky_tags.remove(&free);
+            if let Some(f) = st.fast.as_mut() {
+                if let Some(u) = f.until.get_mut(free) {
+                    *u = 0;
+                }
+            }
+            self.active_kernels[free] = k;
+            self.grown += 1;
+            free
+        } else if self.active_kernels.len() < cfg.max_kernels {
             self.active_kernels.push(k);
             self.grown += 1;
             self.active_kernels.len() - 1
@@ -913,6 +1078,32 @@ fn frame_has_bits(input: &BitVector, f: usize, frame_words: usize) -> bool {
 /// (h+1)/(h+m+2) < 2^k/(2^k+1)  ⇔  (h+1)(2^k+1) < 2^k (h+m+2)  ⇔  h+1 < 2^k (m+1).
 fn unreliable(s: &KernelStats, k: u32) -> bool {
     ((s.misses as u32 + 1) << k) > s.hits as u32 + 1
+}
+
+/// True if `target`'s bits are (at least half) present in some frame of `input`: a new
+/// kernel could key on or copy them.
+fn target_in_frames(input: &BitVector, target: &BitVector, frame_words: usize) -> bool {
+    let fb = frame_words * 64;
+    let bits: Vec<usize> = (0..target.bit_len().min(fb)).filter(|&b| target.bit_get(b)).collect();
+    if bits.is_empty() {
+        return false;
+    }
+    (0..input.bit_len() / fb).any(|f| bits.iter().filter(|&&b| input.bit_get(f * fb + b)).count() * 2 >= bits.len())
+}
+
+/// Sorted-list subset test.
+fn is_subset(small: &[u32], big: &[u32]) -> bool {
+    let mut j = 0;
+    for &x in small {
+        while j < big.len() && big[j] < x {
+            j += 1;
+        }
+        if j == big.len() || big[j] != x {
+            return false;
+        }
+        j += 1;
+    }
+    true
 }
 
 fn reliability(s: &KernelStats) -> f32 {
@@ -1086,6 +1277,55 @@ mod tests {
         kc.process(ctx, &mut out, 0, 0);
         kc.feedback(ctx, target, &mut rng);
         out.as_words()[0]
+    }
+
+    #[test]
+    fn growth_gate_stops_growing_guesses_in_a_known_random_context() {
+        // context A is followed by one of four words at random; no frame carries the
+        // target, so once A's kernels are known to be unreliable the gate stops growth
+        // (with a varying previous word, so deeper kernels keep being grown for every
+        // (previous word, outcome) pair without the gate)
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
+        let targets: Vec<BitVector> = (1..5u64).map(|i| BitVector::from_words(vec![0xFF << (8 * i)])).collect();
+        let mut run = |gate: Option<(u32, u16)>| {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_growth_gate(gate);
+            let mut x: u64 = 12345;
+            for _ in 0..2000 {
+                x = x.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                let prev = 1u64 << (32 + (x >> 33) % 32); // one of 32 previous words
+                let ctx = frames(&[0xFF, prev]);
+                step(&mut kc, &ctx, &targets[((x >> 50) % 4) as usize]);
+            }
+            (kc.live(), kc.gated_growth())
+        };
+        let (open, _) = run(None);
+        let (gated, suppressed) = run(Some((3, 16)));
+        // the gate fires once the context is known to be random, and never adds kernels
+        // (the pile-up it prevents needs real history; see experiment 23)
+        assert!(suppressed > 0);
+        assert!(gated <= open, "gated {gated} vs open {open}");
+    }
+
+    #[test]
+    fn sleep_merges_a_redundant_kernel_and_reuses_its_slot() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        let b = BitVector::from_words(vec![0xFF00]);
+        let mut rng = rand::thread_rng();
+        // a general kernel (bits 0-3) and a specific one (bits 0-7) for the same output
+        kc.grow(&frames(&[0x0F]), &b, 1, &mut rng);
+        kc.grow(&frames(&[0xFF]), &b, 1, &mut rng);
+        for _ in 0..4 {
+            step(&mut kc, &frames(&[0xFF]), &b); // both fire and are right
+        }
+        assert_eq!(kc.live(), 2);
+        let (pruned, merged) = kc.sleep();
+        assert_eq!((pruned, merged), (0, 1));
+        assert_eq!(kc.live(), 1);
+        assert_eq!(step(&mut kc, &frames(&[0xFF]), &b), 0xFF00); // the general one still predicts
+        kc.grow(&frames(&[0xF0]), &b, 1, &mut rng);
+        assert_eq!((kc.len(), kc.live()), (2, 2)); // the freed slot was reused
     }
 
     #[test]

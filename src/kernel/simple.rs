@@ -35,7 +35,8 @@ impl KernelStats {
         self.misses += 1;
     }
 
-    fn halve(&mut self) {
+    /// Shift both counters right by one (ratio kept).
+    pub fn halve(&mut self) {
         self.hits >>= 1;
         self.misses >>= 1;
     }

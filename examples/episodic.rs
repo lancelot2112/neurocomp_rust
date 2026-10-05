@@ -967,10 +967,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let next = ids[t + 1];
                 if std::env::var("FASTDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
                     eprintln!(
-                        "  FASTDIAG answer step: {} kernels matched, {} distinct outputs, {} inhibited, predicted {:?}, answer {}",
+                        "  FASTDIAG answer step: {} kernels matched, {} distinct outputs, {} inhibited, winner reliability {:.2}, predicted {:?}, answer {}",
                         column.l23.matched(),
                         column.l23.matched_outputs(),
                         column.l23.inhibited(),
+                        column.confidence(),
                         enc.decode(&out).map(|i| vocab[i]),
                         vocab[next]
                     );

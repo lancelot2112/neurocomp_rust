@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, RouteScores, Thalamus};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, DentateGyrus, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -43,6 +43,8 @@ const NAMES: &[&str] = &["mary", "john", "sandra", "daniel", "anna", "peter"];
 const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", "bedroom"];
 const FILLERS: &[&str] = &["then", "later", "so", "next", "after"];
 const OBJECTS: &[&str] = &["ball", "apple", "book", "key", "cup", "box"];
+/// Topic task: distractor sentences with no names or places.
+const DISTRACTORS: &[&[&str]] = &[&["the", "cat", "slept", "."], &["the", "dog", "ran", "away", "."], &["it", "rained", "."]];
 /// Persist task: names whose places are fixed and stated only early in training.
 const ANCHOR_NAMES: &[&str] = &["bill", "fred", "julie"];
 const TRAIN: usize = 3000;
@@ -64,6 +66,9 @@ enum Task {
     /// only in the first anchor_stories() training stories; the other names live in varied
     /// stories. Test asks about an anchor half of the time (reported as "held-out").
     Persist,
+    /// Working memory: "X went to the P . <distractors> where is the person ?" -> P. The
+    /// question names nobody; the subject must be held across the distractor sentences.
+    Topic,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -93,6 +98,11 @@ enum Policy {
     /// KernelClass learning cue -> content); when hippocampal recall fails, the cortex
     /// supplies the memory frame.
     Consolidate,
+    /// Episodic recall cued by prefrontal working memory (`WorkingMemory`), whose content
+    /// is loaded by a gate: `learned` = `PfcGate` (basal ganglia, reward at the question
+    /// if the recall contained the answer, delayed through the eligibility trace);
+    /// otherwise a hand-set rule (load names) as the upper bound.
+    Pfc { learned: bool },
     /// Same gate, but the relay routes are learned: discovered from surprises and ranked
     /// by consistency (`RouteScores`, as in experiment 10), top 8 refreshed every 50
     /// stories; memory recall is one more channel.
@@ -146,6 +156,40 @@ fn two_hop_story(rng: &mut StdRng, want_held_out: bool) -> Story {
         words.extend(["where", "is", "the", OBJECTS[o], "?"]);
         let answer_at = words.len();
         words.extend([PLACES[answer], "."]);
+        return Story { words, answer_at, held_out: want_held_out };
+    }
+}
+
+fn topic_story(rng: &mut StdRng, want_held_out: bool) -> Story {
+    loop {
+        let mut words: Vec<&'static str> = Vec::new();
+        for _ in 0..rng.gen_range(0..=4) {
+            words.push(FILLERS.choose(rng).unwrap());
+        }
+        let n = rng.gen_range(0..NAMES.len());
+        let p = rng.gen_range(0..PLACES.len());
+        if allowed(n, p) == want_held_out {
+            continue; // held-out: (name, place) pairs never answered in training
+        }
+        words.push(NAMES[n]);
+        if rng.gen_bool(0.5) {
+            words.push(if rng.gen_bool(0.5) { "quickly" } else { "slowly" });
+        }
+        words.push("went");
+        if rng.gen_bool(0.5) {
+            words.extend(["all", "the", "way", "over"]);
+        }
+        words.extend(["to", "the"]);
+        if rng.gen_bool(0.5) {
+            words.push(if rng.gen_bool(0.5) { "big" } else { "old" });
+        }
+        words.extend([PLACES[p], "."]);
+        for _ in 0..rng.gen_range(1..=3) {
+            words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+        }
+        words.extend(["where", "is", "the", "person", "?"]);
+        let answer_at = words.len();
+        words.extend([PLACES[p], "."]);
         return Story { words, answer_at, held_out: want_held_out };
     }
 }
@@ -274,6 +318,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     ];
     vocab.extend(OBJECTS);
     vocab.extend(ANCHOR_NAMES);
+    vocab.extend(["person", "cat", "slept", "dog", "ran", "away", "it", "rained"]);
     vocab.extend(NAMES);
     vocab.extend(PLACES);
     vocab.extend(FILLERS);
@@ -286,7 +331,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         RelayChannel { query_lag: 3, value_offset: 8 },
     ];
     let mid_frames = match policy {
-        Policy::NoMemory | Policy::Episodic | Policy::Consolidate | Policy::Ca3 { .. } => 1,
+        Policy::NoMemory | Policy::Episodic | Policy::Consolidate | Policy::Pfc { .. } | Policy::Ca3 { .. } => 1,
         Policy::Loop(hops) => hops,
         Policy::Branch(b) => b + 1,
         Policy::Select => 2,
@@ -319,6 +364,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut last_recall_cue: Option<BitVector> = None; // the cue that recalled it
     // tagged replay: the question's cue, stored with the tag, keys the sleep replay
     let mut tag_cues: HashMap<usize, BitVector> = HashMap::new();
+    // Pfc: one-slot working memory and its basal-ganglia gate
+    let mut wm = WorkingMemory::new(BITS, 1);
+    let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
+    let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
+    let mut pfc_loads = HashMap::<&str, (usize, usize)>::new(); // word -> (loads, decisions) at test
+    let names_set: std::collections::HashSet<usize> = NAMES.iter().map(|n| index[n]).collect();
     let mut tagged_or_replayed = 0usize;
     let mut from_cortex = 0usize; // test answers where the memory frame came from the cortex
     let (dg, mut ca3) = match policy {
@@ -465,7 +516,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 class.set_trust_floor(Some(f));
             }
         }
-        let s = if task == Task::Persist {
+        let s = if task == Task::Topic {
+            topic_story(&mut rng, testing && s_i % 2 == 1)
+        } else if task == Task::Persist {
             persist_story(&mut rng, s_i, testing && s_i % 2 == 1, testing)
         } else {
             story(&mut rng, task, max_facts, testing && s_i % 2 == 1)
@@ -498,6 +551,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             }
             let cue_source = if predictive_novelty { &surprising } else { &sentence };
+            if let Policy::Pfc { learned } = policy {
+                let load = if learned {
+                    let explore = if testing { None } else { Some(&mut rng) };
+                    pfc_gate.decide(ids[t], explore) == Gate::Load
+                } else {
+                    names_set.contains(&ids[t]) // hand-set rule: hold the last name
+                };
+                if load {
+                    wm.load(0, code);
+                }
+                if testing {
+                    let e = pfc_loads.entry(vocab[ids[t]]).or_default();
+                    e.0 += load as usize;
+                    e.1 += 1;
+                }
+            }
 
             if t + 1 < ids.len() {
                 let mut words = code.as_words().to_vec();
@@ -642,8 +711,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         words.extend_from_slice(recalled.as_words());
                     }
-                    Policy::Episodic | Policy::Consolidate => {
-                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                    Policy::Episodic | Policy::Consolidate | Policy::Pfc { .. } => {
+                        // Pfc: the cue is what working memory holds (prefrontal-directed retrieval)
+                        let cue = if matches!(policy, Policy::Pfc { .. }) { wm.content() } else { memory.rarest(cue_source, 0.1, rarity_ratio) };
                         let mut recalled = BitVector::new(BITS, Some(0));
                         if cue.count_ones() > 0 {
                             // recall needs most of the cue to be present in the episode
@@ -849,6 +919,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
+                if !testing && t + 1 == s.answer_at {
+                    if let Policy::Pfc { learned: true } = policy {
+                        // dopamine: the recall that working memory cued contained the answer
+                        pfc_gate.reward(recall_had_answer as u32 as f32, &mut rng);
+                    }
+                }
                 last_recall_id = None;
                 last_recall_cue = None;
                 if !testing {
@@ -918,6 +994,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
+    if let Policy::Pfc { learned } = policy {
+        let mut rows: Vec<(&&str, &(usize, usize))> = pfc_loads.iter().filter(|(_, (l, _))| *l > 0).collect();
+        rows.sort_by(|a, b| (b.1 .0 * 1000 / b.1 .1.max(1)).cmp(&(a.1 .0 * 1000 / a.1 .1.max(1))));
+        let shown: Vec<String> = rows.iter().take(12).map(|(w, (l, d))| format!("{w} {:.0}%", 100.0 * *l as f64 / (*d).max(1) as f64)).collect();
+        eprintln!("  PFC seed {seed} ({}): words loaded into working memory at test (share of occurrences): {}", if learned { "learned gate" } else { "load names" }, shown.join(", "));
+    }
     if policy == Policy::Consolidate {
         eprintln!(
             "  CONSOLIDATE seed {seed} ({replay_mode}): memory frame from the cortex at {from_cortex} test answers; semantic kernels {}; {} question tags / awake replays",
@@ -987,6 +1069,7 @@ fn main() {
         Ok("varied") => vec![Task::Varied],
         Ok("twohop") => vec![Task::TwoHop],
         Ok("persist") => vec![Task::Persist],
+        Ok("topic") => vec![Task::Topic],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
@@ -994,10 +1077,12 @@ fn main() {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
     for task in tasks {
-        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist) { &[0] } else { &[2, 3] };
+        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic) { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
             println!();
-            if task == Task::Persist {
+            if task == Task::Topic {
+                println!("Topic stories: \"X went to the P . <1-3 distractor sentences> where is the person ?\"");
+            } else if task == Task::Persist {
                 println!("Persist stories: anchors (bill, fred, julie) stated only in the first {} training stories; \"held-out\" = anchor questions at test", anchor_stories());
             } else if task == Task::TwoHop {
                 println!("TwoHop stories: 2-3 people, 1-2 moves each, 1-2 objects picked up; \"where is the O ?\"");
@@ -1014,6 +1099,7 @@ fn main() {
                 Ok("learned_gate") => vec![Policy::LearnedGate],
                 Ok("consolidate") => vec![Policy::NoMemory, Policy::Episodic, Policy::Consolidate],
                 Ok("consolidate_only") => vec![Policy::Consolidate],
+                Ok("pfc") => vec![Policy::NoMemory, Policy::Episodic, Policy::Pfc { learned: false }, Policy::Pfc { learned: true }],
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],

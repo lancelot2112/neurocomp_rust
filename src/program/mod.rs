@@ -18,3 +18,6 @@ pub use hippocampus::*;
 
 pub mod basal_ganglia;
 pub use basal_ganglia::*;
+
+pub mod prefrontal;
+pub use prefrontal::*;

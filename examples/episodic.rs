@@ -82,6 +82,11 @@ enum Task {
     /// "X went to the" -> X's habitual place for that time of day (a fixed mapping learned
     /// over training). The lower column cannot see the name and the time at the answer.
     Habit,
+    /// Long reach (experiment 25): a season ("winter came .") is announced once every
+    /// SEASON_LEN stories (default 32); every story ends "X went to the" -> X's place for
+    /// the current season. The deciding word lies 0 to SEASON_LEN − 1 stories back, so
+    /// accuracy by that distance shows how far back the areas reach.
+    Season,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -232,6 +237,31 @@ fn habit_story(rng: &mut StdRng, held_out: bool) -> Story {
     words.extend([NAMES[n], "went", "to", "the"]);
     let answer_at = words.len();
     words.extend([PLACES[habit_place(n, t)], "."]);
+    Story { words, answer_at, held_out }
+}
+
+const SEASONS: &[&str] = &["spring", "summer", "autumn", "winter"];
+
+/// Season task: `n`'s place in season `s` (distinct per season for every name).
+fn season_place(n: usize, s: usize) -> usize {
+    (2 * n + [0, 1, 3, 4][s] + 1) % PLACES.len()
+}
+
+fn season_story(rng: &mut StdRng, season: usize, announce: bool, held_out: bool) -> Story {
+    let mut words: Vec<&'static str> = Vec::new();
+    if announce {
+        words.extend([SEASONS[season], "came", "."]);
+    }
+    if rng.gen_bool(0.5) {
+        words.push(FILLERS.choose(rng).unwrap());
+    }
+    for _ in 0..rng.gen_range(1..=3) {
+        words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+    }
+    let n = rng.gen_range(0..NAMES.len());
+    words.extend([NAMES[n], "went", "to", "the"]);
+    let answer_at = words.len();
+    words.extend([PLACES[season_place(n, season)], "."]);
     Story { words, answer_at, held_out }
 }
 
@@ -422,6 +452,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     if task == Task::Habit {
         vocab.extend(["in", "morning", "at", "night"]);
+    }
+    if task == Task::Season {
+        vocab.extend(SEASONS);
+        vocab.push("came");
     }
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
     let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
@@ -626,11 +660,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the higher area (HIER=1): its own predictive L2/3 over [sentence bag | slow state],
     // the slow state spanning the last HIER_SPAN sentences' surprises
     let hier_span: usize = std::env::var("HIER_SPAN").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
-    let mut area = {
+    // HIER_LEVELS=n: n higher areas in a chain (default 1). Area k+1's window is HIER_SPAN
+    // times area k's, and each area (but the top) also reads the prediction of the area
+    // above it as one more frame, so top-down flows down the chain to the column
+    let hier_levels: usize = std::env::var("HIER_LEVELS").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+    let make_area = |span: usize, with_above: bool| {
         let mut c: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
             max_kernels: 100_000,
             frame_words: BITS / 64,
-            max_frames: if std::env::var("HIER_SEPARATE").is_ok() { 1 + hier_span } else { 2 },
+            max_frames: if std::env::var("HIER_SEPARATE").is_ok() { 1 + span } else { 2 } + with_above as usize,
             sample_bits: 16,
             match_fraction: 0.8,
             surprise_fraction: 0.5,
@@ -650,7 +688,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if std::env::var("HIER_SLEEP").is_ok() {
             c.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
         }
-        let mut a = HigherArea::new(BITS, c, hier_span);
+        let mut a = HigherArea::new(BITS, c, span);
         // HIER_SEPARATE=1: one slow-state frame per recent sentence (worse: deep kernels at
         // varying lags); default: one frame with all recent surprises
         a.separate = std::env::var("HIER_SEPARATE").is_ok();
@@ -658,6 +696,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         a.focus = std::env::var("HIER_FOCUS").is_ok();
         a
     };
+    let mut area = make_area(hier_span, hier_levels > 1);
+    let mut upper: Vec<HigherArea> = (1..hier_levels).map(|j| make_area(hier_span.pow(j as u32 + 1), j + 1 < hier_levels)).collect();
+    let mut upper_in: Vec<Option<BitVector>> = vec![None; upper.len()];
+    // test answers where each upper area's prediction held the answer
+    let mut upper_has_answer = vec![0usize; upper.len()];
     let mut hier_in: Option<BitVector> = None;
     let hier_residual = std::env::var("HIER_RESIDUAL").map_or(true, |v| v != "0");
     // HIER_GATE=1: a corticothalamic gate on the top-down channel, learned from use (L5
@@ -700,6 +743,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let path = format!("{dir}/{task:?}_{max_facts}_{seed}.txt").to_lowercase();
         std::io::BufWriter::new(std::fs::File::create(path).expect("dump file"))
     });
+    // Season task: the current season, stories since it was announced, and test accuracy
+    // by that distance in bins [0, 1, 2-3, 4-7, 8-15, 16+]: (answers, right)
+    let season_len: usize = std::env::var("SEASON_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
+    let (mut season, mut season_distance) = (0usize, 0usize);
+    let mut season_bins = [(0usize, 0usize); 6];
     // COST: wall time and words for training and test
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
     let mut phase_start = std::time::Instant::now();
@@ -714,6 +762,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let (p, m) = column.l23.sleep();
             if hier && std::env::var("HIER_SLEEP").is_ok() {
                 area.column.l23.sleep();
+                for u in upper.iter_mut() {
+                    u.column.l23.sleep();
+                }
             }
             sleeps += 1;
             slept_pruned += p;
@@ -773,7 +824,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 column.l23.set_trust_floor(Some(f));
             }
         }
-        let s = if task == Task::Habit {
+        let s = if task == Task::Season {
+            // a new season (never the same one twice running) every season_len stories
+            let d = s_i % season_len;
+            if d == 0 {
+                season = (season + rng.gen_range(1..SEASONS.len())) % SEASONS.len();
+            }
+            season_distance = d;
+            season_story(&mut rng, season, d == 0, testing && s_i % 2 == 1)
+        } else if task == Task::Habit {
             habit_story(&mut rng, testing && s_i % 2 == 1)
         } else if task == Task::Elim {
             elim_story(&mut rng, testing && s_i % 2 == 1)
@@ -815,6 +874,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 surprising.or_mut(code);
                 if hier {
                     area.note_word(code);
+                    for u in upper.iter_mut() {
+                        u.note_word(code);
+                    }
                 }
             }
             if std::env::var("TRACE_SHARE").is_ok() && testing && s_i < TRAIN + 3 {
@@ -1111,7 +1173,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     BitVector::from_words(m)
                 };
                 if hier {
-                    let hin = area.input(&sentence, &surprising);
+                    // the chain, top down: each upper area predicts from its window and the
+                    // prediction of the area above it
+                    let mut above: Option<BitVector> = None;
+                    for i in (0..upper.len()).rev() {
+                        let hin_u = upper[i].input_with(&sentence, &surprising, above.as_ref());
+                        let p = upper[i].predict(&hin_u);
+                        if testing && t + 1 == s.answer_at {
+                            upper_has_answer[i] += (p.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
+                        }
+                        above = Some(p);
+                        upper_in[i] = Some(hin_u);
+                    }
+                    let hin = area.input_with(&sentence, &surprising, above.as_ref());
                     let td = area.predict(&hin);
                     if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
                         let names = |bv: &BitVector| -> Vec<&str> {
@@ -1342,6 +1416,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
+                    if task == Task::Season {
+                        let b = match season_distance {
+                            0 => 0,
+                            1 => 1,
+                            2..=3 => 2,
+                            4..=7 => 3,
+                            8..=15 => 4,
+                            _ => 5,
+                        };
+                        season_bins[b].0 += 1;
+                        season_bins[b].1 += right as usize;
+                    }
                     let c = mix_conf.unwrap_or_else(|| column.confidence());
                     let b = [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count();
                     calib[b].0 += 1;
@@ -1428,6 +1514,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Some(hin) = hier_in.take() {
                         if !hier_residual || column.surprise(&enc.codes[next]) >= 0.5 {
                             area.learn(&hin, &enc.codes[next], &mut rng);
+                            for (u, x) in upper.iter_mut().zip(upper_in.iter_mut()) {
+                                if let Some(x) = x.take() {
+                                    u.learn(&x, &enc.codes[next], &mut rng);
+                                }
+                            }
                         }
                     }
                     // PROF: [3] L2/3 learning
@@ -1484,6 +1575,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 sentence = BitVector::new(BITS, Some(0));
                 if hier {
                     area.end_sentence(&surprising);
+                    for u in upper.iter_mut() {
+                        u.end_sentence(&surprising);
+                    }
                 }
                 surprising = BitVector::new(BITS, Some(0));
             }
@@ -1612,6 +1706,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if lookups > 0 {
             eprintln!("  MEMO seed {seed}: {hits} of {lookups} interpretations served from the memo ({:.0}%)", 100.0 * hits as f64 / lookups as f64);
         }
+        if !upper.is_empty() {
+            let parts: Vec<String> = upper
+                .iter()
+                .zip(&upper_has_answer)
+                .enumerate()
+                .map(|(i, (u, h))| format!("area {} (window {} sentences) {} kernels, held the answer at {:.1}%", i + 3, u.span(), u.column.l23.live(), 100.0 * *h as f64 / TEST as f64))
+                .collect();
+            eprintln!("  CHAIN seed {seed}: {}", parts.join("; "));
+        }
+        if task == Task::Season {
+            let names = ["0", "1", "2-3", "4-7", "8-15", "16+"];
+            let parts: Vec<String> = season_bins
+                .iter()
+                .zip(names)
+                .map(|(b, n)| if b.0 > 0 { format!("{n}: {:.0}% of {}", 100.0 * b.1 as f64 / b.0 as f64, b.0) } else { format!("{n}: -") })
+                .collect();
+            eprintln!("  SEASON seed {seed}: accuracy by stories since the season was announced: {}", parts.join(", "));
+        }
         if hier {
             eprintln!(
                 "  HIER seed {seed}: higher area {} kernels; its top-down frame held the answer at {:.1}% of test answers; top-down passed the gate at {:.1}% of answers",
@@ -1728,6 +1840,7 @@ fn main() {
         Ok("give") => vec![Task::Give],
         Ok("elim") => vec![Task::Elim],
         Ok("habit") => vec![Task::Habit],
+        Ok("season") => vec![Task::Season],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
@@ -1735,7 +1848,7 @@ fn main() {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
     for task in tasks {
-        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give | Task::Elim | Task::Habit) { &[0] } else { &[2, 3] };
+        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give | Task::Elim | Task::Habit | Task::Season) { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
             println!();
             if task == Task::Habit {

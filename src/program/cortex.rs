@@ -412,6 +412,24 @@ impl HigherArea {
         BitVector::from_words(words)
     }
 
+    /// `input` plus, for an area inside a chain, the prediction of the area above it as one
+    /// more frame: `[sentence bag | slow state | from above]`. The area learns to copy it
+    /// where it carries the target, as the column copies its own top-down frame.
+    pub fn input_with(&self, sentence: &BitVector, surprising: &BitVector, above: Option<&BitVector>) -> BitVector {
+        let mut x = self.input(sentence, surprising);
+        if let Some(a) = above {
+            let mut words = x.as_words().to_vec();
+            words.extend_from_slice(a.as_words());
+            x = BitVector::from_words(words);
+        }
+        x
+    }
+
+    /// The area's window, in sentences.
+    pub fn span(&self) -> usize {
+        self.span
+    }
+
     /// Top-down prediction for the lower column's next input.
     pub fn predict(&mut self, input: &BitVector) -> BitVector {
         self.column.predict(input).clone()

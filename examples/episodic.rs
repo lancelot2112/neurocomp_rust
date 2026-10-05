@@ -609,7 +609,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if cur_n == 0 || cur_ok * 10 < cur_n * 8 {
                         continue; // not a "?"-context kernel
                     }
-                    let rel = (k.stats.hits as f32 + 1.0) / ((k.stats.hits + k.stats.misses) as f32 + 2.0);
+                    let rel = (k.stats.hits as f32 + 1.0) / (k.stats.hits as f32 + k.stats.misses as f32 + 2.0);
                     if mem {
                         copy_q += 1;
                         best_rel = best_rel.max(rel);
@@ -1007,14 +1007,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 continue;
                             }
                             let ratio = matched as f32 / k.threshold.max(1) as f32;
-                            let rel = (k.stats.hits as f32 + 1.0) / ((k.stats.hits + k.stats.misses) as f32 + 2.0);
+                            let rel = (k.stats.hits as f32 + 1.0) / (k.stats.hits as f32 + k.stats.misses as f32 + 2.0);
                             // prefer matching kernels, then the most reliable
                             let better = best.map_or(true, |(r, _, br, _)| {
                                 let (m, bm) = (ratio >= 1.0, r >= 1.0);
                                 (m, rel, ratio) > (bm, br, r)
                             });
                             if better {
-                                best = Some((ratio, missing, rel, k.stats.hits + k.stats.misses));
+                                best = Some((ratio, missing, rel, k.stats.hits as u32 + k.stats.misses as u32));
                             }
                         }
                         cover[0] += 1;
@@ -1289,16 +1289,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
 
 /// An environment setting as an integer ratio, read from its text with no float in
 /// between: "p/q", or a decimal such as "0.5" (= 5/10) or "0.75" (= 75/100).
-fn ratio_env(name: &str) -> Option<(u32, u32)> {
+fn ratio_env(name: &str) -> Option<(u16, u16)> {
     let v = std::env::var(name).ok()?;
     if let Some((p, q)) = v.split_once('/') {
         return Some((p.trim().parse().ok()?, q.trim().parse().ok()?));
     }
     let (int, frac) = v.split_once('.').unwrap_or((v.as_str(), ""));
-    let den = 10u32.checked_pow(frac.len() as u32)?;
-    let int: u32 = if int.is_empty() { 0 } else { int.parse().ok()? };
-    let frac: u32 = if frac.is_empty() { 0 } else { frac.parse().ok()? };
-    Some((int * den + frac, den))
+    let den = 10u16.checked_pow(frac.len() as u32)?;
+    let int: u16 = if int.is_empty() { 0 } else { int.parse().ok()? };
+    let frac: u16 = if frac.is_empty() { 0 } else { frac.parse().ok()? };
+    Some((int.checked_mul(den)?.checked_add(frac)?, den))
 }
 
 fn set_bits(bv: &BitVector) -> Vec<usize> {

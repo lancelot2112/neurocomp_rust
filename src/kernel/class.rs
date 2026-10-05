@@ -512,9 +512,9 @@ impl KernelClass<SimpleKernel> {
     /// every trusted kernel, whatever their depth (longest context wins only among kernels
     /// that have earned trust). None restores pure longest-context ranking. The floor is a
     /// ratio of integers and is compared by cross-multiplication (see `Rate`).
-    pub fn set_trust_floor(&mut self, floor: Option<(u32, u32)>) {
+    pub fn set_trust_floor(&mut self, floor: Option<(u16, u16)>) {
         if let Some(st) = self.predictive.as_mut() {
-            st.trust_floor = floor.map(|(p, q)| Rate::new(p as u64, q as u64));
+            st.trust_floor = floor.map(|(p, q)| Rate::new(p, q));
         }
     }
 
@@ -572,9 +572,9 @@ impl KernelClass<SimpleKernel> {
     }
 
     /// Growth trust as an integer ratio p/q (see `set_trust_floor`).
-    pub fn set_growth_trust(&mut self, floor: Option<(u32, u32)>) {
+    pub fn set_growth_trust(&mut self, floor: Option<(u16, u16)>) {
         if let Some(st) = self.predictive.as_mut() {
-            st.growth_trust = floor.map(|(p, q)| Rate::new(p as u64, q as u64));
+            st.growth_trust = floor.map(|(p, q)| Rate::new(p, q));
         }
     }
 
@@ -650,14 +650,14 @@ impl KernelClass<SimpleKernel> {
                 // a lucky guess by an unreliable kernel must not stop a better kernel
                 // from being grown for this case.
                 let trusted = trust_floor.map_or(true, |f| Rate::of(&k.stats) >= f);
-                k.stats.hits += 1;
+                k.stats.record_hit();
                 k.stats.last_useful = self.tick;
                 if trusted {
                     depth_has_target[k.context_frames] = true;
                 }
                 hits.push(m);
             } else {
-                k.stats.misses += 1;
+                k.stats.record_miss();
                 misses.push(m);
             }
         }
@@ -782,7 +782,7 @@ impl KernelClass<SimpleKernel> {
             let tolerance = (smallest as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
             let kern = &mut self.active_kernels[k];
             kern.threshold = (old.len() - drop.len()).saturating_sub(tolerance).max(1);
-            kern.stats.hits += 1;
+            kern.stats.record_hit();
             kern.stats.last_useful = self.tick;
         }
     }
@@ -892,7 +892,7 @@ fn frame_has_bits(input: &BitVector, f: usize, frame_words: usize) -> bool {
 /// Integer form of `reliability(s) < 2^k / (2^k + 1)`, with no divide:
 /// (h+1)/(h+m+2) < 2^k/(2^k+1)  ⇔  (h+1)(2^k+1) < 2^k (h+m+2)  ⇔  h+1 < 2^k (m+1).
 fn unreliable(s: &KernelStats, k: u32) -> bool {
-    ((s.misses as u64 + 1) << k) > s.hits as u64 + 1
+    ((s.misses as u32 + 1) << k) > s.hits as u32 + 1
 }
 
 fn reliability(s: &KernelStats) -> f32 {
@@ -903,20 +903,24 @@ fn reliability(s: &KernelStats) -> f32 {
 /// cross-multiplication (a/b < c/d ⇔ a·d < c·b, both denominators positive), so ranking
 /// and thresholds need no divide and no floats. `value` converts to f32 for readouts only
 /// (confidence, target probability).
+///
+/// Sizes: with 8-bit hit / miss counters, num = hits + 1 ≤ 256 and den = hits + misses + 2
+/// ≤ 512 fit in u16, and a cross-product is at most 256 · 512 = 2^17, so u32 holds it.
+/// Thresholds (`new`) must also stay below 2^15 / 2^15 so their products fit.
 #[derive(Clone, Copy, Debug)]
 pub struct Rate {
-    num: u64,
-    den: u64,
+    num: u16,
+    den: u16,
 }
 
 impl Rate {
-    pub fn new(num: u64, den: u64) -> Self {
+    pub fn new(num: u16, den: u16) -> Self {
         Self { num, den: den.max(1) }
     }
 
     /// A kernel's smoothed hit rate, (hits + 1) / (hits + misses + 2).
     pub fn of(s: &KernelStats) -> Self {
-        Self::new(s.hits as u64 + 1, s.hits as u64 + s.misses as u64 + 2)
+        Self::new(s.hits as u16 + 1, s.hits as u16 + s.misses as u16 + 2)
     }
 
     /// The rate as a float, for readouts (never used in a comparison).
@@ -927,7 +931,7 @@ impl Rate {
 
 impl PartialEq for Rate {
     fn eq(&self, other: &Self) -> bool {
-        self.num * other.den == other.num * self.den
+        self.num as u32 * other.den as u32 == other.num as u32 * self.den as u32
     }
 }
 
@@ -941,7 +945,7 @@ impl PartialOrd for Rate {
 
 impl Ord for Rate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        (self.num * other.den).cmp(&(other.num * self.den))
+        (self.num as u32 * other.den as u32).cmp(&(other.num as u32 * self.den as u32))
     }
 }
 
@@ -965,14 +969,33 @@ fn set_bits(bv: &BitVector) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn eight_bit_counters_halve_together_and_keep_the_ratio() {
+        let mut s = KernelStats::default();
+        for i in 0..3000 {
+            if i % 4 == 3 {
+                s.record_miss();
+            } else {
+                s.record_hit();
+            }
+        }
+        // 3:1 hits to misses, held in 8 bits after many halvings
+        assert!(s.hits > 100 && s.hits as u32 >= 2 * s.misses as u32 && (s.hits as u32) <= 4 * (s.misses as u32 + 1));
+        let mut t = KernelStats { hits: 255, misses: 10, ..Default::default() };
+        t.record_hit();
+        assert_eq!((t.hits, t.misses), (128, 5)); // both halved, then the hit counted
+    }
+
+    #[test]
     fn rates_order_like_the_fractions_they_hold() {
         // cross-multiplication gives the exact order of (hits+1)/(hits+misses+2)
-        let stats: Vec<KernelStats> = (0..40u32)
-            .flat_map(|h| (0..40u32).map(move |m| KernelStats { hits: h, misses: m, ..Default::default() }))
+        let stats: Vec<KernelStats> = (0..=255u8)
+            .step_by(5)
+            .flat_map(|h| (0..=255u8).step_by(3).map(move |m| KernelStats { hits: h, misses: m, ..Default::default() }))
             .collect();
         for a in stats.iter().step_by(7) {
             for b in &stats {
-                let (fa, fb) = ((a.hits as f64 + 1.0) / ((a.hits + a.misses) as f64 + 2.0), (b.hits as f64 + 1.0) / ((b.hits + b.misses) as f64 + 2.0));
+                let rate = |s: &KernelStats| (s.hits as f64 + 1.0) / (s.hits as f64 + s.misses as f64 + 2.0);
+                let (fa, fb) = (rate(a), rate(b));
                 assert_eq!(Rate::of(a).cmp(&Rate::of(b)), fa.partial_cmp(&fb).unwrap());
             }
         }
@@ -987,10 +1010,10 @@ mod tests {
         // (misses+1) << k > hits+1  ⇔  (hits+1)/(hits+misses+2) < 2^k/(2^k+1), exactly
         for k in 0..6u32 {
             let cut = (1u64 << k) as f64 / ((1u64 << k) + 1) as f64;
-            for hits in 0..200u32 {
-                for misses in 0..60u32 {
+            for hits in 0..=255u8 {
+                for misses in 0..=255u8 {
                     let s = KernelStats { hits, misses, ..Default::default() };
-                    let rate = (hits as f64 + 1.0) / ((hits + misses) as f64 + 2.0);
+                    let rate = (hits as f64 + 1.0) / (hits as f64 + misses as f64 + 2.0);
                     assert_eq!(unreliable(&s, k), rate < cut, "k={k} hits={hits} misses={misses}");
                 }
             }

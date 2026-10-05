@@ -8,9 +8,37 @@ use crate::kernel::class::{KernelTrait, KernelOp, KernelContext};
 pub struct KernelStats {
     pub fired_last: bool, // fired on the most recent tick
     pub fires: u32,
-    pub hits: u32,        // fired and the target confirmed its output
-    pub misses: u32,      // fired and the target did not confirm its output
+    /// Fired and the target confirmed its output (8-bit, halved with `misses`, see
+    /// `record_hit`).
+    pub hits: u8,
+    /// Fired and the target did not confirm its output.
+    pub misses: u8,
     pub last_useful: u64, // class tick of creation or last hit (least-recently-useful recycling)
+}
+
+impl KernelStats {
+    /// Count a hit. The counters are 8 bits: when either would pass 255, both are shifted
+    /// right by one first, which keeps their ratio and makes the hit rate weight recent
+    /// evidence (as the bit-sliced counters of the basal ganglia and CA3 do).
+    pub fn record_hit(&mut self) {
+        if self.hits == u8::MAX {
+            self.halve();
+        }
+        self.hits += 1;
+    }
+
+    /// Count a miss (see `record_hit`).
+    pub fn record_miss(&mut self) {
+        if self.misses == u8::MAX {
+            self.halve();
+        }
+        self.misses += 1;
+    }
+
+    fn halve(&mut self) {
+        self.hits >>= 1;
+        self.misses >>= 1;
+    }
 }
 
 /// A simple “dendrite” kernel:

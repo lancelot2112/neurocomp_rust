@@ -43,7 +43,7 @@ Two design bugs had to be fixed first:
 | no memory: normal / anchor | 17.2 / 0% | 15.8 / 0% | 13.4 / 0% |
 | hippocampus only (200 episodes): normal / anchor | 100 / 37.2% | 100 / 36.6% | 100 / 0% |
 | **hippocampus + consolidation**: normal / anchor | **100 / 100%** | **100 / 100%** | **100 / 100%** |
-| hippocampus, unlimited capacity: normal / anchor | UNLIMITED | | |
+| hippocampus, unlimited capacity: normal / anchor (upper bound) | 100 / 100% | 100 / 100% | 100 / 100% |
 
 With consolidation the cortex supplied the memory frame at all 500 anchor answers on every
 seed, from a semantic store of 286–331 kernels. (Hippocampus-only anchor scores of ~37% are
@@ -53,7 +53,9 @@ one of the three anchors.)
 ## Findings
 1. **Replay transfers facts from hippocampus to cortex.** Facts stated only early in
    training, long overwritten in the hippocampus, are answered perfectly from the cortical
-   store; without replay they are lost.
+   store; without replay they are lost. Consolidation reaches the upper bound of a
+   hippocampus that never forgets (100% on every seed), with a cortical store of ~300
+   kernels instead of every episode ever seen.
 2. **Two stores, one reader:** the predictor does not know where its memory frame came
    from. Copy kernels trained on hippocampal recall work unchanged on cortical recall,
    because both produce the same kind of content (the place's word code).

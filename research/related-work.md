@@ -262,7 +262,7 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
 - **Graybiel, A. M. (1998).** *The basal ganglia and chunking of action repertoires.*
   Neurobiology of Learning and Memory 70. Sequences become chunks that run as units;
   habits versus goal-directed control. The chunks of
-  [23](experiments/23-compaction.md#10-chunking-hashlifes-time-skipping).
+  [23](experiments/23-compaction.md#10-chunking-hashlifes-time-skipping--removed-from-the-code).
 
 ## Cortical hierarchy ([24](experiments/24-cortical-hierarchy.md))
 - **Sherman, S. M. & Guillery, R. W. (2006).** *Exploring the Thalamus and Its Role in

@@ -13,7 +13,7 @@ Ordered roughly by how much they matter for "reading like a transformer".
   eager per-kernel updates might fix that. Canonical kernels (hash-consing) are built and
   a clear win ([23 §9](experiments/23-compaction.md#9-canonical-kernels-hashlifes-hash-consed-nodes)).
   Chunking was tried and removed as premature
-  ([23 §10](experiments/23-compaction.md#10-chunking-hashlifes-time-skipping)): at most
+  ([23 §10](experiments/23-compaction.md#10-chunking-hashlifes-time-skipping--removed-from-the-code)): at most
   35% faster answering, limited by how much of the text is habit (1–24% here). Also the dense
   8,192-bit frame copies L4 still builds every word.
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).

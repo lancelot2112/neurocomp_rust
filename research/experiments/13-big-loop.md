@@ -38,6 +38,12 @@ Random fillers between stories; 3,000 training, 1,000 test stories; chance 1/6.
 
 Check on one-hop varied stories (does branching hurt?): Branch(3) 97.3% (1–2 facts; 3 seeds 95/99/98) and 95.5% (1–3 facts; 99/96/92) held-out, vs 99.0% and 97.5% for one hop: extra branches cost 2 points on one-hop questions.
 
+With the copy-credit predictor fixes of [12](12-dentate-gyrus-ca3.md) (credit-guided
+growth, permanent copy tags, pruning after one miss, trust before depth), Branch(3) **drops**
+to 65.9% (5 seeds: 70/77/66/64/52), with the answer in a recalled frame 87–89% of the time.
+The fixes were tuned for a single memory frame; see
+[15](15-basal-ganglia-selector.md#findings) for the likely cause.
+
 ## Findings
 1. **Chaining recalls answers two-hop questions about unseen combinations**, but only
    when the loop doesn't have to guess which recalled item to follow.

@@ -29,6 +29,7 @@ See [basal ganglia and cerebellum](../concepts/basal-ganglia-and-cerebellum.md).
 | Branch(3): 3 branches, predictor chooses ([13](13-big-loop.md)) | 80.8% (5 seeds) | – |
 | **Select: basal-ganglia selector** | **84.5%** (5 seeds: 90/84/90/84/74) | 84.1% |
 | Select, **bit-sliced counters** (4 planes, stochastic steps) | **89.1%** (5 seeds: 86/90/86/92/90) | 88.8% |
+| Select, bit-sliced, **with the copy-credit predictor fixes** of [12](12-dentate-gyrus-ca3.md) | 81.5% (5 seeds: 90/79/70/81/87) | 87–91% |
 | Select with the CA1 comparator ([14](14-ca1-comparator.md)) | 23.6% (1 seed) | 55.0% |
 
 ## Findings
@@ -52,5 +53,13 @@ See [basal ganglia and cerebellum](../concepts/basal-ganglia-and-cerebellum.md).
    for the float version: no worse, and steadier across seeds. Saturating 16-level
    counters bound how far any value can run away, and stochastic steps act like a
    small, noisy learning rate. See [probability in bits](../concepts/probability-in-bits.md).
-6. The reward is immediate (next word). Delayed choices (holding an item across words)
+6. **The copy-credit predictor fixes do not carry over to two hops.** With the settings that
+   took one-hop CA3 to 99–100% (`COPY_GROW GROW_TRUST STICKY=255 GENERALIZE_AFTER=1
+   TRUST_AT_TEST`), Select drops from 89.1% to 81.5% and Branch(3) from 80.8% to 65.9%
+   ([13](13-big-loop.md)), with the answer still in the recalled frames 87–91% of the time.
+   Likely cause (not yet diagnosed): the fixes assume one memory frame that carries the
+   answer; with two hop frames a place appears in hop 1 *and* hop 2, so copy credit tags
+   and protects kernels keyed on the wrong frame. Copy credit needs to know which frame
+   the answer came from (e.g. tag only the frame the winning kernel read).
+7. The reward is immediate (next word). Delayed choices (holding an item across words)
    need the eligibility trace (`BG_TRACE`), not yet tested.

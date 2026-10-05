@@ -316,6 +316,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let replay_mode = std::env::var("REPLAY_MODE").unwrap_or_else(|_| "random".into());
     let tag_boost: u32 = std::env::var("TAG_BOOST").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     let mut last_recall_id: Option<usize> = None; // hippocampal episode recalled this step
+    let mut last_recall_cue: Option<BitVector> = None; // the cue that recalled it
     let mut tagged_or_replayed = 0usize;
     let mut from_cortex = 0usize; // test answers where the memory frame came from the cortex
     let (dg, mut ca3) = match policy {
@@ -647,6 +648,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let need = ((cue.count_ones() as f32 * 0.7) as u32).max(min_overlap);
                             if let Some((id, ep)) = memory.recall_excluding(&cue, need, &[]) {
                                 last_recall_id = Some(id);
+                                last_recall_cue = Some(cue.clone());
                                 recalled = memory.novel(ep, habituation);
                                 // what the memory adds beyond the cue
                                 for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {
@@ -823,8 +825,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 tagged_or_replayed += 1;
                             }
                             "awake" => {
-                                if let Some(ep) = memory.get_by_id(id).cloned() {
-                                    let cue = memory.rarest(&ep, 0.1, rarity_ratio);
+                                if let (Some(ep), Some(cue)) = (memory.get_by_id(id).cloned(), last_recall_cue.clone()) {
+                                    // keyed on the question's own cue (what the prefrontal
+                                    // query asked for), not on the episode's rarest bits
                                     let mut content = memory.novel(&ep, habituation);
                                     for (r, &c) in content.as_words_mut().iter_mut().zip(cue.as_words()) {
                                         *r &= !c;
@@ -842,6 +845,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 last_recall_id = None;
+                last_recall_cue = None;
                 if !testing {
                     class.feedback(&input, &enc.codes[next], &mut rng);
                     // dopamine: did the followed item's recall contain what came next?

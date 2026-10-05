@@ -27,6 +27,11 @@ impl EpisodicMemory {
         Self { bits, capacity, episodes: Vec::new(), bit_counts: vec![0; bits], stored: 0, first_id: 0 }
     }
 
+    /// The `i`-th episode currently held (0 = oldest), e.g. for replay.
+    pub fn get(&self, i: usize) -> Option<&BitVector> {
+        self.episodes.get(i)
+    }
+
     /// Store one episode in a single shot (the oldest is forgotten at capacity).
     pub fn store(&mut self, episode: &BitVector) {
         for b in set_bits(episode) {

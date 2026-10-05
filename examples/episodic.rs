@@ -44,6 +44,8 @@ const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", 
 const FILLERS: &[&str] = &["then", "later", "so", "next", "after"];
 const OBJECTS: &[&str] = &["ball", "apple", "book", "key", "cup", "box"];
 const TRAIN: usize = 3000;
+const ANCHOR_STORIES: usize = 300; // Persist: anchor facts only appear in these first stories
+const ANCHORS: usize = 3; // Persist: NAMES[..ANCHORS] are anchors, the rest active
 const TEST: usize = 1000;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -53,6 +55,10 @@ enum Task {
     Varied,
     /// Two-hop questions: "X picked up the O" + "X went to the P" ... "where is the O ?"
     TwoHop,
+    /// Consolidation: anchor names (mary, john, sandra) each have one fixed place, stated
+    /// only in the first ANCHOR_STORIES training stories; the other names live in varied
+    /// stories. Test asks about an anchor half of the time (reported as "held-out").
+    Persist,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -77,6 +83,11 @@ enum Policy {
     /// channels; `BasalGanglia` releases one per step, valued per (channel, current word);
     /// reward = the released content contained the next word. One frame.
     ThalamicGate,
+    /// Episodic memory plus consolidation: after each training story the hippocampus
+    /// replays REPLAYS stored episodes into a cortical semantic store (a predictive
+    /// KernelClass learning cue -> content); when hippocampal recall fails, the cortex
+    /// supplies the memory frame.
+    Consolidate,
     /// Same gate, but the relay routes are learned: discovered from surprises and ranked
     /// by consistency (`RouteScores`, as in experiment 10), top 8 refreshed every 50
     /// stories; memory recall is one more channel.
@@ -132,6 +143,59 @@ fn two_hop_story(rng: &mut StdRng, want_held_out: bool) -> Story {
         words.extend([PLACES[answer], "."]);
         return Story { words, answer_at, held_out: want_held_out };
     }
+}
+
+/// Persist task. Anchors: NAMES[..ANCHORS], each always at PLACES[(2a + 1) % 6].
+fn anchor_place(a: usize) -> usize {
+    (2 * a + 1) % PLACES.len()
+}
+
+fn persist_story(rng: &mut StdRng, s_i: usize, ask_anchor: bool) -> Story {
+    let mut words: Vec<&'static str> = Vec::new();
+    for _ in 0..rng.gen_range(0..=4) {
+        words.push(FILLERS.choose(rng).unwrap());
+    }
+    let mut facts = Vec::new();
+    if s_i < ANCHOR_STORIES {
+        // one anchor statement per early story, cycling through the anchors
+        let a = s_i % ANCHORS;
+        facts.push((a, anchor_place(a)));
+    }
+    let mut active: Vec<usize> = (ANCHORS..NAMES.len()).collect();
+    active.shuffle(rng);
+    for &n in &active[..rng.gen_range(1..=2)] {
+        facts.push((n, rng.gen_range(0..PLACES.len())));
+    }
+    facts.shuffle(rng);
+    let mut asked = None;
+    for &(n, p) in &facts {
+        words.push(NAMES[n]);
+        if rng.gen_bool(0.5) {
+            words.push(if rng.gen_bool(0.5) { "quickly" } else { "slowly" });
+        }
+        words.push("went");
+        if rng.gen_bool(0.5) {
+            words.extend(["all", "the", "way", "over"]);
+        }
+        words.extend(["to", "the"]);
+        if rng.gen_bool(0.5) {
+            words.push(if rng.gen_bool(0.5) { "big" } else { "old" });
+        }
+        words.extend([PLACES[p], "."]);
+        if n >= ANCHORS {
+            asked = Some((n, p));
+        }
+    }
+    let (q, a) = if ask_anchor {
+        let n = rng.gen_range(0..ANCHORS);
+        (n, anchor_place(n))
+    } else {
+        asked.unwrap()
+    };
+    words.extend(["where", "is", NAMES[q], "right", "now", "?"]);
+    let answer_at = words.len();
+    words.extend([PLACES[a], "."]);
+    Story { words, answer_at, held_out: ask_anchor }
 }
 
 fn story(rng: &mut StdRng, task: Task, max_facts: usize, want_held_out: bool) -> Story {
@@ -207,7 +271,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         RelayChannel { query_lag: 3, value_offset: 8 },
     ];
     let mid_frames = match policy {
-        Policy::NoMemory | Policy::Episodic | Policy::Ca3 { .. } => 1,
+        Policy::NoMemory | Policy::Episodic | Policy::Consolidate | Policy::Ca3 { .. } => 1,
         Policy::Loop(hops) => hops,
         Policy::Branch(b) => b + 1,
         Policy::Select => 2,
@@ -215,7 +279,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         Policy::FixedRelay => routes.len(),
     };
     let mut th = Thalamus::new(BITS, 60, routes.clone());
-    let mut memory = EpisodicMemory::new(BITS, 200); // also keeps the habituation statistics
+    let capacity = std::env::var("CAPACITY").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
+    let mut memory = EpisodicMemory::new(BITS, capacity); // also keeps the habituation statistics
+    // Consolidate: the cortical semantic store (cue -> content), trained only by replay
+    let mut semantic: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
+        max_kernels: 20_000,
+        frame_words: BITS / 64,
+        max_frames: 1,
+        sample_bits: 16,
+        match_fraction: 0.8,
+        surprise_fraction: 0.5,
+        generalize: None,
+        generalize_after: 1,
+    });
+    let replays: usize = std::env::var("REPLAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
+    let mut from_cortex = 0usize; // test answers where the memory frame came from the cortex
     let (dg, mut ca3) = match policy {
         Policy::Ca3 { cells, k, settle } => {
             let env = |name: &str, default: f32| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
@@ -360,7 +438,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 class.set_trust_floor(Some(f));
             }
         }
-        let s = story(&mut rng, task, max_facts, testing && s_i % 2 == 1);
+        let s = if task == Task::Persist {
+            persist_story(&mut rng, s_i, testing && s_i % 2 == 1)
+        } else {
+            story(&mut rng, task, max_facts, testing && s_i % 2 == 1)
+        };
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         for t in 0..ids.len() {
             let code = &enc.codes[ids[t]];
@@ -533,7 +615,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         words.extend_from_slice(recalled.as_words());
                     }
-                    Policy::Episodic => {
+                    Policy::Episodic | Policy::Consolidate => {
                         let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
                         let mut recalled = BitVector::new(BITS, Some(0));
                         if cue.count_ones() > 0 {
@@ -544,6 +626,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 // what the memory adds beyond the cue
                                 for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {
                                     *r &= !c;
+                                }
+                            } else if policy == Policy::Consolidate {
+                                // hippocampus has nothing: the cortex's consolidated knowledge
+                                if let Some(out) = semantic.peek(&cue) {
+                                    recalled = out.clone();
+                                    for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {
+                                        *r &= !c;
+                                    }
+                                    if testing && t + 1 == s.answer_at {
+                                        from_cortex += 1;
+                                    }
                                 }
                             }
                         }
@@ -730,8 +823,32 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
             prev = Some(ids[t]);
         }
+        if policy == Policy::Consolidate && !testing && !memory.is_empty() {
+            // sleep: replay stored episodes into the cortical semantic store
+            for _ in 0..replays {
+                let i = rng.gen_range(0..memory.len());
+                let ep = memory.get(i).unwrap().clone();
+                let cue = memory.rarest(&ep, 0.1, rarity_ratio);
+                if cue.count_ones() == 0 {
+                    continue;
+                }
+                let mut content = memory.novel(&ep, habituation);
+                for (r, &c) in content.as_words_mut().iter_mut().zip(cue.as_words()) {
+                    *r &= !c;
+                }
+                if content.count_ones() == 0 {
+                    continue;
+                }
+                let mut out = BitVector::new(BITS, Some(0));
+                semantic.process_predictive(&cue, &mut out);
+                semantic.feedback(&cue, &content, &mut rng);
+            }
+        }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
+    if policy == Policy::Consolidate {
+        eprintln!("  CONSOLIDATE seed {seed}: memory frame from the cortex at {from_cortex} test answers; semantic kernels {}", semantic.len());
+    }
     if matches!(policy, Policy::ThalamicGate | Policy::LearnedGate) {
         let total = gate_chosen_at_answer.values().sum::<usize>().max(1) as f64;
         let mut shares: Vec<(String, usize)> = gate_chosen_at_answer.into_iter().collect();
@@ -793,6 +910,7 @@ fn main() {
         Ok("long") => vec![Task::Long],
         Ok("varied") => vec![Task::Varied],
         Ok("twohop") => vec![Task::TwoHop],
+        Ok("persist") => vec![Task::Persist],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
@@ -800,10 +918,12 @@ fn main() {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
     for task in tasks {
-        let fact_settings: &[usize] = if task == Task::TwoHop { &[0] } else { &[2, 3] };
+        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist) { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
             println!();
-            if task == Task::TwoHop {
+            if task == Task::Persist {
+                println!("Persist stories: anchors (mary, john, sandra) stated only in the first {ANCHOR_STORIES} training stories; \"held-out\" = anchor questions at test");
+            } else if task == Task::TwoHop {
                 println!("TwoHop stories: 2-3 people, 1-2 moves each, 1-2 objects picked up; \"where is the O ?\"");
             } else {
                 println!("{task:?} stories, 1-{max_facts} facts, question about a random one");
@@ -816,6 +936,7 @@ fn main() {
                 Ok("twohop_learned") => vec![Policy::Branch(3), Policy::Select],
                 Ok("gate") => vec![Policy::FixedRelay, Policy::Episodic, Policy::ThalamicGate],
                 Ok("learned_gate") => vec![Policy::LearnedGate],
+                Ok("consolidate") => vec![Policy::NoMemory, Policy::Episodic, Policy::Consolidate],
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],

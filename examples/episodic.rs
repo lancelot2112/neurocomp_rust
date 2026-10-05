@@ -43,9 +43,11 @@ const NAMES: &[&str] = &["mary", "john", "sandra", "daniel", "anna", "peter"];
 const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", "bedroom"];
 const FILLERS: &[&str] = &["then", "later", "so", "next", "after"];
 const OBJECTS: &[&str] = &["ball", "apple", "book", "key", "cup", "box"];
+/// Persist task: names whose places are fixed and stated only early in training.
+const ANCHOR_NAMES: &[&str] = &["bill", "fred", "julie"];
 const TRAIN: usize = 3000;
 const ANCHOR_STORIES: usize = 300; // Persist: anchor facts only appear in these first stories
-const ANCHORS: usize = 3; // Persist: NAMES[..ANCHORS] are anchors, the rest active
+const ANCHORS: usize = 3; // Persist: ANCHOR_NAMES; all of NAMES stay active
 const TEST: usize = 1000;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -55,7 +57,7 @@ enum Task {
     Varied,
     /// Two-hop questions: "X picked up the O" + "X went to the P" ... "where is the O ?"
     TwoHop,
-    /// Consolidation: anchor names (mary, john, sandra) each have one fixed place, stated
+    /// Consolidation: anchor names (bill, fred, julie) each have one fixed place, stated
     /// only in the first ANCHOR_STORIES training stories; the other names live in varied
     /// stories. Test asks about an anchor half of the time (reported as "held-out").
     Persist,
@@ -145,7 +147,9 @@ fn two_hop_story(rng: &mut StdRng, want_held_out: bool) -> Story {
     }
 }
 
-/// Persist task. Anchors: NAMES[..ANCHORS], each always at PLACES[(2a + 1) % 6].
+/// Persist task. Anchors: ANCHOR_NAMES[a], each always at PLACES[(2a + 1) % 6]. All six
+/// NAMES stay active, so a name is rarer than the question words (with only three active
+/// names they were not, and the recall cue picked up "where is ... right now").
 fn anchor_place(a: usize) -> usize {
     (2 * a + 1) % PLACES.len()
 }
@@ -155,21 +159,22 @@ fn persist_story(rng: &mut StdRng, s_i: usize, ask_anchor: bool) -> Story {
     for _ in 0..rng.gen_range(0..=4) {
         words.push(FILLERS.choose(rng).unwrap());
     }
-    let mut facts = Vec::new();
+    // (name, place, is_anchor)
+    let mut facts: Vec<(&'static str, usize, bool)> = Vec::new();
     if s_i < ANCHOR_STORIES {
         // one anchor statement per early story, cycling through the anchors
         let a = s_i % ANCHORS;
-        facts.push((a, anchor_place(a)));
+        facts.push((ANCHOR_NAMES[a], anchor_place(a), true));
     }
-    let mut active: Vec<usize> = (ANCHORS..NAMES.len()).collect();
+    let mut active: Vec<usize> = (0..NAMES.len()).collect();
     active.shuffle(rng);
     for &n in &active[..rng.gen_range(1..=2)] {
-        facts.push((n, rng.gen_range(0..PLACES.len())));
+        facts.push((NAMES[n], rng.gen_range(0..PLACES.len()), false));
     }
     facts.shuffle(rng);
     let mut asked = None;
-    for &(n, p) in &facts {
-        words.push(NAMES[n]);
+    for &(name, p, anchor) in &facts {
+        words.push(name);
         if rng.gen_bool(0.5) {
             words.push(if rng.gen_bool(0.5) { "quickly" } else { "slowly" });
         }
@@ -182,17 +187,17 @@ fn persist_story(rng: &mut StdRng, s_i: usize, ask_anchor: bool) -> Story {
             words.push(if rng.gen_bool(0.5) { "big" } else { "old" });
         }
         words.extend([PLACES[p], "."]);
-        if n >= ANCHORS {
-            asked = Some((n, p));
+        if !anchor {
+            asked = Some((name, p));
         }
     }
     let (q, a) = if ask_anchor {
         let n = rng.gen_range(0..ANCHORS);
-        (n, anchor_place(n))
+        (ANCHOR_NAMES[n], anchor_place(n))
     } else {
         asked.unwrap()
     };
-    words.extend(["where", "is", NAMES[q], "right", "now", "?"]);
+    words.extend(["where", "is", q, "right", "now", "?"]);
     let answer_at = words.len();
     words.extend([PLACES[a], "."]);
     Story { words, answer_at, held_out: ask_anchor }
@@ -259,6 +264,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         "went", "to", "the", ".", "where", "is", "?", "all", "way", "over", "right", "now", "quickly", "slowly", "big", "old", "picked", "up",
     ];
     vocab.extend(OBJECTS);
+    vocab.extend(ANCHOR_NAMES);
     vocab.extend(NAMES);
     vocab.extend(PLACES);
     vocab.extend(FILLERS);
@@ -922,7 +928,7 @@ fn main() {
         for &max_facts in fact_settings {
             println!();
             if task == Task::Persist {
-                println!("Persist stories: anchors (mary, john, sandra) stated only in the first {ANCHOR_STORIES} training stories; \"held-out\" = anchor questions at test");
+                println!("Persist stories: anchors (bill, fred, julie) stated only in the first {ANCHOR_STORIES} training stories; \"held-out\" = anchor questions at test");
             } else if task == Task::TwoHop {
                 println!("TwoHop stories: 2-3 people, 1-2 moves each, 1-2 objects picked up; \"where is the O ?\"");
             } else {

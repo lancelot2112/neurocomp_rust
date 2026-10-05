@@ -607,6 +607,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let rank_min: u16 = std::env::var("RANK_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     class.set_reliability_first(std::env::var("RANK").ok().filter(|v| v == "reliability").map(|_| rank_min));
     class.set_skip_empty(std::env::var("SKIP_EMPTY").is_ok());
+    // SCORE_ALL=1: score every matched kernel on expected steps too (not only the winner)
+    class.set_score_all(std::env::var("SCORE_ALL").is_ok());
+    // PROBATION=f: a kernel changes answers only once its hit rate has reached f
+    class.set_probation(ratio_env("PROBATION"));
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
@@ -673,6 +677,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut topdown_has_answer = 0usize;
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
+    // calibration of the column's L5 confidence at test answers: (answers, right) per
+    // confidence bucket [0, .5), [.5, .7), [.7, .8), [.8, .9), [.9, 1], plus the summed
+    // confidence per bucket (for the expected calibration error)
+    let mut calib = [(0usize, 0usize, 0f64); 5];
     let mut recall_has_answer = 0usize;
     let mut recall_places = 0usize;
     // DIAG: what the predictor got at the answer, split by right / wrong
@@ -1275,6 +1283,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
+                    let c = column.confidence();
+                    let b = [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count();
+                    calib[b].0 += 1;
+                    calib[b].1 += right as usize;
+                    calib[b].2 += c as f64;
                 }
                 // the question's recall contained the answer: good credit for that episode
                 // (whether or not the still-learning predictor used it)
@@ -1578,6 +1591,29 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             train_words,
             1e6 * test_secs / test_words.max(1) as f64
         );
+    }
+    {
+        // CALIB: does confidence predict correctness? Accuracy per confidence bucket, the
+        // expected calibration error (answer-weighted |accuracy − mean confidence|), and
+        // accuracy / coverage if the column abstained below 0.8
+        let n: usize = calib.iter().map(|b| b.0).sum();
+        if n > 0 {
+            let names = ["<.5", ".5-.7", ".7-.8", ".8-.9", ">=.9"];
+            let parts: Vec<String> = calib
+                .iter()
+                .zip(names)
+                .map(|(b, name)| if b.0 == 0 { format!("{name} -") } else { format!("{name} {:.0}% of {}", 100.0 * b.1 as f64 / b.0 as f64, b.0) })
+                .collect();
+            let ece: f64 = calib.iter().filter(|b| b.0 > 0).map(|b| (b.1 as f64 - b.2).abs()).sum::<f64>() / n as f64;
+            let (cn, cr) = calib[3..].iter().fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+            eprintln!(
+                "  CALIB seed {seed}: {}; ECE {:.3}; answering only at >= .8: {:.1}% right, {:.1}% answered",
+                parts.join(", "),
+                ece,
+                if cn > 0 { 100.0 * cr as f64 / cn as f64 } else { 0.0 },
+                100.0 * cn as f64 / n as f64
+            );
+        }
     }
     if dump.is_none() {
         let total: f64 = prof.iter().sum();

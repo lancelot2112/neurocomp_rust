@@ -158,6 +158,13 @@ struct PredictiveState {
     reliability_first: Option<u16>,
     /// Grow past empty frames (see `set_skip_empty`).
     skip_empty: bool,
+    /// Score every matched kernel on expected steps too (see `set_score_all`).
+    score_all: bool,
+    /// Probation floor: a kernel may change an answer only once its rate has reached it
+    /// (see `set_probation`).
+    probation: Option<Rate>,
+    /// Per kernel: its rate has reached the probation floor at least once.
+    proven: Vec<bool>,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -431,6 +438,9 @@ impl KernelClass<SimpleKernel> {
             canon_reused: 0,
             reliability_first: None,
             skip_empty: false,
+            score_all: false,
+            probation: None,
+            proven: Vec::new(),
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -530,9 +540,10 @@ impl KernelClass<SimpleKernel> {
         // (not inhibited, agree-first, trusted, depth, agree-within-depth, reliability, count)
         let trust_floor = st.trust_floor;
         let rel_first = st.reliability_first;
+        let on_probation = st.probation.is_some();
         // ... then the older kernel (lower id): ties must not depend on the order kernels
         // are visited, which differs between the index fan-out and the frame memo
-        let mut best: Option<((bool, bool, bool, Rate, usize, bool, Rate, u32, std::cmp::Reverse<usize>), usize)> = None;
+        let mut best: Option<((bool, bool, bool, bool, Rate, usize, bool, Rate, u32, std::cmp::Reverse<usize>), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -555,7 +566,10 @@ impl KernelClass<SimpleKernel> {
             let free = st.fast.as_ref().map_or(true, |f| !f.inhibits(k));
             // reliability-first puts the rate ahead of depth; otherwise that slot is constant
             let first = rank_rate(&kern.stats, rel_first);
-            let key = (free, prefer, trusted, first, kern.context_frames, tie, r, count, std::cmp::Reverse(k));
+            // probation: a kernel that has not yet proven itself ranks below every one
+            // that has (it answers only where no proven kernel matches)
+            let proven = !on_probation || st.proven.get(k).copied().unwrap_or(false);
+            let key = (free, proven, prefer, trusted, first, kern.context_frames, tie, r, count, std::cmp::Reverse(k));
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
             }
@@ -612,10 +626,11 @@ impl KernelClass<SimpleKernel> {
                 let kern = &self.active_kernels[k as usize];
                 let r = Rate::of(&kern.stats);
                 let first = rank_rate(&kern.stats, st.reliability_first);
-                ((first, kern.context_frames, r, c), k as usize)
+                let proven = st.probation.is_none() || st.proven.get(k as usize).copied().unwrap_or(false);
+                ((proven, first, kern.context_frames, r, c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-            .map(|((_, _, rel, _), k)| (self.active_kernels[k].output_vector(), rel.value()))
+            .map(|((_, _, _, rel, _), k)| (self.active_kernels[k].output_vector(), rel.value()))
     }
 
     /// Restrict which input bits newly grown kernels may sample (None = all).
@@ -727,6 +742,32 @@ impl KernelClass<SimpleKernel> {
     /// The no-surprise path of `feedback` (see `set_surprise_gate`).
     fn confirm_expected(&mut self, w: usize, input: &BitVector, target: &BitVector, cfg: &GrowthConfig) {
         let tick = self.tick;
+        // score_all: every other matched kernel is scored too (recounted after a memo hit)
+        if self.predictive.as_ref().map_or(false, |st| st.score_all) {
+            if self.predictive.as_ref().map_or(false, |st| st.matches_stale) {
+                self.recount(input);
+            }
+            let st = self.predictive.as_mut().expect("predictive");
+            let mut changed = false;
+            let matches = std::mem::take(&mut st.last_matches);
+            for &m in &matches {
+                if m == w {
+                    continue;
+                }
+                let k = &mut self.active_kernels[m];
+                if predicts(k, target) {
+                    k.stats.record_hit();
+                } else {
+                    k.stats.record_miss();
+                }
+                changed = true;
+                Self::note_proven(st, &self.active_kernels, m);
+            }
+            st.last_matches = matches;
+            if changed {
+                st.version += 1; // other kernels' rates moved: re-rank
+            }
+        }
         let before = Rate::of(&self.active_kernels[w].stats);
         let k = &mut self.active_kernels[w];
         let halves = k.stats.hits == u8::MAX;
@@ -737,7 +778,8 @@ impl KernelClass<SimpleKernel> {
         // the winner's record reaching the evidence gate turns its optimistic rank into
         // its rate, which can change the winner
         let proven = st.reliability_first.map_or(false, |min| evidence + 1 == min);
-        if halves || proven {
+        let passed = Self::note_proven(st, &self.active_kernels, w);
+        if halves || proven || passed {
             st.version += 1; // halving can shift a rate by rounding: re-rank
         }
         st.last_target_prob = before.value();
@@ -822,6 +864,52 @@ impl KernelClass<SimpleKernel> {
             st.reliability_first = min;
             st.version += 1;
         }
+    }
+
+    /// Surprise-gated learning scores only the winner on an expected step. With `on`, every
+    /// matched kernel is scored then too, so a kernel that does not win earns its record
+    /// (hits and misses) as fast as the winner: reliability is measured, not inferred
+    /// from the winner's misses. Costs a scoring pass per expected step, and each one
+    /// invalidates the memo.
+    pub fn set_score_all(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.score_all = on;
+        }
+    }
+
+    /// Probation: with `Some((p, q))`, a kernel competes for the answer only after its
+    /// smoothed hit rate has reached p/q at least once (e.g. 4/5: three hits without a
+    /// miss). Until then it persists, matches and is scored, and blocks re-growth of the
+    /// same kernel, but ranks below every proven kernel, so it changes an answer only
+    /// where no proven kernel matches. Once proven it stays a full competitor. Best with
+    /// `set_score_all`, so a kernel on probation is also scored where it would be wrong.
+    pub fn set_probation(&mut self, floor: Option<(u16, u16)>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.probation = floor.map(|(p, q)| Rate::new(p, q));
+            st.version += 1;
+        }
+    }
+
+    /// Kernels that have passed probation (all live ones, when probation is off).
+    pub fn proven_count(&self) -> usize {
+        match self.predictive.as_ref() {
+            Some(st) if st.probation.is_some() => st.proven.iter().filter(|&&p| p).count(),
+            _ => self.active_kernels.len(),
+        }
+    }
+
+    /// Mark kernel `k` proven if probation is on and its rate has reached the floor.
+    /// Returns true if it just became proven (the ranking changed).
+    fn note_proven(st: &mut PredictiveState, kernels: &[SimpleKernel], k: usize) -> bool {
+        let Some(floor) = st.probation else { return false };
+        if st.proven.len() < kernels.len() {
+            st.proven.resize(kernels.len(), false);
+        }
+        if !st.proven[k] && Rate::of(&kernels[k].stats) >= floor {
+            st.proven[k] = true;
+            return true;
+        }
+        false
     }
 
     /// Growth: with `on`, deepening skips empty frames, so a kernel can reach a frame
@@ -1336,6 +1424,9 @@ impl KernelClass<SimpleKernel> {
             }
         }
         if let Some(st) = self.predictive.as_mut() {
+            for &m in &hits {
+                Self::note_proven(st, &self.active_kernels, m);
+            }
             st.last_target_prob = expected.map_or(0.0, |e| e.1.value());
             if let Some(f) = st.fast.as_mut() {
                 let gate = |v: &Vec<usize>| -> Vec<usize> {
@@ -1638,6 +1729,13 @@ impl KernelClass<SimpleKernel> {
 
         if st.index.len() < input.bit_len() {
             st.index.resize(input.bit_len(), Vec::new());
+        }
+        // a new kernel starts on probation (a recycled slot loses its standing)
+        if st.probation.is_some() {
+            if st.proven.len() < self.active_kernels.len() {
+                st.proven.resize(self.active_kernels.len(), false);
+            }
+            st.proven[slot] = false;
         }
         let frame_bits = cfg.frame_words * 64;
         for &b in &self.active_kernels[slot].input_set {
@@ -2140,6 +2238,48 @@ mod tests {
             step(&mut kc, &xa, &c); // one "xA -> C": a fresh deep kernel
             assert!(kc.kernels().iter().any(|k| k.context_frames == 2));
             assert_eq!(step(&mut kc, &xa, &c), want);
+        }
+    }
+
+    #[test]
+    fn probation_keeps_a_new_kernel_from_changing_answers_until_it_proves_itself() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        let a = frames(&[0xFF, 0]);
+        let xa = frames(&[0xFF, 0xF000_0000_0000_0000]);
+        let mut kc = KernelClass::predictive(cfg);
+        kc.set_probation(Some((4, 5)));
+        for _ in 0..8 {
+            step(&mut kc, &a, &b); // the first kernel answers (nothing else matches) and is proven
+        }
+        assert_eq!(kc.proven_count(), 1);
+        step(&mut kc, &xa, &c); // grows "xA -> C", on probation
+        // scored a hit each time, but the proven "A -> B" keeps the answer until the new
+        // kernel's rate reaches 4/5 (three hits)
+        for _ in 0..3 {
+            assert_eq!(step(&mut kc, &xa, &c), 0xFF00);
+        }
+        assert_eq!(step(&mut kc, &xa, &c), 0xFF0000);
+    }
+
+    #[test]
+    fn score_all_scores_matched_kernels_on_expected_steps() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        let a = frames(&[0xFF]);
+        for (all, misses) in [(false, 0), (true, 1)] {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_surprise_gate(true);
+            kc.set_score_all(all);
+            for _ in 0..3 {
+                step(&mut kc, &a, &b);
+            }
+            step(&mut kc, &a, &c); // grows "A -> C" beside "A -> B"
+            assert_eq!(step(&mut kc, &a, &b), 0xFF00); // the older kernel wins the tie: expected
+            let ac = kc.kernels().iter().find(|k| k.output_set.contains(&16)).unwrap();
+            assert_eq!(ac.stats.misses, misses);
         }
     }
 

@@ -34,6 +34,8 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Question names no one: recall cued by a working-memory slot, loaded by a learned basal-ganglia gate | **100%** every seed | cue at the question 15–17%; trace-credited gate 16–21% | [18](experiments/18-prefrontal-working-memory.md) |
 | – | One shared reward from cortical layer 5 (the column's outcome, credited only if the prediction read the choice) for every selector | gates **100%** every seed; hop-2 selector 91 / 69 / 82% | each selector's own answer key: 100% / 86 / 83 / 86%; unattributed outcome: down to 18% / 32% | [19](experiments/19-l5-shared-reward.md) |
 | – | Cortical layer 6 gates the thalamic relays (per context, learned from use, no reward) | **100%** every seed, 0.04–0.19 channels per word, 2.4× faster | all channels open: 100%, 3.5 channels per word | [20](experiments/20-l6-corticothalamic-gating.md) |
+| – | Different questions need different relays: L6 opens several routes at once, per context (with a warm-up and slow weakening) | **100 / 100 / 98%** held-out, ~1 channel per word | all relays open 91 / 88 / 99%; basal ganglia (one channel) 55–60% | [21](experiments/21-several-routes.md) |
+| – | Elimination ("which place hasn't been named?") by a fast-learning inhibitory loop in L2/3, gated by reliability in integers | **100%** every seed, varied stories still 100% | no inhibition 14–17% (chance); ungated: varied falls to 78–84% | [22](experiments/22-fast-inhibition.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -83,6 +85,8 @@ Experiments (chronological)
 18. [Prefrontal working memory: a gated slot that cues recall](experiments/18-prefrontal-working-memory.md)
 19. [Layer 5 as the shared reward: one dopamine signal for every selector](experiments/19-l5-shared-reward.md)
 20. [Layer 6 corticothalamic gating: cortex learns which relays to let through](experiments/20-l6-corticothalamic-gating.md)
+21. [Several routes needed: L6 opens more than one relay where each is used](experiments/21-several-routes.md)
+22. [A fast-learning inhibitory loop in L2/3](experiments/22-fast-inhibition.md)
 
 Concepts
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)

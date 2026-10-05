@@ -80,3 +80,25 @@ that generalize:
   synapse, halved by plane shift every N stores instead of `decay^age`.
 - **Comparator:** already a ratio of popcounts × a ratio of counts; compare
   overlap·hits·2 against |prediction|·(hits + misses + 2) in integers.
+
+## Done: the predictor's own statistics in integers ([22](../experiments/22-fast-inhibition.md#integer-only))
+The L2/3 predictor kept floats longest: each kernel's reliability was an `f32`
+(hits+1)/(hits+misses+2), compared against floors and against other kernels. Now:
+- **Rates are fractions, not floats.** `Rate` holds num = hits+1 and den = hits+misses+2
+  and compares by cross-multiplication (a/b < c/d ⇔ a·d < c·b). The winner ranking, the
+  trust floors (`TRUST`, `TRUST_AT_TEST`, `GROW_TRUST`, parsed from text as p/q with no
+  float in between) and the growth bookkeeping all use it. Floats remain only in
+  readouts nothing compares inside L2/3 (`confidence`, target probability, L5's
+  outcome).
+- **Thresholds of the form 2^k/(2^k+1) are a shift.** rate < 2^k/(2^k+1) ⇔
+  hits+1 < 2^k·(misses+1): one shift and one compare. Used by the fast-inhibition gate
+  (k = 3 ≈ 8/9) and the uncertainty-gated growth of [23](../experiments/23-compaction.md).
+  A test checks it against the ratio for every 8-bit (hits, misses) pair.
+- **8-bit counters, halved together.** hits and misses are `u8`; when either would pass
+  255, both shift right by one (ratio kept, recent evidence weighted, as in the basal
+  ganglia's and CA3's sliced counters). Then num ≤ 256 and den ≤ 512 fit `u16` and every
+  cross-product fits `u32` (≤ 2^17); the previous `u32` counters with `u64` products could
+  in principle overflow. Per kernel: 2 bytes of statistics instead of 8.
+- **Results unchanged.** Float vs integer ranking on the same build: identical on varied
+  stories (100%) and two-hop (90.0% held-out, seed 0). 8-bit halving counters: identical
+  on two-hop seed 0 (90.0%), varied (100%, seeds 0–2) and elimination (100%, seeds 0–1).

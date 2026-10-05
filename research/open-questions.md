@@ -8,8 +8,9 @@ Ordered roughly by how much they matter for "reading like a transformer".
   25–50% and learning 24–38%; kernels are now stored sparsely
   ([23](experiments/23-compaction.md#6-sparse-kernel-storage)). Whole-input memoisation is built
   ([23 §7](experiments/23-compaction.md#7-memoised-interpretation-after-hashlife)): exact,
-  but it hits only 4–21%. Next from Hashlife (Gosper 1984): memoise per frame (frame
-  content → kernels and counts) with per-kernel invalidation; hash-cons kernels at growth
+  but it hits only 4–21%. The per-frame memo is exact but not a net
+  win ([23 §8](experiments/23-compaction.md#8-per-frame-memo-hashlifes-sub-nodes-exact-but-not-a-net-win));
+  eager per-kernel updates might fix that. Next from Hashlife (Gosper 1984): hash-cons kernels at growth
   (canonical bit samples, so duplicates are never created); and chunking, i.e.
   time-skipping through a hierarchy. Also the dense
   8,192-bit frame copies L4 still builds every word.

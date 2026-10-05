@@ -228,6 +228,53 @@ Results are **identical** on every task (seed 0, with compaction and the surpris
    the frames, would hit almost always. Invalidating per kernel rather than globally would
    keep entries valid through training. Not built yet.
 
+## 8. Per-frame memo (Hashlife's sub-nodes): exact, but not a net win
+Hashlife memoises *sub*-patterns, which repeat far more than whole boards. The analog
+here (`FRAME_MEMO=1`, `KernelClass::set_frame_memo`):
+- **Entries:** each frame of the L4 input (current word, relayed or recalled frames,
+  previous word) has an entry keyed by (frame, content). It holds that content's
+  contribution to every kernel's match count, and matching sums the cached lists.
+- **Per-kernel invalidation:** every change to a kernel's connections (growth, pruning,
+  removal in sleep) is logged. A stale entry is patched by recounting only the changed
+  kernels against its stored bits, and rebuilt beyond 512 changes. This keeps entries
+  usable through training, where the whole-input memo of section 7 was always
+  invalidated.
+
+**A bug it exposed: winner ties depended on visit order.** The first real-task run was
+not equivalent. Kernel counts differed, and two-hop fell from 88.6% to 84.6%, although a
+unit test had passed. When two kernels ranked exactly equal, the first one visited won,
+and the memo visits kernels in a different order from the index fan-out. The toy test
+had no exact ties; real tasks do. Ties now go to the older kernel (lower id). This changes
+the baseline itself on seed 0:
+- two-hop 88.6% → **91.6%**;
+- topic: held-out still 100%, seen pairs 100% → 93.4%;
+- elimination keeps 2,880 kernels instead of 1,193, so answering slows from 21 to 43 µs.
+  The old order-dependent ties happened to favour merging there.
+
+**With the fix, the frame memo is exact:** identical kernel counts and accuracy on all
+five tasks, and a unit test checks identical outputs and kernel statistics through
+growth, pruning and sleep. The speed (seed 0):
+
+| Task | Lookups: hit / patched / rebuilt | Training µs/word | Answering µs/word |
+|---|---|---|---|
+| Elimination | 28 / 72 / 0% | 41 → **38** | 43 → **31** |
+| Give | 8 / 88 / 5% | 156 → 188 | 53 → **42** |
+| Topic | 46 / 49 / 5% | 55 → 75 | 45 → **38** |
+| Two-hop | 40 / 51 / 9% | 149 → 198 | 66 → 76 |
+| Varied, 1–2 / 1–3 facts | 35 / 54 / 11% | 53 / 59 → 84 / 85 | 46 / 44 → 54 / 58 |
+
+1. **Training is 1.3–1.6× slower** on four tasks. Most lookups need patching, and a
+   patch replays up to 512 logged changes, more work than the fan-out it replaces.
+2. **Answering is mixed:** faster where frame contents recur (elimination, give, topic),
+   slower where the recalled memory frame keeps changing (varied, two-hop).
+3. **Why the saving is small:** the index fan-out was already event-based. The memo saves
+   only the repeat increments when a kernel reads several bits of the same word, and pays
+   for hashing, entry lookups and patching.
+4. **What would make it pay:** eager updates (a kernel change updates only the entries
+   containing its bits, through a bit → entries index) instead of replaying a log, and
+   memoising only the frames that recur (current and previous word), not the memory frame.
+   Left off by default.
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the

@@ -86,6 +86,10 @@ stories; chance 1/6.
    would need context, such as the previous word or the slot's content, as PBWM gates on
    input plus working-memory state. Not yet tested, and neither are more slots.
 
+Later ([19](19-l5-shared-reward.md)): the held load is credited by advantage (reward − the
+running-average reward). It still scores 100% on every seed with this task's reward, and
+it also works with the cortex's L5 outcome as the reward.
+
 ## Biology
 - **PBWM:** prefrontal stripes hold items, and the striatum's go / no-go pathways gate
   updates. Dopamine at the outcome trains the gating of the stripe whose content

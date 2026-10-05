@@ -200,6 +200,11 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
 - **O'Reilly, R. & Frank, M. (2006).** *Making working memory work: a computational model
   of learning in the prefrontal cortex and basal ganglia.* Neural Computation 18. PBWM:
   basal ganglia learn when to gate information into working memory.
+  Used in [18](experiments/18-prefrontal-working-memory.md).
+- **Schultz, W., Dayan, P. & Montague, P. R. (1997).** *A neural substrate of prediction
+  and reward.* Science 275. Dopamine neurons signal reward-prediction error (outcome
+  better or worse than expected), not reward. The advantage credit of
+  [19](experiments/19-l5-shared-reward.md).
 - **Marr, D. (1969).** *A theory of cerebellar cortex.* J. Physiology 202; **Albus, J.
   (1971).** *A theory of cerebellar function.* Mathematical Biosciences 10; **Ito, M.
   (2001).** *Cerebellar long-term depression.* Physiological Reviews 81. Granule

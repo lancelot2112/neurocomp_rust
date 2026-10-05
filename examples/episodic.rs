@@ -813,8 +813,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
 
             if ids[t] == full_stop {
-                // one-shot: the whole sentence (or its unpredicted part) is one episode
-                memory.store(if predictive_novelty { &surprising } else { &sentence });
+                // one-shot: the whole sentence (or its unpredicted part) is one episode.
+                // Persist: test questions are not stored, or the first anchor question
+                // would leak its own answer to every later one.
+                let question = sentence.as_words().iter().zip(enc.codes[index["where"]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
+                if !(task == Task::Persist && testing && question) {
+                    memory.store(if predictive_novelty { &surprising } else { &sentence });
+                }
                 if let (Some(dg), Some(ca3)) = (&dg, &mut ca3) {
                     // Encode the novel part: content shared by most episodes ("went to the")
                     // would otherwise dominate the dentate gyrus, give every episode the same

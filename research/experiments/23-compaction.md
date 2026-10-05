@@ -365,6 +365,36 @@ Results with canonical kernels, `CHUNK=4`, seeds 0 / 1 / 2:
    memory while running a habit.
 4. Both are left off by default.
 
+### Chunks that also skip recall and frame assembly
+To make a chunk skip *all* the work, as Hashlife's jump does:
+- **Deciding early:** `KernelClass::chunk_would_jump(current word)` says, before the input
+  is built, whether the step will be taken by a chunk. It depends only on the previous
+  winner and the current word.
+- **Skipping:** with `CHUNK_SKIP=1` (and habits-only chunks), such a step runs no
+  hippocampal recall, relays or gates, and leaves those frames empty. The chunked kernel
+  reads only the current word, so the empty frames cannot change its prediction.
+- **The one cost:** if a chunked word turns out to be a surprise, the column never saw
+  the full input for that step, so it does not learn from that word. This happened on
+  155–1,300 words per run, about 1–2% of all words.
+
+| Task | Steps chunked, seeds 0 / 1 / 2 | Held-out | Without chunks (same batch) | Answering µs/word, seed 0 |
+|---|---|---|---|---|
+| Varied, 1–2 facts | 24 / 11 / 12% | 100% every seed | 100% | 42 → **27** |
+| Varied, 1–3 facts | 8 / 15 / 10% | 100% every seed | 100% | 39 → 33 |
+| Topic | 19 / 21 / 6% | 100 / 100 / 100% | 100% | 45 → 41 |
+| Give | 10 / 1 / 10% | 100 / 99.8 / 100% | 99.8% | 50 → 55 |
+| Two-hop | 9–10% | 89.4 / 87.6 / 89.2% | 93.0 / 83.6 / 80.4% | 71 → **59** |
+
+1. **Accuracy holds.** Skipping learning on surprised chunk steps did no harm. Two-hop's
+   mean rose from 85.7% to 88.7%, but seed 0 fell 3.6 points, so this may be noise.
+2. **Answering speeds up where chunks cover enough of the text:** 35% on varied seed 0
+   (24% of steps chunked) and 17% on two-hop. Elsewhere the change is within noise, and
+   give seed 0 is slightly slower. Training is about the same.
+3. **The limit is now coverage, not cost per step.** Habits-only chunks take 1–24% of
+   steps. The rest depend on memory or older context, and rightly stay goal-directed.
+   These templated stories are short, and almost every sentence carries a fact. Text with
+   more stock phrases would give chunks more to cover.
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the

@@ -14,7 +14,8 @@ Ordered roughly by how much they matter for "reading like a transformer".
   a clear win ([23 §9](experiments/23-compaction.md#9-canonical-kernels-hashlifes-hash-consed-nodes)).
   Chunking is built ([23 §10](experiments/23-compaction.md#10-chunking-hashlifes-time-skipping)):
   a small speed-for-accuracy trade; habits-only chunks keep accuracy but lose the gain.
-  A chunk would pay if it also skipped recall and frame assembly while it runs. Also the dense
+  Skipping recall and frame assembly within a chunk keeps accuracy and speeds answering
+  up to 35%, limited by how much of the text is habit (1–24% here). Also the dense
   8,192-bit frame copies L4 still builds every word.
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where

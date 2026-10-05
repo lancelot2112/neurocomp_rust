@@ -813,8 +813,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 // the question's recall contained the answer: good credit for that episode
                 // (whether or not the still-learning predictor used it)
-                let recall_had_answer = words.len() >= 2 * (BITS / 64)
-                    && words[BITS / 64..2 * (BITS / 64)].iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
+                let recall_had_answer = input.as_words().len() >= 2 * (BITS / 64)
+                    && input.as_words()[BITS / 64..2 * (BITS / 64)].iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
                 if !testing && policy == Policy::Consolidate && t + 1 == s.answer_at && recall_had_answer {
                     if let Some(id) = last_recall_id {
                         match replay_mode.as_str() {

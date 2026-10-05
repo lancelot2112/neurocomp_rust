@@ -278,9 +278,12 @@ noted). Settings as above; all probation rows also score every kernel:
 4. **Calibration.** The default is reasonably calibrated where answers come from
    learned habits (ECE 0.03–0.08) but underconfident where they come from memory (topic
    ECE 0.21: right 100% at confidence 0.7–0.9). A copy kernel's rate counts the
-   training-time failures of recall, not its own. Answering only at confidence 0.8 or
-   above gives 93–100% accuracy on every task and setting, at 15–100% coverage. That
-   is the abstention lever of the [roadmap](../roadmap.md), already usable.
+   training-time failures of recall, not its own. In the default and the recommended
+   setting, answering only at confidence 0.8 or above gives 93–100% on topic, give,
+   two-hop and varied, at 50–100% coverage: the abstention lever of the
+   [roadmap](../roadmap.md), already usable there. On habit it gives 70–86%, hardly
+   above overall accuracy. Confidence there is the habit kernel's rate, the same for
+   every answer, so it cannot tell a right answer from a wrong one.
 5. **Scoring every kernel alone does not decide much:** habit −6, habit + memory +3,
    topic −9, two-hop +13 (one seed). It costs nothing measurable in speed; it matters as
    the basis for probation, whose rates must include the misses of kernels that do not

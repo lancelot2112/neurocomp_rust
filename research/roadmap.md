@@ -38,7 +38,8 @@ scoring every kernel, probation and the calibration report are built.
 - `SCORE_ALL=1 PROBATION=0.8 PROBATION_BEAT=1` matches the default everywhere with fewer
   kernels.
 - The absolute floor alone lifts habit to 93–95% but breaks memory copying.
-- Answering only at confidence 0.8 or above already gives 93–100% accuracy.
+- Answering only at confidence 0.8 or above already gives 93–100% accuracy on the memory
+  tasks, but not on habit (70–86%).
 - Memory-derived answers are underconfident (topic ECE 0.21). Abstention is not built.
 
 ## 2. Learned source arbitration

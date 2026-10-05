@@ -69,6 +69,11 @@ enum Task {
     /// Working memory: "X went to the P . <distractors> where is the person ?" -> P. The
     /// question names nobody; the subject must be held across the distractor sentences.
     Topic,
+    /// Several routes needed: 2-3 facts "X gave the O to Y ." (all names distinct), then
+    /// "what did X give ?" -> O (route (2,3): the word 3 after the earlier X) or
+    /// "who got the O ?" -> Y (route (1,2): the word 2 after the earlier O). Recall of the
+    /// fact sentence returns both O and Y, so memory alone is ambiguous.
+    Give,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -161,6 +166,41 @@ fn two_hop_story(rng: &mut StdRng, want_held_out: bool) -> Story {
         words.extend(["where", "is", "the", OBJECTS[o], "?"]);
         let answer_at = words.len();
         words.extend([PLACES[answer], "."]);
+        return Story { words, answer_at, held_out: want_held_out };
+    }
+}
+
+/// Give task: held-out = the question's (name, object) pair is never asked in training.
+fn give_story(rng: &mut StdRng, want_held_out: bool) -> Story {
+    loop {
+        let facts = rng.gen_range(2..=3);
+        let mut names: Vec<usize> = (0..NAMES.len()).collect();
+        names.shuffle(rng);
+        let mut objects: Vec<usize> = (0..OBJECTS.len()).collect();
+        objects.shuffle(rng);
+        let mut words: Vec<&'static str> = Vec::new();
+        for f in 0..facts {
+            if rng.gen_bool(0.5) {
+                words.push(FILLERS.choose(rng).unwrap());
+            }
+            words.extend([NAMES[names[2 * f]], "gave", "the", OBJECTS[objects[f]], "to", NAMES[names[2 * f + 1]], "."]);
+        }
+        let f = rng.gen_range(0..facts);
+        let (giver, receiver, object) = (names[2 * f], names[2 * f + 1], objects[f]);
+        let ask_object = rng.gen_bool(0.5);
+        let name = if ask_object { giver } else { receiver };
+        if allowed(name, object) == want_held_out {
+            continue;
+        }
+        let answer = if ask_object {
+            words.extend(["what", "did", NAMES[giver], "give", "?"]);
+            OBJECTS[object]
+        } else {
+            words.extend(["who", "got", "the", OBJECTS[object], "?"]);
+            NAMES[receiver]
+        };
+        let answer_at = words.len();
+        words.extend([answer, "."]);
         return Story { words, answer_at, held_out: want_held_out };
     }
 }
@@ -327,14 +367,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     vocab.extend(NAMES);
     vocab.extend(PLACES);
     vocab.extend(FILLERS);
+    if task == Task::Give {
+        // appended only for this task, so the other tasks' codes and rng are unchanged
+        vocab.extend(["gave", "what", "did", "give", "who", "got"]);
+    }
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
     let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
 
-    let routes = vec![
+    let mut routes = vec![
         RelayChannel { query_lag: 1, value_offset: 4 },
         RelayChannel { query_lag: 3, value_offset: 4 },
         RelayChannel { query_lag: 3, value_offset: 8 },
     ];
+    if task == Task::Give {
+        // the two routes this task needs, alongside the three of 09-10
+        routes.extend([RelayChannel { query_lag: 2, value_offset: 3 }, RelayChannel { query_lag: 1, value_offset: 2 }]);
+    }
     let mid_frames = match policy {
         Policy::NoMemory | Policy::Episodic | Policy::Consolidate | Policy::Pfc { .. } | Policy::Ca3 { .. } => 1,
         Policy::Loop(hops) => hops,
@@ -424,8 +472,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // with content; test counts: open channels per word, and per channel at answers
     let mut l6_gate = CorticothalamicGate::new(BITS, routes.len() + 1, seed + 21);
     let mut l6_step: Option<(BitVector, Vec<bool>)> = None;
+    let l6_pair = std::env::var("L6_CONTEXT").map_or(false, |v| v == "pair");
     let (mut l6_open_sum, mut l6_words) = (0usize, 0usize);
-    let mut l6_open_at_answer = vec![0usize; routes.len() + 1];
+    // [question kind][channel]: kind 1 = "what did X give ?", else 0
+    let mut l6_open_at_answer = vec![vec![0usize; routes.len() + 1]; 2];
+    let mut l6_answers = [0usize; 2];
     let mut gate_chosen_at_answer: HashMap<String, usize> = HashMap::new();
     // LearnedGate: route discovery and the current pool
     let mut route_scores = RouteScores::default();
@@ -540,7 +591,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 column.l23.set_trust_floor(Some(f));
             }
         }
-        let s = if task == Task::Topic {
+        let s = if task == Task::Give {
+            give_story(&mut rng, testing && s_i % 2 == 1)
+        } else if task == Task::Topic {
             topic_story(&mut rng, testing && s_i % 2 == 1)
         } else if task == Task::Persist {
             persist_story(&mut rng, s_i, testing && s_i % 2 == 1, testing)
@@ -653,10 +706,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                         }
                         contents.push(recalled);
-                        // L6: the cortical context is the current input
+                        // L6: the cortical context is the current input, or with L6_CONTEXT=pair
+                        // the current and previous inputs (previous bound by a 1-bit rotation)
+                        let ctx = if l6_pair {
+                            let mut c = column.previous();
+                            c.rotl_mut(1);
+                            c.or_mut(code);
+                            c
+                        } else {
+                            code.clone()
+                        };
                         let open = if gated {
                             let explore = if testing { None } else { Some(&mut rng) };
-                            l6_gate.open(code, explore)
+                            l6_gate.open(&ctx, explore)
                         } else {
                             vec![true; contents.len()]
                         };
@@ -674,12 +736,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             l6_open_sum += passed.iter().filter(|&&p| p).count();
                             l6_words += 1;
                             if t + 1 == s.answer_at {
+                                let kind = (t >= 1 && s.words[t - 1] == "give") as usize;
+                                l6_answers[kind] += 1;
                                 for (c, &p) in passed.iter().enumerate() {
-                                    l6_open_at_answer[c] += p as usize;
+                                    l6_open_at_answer[kind][c] += p as usize;
                                 }
                             }
                         }
-                        l6_step = Some((code.clone(), passed));
+                        l6_step = Some((ctx, passed));
                     }
                     Policy::Loop(hops) => {
                         let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
@@ -1108,13 +1172,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     if let Policy::L6Gate { gated } = policy {
         let names: Vec<String> = routes.iter().map(|r| format!("({},{})", r.query_lag, r.value_offset)).chain(["memory".to_string()]).collect();
-        let at: Vec<String> = names.iter().zip(&l6_open_at_answer).map(|(n, &c)| format!("{n} {:.0}%", 100.0 * c as f64 / TEST as f64)).collect();
+        let at = |k: usize| -> String {
+            names.iter().zip(&l6_open_at_answer[k]).map(|(n, &c)| format!("{n} {:.0}%", 100.0 * c as f64 / l6_answers[k].max(1) as f64)).collect::<Vec<_>>().join(", ")
+        };
         eprintln!(
-            "  L6 seed {seed} ({}): channels passed per word at test {:.2} of {}; open at test answers: {}",
+            "  L6 seed {seed} ({}{}): channels passed per word at test {:.2} of {}; open at test answers: {}",
             if gated { "gated" } else { "all open" },
+            if l6_pair { ", context = current + previous" } else { "" },
             l6_open_sum as f64 / l6_words.max(1) as f64,
             names.len(),
-            at.join(", ")
+            if task == Task::Give { format!("\"what did X give ?\" {}; other questions {}", at(1), at(0)) } else { at(0) }
         );
     }
     if matches!(policy, Policy::ThalamicGate | Policy::LearnedGate) {
@@ -1180,6 +1247,7 @@ fn main() {
         Ok("twohop") => vec![Task::TwoHop],
         Ok("persist") => vec![Task::Persist],
         Ok("topic") => vec![Task::Topic],
+        Ok("give") => vec![Task::Give],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
@@ -1187,10 +1255,12 @@ fn main() {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
     for task in tasks {
-        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic) { &[0] } else { &[2, 3] };
+        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give) { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
             println!();
-            if task == Task::Topic {
+            if task == Task::Give {
+                println!("Give stories: 2-3 \"X gave the O to Y .\"; \"what did X give ?\" -> O or \"who got the O ?\" -> Y");
+            } else if task == Task::Topic {
                 println!("Topic stories: \"X went to the P . <1-3 distractor sentences> where is the person ?\"");
             } else if task == Task::Persist {
                 println!("Persist stories: anchors (bill, fred, julie) stated only in the first {} training stories; \"held-out\" = anchor questions at test", anchor_stories());

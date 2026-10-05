@@ -161,6 +161,9 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   Neural Computation 32. Iteratively factoring superposed vector-symbolic bindings.
 - **Zacks, J. et al. (2007).** *Event perception: a mind-brain perspective.* Psychological
   Bulletin 133. Event boundaries at prediction errors.
+- **Mattar, M. & Daw, N. (2018).** *Prioritized memory access explains planning and
+  hippocampal replay.* Nature Neuroscience 21. Replay favours memories whose update is most
+  useful; cf. question-tagged replay in [17](experiments/17-consolidation.md).
 - **Lisman, J. & Grace, A. (2005).** *The hippocampal-VTA loop: controlling the entry of
   information into long-term memory.* Neuron 46. CA1/subiculum novelty → dopamine →
   encoding: novelty as a computed mismatch, not a frequency count.

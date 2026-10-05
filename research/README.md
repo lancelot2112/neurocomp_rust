@@ -29,6 +29,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Storing what the predictor didn't predict (CA1 comparator) | 93% / 87% held-out (1 seed) | frequency habituation 98% | [14](experiments/14-ca1-comparator.md) |
 | – | Two-hop questions, learned choice of what to follow (basal ganglia) | **89.1%** held-out (5 seeds, bit-sliced counters) | branching recall 80.8% | [15](experiments/15-basal-ganglia-selector.md) |
 | – | Basal ganglia choose among thalamic channels (learned routes + memory recall) | **100%** every seed, memory released at every answer | routes only 36–41% | [16](experiments/16-thalamic-gate-memory-channel.md) |
+| – | Facts the hippocampus has overwritten, recalled from cortex after replay (consolidation) | **100%** every seed | hippocampus only 0–37% (guessing) | [17](experiments/17-consolidation.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -74,6 +75,7 @@ Experiments (chronological)
 14. [A CA1-style comparator: store what wasn't predicted](experiments/14-ca1-comparator.md)
 15. [A basal-ganglia selector: learning which recalled item to follow](experiments/15-basal-ganglia-selector.md)
 16. [Memory recall as a thalamic channel, chosen by the basal ganglia](experiments/16-thalamic-gate-memory-channel.md)
+17. [Consolidation: hippocampal replay into a cortical semantic store](experiments/17-consolidation.md)
 
 Concepts
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)

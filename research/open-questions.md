@@ -19,11 +19,15 @@ Ordered roughly by how much they matter for "reading like a transformer".
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where
   0.3–2.3 MB is needed.
-- **The hierarchy's next steps** ([24](experiments/24-cortical-hierarchy.md)): run the
-  higher area on a truly slower clock (only on the column's surprises, or once per
-  sentence) to remove its cost; arbitrate between memory and top-down by each source's
-  reliability per context; a third level; several columns side by side; then real text
-  again ([comparison](concepts/brain-transformer-comparison.md)).
+- **Arbitration in L2/3** ([24](experiments/24-cortical-hierarchy.md#a-thalamic-gate-on-the-top-down-frame)):
+  growth stops at an empty frame and winners are ranked by depth before reliability, so
+  frame order, not reliability, decides between memory and top-down, and no thalamic gate
+  on the top-down frame helped (use, reliability, confidence). Let growth skip empty
+  frames and rank sources by reliability; then retry the gate.
+- **The hierarchy's next steps**: run the higher area on a truly slower clock (only on
+  the column's surprises, or once per sentence) to remove its cost; a third level;
+  several columns side by side; then real text again
+  ([comparison](concepts/brain-transformer-comparison.md)).
 - **Basal ganglia and L6 together** on the same relays (select by reward among what L6
   lets through).
 - **Two-hop's weak seed.** The selector picks well (answer in recall 86–89%), but the

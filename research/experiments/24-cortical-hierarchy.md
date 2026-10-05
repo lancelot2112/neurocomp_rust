@@ -101,6 +101,52 @@ The other tasks with the higher area on (seed 0; without it in brackets):
    timescale: run the higher area only when the column is surprised, or once per
    sentence, not at every word.
 
+## A thalamic gate on the top-down frame
+In the brain, higher-order signals reach an area through the thalamus (pulvinar), and the
+reticular nucleus and L6 feedback set how much gets through, so an unreliable signal can
+be turned down. Here the top-down frame went straight into the column, so three gates
+were tried (`HIER_GATE`, `HIER_GATE_SIGNAL`, `HIER_GATE_CONF`), each with the frame late
+(after memory) and early (`HIER_EARLY`, right after the current word):
+- **Use** (the L6 gate of [20](20-l6-corticothalamic-gating.md) on one channel, keyed on
+  the current word). It is strengthened when the column read the top-down frame and came
+  true; 1,000-story warm-up, weakening × 0.25.
+- **Reliability** (`HIER_GATE_SIGNAL=area`). Same gate, strengthened when the *higher
+  area's own* prediction came true (its L5 outcome).
+- **Confidence** (`HIER_GATE_CONF=0.7`). A prediction passes only if the higher area's
+  winning kernel is at least 0.7 reliable.
+
+| Held-out | Late, no gate | Use gate | Reliability gate | Confidence gate | Early, no gate | Early + use | Early + confidence |
+|---|---|---|---|---|---|---|---|
+| Habit, no memory (seeds 0 / 1 / 2) | **81 / 82 / 80%** | 79 / 73 / 17% | 15 / 18 / 18% | 65 / 71 / 84% | 81 / 82 / 80% | 79 / 73 / 17% | 65 / 71 / 84% |
+| Habit + memory | 70 / 79 / 80% | 52 / 51 / 79% | 52 / 48 / 46% | 72 / 80 / 77% | 67 / 67 / 83% | 50 / 51 / 85% | 70 / 88 / 78% |
+| Topic (seed 0) | **100%** | 97% | 100% | 100% | 37% | 59% | 51% |
+| Two-hop (seed 0) | 94.4% | 82.6% | 91.2% | 94.4% | 90.4% | 92.4% | 90.0% |
+| Varied / give (seed 0) | 100 / 99.6% | 100 / 100% | 100 / 100% | 100 / 99.6% | 100 / 99.8% | 100 / 100% | 100 / 99.8% |
+
+1. **A gate keyed on the current word is all-or-nothing at the answer:** it passed top-down
+   at 100% or 0% of answers in every run. "the" occurs in "the cat", "in the morning" and
+   "went to the", so a per-word gain cannot single out the answer position.
+2. **"Used" is the wrong signal.** With memory on, the column often answers from memory,
+   so the top-down frame looks unused and the gate shuts it even where it would have been
+   right (habit + memory falls to the memory-only 50%).
+3. **"Right" per word is also too coarse.** The higher area is trained only where the
+   column fails, so at most occurrences of "the" its prediction is wrong. The reliability
+   gate closed the channel on every task, at 0% passed.
+4. **Per-prediction confidence is selective** (passes at 64–80% of habit answers, 4–11% of
+   topic answers, ~2% on varied). But it blocks some correct, less confident predictions,
+   and does not beat late placement without a gate.
+5. **The arbitration problem is in the column, not the thalamus.**
+   - **Growth stops at an empty frame.** With top-down early and gated off, frame 1 is
+     empty and the memory-copy kernels behind it can never grow, so topic stays broken
+     (51–59%).
+   - **The winner is ranked by depth before reliability.** A kernel reading a later frame
+     beats a more reliable one reading an earlier frame, so frame order decides the
+     arbitration.
+
+   A thalamic gate becomes useful once L2/3 can grow past empty frames and choose between
+   sources by reliability. That is the next step. Late placement without a gate stays
+   the default.
+
 ## Biology
 - **Hierarchy and predictive coding:** each level predicts the activity of the level below
   and is driven by its prediction errors (Rao & Ballard 1999; Friston 2005). Here the

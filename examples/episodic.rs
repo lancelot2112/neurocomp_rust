@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, CorticothalamicGate, DentateGyrus, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, CorticothalamicGate, DentateGyrus, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -526,20 +526,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
     };
     let mut gate_pending: Option<BitVector> = None; // released content, awaiting reward
-    // ARBITRATE=1: a basal-ganglia selector per context (previous word, current word)
-    // chooses which source the column follows where memory and top-down offer different
-    // words: 0 = neither (the column's own ranking), 1 = memory, 2 = top-down. Its choice
-    // biases L2/3 towards kernels predicting that source's content; it learns from whether
-    // the prediction came true, so it holds each source's reliability per context
-    let arbitrate = std::env::var("ARBITRATE").is_ok();
-    let mut arb_bg = BasalGanglia::new(BITS);
-    let action_code = |a: usize| -> BitVector {
-        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(2_000_003) ^ (a as u64 + 1000));
-        let all: Vec<usize> = (0..BITS).collect();
-        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
-    };
-    // test answers: [conflicts, then (chosen, right) per action]
-    let mut arb_stats = [0usize; 7];
+    // MIX=1: precision-weighted mixing of sources (thalamic gain, not a switch). The
+    // column's own prediction, memory (recall / relay frames) and the higher area's
+    // top-down prediction each vote for their words, weighted by their learned reliability
+    // per (previous word, current word, own-confidence bucket); the word with the most
+    // evidence is the prediction (see `SourceMix`)
+    let mixing = std::env::var("MIX").is_ok();
+    let mut mix = SourceMix::new();
+    // test answers: [answers, column right, mix right, changed, changed and right,
+    // sources agreed, agreed and right]
+    let mut mix_stats = [0usize; 7];
     // L6Gate: the corticothalamic gate, this step's context and which channels were open
     // with content; test counts: open channels per word, and per channel at answers
     let mut l6_gate = CorticothalamicGate::new(BITS, routes.len() + 1, seed + 21);
@@ -1198,37 +1194,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 prof_t = std::time::Instant::now();
                 let input = BitVector::from_words(words);
 
-                // basal-ganglia arbitration between memory and top-down, where they disagree
-                let mut arb_choice: Option<usize> = None;
-                let mut bias: Option<BitVector> = None;
-                if let (true, Some(td)) = (arbitrate, td_src.as_ref()) {
-                    let words_of = |bv: &BitVector| -> Vec<usize> {
-                        (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).collect()
-                    };
-                    let (mw, tw) = (words_of(&mem_src), words_of(td));
-                    if !mw.is_empty() && tw.iter().any(|w| !mw.contains(w)) {
-                        let prev = if t > 0 { ids[t - 1] } else { vocab.len() };
-                        let ctx = (prev * 131 + ids[t] * 7919) % BITS;
-                        let cands: Vec<BitVector> = (0..3)
-                            .map(|a| {
-                                let mut c = action_code(a);
-                                c.rotl_mut(ctx);
-                                c
-                            })
-                            .collect();
-                        let explore = if testing { None } else { Some(&mut rng) };
-                        if let Some(a) = arb_bg.select(&cands, explore) {
-                            bias = match a {
-                                1 => Some(mem_src.clone()),
-                                2 => Some(td.clone()),
-                                _ => None,
-                            };
-                            arb_choice = Some(a);
-                        }
-                    }
-                }
                 let mut out = BitVector::new(BITS, Some(0));
-                out.or_mut(column.predict_biased(&input, bias.as_ref()));
+                out.or_mut(column.predict(&input));
                 // PROF: [1] L2/3 prediction
                 prof[1] += prof_t.elapsed().as_secs_f64();
                 prof_t = std::time::Instant::now();
@@ -1244,14 +1211,52 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         vocab[next]
                     );
                 }
-                if let Some(a) = arb_choice {
-                    let right = enc.decode(&out) == Some(next);
+                // MIX: every source votes for its words with its reliability as the weight
+                let mut mix_conf: Option<f32> = None;
+                if mixing {
+                    let prev = if t > 0 { ids[t - 1] } else { vocab.len() };
+                    let ctx = (prev * (vocab.len() + 1) + ids[t]) as u64 * 8;
+                    let bucket = |c: f32| [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count() as u64;
+                    let words_of = |bv: &BitVector| -> Vec<usize> {
+                        (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).collect()
+                    };
+                    // (source, key, proposed words): 0 column, 1 memory, 2 top-down
+                    let mut proposals: Vec<(u8, u64, Vec<usize>)> = Vec::new();
+                    let own = enc.decode(&out);
+                    if let Some(w) = own {
+                        proposals.push((0, ctx + bucket(column.confidence()), vec![w]));
+                    }
+                    let mw = words_of(&mem_src);
+                    if !mw.is_empty() {
+                        proposals.push((1, ctx + mw.len().min(3) as u64, mw));
+                    }
+                    if let Some(td) = td_src.as_ref() {
+                        let tw = words_of(td);
+                        if !tw.is_empty() {
+                            proposals.push((2, ctx + bucket(area.column.confidence()), tw));
+                        }
+                    }
+                    let votes: Vec<(usize, u32)> = proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, mix.weight(*src, *key))).collect::<Vec<_>>()).collect();
+                    if let Some((w, total)) = SourceMix::combine(&votes) {
+                        if testing && t + 1 == s.answer_at {
+                            let agreed = proposals.len() > 1 && proposals.iter().all(|p| p.2 == vec![w]);
+                            mix_stats[0] += 1;
+                            mix_stats[1] += (own == Some(next)) as usize;
+                            mix_stats[2] += (w == next) as usize;
+                            mix_stats[3] += (own != Some(w)) as usize;
+                            mix_stats[4] += (own != Some(w) && w == next) as usize;
+                            mix_stats[5] += agreed as usize;
+                            mix_stats[6] += (agreed && w == next) as usize;
+                        }
+                        out = enc.codes[w].clone();
+                        mix_conf = Some(SourceMix::confidence(total));
+                    }
                     if !testing {
-                        arb_bg.reward(right as u32 as f32, &mut rng);
-                    } else if t + 1 == s.answer_at {
-                        arb_stats[0] += 1;
-                        arb_stats[1 + 2 * a] += 1;
-                        arb_stats[2 + 2 * a] += right as usize;
+                        for (src, key, ws) in &proposals {
+                            for &w in ws {
+                                mix.record(*src, *key, w == next);
+                            }
+                        }
                     }
                 }
                 if testing && t + 1 == s.answer_at {
@@ -1337,7 +1342,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
-                    let c = column.confidence();
+                    let c = mix_conf.unwrap_or_else(|| column.confidence());
                     let b = [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count();
                     calib[b].0 += 1;
                     calib[b].1 += right as usize;
@@ -1646,14 +1651,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             1e6 * test_secs / test_words.max(1) as f64
         );
     }
-    if arbitrate {
-        let pct = |r: usize, n: usize| if n > 0 { format!("{:.0}% right of {n}", 100.0 * r as f64 / n as f64) } else { "-".to_string() };
+    if mixing && mix_stats[0] > 0 {
+        let pct = |r: usize, n: usize| if n > 0 { format!("{:.1}%", 100.0 * r as f64 / n as f64) } else { "-".to_string() };
         eprintln!(
-            "  ARB seed {seed}: memory and top-down disagreed at {:.1}% of test answers; chosen: neither {}, memory {}, top-down {}",
-            100.0 * arb_stats[0] as f64 / TEST as f64,
-            pct(arb_stats[2], arb_stats[1]),
-            pct(arb_stats[4], arb_stats[3]),
-            pct(arb_stats[6], arb_stats[5])
+            "  MIX seed {seed}: test answers {}: column alone {} right, mixed {} right; mix changed the column's answer at {} ({} of those right); all sources agreed at {} ({} right); {} reliability entries",
+            mix_stats[0],
+            pct(mix_stats[1], mix_stats[0]),
+            pct(mix_stats[2], mix_stats[0]),
+            pct(mix_stats[3], mix_stats[0]),
+            pct(mix_stats[4], mix_stats[3]),
+            pct(mix_stats[5], mix_stats[0]),
+            pct(mix_stats[6], mix_stats[5]),
+            mix.len()
         );
     }
     {

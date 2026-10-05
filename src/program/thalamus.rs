@@ -313,8 +313,143 @@ fn frame_hash(frame: &BitVector) -> u64 {
     h.finish()
 }
 
+/// Precision-weighted mixing of sources: a pulvinar-like gain per source, not a switch.
+///
+/// Several sources (the column's own prediction, hippocampal recall, a higher area's
+/// top-down prediction) each propose candidates. Instead of gating one through, every
+/// candidate collects a vote from each source that proposes it, weighted by that
+/// source's learned reliability in the current context, and the candidate with the most
+/// evidence wins. Weights add, as precisions do in a Kalman update: two sources that agree
+/// give more evidence than either alone, and a reliable source outweighs an unreliable one
+/// without silencing it.
+///
+/// Reliability is kept per (source, key), where the key is the caller's context (e.g. the
+/// previous and current word) plus a bucket of the source's own per-question confidence
+/// (the higher area's L5 confidence, how many places a recall offers). It is the smoothed
+/// rate p = (hits + 1) / (hits + misses + 2) that a candidate the source proposed was
+/// right, held in 8-bit counters halved together at saturation (as `KernelStats`).
+///
+/// A vote's weight is −log2(1 − p) in 1/16 bits: the evidence that the source is not
+/// wrong. It is computed in integers from a log table, −log2(1 − p) = log2(h + m + 2) −
+/// log2(m + 1). Summed over the sources proposing a candidate, it is −log2 of the chance
+/// that all of them are wrong (if independent); `confidence` turns a total back into that
+/// probability's complement. A source never seen in a context has p = 1/2: one bit.
+pub struct SourceMix {
+    stats: HashMap<(u8, u64), (u8, u8)>,
+    /// log2(i) × 16, rounded, for i in 0..=512 (index 0 unused)
+    log2: Vec<u16>,
+}
+
+impl Default for SourceMix {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SourceMix {
+    pub fn new() -> Self {
+        let log2 = (0..=512usize).map(|i| if i == 0 { 0 } else { ((i as f64).log2() * 16.0).round() as u16 }).collect();
+        Self { stats: HashMap::new(), log2 }
+    }
+
+    /// Weight (1/16 bits) of a vote by `source` under `key`.
+    pub fn weight(&self, source: u8, key: u64) -> u32 {
+        let (h, m) = self.stats.get(&(source, key)).copied().unwrap_or((0, 0));
+        let den = h as usize + m as usize + 2;
+        (self.log2[den] - self.log2[m as usize + 1]) as u32
+    }
+
+    /// Smoothed rate that a candidate `source` proposed under `key` is right.
+    pub fn rate(&self, source: u8, key: u64) -> f32 {
+        let (h, m) = self.stats.get(&(source, key)).copied().unwrap_or((0, 0));
+        (h as f32 + 1.0) / (h as f32 + m as f32 + 2.0)
+    }
+
+    /// Record whether a candidate `source` proposed under `key` was right.
+    pub fn record(&mut self, source: u8, key: u64, right: bool) {
+        let e = self.stats.entry((source, key)).or_insert((0, 0));
+        if (right && e.0 == u8::MAX) || (!right && e.1 == u8::MAX) {
+            *e = (e.0 / 2, e.1 / 2);
+        }
+        if right {
+            e.0 += 1;
+        } else {
+            e.1 += 1;
+        }
+    }
+
+    /// The candidate with the most summed evidence among `votes` (candidate, weight);
+    /// ties go to the earliest vote's candidate. Returns (candidate, total weight).
+    pub fn combine(votes: &[(usize, u32)]) -> Option<(usize, u32)> {
+        let mut totals: Vec<(usize, u32)> = Vec::new();
+        for &(c, w) in votes {
+            match totals.iter_mut().find(|t| t.0 == c) {
+                Some(t) => t.1 += w,
+                None => totals.push((c, w)),
+            }
+        }
+        let mut best: Option<(usize, u32)> = None;
+        for t in totals {
+            if best.map_or(true, |b| t.1 > b.1) {
+                best = Some(t);
+            }
+        }
+        best
+    }
+
+    /// Probability that not all of the sources behind `total` are wrong: 1 − 2^(−total/16).
+    pub fn confidence(total: u32) -> f32 {
+        1.0 - (-(total as f32) / 16.0).exp2()
+    }
+
+    /// Number of (source, key) entries learned.
+    pub fn len(&self) -> usize {
+        self.stats.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.stats.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn source_mix_weights_by_reliability_and_adds_agreement() {
+        let mut mix = SourceMix::new();
+        assert_eq!(mix.weight(0, 1), 16); // unknown: p = 1/2, one bit
+        for i in 0..20 {
+            mix.record(0, 1, i % 10 != 0); // source 0: right 90%
+            mix.record(1, 1, i % 2 == 0); // source 1: right 50%
+            mix.record(2, 1, i % 4 == 0); // source 2: right 25%
+        }
+        let (w0, w1, w2) = (mix.weight(0, 1), mix.weight(1, 1), mix.weight(2, 1));
+        assert!(w0 > w1 && w1 > w2);
+        // the reliable source beats the unreliable one when they disagree...
+        assert_eq!(SourceMix::combine(&[(7, w2), (3, w0)]).unwrap().0, 3);
+        // ...but weaker sources that agree can outvote it: 90% right is ~2.9 bits, three
+        // 50% sources are 3
+        assert_eq!(SourceMix::combine(&[(3, w0), (5, w1), (5, w1)]).unwrap().0, 3);
+        let (c, total) = SourceMix::combine(&[(3, w0), (5, w1), (5, w1), (5, w1)]).unwrap();
+        assert_eq!(c, 5);
+        // agreement raises confidence above either source alone
+        let alone = SourceMix::confidence(w1);
+        assert!(SourceMix::confidence(total) > alone && (alone - mix.rate(1, 1)).abs() < 0.03);
+        // other keys are independent
+        assert_eq!(mix.weight(0, 2), 16);
+    }
+
+    #[test]
+    fn source_mix_counters_halve_together_at_saturation() {
+        let mut mix = SourceMix::new();
+        for _ in 0..300 {
+            mix.record(0, 0, true);
+        }
+        mix.record(0, 0, false);
+        let r = mix.rate(0, 0);
+        assert!(r > 0.98 && r < 1.0);
+    }
+
     #[test]
     fn corticothalamic_gate_opens_what_cortex_uses_per_context() {
         let mut g = CorticothalamicGate::new(1024, 2, 1);

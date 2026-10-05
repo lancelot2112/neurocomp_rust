@@ -162,23 +162,40 @@ pub struct FastInhibition {
     /// Inhibition then acts where the context is unpredictable (several continuations,
     /// none dominant) and leaves reliable predictions ("went → to", memory copies) alone.
     pub reliable_shift: Option<u32>,
-    tags: std::collections::HashMap<usize, u8>,
+    /// Per kernel, the step until which it is inhibited (a flat array: tagging is one
+    /// write, checking one compare, and nothing has to be counted down).
+    until: Vec<u64>,
+    /// Predictive steps so far.
+    now: u64,
 }
 
 impl FastInhibition {
     pub fn new(ttl: u8, on_hits: bool, on_misses: bool) -> Self {
-        Self { ttl, on_hits, on_misses, reliable_shift: None, tags: std::collections::HashMap::new() }
+        Self { ttl, on_hits, on_misses, reliable_shift: None, until: Vec::new(), now: 0 }
+    }
+
+    // a tag set after step n is seen by steps n+1 .. n+ttl-1 (as a counter set to ttl and
+    // decremented before each step would be)
+    fn set(&mut self, k: usize) {
+        if self.until.len() <= k {
+            self.until.resize(k + 1, 0);
+        }
+        self.until[k] = self.now + self.ttl as u64;
+    }
+
+    fn inhibits(&self, k: usize) -> bool {
+        self.until.get(k).map_or(false, |&u| u > self.now)
     }
 
     fn tag(&mut self, hits: &[usize], misses: &[usize]) {
         if self.on_hits {
             for &k in hits {
-                self.tags.insert(k, self.ttl);
+                self.set(k);
             }
         }
         if self.on_misses {
             for &k in misses {
-                self.tags.insert(k, self.ttl);
+                self.set(k);
             }
         }
     }
@@ -364,12 +381,9 @@ impl KernelClass<SimpleKernel> {
             }
         }
 
-        // fast inhibition decays one step
+        // fast inhibition: one step later (tags expire by comparison, not by counting down)
         if let Some(f) = st.fast.as_mut() {
-            f.tags.retain(|_, t| {
-                *t -= 1;
-                *t > 0
-            });
+            f.now += 1;
         }
         let mode = bias.map(|(_, m)| m);
         let agrees = |k: &SimpleKernel| bias.map_or(false, |(b, _)| predicts(k, b));
@@ -395,7 +409,7 @@ impl KernelClass<SimpleKernel> {
             let tie = mode == Some(BiasMode::SameDepth) && a;
             let r = Rate::of(&kern.stats);
             let trusted = trust_floor.map_or(true, |f| r >= f);
-            let free = st.fast.as_ref().map_or(true, |f| !f.tags.contains_key(&k));
+            let free = st.fast.as_ref().map_or(true, |f| !f.inhibits(k));
             let key = (free, prefer, trusted, kern.context_frames, tie, r, count);
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
@@ -568,7 +582,7 @@ impl KernelClass<SimpleKernel> {
 
     /// Kernels currently inhibited by the fast loop.
     pub fn inhibited(&self) -> usize {
-        self.predictive.as_ref().and_then(|st| st.fast.as_ref()).map_or(0, |f| f.tags.len())
+        self.predictive.as_ref().and_then(|st| st.fast.as_ref()).map_or(0, |f| (0..f.until.len()).filter(|&k| f.inhibits(k)).count())
     }
 
     /// Growth trust as an integer ratio p/q (see `set_trust_floor`).
@@ -862,7 +876,9 @@ impl KernelClass<SimpleKernel> {
             st.sticky_tags.remove(&victim);
             st.last_misses.retain(|&x| x != victim);
             if let Some(f) = st.fast.as_mut() {
-                f.tags.remove(&victim);
+                if let Some(u) = f.until.get_mut(victim) {
+                    *u = 0;
+                }
             }
             self.active_kernels[victim] = k;
             self.recycled += 1;

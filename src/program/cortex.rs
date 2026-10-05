@@ -377,6 +377,31 @@ mod tests {
         assert_eq!(col.previous().as_words(), b.as_words()); // L6: the input before a
     }
 
+    #[test]
+    fn fast_inhibition_makes_the_column_try_an_alternative() {
+        // x is followed by a and by b equally often; with adaptation, once x → a has
+        // happened, the next x predicts b (inhibition of return), and the tag fades
+        let bits = 64;
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 4, ..GrowthConfig::default() };
+        let mut col = CorticalColumn::new(bits, KernelClass::predictive(cfg), ContextBuffer::new(bits, 8, Vec::new()));
+        let mut rng = rand::thread_rng();
+        let (x, a, b) = (sym(1), sym(2), sym(3));
+        let mut step = |col: &mut CorticalColumn, next: &BitVector| -> BitVector {
+            let l4 = BitVector::from_words(x.as_words().to_vec());
+            let p = col.predict(&l4).clone();
+            col.learn(&l4, next, &mut rng);
+            p
+        };
+        for i in 0..20 {
+            step(&mut col, if i % 2 == 0 { &a } else { &b });
+        }
+        col.l23.set_fast_inhibition(Some(crate::kernel::FastInhibition::new(2, true, false)));
+        step(&mut col, &a); // x → a happens: the a-kernel is inhibited
+        assert_eq!(col.l23.inhibited(), 1);
+        assert_eq!(step(&mut col, &b).as_words(), b.as_words()); // so x now predicts b
+        assert_eq!(step(&mut col, &a).as_words(), a.as_words()); // b inhibited in turn, a's 2-step tag has faded
+    }
+
     fn sym(i: usize) -> BitVector {
         BitVector::from_bits(&[i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 3], 64)
     }

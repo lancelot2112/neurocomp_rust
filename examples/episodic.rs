@@ -74,6 +74,10 @@ enum Task {
     /// "who got the O ?" -> Y (route (1,2): the word 2 after the earlier O). Recall of the
     /// fact sentence returns both O and Y, so memory alone is ambiguous.
     Give,
+    /// Elimination: "is it the P ? no ." for 5 of the 6 places in random order, then
+    /// "is it the" -> the one place not yet named. Nothing in the story states the answer;
+    /// the column has to avoid what it has just seen (fast inhibition).
+    Elim,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -203,6 +207,22 @@ fn give_story(rng: &mut StdRng, want_held_out: bool) -> Story {
         words.extend([answer, "."]);
         return Story { words, answer_at, held_out: want_held_out };
     }
+}
+
+fn elim_story(rng: &mut StdRng, held_out: bool) -> Story {
+    let mut places: Vec<usize> = (0..PLACES.len()).collect();
+    places.shuffle(rng);
+    let mut words: Vec<&'static str> = Vec::new();
+    if rng.gen_bool(0.5) {
+        words.push(FILLERS.choose(rng).unwrap());
+    }
+    for &p in &places[..PLACES.len() - 1] {
+        words.extend(["is", "it", "the", PLACES[p], "?", "no", "."]);
+    }
+    words.extend(["is", "it", "the"]);
+    let answer_at = words.len();
+    words.extend([PLACES[places[PLACES.len() - 1]], "?", "yes", "."]);
+    Story { words, answer_at, held_out }
 }
 
 fn topic_story(rng: &mut StdRng, want_held_out: bool) -> Story {
@@ -371,6 +391,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // appended only for this task, so the other tasks' codes and rng are unchanged
         vocab.extend(["gave", "what", "did", "give", "who", "got"]);
     }
+    if task == Task::Elim {
+        vocab.extend(["no", "yes"]);
+    }
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
     let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
 
@@ -518,6 +541,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // COPY_GROW=1: new kernels sample only the target's bits in a frame that contains them
     class.set_copy_growth(std::env::var("COPY_GROW").is_ok());
     // GROW_TRUST=f: a lucky unreliable kernel (< f) does not block growth of a better one
+    // FAST_INHIBIT=hits|misses|both: L2/3 fast inhibitory loop, tags lasting FAST_TTL steps
+    if let Ok(mode) = std::env::var("FAST_INHIBIT") {
+        let ttl: u8 = std::env::var("FAST_TTL").ok().and_then(|v| v.parse().ok()).unwrap_or(40);
+        let (h, m) = (mode == "hits" || mode == "both", mode == "misses" || mode == "both");
+        class.set_fast_inhibition(Some(neurocomp::kernel::FastInhibition::new(ttl, h, m)));
+    }
     class.set_growth_trust(std::env::var("GROW_TRUST").ok().and_then(|v| v.parse().ok()));
     // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /
     // confidence / surprise, L6 context (`th`, whose match rules the thalamus gates)
@@ -591,7 +620,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 column.l23.set_trust_floor(Some(f));
             }
         }
-        let s = if task == Task::Give {
+        let s = if task == Task::Elim {
+            elim_story(&mut rng, testing && s_i % 2 == 1)
+        } else if task == Task::Give {
             give_story(&mut rng, testing && s_i % 2 == 1)
         } else if task == Task::Topic {
             topic_story(&mut rng, testing && s_i % 2 == 1)
@@ -1248,6 +1279,7 @@ fn main() {
         Ok("persist") => vec![Task::Persist],
         Ok("topic") => vec![Task::Topic],
         Ok("give") => vec![Task::Give],
+        Ok("elim") => vec![Task::Elim],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
@@ -1255,10 +1287,12 @@ fn main() {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
     for task in tasks {
-        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give) { &[0] } else { &[2, 3] };
+        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give | Task::Elim) { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
             println!();
-            if task == Task::Give {
+            if task == Task::Elim {
+                println!("Elim stories: \"is it the P ? no .\" for 5 places, then \"is it the\" -> the 6th");
+            } else if task == Task::Give {
                 println!("Give stories: 2-3 \"X gave the O to Y .\"; \"what did X give ?\" -> O or \"who got the O ?\" -> Y");
             } else if task == Task::Topic {
                 println!("Topic stories: \"X went to the P . <1-3 distractor sentences> where is the person ?\"");
@@ -1286,6 +1320,7 @@ fn main() {
                 Ok("pfc") => vec![Policy::NoMemory, Policy::Episodic, Policy::Pfc { learned: false }, Policy::Pfc { learned: true }],
                 Ok("pfc_learned") => vec![Policy::Pfc { learned: true }],
                 Ok("episodic") => vec![Policy::Episodic],
+                Ok("nomemory") => vec![Policy::NoMemory],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_big") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }, Policy::Ca3 { cells: 16384, k: 32, settle: 0 }],

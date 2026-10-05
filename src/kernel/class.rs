@@ -139,6 +139,30 @@ struct PredictiveState {
     growth_trust: Option<f32>,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
+    /// Fast inhibitory loop (see `set_fast_inhibition`). None = off.
+    fast: Option<FastInhibition>,
+}
+
+/// A fast-learning inhibitory loop on the winner competition: one-shot inhibitory tags on
+/// kernels, set by the latest target and decaying over `ttl` steps. A tagged kernel loses
+/// to every untagged candidate, and still wins if nothing else matches.
+#[derive(Clone, Debug)]
+pub struct FastInhibition {
+    /// Steps a tag lasts.
+    pub ttl: u8,
+    /// Tag the kernels the target confirmed (adaptation: what just happened in this
+    /// context is suppressed next time, so an alternative continuation wins).
+    pub on_hits: bool,
+    /// Tag the kernels the target contradicted (error-driven: a prediction that just
+    /// failed is not repeated while the tag lasts).
+    pub on_misses: bool,
+    tags: std::collections::HashMap<usize, u8>,
+}
+
+impl FastInhibition {
+    pub fn new(ttl: u8, on_hits: bool, on_misses: bool) -> Self {
+        Self { ttl, on_hits, on_misses, tags: std::collections::HashMap::new() }
+    }
 }
 
 /// How a higher layer's expectation (`bias`) steers a predictive step.
@@ -261,6 +285,7 @@ impl KernelClass<SimpleKernel> {
             growth_trust: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
+            fast: None,
         });
         kc
     }
@@ -320,11 +345,18 @@ impl KernelClass<SimpleKernel> {
             }
         }
 
+        // fast inhibition decays one step
+        if let Some(f) = st.fast.as_mut() {
+            f.tags.retain(|_, t| {
+                *t -= 1;
+                *t > 0
+            });
+        }
         let mode = bias.map(|(_, m)| m);
         let agrees = |k: &SimpleKernel| bias.map_or(false, |(b, _)| predicts(k, b));
-        // (agree-first, trusted, depth, agree-within-depth, reliability, count)
+        // (not inhibited, agree-first, trusted, depth, agree-within-depth, reliability, count)
         let trust_floor = st.trust_floor;
-        let mut best: Option<((bool, bool, usize, bool, f32, u32), usize)> = None;
+        let mut best: Option<((bool, bool, bool, usize, bool, f32, u32), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -344,7 +376,8 @@ impl KernelClass<SimpleKernel> {
             let tie = mode == Some(BiasMode::SameDepth) && a;
             let r = reliability(&kern.stats);
             let trusted = trust_floor.map_or(true, |f| r >= f);
-            let key = (prefer, trusted, kern.context_frames, tie, r, count);
+            let free = st.fast.as_ref().map_or(true, |f| !f.tags.contains_key(&k));
+            let key = (free, prefer, trusted, kern.context_frames, tie, r, count);
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
             }
@@ -467,6 +500,18 @@ impl KernelClass<SimpleKernel> {
 
     /// Growth: a matching kernel that predicted the target blocks same-depth growth only
     /// if its reliability is at least `floor` (None: any kernel blocks it).
+    /// Fast inhibitory loop on the winner competition (None = off). See `FastInhibition`.
+    pub fn set_fast_inhibition(&mut self, fast: Option<FastInhibition>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.fast = fast;
+        }
+    }
+
+    /// Kernels currently inhibited by the fast loop.
+    pub fn inhibited(&self) -> usize {
+        self.predictive.as_ref().and_then(|st| st.fast.as_ref()).map_or(0, |f| f.tags.len())
+    }
+
     pub fn set_growth_trust(&mut self, floor: Option<f32>) {
         if let Some(st) = self.predictive.as_mut() {
             st.growth_trust = floor;
@@ -558,6 +603,19 @@ impl KernelClass<SimpleKernel> {
         }
         if let Some(st) = self.predictive.as_mut() {
             st.last_target_prob = expected.map_or(0.0, |e| e.1);
+            if let Some(f) = st.fast.as_mut() {
+                let ttl = f.ttl;
+                if f.on_hits {
+                    for &k in &hits {
+                        f.tags.insert(k, ttl);
+                    }
+                }
+                if f.on_misses {
+                    for &k in &misses {
+                        f.tags.insert(k, ttl);
+                    }
+                }
+            }
             st.last_hits = hits;
             st.last_misses = misses;
         }
@@ -746,6 +804,9 @@ impl KernelClass<SimpleKernel> {
             st.silent_counts.remove(&victim);
             st.sticky_tags.remove(&victim);
             st.last_misses.retain(|&x| x != victim);
+            if let Some(f) = st.fast.as_mut() {
+                f.tags.remove(&victim);
+            }
             self.active_kernels[victim] = k;
             self.recycled += 1;
             victim

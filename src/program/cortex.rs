@@ -350,6 +350,72 @@ impl CorticalColumn {
     }
 }
 
+/// A higher cortical area: a column one level up a hierarchy, working on a slower
+/// timescale than the column below it.
+///
+/// - **Feedforward (L5 → higher-order thalamus → L4 above):** it receives two frames, the
+///   bag of the current sentence's words and a slow state, the words the lower column
+///   found surprising over the last `span` sentences (the lower column's L5 surprise,
+///   integrated over time). Predictable filler does not enter the state, so a fact stated
+///   several sentences back stays in view.
+/// - **L2/3:** a predictive `CorticalColumn` that predicts the lower column's next input
+///   from that sentence- and story-level context.
+/// - **Feedback (L6 / apical → lower column):** its prediction is the lower column's
+///   top-down frame, which the lower column learns to use (or ignore) like any other frame.
+pub struct HigherArea {
+    pub column: CorticalColumn,
+    bits: usize,
+    span: usize,
+    /// Surprising content of recent sentences, newest last.
+    window: std::collections::VecDeque<BitVector>,
+}
+
+impl HigherArea {
+    pub fn new(bits: usize, l23: KernelClass<SimpleKernel>, span: usize) -> Self {
+        Self { column: CorticalColumn::new(bits, l23, ContextBuffer::new(bits, 4, Vec::new())), bits, span: span.max(1), window: std::collections::VecDeque::new() }
+    }
+
+    /// The slow state: everything the lower column found surprising in the last `span`
+    /// sentences (including the current one's surprises so far, `current`).
+    pub fn state(&self, current: &BitVector) -> BitVector {
+        let mut s = current.clone();
+        for w in &self.window {
+            s.or_mut(w);
+        }
+        s
+    }
+
+    /// The higher area's input: `[sentence bag | slow state]`.
+    pub fn input(&self, sentence: &BitVector, surprising: &BitVector) -> BitVector {
+        let mut words = sentence.as_words().to_vec();
+        words.extend_from_slice(self.state(surprising).as_words());
+        BitVector::from_words(words)
+    }
+
+    /// Top-down prediction for the lower column's next input.
+    pub fn predict(&mut self, input: &BitVector) -> BitVector {
+        self.column.predict(input).clone()
+    }
+
+    pub fn learn<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, target: &BitVector, rng: &mut R) {
+        self.column.learn(input, target, rng);
+    }
+
+    /// End of a sentence: its surprising content joins the slow state.
+    pub fn end_sentence(&mut self, surprising: &BitVector) {
+        if surprising.count_ones() > 0 {
+            self.window.push_back(surprising.clone());
+            while self.window.len() > self.span {
+                self.window.pop_front();
+            }
+        }
+    }
+
+    pub fn bits(&self) -> usize {
+        self.bits
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,6 +477,37 @@ mod tests {
         col.l23.set_fast_inhibition(Some(fast));
         step(&mut col, &a);
         assert_eq!(col.l23.inhibited(), 0);
+    }
+
+    #[test]
+    fn higher_area_carries_a_story_level_fact_across_filler_and_predicts_with_it() {
+        use rand::SeedableRng;
+        // story: a time-of-day sentence (surprising), filler (predictable, nothing
+        // surprising), then "name went to the" -> place, where place depends on the name
+        // AND the time; the higher area sees the name in the sentence bag and the time in
+        // its slow state
+        let bits = 64;
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 4, ..GrowthConfig::default() };
+        let mut area = HigherArea::new(bits, KernelClass::predictive(cfg), 3);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(4);
+        let (times, names, places) = ([sym(1), sym(2)], [sym(3), sym(4), sym(5)], [sym(6), sym(7), sym(8), sym(9), sym(10), sym(11)]);
+        let place = |n: usize, t: usize| (2 * n + t) % 6;
+        let mut right = 0;
+        for story in 0..400 {
+            let (t, n) = (story % 2, (story / 2) % 3);
+            area.end_sentence(&times[t]); // "in the morning ." was surprising
+            area.end_sentence(&BitVector::new(bits, Some(0))); // filler: nothing surprising
+            let mut bag = names[n].clone();
+            bag.or_mut(&sym(12)); // "went to the"
+            let input = area.input(&bag, &names[n]);
+            let pred = area.predict(&input);
+            if story >= 300 && pred.as_words() == places[place(n, t)].as_words() {
+                right += 1;
+            }
+            area.learn(&input, &places[place(n, t)], &mut rng);
+            area.end_sentence(&names[n]);
+        }
+        assert_eq!(right, 100);
     }
 
     fn sym(i: usize) -> BitVector {

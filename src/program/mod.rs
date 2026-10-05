@@ -5,7 +5,7 @@ pub mod neurocomp;
 pub use neurocomp::*;
 
 pub mod cortex;
-pub use cortex::{ContextBuffer, CorticalColumn, RouteScores};
+pub use cortex::{ContextBuffer, CorticalColumn, HigherArea, RouteScores};
 
 pub mod thalamus;
 pub use thalamus::*;

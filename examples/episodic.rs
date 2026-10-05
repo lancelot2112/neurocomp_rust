@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, CorticothalamicGate, DentateGyrus, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, CorticothalamicGate, DentateGyrus, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -78,6 +78,10 @@ enum Task {
     /// "is it the" -> the one place not yet named. Nothing in the story states the answer;
     /// the column has to avoid what it has just seen (fast inhibition).
     Elim,
+    /// Hierarchy: "in the morning ." or "at night .", 1-3 filler sentences, then
+    /// "X went to the" -> X's habitual place for that time of day (a fixed mapping learned
+    /// over training). The lower column cannot see the name and the time at the answer.
+    Habit,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -207,6 +211,28 @@ fn give_story(rng: &mut StdRng, want_held_out: bool) -> Story {
         words.extend([answer, "."]);
         return Story { words, answer_at, held_out: want_held_out };
     }
+}
+
+/// Habit task: the place name `n` habitually goes to in the morning (t = 0) or at night (1).
+fn habit_place(n: usize, t: usize) -> usize {
+    (2 * n + 3 * t + 1) % PLACES.len()
+}
+
+fn habit_story(rng: &mut StdRng, held_out: bool) -> Story {
+    let mut words: Vec<&'static str> = Vec::new();
+    if rng.gen_bool(0.5) {
+        words.push(FILLERS.choose(rng).unwrap());
+    }
+    let t = rng.gen_range(0..2);
+    words.extend(if t == 0 { ["in", "the", "morning", "."] } else { ["at", "the", "night", "."] });
+    for _ in 0..rng.gen_range(1..=3) {
+        words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+    }
+    let n = rng.gen_range(0..NAMES.len());
+    words.extend([NAMES[n], "went", "to", "the"]);
+    let answer_at = words.len();
+    words.extend([PLACES[habit_place(n, t)], "."]);
+    Story { words, answer_at, held_out }
 }
 
 fn elim_story(rng: &mut StdRng, held_out: bool) -> Story {
@@ -394,6 +420,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if task == Task::Elim {
         vocab.extend(["no", "yes"]);
     }
+    if task == Task::Habit {
+        vocab.extend(["in", "morning", "at", "night"]);
+    }
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
     let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
 
@@ -406,7 +435,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // the two routes this task needs, alongside the three of 09-10
         routes.extend([RelayChannel { query_lag: 2, value_offset: 3 }, RelayChannel { query_lag: 1, value_offset: 2 }]);
     }
-    let mid_frames = match policy {
+    // HIER=1: a higher cortical area above the column; its prediction is one more frame
+    let hier = std::env::var("HIER").is_ok();
+    let base_frames = match policy {
         Policy::NoMemory | Policy::Episodic | Policy::Consolidate | Policy::Pfc { .. } | Policy::Ca3 { .. } => 1,
         Policy::Loop(hops) => hops,
         Policy::Branch(b) => b + 1,
@@ -415,6 +446,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         Policy::L6Gate { .. } => routes.len() + 1,
         Policy::FixedRelay => routes.len(),
     };
+    let mid_frames = base_frames + hier as usize;
     let mut th = Thalamus::new(BITS, 60, routes.clone());
     let capacity = std::env::var("CAPACITY").ok().and_then(|v| v.parse().ok()).unwrap_or(200);
     let mut memory = EpisodicMemory::new(BITS, capacity); // also keeps the habituation statistics
@@ -581,6 +613,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /
     // confidence / surprise, L6 context (`th`, whose match rules the thalamus gates)
     let mut column = CorticalColumn::new(BITS, class, th);
+    // the higher area (HIER=1): its own predictive L2/3 over [sentence bag | slow state],
+    // the slow state spanning the last HIER_SPAN sentences' surprises
+    let mut area = {
+        let mut c: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
+            max_kernels: 100_000,
+            frame_words: BITS / 64,
+            max_frames: 2,
+            sample_bits: 16,
+            match_fraction: 0.8,
+            surprise_fraction: 0.5,
+            generalize: None,
+            generalize_after: 1,
+        });
+        c.set_surprise_gate(true);
+        c.set_canonical(true);
+        HigherArea::new(BITS, c, std::env::var("HIER_SPAN").ok().and_then(|v| v.parse().ok()).unwrap_or(4))
+    };
+    let mut hier_in: Option<BitVector> = None;
+    let mut topdown_has_answer = 0usize;
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     let mut recall_has_answer = 0usize;
@@ -677,7 +728,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 column.l23.set_trust_floor(Some(f));
             }
         }
-        let s = if task == Task::Elim {
+        let s = if task == Task::Habit {
+            habit_story(&mut rng, testing && s_i % 2 == 1)
+        } else if task == Task::Elim {
             elim_story(&mut rng, testing && s_i % 2 == 1)
         } else if task == Task::Give {
             give_story(&mut rng, testing && s_i % 2 == 1)
@@ -748,7 +801,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // CHUNK_SKIP: a step a habit chunk will take needs neither recall nor relays
                 let chunk_step = chunk_skip && column.l23.chunk_would_jump(code);
                 if chunk_step {
-                    words.extend(std::iter::repeat(0).take(mid_frames * BITS / 64));
+                    words.extend(std::iter::repeat(0).take(base_frames * BITS / 64));
                     chunk_skipped += 1;
                     l6_step = None;
                 } else {
@@ -1000,6 +1053,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 }
+                // the higher area: [sentence bag | slow state] -> top-down frame for the column
+                if hier {
+                    if chunk_step {
+                        words.extend(std::iter::repeat(0).take(BITS / 64));
+                        hier_in = None;
+                    } else {
+                        let hin = area.input(&sentence, &surprising);
+                        let td = area.predict(&hin);
+                        if testing && t + 1 == s.answer_at {
+                            topdown_has_answer += (td.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
+                        }
+                        words.extend_from_slice(td.as_words());
+                        hier_in = Some(hin);
+                    }
+                }
                 words.extend_from_slice(column.previous().as_words()); // L6: the previous input
                 if testing && t + 1 == s.answer_at {
                     // memory diagnostic: does any recalled frame contain the answer word?
@@ -1208,6 +1276,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     prof[2] += prof_t.elapsed().as_secs_f64();
                     prof_t = std::time::Instant::now();
                     column.learn(&input, &enc.codes[next], &mut rng);
+                    if let Some(hin) = hier_in.take() {
+                        area.learn(&hin, &enc.codes[next], &mut rng);
+                    }
                     // PROF: [3] L2/3 learning
                     prof[3] += prof_t.elapsed().as_secs_f64();
                     prof_t = std::time::Instant::now();
@@ -1260,6 +1331,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 sentence = BitVector::new(BITS, Some(0));
+                if hier {
+                    area.end_sentence(&surprising);
+                }
                 surprising = BitVector::new(BITS, Some(0));
             }
             prev = Some(ids[t]);
@@ -1391,6 +1465,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if lookups > 0 {
             eprintln!("  MEMO seed {seed}: {hits} of {lookups} interpretations served from the memo ({:.0}%)", 100.0 * hits as f64 / lookups as f64);
         }
+        if hier {
+            eprintln!("  HIER seed {seed}: higher area {} kernels; its top-down frame held the answer at {:.1}% of test answers", area.column.l23.live(), 100.0 * topdown_has_answer as f64 / TEST as f64);
+        }
         if column.l23.expected_steps() > 0 {
             eprintln!(
                 "  SURPRISE seed {seed}: {} of {} training words were expected (winner right): confirmed only",
@@ -1461,6 +1538,7 @@ fn main() {
         Ok("topic") => vec![Task::Topic],
         Ok("give") => vec![Task::Give],
         Ok("elim") => vec![Task::Elim],
+        Ok("habit") => vec![Task::Habit],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
@@ -1468,10 +1546,12 @@ fn main() {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
     for task in tasks {
-        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give | Task::Elim) { &[0] } else { &[2, 3] };
+        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give | Task::Elim | Task::Habit) { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
             println!();
-            if task == Task::Elim {
+            if task == Task::Habit {
+                println!("Habit stories: \"in the morning .\" / \"at night .\", 1-3 fillers, \"X went to the\" -> X's place for that time of day");
+            } else if task == Task::Elim {
                 println!("Elim stories: \"is it the P ? no .\" for 5 places, then \"is it the\" -> the 6th");
             } else if task == Task::Give {
                 println!("Give stories: 2-3 \"X gave the O to Y .\"; \"what did X give ?\" -> O or \"who got the O ?\" -> Y");

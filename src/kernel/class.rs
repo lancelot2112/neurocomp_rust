@@ -153,8 +153,9 @@ struct PredictiveState {
     canon: Option<std::collections::HashMap<u64, u32>>,
     /// Growth events that found an identical kernel already present.
     canon_reused: usize,
-    /// Rank winners by reliability before depth (see `set_reliability_first`).
-    reliability_first: bool,
+    /// Rank winners by reliability before depth, for kernels with at least this many
+    /// scored predictions (see `set_reliability_first`).
+    reliability_first: Option<u16>,
     /// Grow past empty frames (see `set_skip_empty`).
     skip_empty: bool,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
@@ -428,7 +429,7 @@ impl KernelClass<SimpleKernel> {
             frame_memo: None,
             canon: None,
             canon_reused: 0,
-            reliability_first: false,
+            reliability_first: None,
             skip_empty: false,
             version: 0,
             matches_stale: false,
@@ -553,7 +554,7 @@ impl KernelClass<SimpleKernel> {
             let trusted = trust_floor.map_or(true, |f| r >= f);
             let free = st.fast.as_ref().map_or(true, |f| !f.inhibits(k));
             // reliability-first puts the rate ahead of depth; otherwise that slot is constant
-            let first = if rel_first { r } else { Rate::new(0, 1) };
+            let first = rank_rate(&kern.stats, rel_first);
             let key = (free, prefer, trusted, first, kern.context_frames, tie, r, count, std::cmp::Reverse(k));
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
@@ -610,7 +611,7 @@ impl KernelClass<SimpleKernel> {
             .map(|(k, c)| {
                 let kern = &self.active_kernels[k as usize];
                 let r = Rate::of(&kern.stats);
-                let first = if st.reliability_first { r } else { Rate::new(0, 1) };
+                let first = rank_rate(&kern.stats, st.reliability_first);
                 ((first, kern.context_frames, r, c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
@@ -729,10 +730,14 @@ impl KernelClass<SimpleKernel> {
         let before = Rate::of(&self.active_kernels[w].stats);
         let k = &mut self.active_kernels[w];
         let halves = k.stats.hits == u8::MAX;
+        let evidence = k.stats.hits as u16 + k.stats.misses as u16;
         k.stats.record_hit();
         k.stats.last_useful = tick;
         let Some(st) = self.predictive.as_mut() else { return };
-        if halves {
+        // the winner's record reaching the evidence gate turns its optimistic rank into
+        // its rate, which can change the winner
+        let proven = st.reliability_first.map_or(false, |min| evidence + 1 == min);
+        if halves || proven {
             st.version += 1; // halving can shift a rate by rounding: re-rank
         }
         st.last_target_prob = before.value();
@@ -802,14 +807,19 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
-    /// Winner ranking: with `on`, the most reliable matching kernel wins and depth only
-    /// breaks ties (default: the deepest wins and reliability breaks ties). Every
-    /// matching kernel is scored at feedback, winner or not, so a deep kernel that never
-    /// wins still earns the evidence to win later. Sources (frames) are then arbitrated by
-    /// how often each has been right in this context, not by their order in L4.
-    pub fn set_reliability_first(&mut self, on: bool) {
+    /// Winner ranking: with `Some(min)`, the most reliable matching kernel wins and depth
+    /// only breaks ties (None, the default: the deepest wins and reliability breaks ties).
+    /// Sources (frames) are then arbitrated by how often each has been right in this
+    /// context, not by their order in L4.
+    ///
+    /// Evidence gate: a kernel with fewer than `min` scored predictions (hits + misses)
+    /// has no record yet and ranks as if fully reliable (optimism), so among new kernels
+    /// the deepest wins, as by default, and a fresh specific kernel gets to fire and earn
+    /// its record instead of losing to an established general one. `Some(0)` ranks every
+    /// kernel by its smoothed rate from the start.
+    pub fn set_reliability_first(&mut self, min: Option<u16>) {
         if let Some(st) = self.predictive.as_mut() {
-            st.reliability_first = on;
+            st.reliability_first = min;
             st.version += 1;
         }
     }
@@ -1653,6 +1663,16 @@ impl KernelClass<SimpleKernel> {
 }
 
 /// Whether frame `f` (0 = most recent) of a concatenated input has any active bit.
+/// The reliability-first slot of the winner key: constant when ranking is depth-first,
+/// optimistic (1/1) for a kernel without `min` scored predictions, its smoothed rate after.
+fn rank_rate(s: &KernelStats, reliability_first: Option<u16>) -> Rate {
+    match reliability_first {
+        None => Rate::new(0, 1),
+        Some(min) if (s.hits as u16 + s.misses as u16) < min => Rate::new(1, 1),
+        Some(_) => Rate::of(s),
+    }
+}
+
 fn frame_has_bits(input: &BitVector, f: usize, frame_words: usize) -> bool {
     input.as_words().iter().skip(f * frame_words).take(frame_words).any(|&w| w != 0)
 }
@@ -2109,7 +2129,9 @@ mod tests {
         let c = BitVector::from_words(vec![0xFF0000]);
         let a = frames(&[0xFF, 0]);
         let xa = frames(&[0xFF, 0xF000_0000_0000_0000]);
-        for (rel_first, want) in [(false, 0xFF0000), (true, 0xFF00)] {
+        // depth-first: the fresh deep kernel wins; reliability-first: the proven one; with
+        // an evidence gate, the fresh one again (no record yet: ranked optimistically)
+        for (rel_first, want) in [(None, 0xFF0000), (Some(0), 0xFF00), (Some(4), 0xFF0000)] {
             let mut kc = KernelClass::predictive(cfg);
             kc.set_reliability_first(rel_first);
             for _ in 0..8 {
@@ -2117,7 +2139,6 @@ mod tests {
             }
             step(&mut kc, &xa, &c); // one "xA -> C": a fresh deep kernel
             assert!(kc.kernels().iter().any(|k| k.context_frames == 2));
-            // depth-first: the fresh deep kernel wins; reliability-first: the proven one
             assert_eq!(step(&mut kc, &xa, &c), want);
         }
     }

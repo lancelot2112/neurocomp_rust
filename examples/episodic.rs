@@ -602,7 +602,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // RANK=reliability: L2/3 winners ranked by reliability before depth (sources arbitrated
     // by how often each has been right, not by frame order); SKIP_EMPTY=1: growth deepens
     // past empty frames
-    class.set_reliability_first(std::env::var("RANK").map_or(false, |v| v == "reliability"));
+    // RANK_MIN=n: evidence gate, kernels with fewer than n scored predictions rank as fully
+    // reliable (default 0: rate from the start)
+    let rank_min: u16 = std::env::var("RANK_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    class.set_reliability_first(std::env::var("RANK").ok().filter(|v| v == "reliability").map(|_| rank_min));
     class.set_skip_empty(std::env::var("SKIP_EMPTY").is_ok());
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {

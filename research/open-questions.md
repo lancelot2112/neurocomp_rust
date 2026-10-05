@@ -20,10 +20,11 @@ Ordered roughly by how much they matter for "reading like a transformer".
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where
   0.3–2.3 MB is needed.
-- **Several columns, a hierarchy, and real text.** Everything runs through one column on
-  templated stories. A second area reading the first's L5 output through a thalamic
-  relay is the start of a hierarchy, and the step toward reading a book again with
-  episodic memory, gating and compaction ([comparison](concepts/brain-transformer-comparison.md)).
+- **The hierarchy's next steps** ([24](experiments/24-cortical-hierarchy.md)): run the
+  higher area on a truly slower clock (only on the column's surprises, or once per
+  sentence) to remove its cost; arbitrate between memory and top-down by each source's
+  reliability per context; a third level; several columns side by side; then real text
+  again ([comparison](concepts/brain-transformer-comparison.md)).
 - **Basal ganglia and L6 together** on the same relays (select by reward among what L6
   lets through).
 - **Two-hop's weak seed.** The selector picks well (answer in recall 86–89%), but the

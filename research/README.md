@@ -37,6 +37,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Different questions need different relays: L6 opens several routes at once, per context (with a warm-up and slow weakening) | **100 / 100 / 98%** held-out, ~1 channel per word | all relays open 91 / 88 / 99%; basal ganglia (one channel) 55–60% | [21](experiments/21-several-routes.md) |
 | – | Elimination ("which place hasn't been named?") by a fast-learning inhibitory loop in L2/3, gated by reliability in integers | **100%** every seed, varied stories still 100% | no inhibition 14–17% (chance); ungated: varied falls to 78–84% | [22](experiments/22-fast-inhibition.md) |
 | – | Compaction: event-based fast path, uncertainty-gated growth, sleep (downscale, prune, merge by replay) | **5–14× fewer kernels**, accuracy kept on every task; answering 5–62 µs/word (from 160–3,600) with surprise-gated learning, event-based recall, sparse storage and canonical kernels | transformer 16–100 µs/word, but 25–77% on held-out binding where we get 72–100% | [23](experiments/23-compaction.md), [comparison](concepts/brain-transformer-comparison.md) |
+| – | A cortical hierarchy: a higher area (sentence + slow state of past surprises) learns the column's errors and feeds back a top-down frame | **81 / 82 / 80%** on a task needing story-level context | column alone 0%, episodic memory 49–52% | [24](experiments/24-cortical-hierarchy.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -89,6 +90,7 @@ Experiments (chronological)
 21. [Several routes needed: L6 opens more than one relay where each is used](experiments/21-several-routes.md)
 22. [A fast-learning inhibitory loop in L2/3](experiments/22-fast-inhibition.md)
 23. [Compaction: an event-based fast path, uncertainty-gated growth and sleep](experiments/23-compaction.md)
+24. [A cortical hierarchy: a higher area that predicts the column's errors](experiments/24-cortical-hierarchy.md)
 
 Concepts
 - [Brain, this network, and a transformer: function vs speed and memory](concepts/brain-transformer-comparison.md)

@@ -634,11 +634,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         c.set_canonical(true);
         // HIER_GROW_TRUST=p/q: growth trust floor in the higher area (did not help)
         c.set_growth_trust(ratio_env("HIER_GROW_TRUST"));
-        // the same compaction as the column: uncertainty-gated growth, and sleep (below)
-        if let Some(k) = std::env::var("GROW_GATE").ok().and_then(|v| v.parse().ok()) {
-            c.set_growth_gate(Some((k, std::env::var("UNC_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(16))));
-        }
-        if std::env::var("SLEEP_EVERY").is_ok() {
+        // HIER_SLEEP=1: sleep compacts the higher area too (half the cost, a few points less
+        // on habit). No uncertainty gate on its growth: the gate stops growth when no input
+        // frame carries the target, but the higher area's target (the column's residual) is
+        // never in its input, by design
+        if std::env::var("HIER_SLEEP").is_ok() {
             c.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
         }
         let mut a = HigherArea::new(BITS, c, hier_span);
@@ -690,7 +690,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
         if !testing && s_i > 0 && sleep_every.map_or(false, |n| s_i % n == 0) {
             let (p, m) = column.l23.sleep();
-            if hier {
+            if hier && std::env::var("HIER_SLEEP").is_ok() {
                 area.column.l23.sleep();
             }
             sleeps += 1;

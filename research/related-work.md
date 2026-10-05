@@ -264,6 +264,18 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   habits versus goal-directed control. The chunks of
   [23](experiments/23-compaction.md#10-chunking-hashlifes-time-skipping).
 
+## Cortical hierarchy ([24](experiments/24-cortical-hierarchy.md))
+- **Sherman, S. M. & Guillery, R. W. (2006).** *Exploring the Thalamus and Its Role in
+  Cortical Function* (2nd ed.). MIT Press. Layer 5 drives higher-order thalamic nuclei,
+  which relay to the next cortical area: the feedforward path of the hierarchy.
+- **Hasson, U. et al. (2008).** *A hierarchy of temporal receptive windows in human
+  cortex.* J. Neuroscience 28; **Murray, J. D. et al. (2014).** *A hierarchy of intrinsic
+  timescales across primate cortex.* Nature Neuroscience 17. Higher areas integrate over
+  longer windows: the slow state.
+- Predictive coding across levels: **Rao & Ballard (1999)**, **Friston (2005)** (under
+  [top-down feedback](#top-down-feedback-and-predictive-coding)); the higher area learns
+  the column's residual.
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

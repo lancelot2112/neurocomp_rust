@@ -50,6 +50,41 @@ seed, from a semantic store of 286–331 kernels. (Hippocampus-only anchor score
 the guessing floor: with no recall the predictor falls back on one fixed place, right for
 one of the three anchors.)
 
+## Prioritised replay: questions decide what is consolidated
+Settings that make the replay budget matter: anchors stated only in the first **30** stories
+(`ANCHOR_STORIES=30`), sleep replays **1** episode after only **30%** of stories
+(`REPLAYS=1 REPLAY_PROB=0.3`). During those 30 stories, half the training questions ask
+about the anchor just stated (retrieval practice). Three modes (`REPLAY_MODE`):
+- **random**: sleep replay picks episodes uniformly.
+- **tagged**: when a question's hippocampal recall *contained the answer*, that episode is
+  tagged; sleep replay picks episodes with weight 1 + 20 × tags. The tag stores the
+  question's cue, and replaying a tagged episode trains the cortex under that cue.
+- **awake**: that episode is replayed into the cortex *at once, at the question*, under the
+  question's cue: a prefrontal-driven retrieval that forces a consolidation event.
+
+| Anchor questions, small budget | Seed 0 | Seed 1 | Seed 2 | Cortical kernels |
+|---|---|---|---|---|
+| random replay | 33.6% | 64.2% | 66.2% | 159–181 |
+| **tagged sleep replay** | **100%** | **100%** | **100%** | **90–103** |
+| **awake replay at the question** | **100%** | **100%** | **100%** | 178–212 |
+
+(Normal questions: 100% in every run.)
+
+Two things had to be right, found by the runs that failed first:
+1. **Credit = the recall contained the answer**, not "the predictor answered correctly".
+   The anchor questions come in the first 30 stories, before the predictor has learned to
+   read memory, so answer-based credit missed them (tagged 30–68%, awake 65–100%).
+2. **The cortical key is the question's cue.** Keying a replay on the episode's rarest bits
+   uses the bit counts at replay time; early on every count is tiny, so the key could be an
+   adverb rather than the name, and the test-time cue (the name) did not match (awake on
+   seed 2: 67% → 100%; tagged: ~30% → 100%).
+
+**What this shows:** being asked about something, and having the hippocampus answer it,
+is what should decide consolidation. The prefrontal query supplies both *which* episode
+(the one recalled) and *under what key* (what was asked). Tagged sleep replay reaches the
+same accuracy as awake replay with about half the cortical kernels, because sleep replays
+repeat the same few tagged episodes instead of every question's recall.
+
 ## Findings
 1. **Replay transfers facts from hippocampus to cortex.** Facts stated only early in
    training, long overwritten in the hippocampus, are answered perfectly from the cortical

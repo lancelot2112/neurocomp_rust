@@ -18,7 +18,7 @@ connections between them exist. "Not modelled" is as important as what is.
 | **Subiculum** | Hippocampal output hub, to thalamus / PFC | — | Not modelled |
 | **Big loop** (EC→HC→EC) | Recalled content re-enters as the next cue | `recall_chain`, `recall_branches` ([13](../experiments/13-big-loop.md)) | Built |
 | **Red nucleus** | Cerebellum → red nucleus → spinal cord (and → inferior olive) | — | Not modelled: **no motor or action output** at all |
-| **Prefrontal / working memory** | Holds items; BG gates updates (PBWM) | — | Not modelled (closest: selector's choice held for one hop) |
+| **Prefrontal / working memory** | Holds items; BG gates updates (PBWM); directs retrieval (via nucleus reuniens) | A question's recall cue, used to tag or immediately replay the recalled episode into cortex ([17](../experiments/17-consolidation.md#prioritised-replay-questions-decide-what-is-consolidated)) | Partial: retrieval-driven consolidation only |
 | **Neuromodulators** | Dopamine (reward), ACh (encode vs retrieve), NE (surprise) | Reward in `BasalGanglia`; surprise drives growth; novelty gates storage | Signals exist, no separate systems |
 
 ## Connections that exist

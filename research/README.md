@@ -30,6 +30,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Two-hop questions, learned choice of what to follow (basal ganglia) | **89.1%** held-out (5 seeds, bit-sliced counters) | branching recall 80.8% | [15](experiments/15-basal-ganglia-selector.md) |
 | – | Basal ganglia choose among thalamic channels (learned routes + memory recall) | **100%** every seed, memory released at every answer | routes only 36–41% | [16](experiments/16-thalamic-gate-memory-channel.md) |
 | – | Facts the hippocampus has overwritten, recalled from cortex after replay (consolidation) | **100%** every seed | hippocampus only 0–37% (guessing) | [17](experiments/17-consolidation.md) |
+| – | Small replay budget: replay chosen by questions (tagged or awake) | **100%** every seed | random replay 34–66% | [17](experiments/17-consolidation.md#prioritised-replay-questions-decide-what-is-consolidated) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off

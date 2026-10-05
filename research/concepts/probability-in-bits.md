@@ -101,4 +101,6 @@ The L2/3 predictor kept floats longest: each kernel's reliability was an `f32`
   in principle overflow. Per kernel: 2 bytes of statistics instead of 8.
 - **Results unchanged.** Float vs integer ranking on the same build: identical on varied
   stories (100%) and two-hop (90.0% held-out, seed 0). 8-bit halving counters: identical
-  on two-hop seed 0 (90.0%), varied (100%, seeds 0–2) and elimination (100%, seeds 0–1).
+  on two-hop seed 0 (90.0%); varied and elimination 100% on seeds 0–2; two-hop seeds 1–2
+  86.8 / 77.2%, within that setting's usual spread (90 / 79 / 70% in
+  [15](../experiments/15-basal-ganglia-selector.md) with the same predictor settings).

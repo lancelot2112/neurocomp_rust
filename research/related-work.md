@@ -236,6 +236,22 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   Values as densities of ones in bit streams; AND multiplies. See
   [probability in bits](concepts/probability-in-bits.md).
 
+## Sleep, pruning and uncertainty (compaction, [23](experiments/23-compaction.md))
+- **Tononi, G. & Cirelli, C. (2003, 2014).** *Sleep and synaptic homeostasis: a
+  hypothesis* (Brain Res. Bull. 62); *Sleep and the price of plasticity* (Neuron 81).
+  Waking learning potentiates synapses; slow-wave sleep downscales them and weak ones
+  are lost. The downscale and prune steps of `sleep`.
+- **Yu, A. & Dayan, P. (2005).** *Uncertainty, neuromodulation, and attention.* Neuron
+  46. Acetylcholine signals expected uncertainty, noradrenaline unexpected uncertainty;
+  only the second should drive learning. The uncertainty-gated growth.
+- **Földiák, P. (1990).** *Forming sparse representations by local anti-Hebbian
+  learning.* Biol. Cybern. 64. Lateral inhibition decorrelates units, so two do not learn
+  the same thing.
+- **Stevens, B. et al. (2007).** *The classical complement cascade mediates CNS synapse
+  elimination* (Cell 131); **Schafer, D. et al. (2012).** *Microglia sculpt postnatal
+  neural circuits in an activity and complement-dependent manner* (Neuron 74). Weak,
+  little-used synapses are tagged and removed.
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

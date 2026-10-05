@@ -1,0 +1,126 @@
+# 23 · Compaction: an event-based fast path, uncertainty-gated growth and sleep
+
+**Question.** The column learns in one pass, but it was 100–500× slower per word than a
+small transformer, and on the elimination task 17,273 kernels matched a single context.
+The aim was three things:
+- an event-based path that touches only the active bits (about 32 of 8,192 per word),
+  with learning still inline at every word;
+- a prior that stays compact, using mechanisms the brain uses for the same job;
+- accuracy kept on every task.
+
+**Code.**
+- In [`src/kernel/simple.rs`](../../src/kernel/simple.rs): `SimpleKernel::input_bits`,
+  `input_set` and `output_set`.
+- In [`src/kernel/class.rs`](../../src/kernel/class.rs): `set_growth_gate`, `sleep`,
+  `set_replay` and `live`.
+- In [`examples/episodic.rs`](../../examples/episodic.rs): `GROW_GATE`, `UNC_MIN`,
+  `SLEEP_EVERY`, `REPLAY_LEN`, and the `COST` and `PROF` report lines.
+
+Run: add `GROW_GATE=3 SLEEP_EVERY=500` to any experiment's settings.
+
+## 1. Measure first
+Per-stage timers on the word loop (`PROF`) put the time almost entirely in L2/3: kernel
+matching took 76–78% and learning 19–21% on varied stories. Recall, relays, gates and
+evaluation together took 2% or less. Within L2/3, the cost came from dense operations on
+sparse objects:
+- **Near-miss check:** for every kernel the input touched without fully matching, it
+  popcounted the kernel's whole input mask, 3 × 8,192 bits (384 words), just to learn its
+  size.
+- **Learning:** checking a prediction ANDed and popcounted the kernel's full 8,192-bit
+  output. The copy-credit tags and pruning scanned each hit or near-miss kernel's dense
+  input mask.
+- **Fast inhibition:** tags were a hash map that was walked every step to count them
+  down.
+
+## 2. Event-based fast path (results unchanged)
+- **Cached sizes and positions:** each kernel caches its input-mask size, its input bits
+  as a position list and its output as a position list (~32 bits). They are resynced
+  wherever pruning or the Hebbian moves change a mask.
+- **Expiry array:** fast-inhibition tags became one step number per kernel.
+
+Kernel counts and accuracy were identical. Per word, before and after:
+
+| | Training | Answering |
+|---|---|---|
+| Varied stories | 2,421–2,998 → 274–378 µs (8–9×) | 3,489–4,134 → 183–208 µs (19–20×) |
+| Elimination | 2,664 → 399 µs (6.7×) | 3,570 → 467 µs (7.6×) |
+
+## 3. Compacting the prior
+What remained was structural: a context fanned out to thousands of redundant kernels.
+Two brain mechanisms handle exactly this.
+
+**Awake: expected uncertainty gates growth (acetylcholine-like; Yu & Dayan 2005).**
+- A miss normally grows a new kernel. It now grows nothing when two conditions hold:
+  - the winning kernel's context is *known* to be unpredictable: at least `UNC_MIN` = 16
+    observations, and a hit rate below 2^k/(2^k+1), tested in integers as
+    `(misses+1) << k > hits+1` with k = 3;
+  - no input frame carries the target, so a new kernel would have nothing to copy or key
+    on.
+- The second condition keeps memory-copy learning intact: in varied stories the answer
+  *is* in the memory frame, so growth still happens there.
+- In short, only *unexpected* surprise drives growth.
+
+**Asleep: synaptic homeostasis and replay (Tononi & Cirelli 2003, 2014).** Every 500
+training stories:
+1. **Downscale:** every kernel's hit and miss counts shift right by one.
+2. **Prune:** kernels that have only ever failed are removed.
+3. **Merge by replay:** the column keeps its last 512 inputs as active-bit lists, and
+   replays them. Kernels with the same output that fire on *exactly the same* replayed
+   inputs carry the same information. The most reliable one is kept and the others are
+   removed. Kernels that fire on nothing in the replay are kept, since they may be rare
+   but useful, such as a copy kernel for a rare word.
+
+Removed slots go to a free list that growth reuses, and the inverted index is rebuilt
+once per sleep.
+
+A first version merged only kernels whose inputs were a *subset* of a more general
+kernel's. It found nothing (0 merges): each kernel samples random bits of each word, so
+two duplicates read different bits of the same words. They are redundant in what they
+respond to, not in what they store. Replay sees that; a static comparison does not.
+
+## Results (seeds 0 / 1 / 2; "none" is seed 0 on the same build)
+
+| Task | Live kernels: none → compacted | Held-out: none → compacted | Training µs/word | Answering µs/word |
+|---|---|---|---|---|
+| Elimination (fast inhibition) | 17,273 → **1,193** (14×) | 100% → **100%** | 423 → **39** | 482 → **19** |
+| Varied, 1–2 facts | 16,237 → 2,968–3,061 (5.4×) | 100% → **100 / 100 / 100%** | 272 → ~95 | 161 → 67–75 |
+| Varied, 1–3 facts | 19,292 → 3,301–3,425 (5.7×) | 100% → **100 / 100 / 100%** | 356 → ~96 | 180 → 70–79 |
+| Topic (learned prefrontal gate) | 14,779 → 2,581–2,867 (5.4×) | 100% → **100 / 100 / 100%** | 323 → ~101 | 196 → 71–84 |
+| Give (L6 gate) | 24,992 → 5,123–5,418 (4.7×) | 100% → **100 / 100 / 99.8%** | 658 → ~223 | 228 → ~110 |
+| Two-hop (basal-ganglia selector) | 33,257 → 6,742–6,805 (4.9×) | 90.0% → 89.0 / 86.4 / 71.8% | 1,161 → ~238 | 466 → ~149 |
+
+Kernel memory, compacted:
+- **As stored now** (dense masks): 4.9–50 MB, against 60–230 MB before.
+- **As sparse indices plus the inverted index:** 0.3–2.3 MB.
+
+The two-hop selector's seeds without compaction are 90.0 / 86.8 / 77.2% (8-bit counters,
+[probability in bits](../concepts/probability-in-bits.md)). Seed 2 is 5 points lower
+compacted, and it is the seed that has always been weakest (70% in
+[15](15-basal-ganglia-selector.md) with the same predictor settings).
+
+## Findings
+1. **Most of the prior was duplicates.** Replay merged 8,000–22,000 kernels per run. The
+   column was storing the same context → continuation many times over, as random bit
+   samples of the same words.
+2. **Compaction did not cost function.** Every task keeps its accuracy (100% where it was
+   100%), except possibly two-hop seed 2 (−5 points).
+3. **The fast path is now competitive with a small transformer per word**, while learning
+   inline in one pass. From this morning's code to now, answering on elimination went
+   from about 3,600 µs per word to 19 µs (~190×), and on varied stories from ~3,500 µs to
+   ~70 µs (~50×). See the [comparison](../concepts/brain-transformer-comparison.md).
+4. **What's left:**
+   - **Masks are still stored densely,** about 50× more memory than the sparse form needs.
+   - **Learning now dominates** (60%): every matched kernel is still scored at every
+     word, even when the prediction was right. Surprise-gated learning, where an expected
+     word costs almost nothing, is the next step.
+
+## Biology
+- **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
+  to signal known, irreducible noise, and noradrenaline a change in the world. Only the
+  second should drive structural learning.
+- **Synaptic homeostasis** (Tononi & Cirelli): waking learning adds synapses; slow-wave
+  sleep scales them down, and weak ones are pruned.
+- **Replay** (sleep reactivation, as in [17](17-consolidation.md)): reactivated patterns
+  expose which units carry the same information. Here that is used to merge them.
+- **Pruning of unused synapses** by microglia (Stevens et al. 2007; Schafer et al. 2012)
+  corresponds to the "only fails" prune and to least-recently-used recycling.

@@ -36,6 +36,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Cortical layer 6 gates the thalamic relays (per context, learned from use, no reward) | **100%** every seed, 0.04–0.19 channels per word, 2.4× faster | all channels open: 100%, 3.5 channels per word | [20](experiments/20-l6-corticothalamic-gating.md) |
 | – | Different questions need different relays: L6 opens several routes at once, per context (with a warm-up and slow weakening) | **100 / 100 / 98%** held-out, ~1 channel per word | all relays open 91 / 88 / 99%; basal ganglia (one channel) 55–60% | [21](experiments/21-several-routes.md) |
 | – | Elimination ("which place hasn't been named?") by a fast-learning inhibitory loop in L2/3, gated by reliability in integers | **100%** every seed, varied stories still 100% | no inhibition 14–17% (chance); ungated: varied falls to 78–84% | [22](experiments/22-fast-inhibition.md) |
+| – | Compaction: event-based fast path, uncertainty-gated growth, sleep (downscale, prune, merge by replay) | **5–14× fewer kernels**, accuracy kept on every task; answering 19–150 µs/word (from 160–3,600) | transformer 16–100 µs/word, but 25–77% on held-out binding where we get 72–100% | [23](experiments/23-compaction.md), [comparison](concepts/brain-transformer-comparison.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -87,8 +88,10 @@ Experiments (chronological)
 20. [Layer 6 corticothalamic gating: cortex learns which relays to let through](experiments/20-l6-corticothalamic-gating.md)
 21. [Several routes needed: L6 opens more than one relay where each is used](experiments/21-several-routes.md)
 22. [A fast-learning inhibitory loop in L2/3](experiments/22-fast-inhibition.md)
+23. [Compaction: an event-based fast path, uncertainty-gated growth and sleep](experiments/23-compaction.md)
 
 Concepts
+- [Brain, this network, and a transformer: function vs speed and memory](concepts/brain-transformer-comparison.md)
 - [Surprise-driven growth and recycling](concepts/surprise-driven-growth.md)
 - [The Hebbian mask rule](concepts/hebbian-mask-rule.md)
 - [Sparse codes and collisions](concepts/sparse-codes-and-collisions.md)

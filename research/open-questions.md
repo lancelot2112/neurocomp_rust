@@ -2,6 +2,26 @@
 
 Ordered roughly by how much they matter for "reading like a transformer".
 
+## Current (after [23](experiments/23-compaction.md))
+- **Surprise-gated learning.** Learning is now ~60% of the time: every matched kernel is
+  scored at every word, even when the prediction was right. Score only on surprise, or
+  only the winner and its rivals, so an expected word costs almost nothing (the brain's
+  energy trick).
+- **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where
+  0.3–2.3 MB is needed.
+- **Several columns, a hierarchy, and real text.** Everything runs through one column on
+  templated stories. A second area reading the first's L5 output through a thalamic
+  relay is the start of a hierarchy, and the step toward reading a book again with
+  episodic memory, gating and compaction ([comparison](concepts/brain-transformer-comparison.md)).
+- **Basal ganglia and L6 together** on the same relays (select by reward among what L6
+  lets through).
+- **Two-hop's weak seed.** The selector picks well (answer in recall 86–89%), but the
+  predictor misses on seed 2 (72–77%).
+
+## Earlier list (items 1, 4 and parts of 7 have since been addressed: held-out binding
+[11](experiments/11-episodic-memory.md)–[21](experiments/21-several-routes.md), growth
+gating [23](experiments/23-compaction.md))
+
 1. **Variable binding / content-addressed retrieval.** The 0% on held-out bAbI-style
    pairs ([06B](experiments/06-meaning.md)) is the main architectural gap. Try fast
    one-shot binding kernels, XOR binding, or copy kernels

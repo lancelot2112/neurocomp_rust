@@ -364,15 +364,25 @@ impl CorticalColumn {
 ///   top-down frame, which the lower column learns to use (or ignore) like any other frame.
 pub struct HigherArea {
     pub column: CorticalColumn,
+    /// Slow state as one frame per recent sentence (newest first) instead of one frame
+    /// for all of them: a fact's sentence stays apart from the filler around it.
+    pub separate: bool,
     bits: usize,
     span: usize,
     /// Surprising content of recent sentences, newest last.
     window: std::collections::VecDeque<BitVector>,
+    /// Attention at growth: a new kernel samples the slow state from one remembered word
+    /// only (chosen at random), plus the whole sentence bag, so it keys on (sentence, one
+    /// earlier fact) and generalizes across the other words that happen to be in the state.
+    pub focus: bool,
+    /// The surprising words, one code each: of the current sentence, and of recent ones.
+    pending_words: Vec<BitVector>,
+    window_words: std::collections::VecDeque<Vec<BitVector>>,
 }
 
 impl HigherArea {
     pub fn new(bits: usize, l23: KernelClass<SimpleKernel>, span: usize) -> Self {
-        Self { column: CorticalColumn::new(bits, l23, ContextBuffer::new(bits, 4, Vec::new())), bits, span: span.max(1), window: std::collections::VecDeque::new() }
+        Self { column: CorticalColumn::new(bits, l23, ContextBuffer::new(bits, 4, Vec::new())), separate: false, bits, span: span.max(1), window: std::collections::VecDeque::new(), focus: false, pending_words: Vec::new(), window_words: std::collections::VecDeque::new() }
     }
 
     /// The slow state: everything the lower column found surprising in the last `span`
@@ -385,10 +395,20 @@ impl HigherArea {
         s
     }
 
-    /// The higher area's input: `[sentence bag | slow state]`.
+    /// The higher area's input: `[sentence bag | slow state]`, or with `separate`,
+    /// `[sentence bag | last sentence's surprises | the one before | ...]` (`span` frames,
+    /// empty where there is no such sentence yet).
     pub fn input(&self, sentence: &BitVector, surprising: &BitVector) -> BitVector {
         let mut words = sentence.as_words().to_vec();
-        words.extend_from_slice(self.state(surprising).as_words());
+        if self.separate {
+            let empty = BitVector::new(self.bits, Some(0));
+            for i in 0..self.span {
+                let w = self.window.len().checked_sub(i + 1).map(|j| &self.window[j]).unwrap_or(&empty);
+                words.extend_from_slice(w.as_words());
+            }
+        } else {
+            words.extend_from_slice(self.state(surprising).as_words());
+        }
         BitVector::from_words(words)
     }
 
@@ -398,12 +418,44 @@ impl HigherArea {
     }
 
     pub fn learn<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, target: &BitVector, rng: &mut R) {
+        if self.focus && !self.separate {
+            // growth may sample all of frame 0 (the sentence) and one state word in frame 1
+            // earlier sentences only: the current one is already in the bag
+            let words: Vec<&BitVector> = self.window_words.iter().flatten().collect();
+            if !words.is_empty() {
+                let pick = words[rng.gen_range(0..words.len())];
+                let mut mask = BitVector::new(2 * self.bits, Some(0));
+                for (i, w) in mask.as_words_mut().iter_mut().enumerate().take(self.bits / 64) {
+                    *w = !0;
+                    let _ = i;
+                }
+                for (i, &w) in pick.as_words().iter().enumerate() {
+                    mask.as_words_mut()[self.bits / 64 + i] = w;
+                }
+                self.column.l23.set_growth_mask(Some(mask));
+                self.column.learn(input, target, rng);
+                self.column.l23.set_growth_mask(None);
+                return;
+            }
+        }
         self.column.learn(input, target, rng);
+    }
+
+    /// A word the lower column found surprising (kept as its own item for `focus`).
+    pub fn note_word(&mut self, code: &BitVector) {
+        self.pending_words.push(code.clone());
     }
 
     /// End of a sentence: its surprising content joins the slow state.
     pub fn end_sentence(&mut self, surprising: &BitVector) {
-        if surprising.count_ones() > 0 {
+        let words = std::mem::take(&mut self.pending_words);
+        if !words.is_empty() {
+            self.window_words.push_back(words);
+            while self.window_words.len() > self.span {
+                self.window_words.pop_front();
+            }
+        }
+        if self.separate || surprising.count_ones() > 0 {
             self.window.push_back(surprising.clone());
             while self.window.len() > self.span {
                 self.window.pop_front();

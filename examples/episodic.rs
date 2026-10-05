@@ -615,22 +615,34 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut column = CorticalColumn::new(BITS, class, th);
     // the higher area (HIER=1): its own predictive L2/3 over [sentence bag | slow state],
     // the slow state spanning the last HIER_SPAN sentences' surprises
+    let hier_span: usize = std::env::var("HIER_SPAN").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
     let mut area = {
         let mut c: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
             max_kernels: 100_000,
             frame_words: BITS / 64,
-            max_frames: 2,
+            max_frames: if std::env::var("HIER_SEPARATE").is_ok() { 1 + hier_span } else { 2 },
             sample_bits: 16,
             match_fraction: 0.8,
             surprise_fraction: 0.5,
-            generalize: None,
-            generalize_after: 1,
+            // HIER_GENERALIZE=f: near-miss generalization in the higher area (off: it pruned
+            // the time-of-day bits along with the noise)
+            generalize: std::env::var("HIER_GENERALIZE").ok().and_then(|v| v.parse().ok()).filter(|&f: &f32| f > 0.0),
+            generalize_after: std::env::var("GENERALIZE_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
         });
         c.set_surprise_gate(true);
         c.set_canonical(true);
-        HigherArea::new(BITS, c, std::env::var("HIER_SPAN").ok().and_then(|v| v.parse().ok()).unwrap_or(4))
+        // HIER_GROW_TRUST=p/q: growth trust floor in the higher area (did not help)
+        c.set_growth_trust(ratio_env("HIER_GROW_TRUST"));
+        let mut a = HigherArea::new(BITS, c, hier_span);
+        // HIER_SEPARATE=1: one slow-state frame per recent sentence (worse: deep kernels at
+        // varying lags); default: one frame with all recent surprises
+        a.separate = std::env::var("HIER_SEPARATE").is_ok();
+        // HIER_FOCUS=1: attention to one remembered word at growth (did not help)
+        a.focus = std::env::var("HIER_FOCUS").is_ok();
+        a
     };
     let mut hier_in: Option<BitVector> = None;
+    let hier_residual = std::env::var("HIER_RESIDUAL").map_or(true, |v| v != "0");
     let mut topdown_has_answer = 0usize;
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
@@ -768,6 +780,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let share = 1.0 - column.surprise(code);
             if share < predicted_share {
                 surprising.or_mut(code);
+                if hier {
+                    area.note_word(code);
+                }
             }
             if std::env::var("TRACE_SHARE").is_ok() && testing && s_i < TRAIN + 3 {
                 eprint!("{}:{share:.2} ", s.words[t]);
@@ -810,6 +825,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     } else {
                         let hin = area.input(&sentence, &surprising);
                         let td = area.predict(&hin);
+                        if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
+                            let names = |bv: &BitVector| -> Vec<&str> {
+                                (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
+                            };
+                            eprintln!(
+                                "  HIERDIAG {:?}\n    state {:?} -> top-down {:?} (confidence {:.2}), answer {}",
+                                s.words,
+                                names(&area.state(&surprising)),
+                                names(&td),
+                                area.column.confidence(),
+                                s.words[t + 1]
+                            );
+                        }
                         if testing && t + 1 == s.answer_at {
                             topdown_has_answer += (td.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
                         }
@@ -1278,8 +1306,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     prof[2] += prof_t.elapsed().as_secs_f64();
                     prof_t = std::time::Instant::now();
                     column.learn(&input, &enc.codes[next], &mut rng);
+                    // predictive coding: the higher area learns the lower column's residual,
+                    // the words it failed to predict (HIER_RESIDUAL=0: every word)
                     if let Some(hin) = hier_in.take() {
-                        area.learn(&hin, &enc.codes[next], &mut rng);
+                        if !hier_residual || column.surprise(&enc.codes[next]) >= 0.5 {
+                            area.learn(&hin, &enc.codes[next], &mut rng);
+                        }
                     }
                     // PROF: [3] L2/3 learning
                     prof[3] += prof_t.elapsed().as_secs_f64();

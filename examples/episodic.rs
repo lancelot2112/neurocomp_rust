@@ -585,6 +585,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // COST: wall time and words for training and test
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
     let mut phase_start = std::time::Instant::now();
+    let mut prof = [0f64; 6];
+    let mut prof_t = std::time::Instant::now();
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
         if s_i == TRAIN {
@@ -664,6 +666,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         for t in 0..ids.len() {
+            // PROF: [4] storage and everything after learning (from the previous word)
+            prof[4] += prof_t.elapsed().as_secs_f64();
+            prof_t = std::time::Instant::now();
             let code = &enc.codes[ids[t]];
             column.observe(code);
             sentence.or_mut(code);
@@ -701,6 +706,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             }
 
+            // PROF: [5] observe, surprise, sentence bag, working-memory gate
+            prof[5] += prof_t.elapsed().as_secs_f64();
+            prof_t = std::time::Instant::now();
             if t + 1 < ids.len() {
                 let mut words = code.as_words().to_vec();
                 match policy {
@@ -984,10 +992,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         })
                         .count();
                 }
+                // PROF: [0] L4 assembly: recall, relays, gates
+                prof[0] += prof_t.elapsed().as_secs_f64();
+                prof_t = std::time::Instant::now();
                 let input = BitVector::from_words(words);
 
                 let mut out = BitVector::new(BITS, Some(0));
                 out.or_mut(column.predict(&input));
+                // PROF: [1] L2/3 prediction
+                prof[1] += prof_t.elapsed().as_secs_f64();
+                prof_t = std::time::Instant::now();
                 let next = ids[t + 1];
                 if std::env::var("FASTDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
                     eprintln!(
@@ -1145,7 +1159,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     column.fast_inhibit(&enc.codes[next]);
                 }
                 if !testing {
+                    // PROF: [2] evaluation, diagnostics, rewards
+                    prof[2] += prof_t.elapsed().as_secs_f64();
+                    prof_t = std::time::Instant::now();
                     column.learn(&input, &enc.codes[next], &mut rng);
+                    // PROF: [3] L2/3 learning
+                    prof[3] += prof_t.elapsed().as_secs_f64();
+                    prof_t = std::time::Instant::now();
                     // dopamine: did the followed item's recall contain what came next?
                     if policy == Policy::LearnedGate && enc.decode(&out) != Some(next) {
                         // surprise: discover and score routes that would have relayed `next`
@@ -1327,6 +1347,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             train_words,
             1e6 * test_secs / test_words.max(1) as f64
         );
+    }
+    if dump.is_none() {
+        let total: f64 = prof.iter().sum();
+        let names = ["L4 assembly (recall, relays, gates)", "L2/3 prediction", "evaluation and rewards", "L2/3 learning", "storage and after-learning", "observe / surprise / bag"];
+        let parts: Vec<String> = names.iter().zip(prof).map(|(n, p)| format!("{n} {:.0}%", 100.0 * p / total)).collect();
+        eprintln!("  PROF seed {seed}: {:.0} s in the word loop: {}", total, parts.join(", "));
     }
     Outcome { seen: pct(seen), held_out: pct(held), recall: 100.0 * recall_has_answer as f64 / TEST as f64, places: recall_places as f64 / TEST as f64 }
 }

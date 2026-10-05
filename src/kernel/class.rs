@@ -163,6 +163,19 @@ impl FastInhibition {
     pub fn new(ttl: u8, on_hits: bool, on_misses: bool) -> Self {
         Self { ttl, on_hits, on_misses, tags: std::collections::HashMap::new() }
     }
+
+    fn tag(&mut self, hits: &[usize], misses: &[usize]) {
+        if self.on_hits {
+            for &k in hits {
+                self.tags.insert(k, self.ttl);
+            }
+        }
+        if self.on_misses {
+            for &k in misses {
+                self.tags.insert(k, self.ttl);
+            }
+        }
+    }
 }
 
 /// How a higher layer's expectation (`bias`) steers a predictive step.
@@ -507,6 +520,41 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// The fast loop alone, without slow learning: tag the kernels that matched on the last
+    /// step by whether `target` confirmed them. Use it when `feedback` is off (e.g. at
+    /// test); `feedback` already does this.
+    pub fn fast_inhibit(&mut self, target: &BitVector) {
+        let Some(st) = self.predictive.as_ref() else { return };
+        if st.fast.is_none() {
+            return;
+        }
+        let (mut hits, mut misses) = (Vec::new(), Vec::new());
+        for &m in &st.last_matches {
+            if predicts(&self.active_kernels[m], target) {
+                hits.push(m);
+            } else {
+                misses.push(m);
+            }
+        }
+        if let Some(f) = self.predictive.as_mut().and_then(|st| st.fast.as_mut()) {
+            f.tag(&hits, &misses);
+        }
+    }
+
+    /// Kernels that matched on the last predictive step.
+    pub fn matched(&self) -> usize {
+        self.predictive.as_ref().map_or(0, |st| st.last_matches.len())
+    }
+
+    /// Distinct outputs among the kernels that matched on the last step.
+    pub fn matched_outputs(&self) -> usize {
+        let Some(st) = self.predictive.as_ref() else { return 0 };
+        let mut outs: Vec<&[u64]> = st.last_matches.iter().map(|&k| self.active_kernels[k].output_mask.as_words()).collect();
+        outs.sort();
+        outs.dedup();
+        outs.len()
+    }
+
     /// Kernels currently inhibited by the fast loop.
     pub fn inhibited(&self) -> usize {
         self.predictive.as_ref().and_then(|st| st.fast.as_ref()).map_or(0, |f| f.tags.len())
@@ -604,17 +652,7 @@ impl KernelClass<SimpleKernel> {
         if let Some(st) = self.predictive.as_mut() {
             st.last_target_prob = expected.map_or(0.0, |e| e.1);
             if let Some(f) = st.fast.as_mut() {
-                let ttl = f.ttl;
-                if f.on_hits {
-                    for &k in &hits {
-                        f.tags.insert(k, ttl);
-                    }
-                }
-                if f.on_misses {
-                    for &k in &misses {
-                        f.tags.insert(k, ttl);
-                    }
-                }
+                f.tag(&hits, &misses);
             }
             st.last_hits = hits;
             st.last_misses = misses;

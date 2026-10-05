@@ -962,6 +962,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let mut out = BitVector::new(BITS, Some(0));
                 out.or_mut(column.predict(&input));
                 let next = ids[t + 1];
+                if std::env::var("FASTDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
+                    eprintln!(
+                        "  FASTDIAG answer step: {} kernels matched, {} distinct outputs, {} inhibited, predicted {:?}, answer {}",
+                        column.l23.matched(),
+                        column.l23.matched_outputs(),
+                        column.l23.inhibited(),
+                        enc.decode(&out).map(|i| vocab[i]),
+                        vocab[next]
+                    );
+                }
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     if s.held_out && !right && std::env::var("DIAG").is_ok() {
@@ -1102,6 +1112,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 last_recall_id = None;
                 last_recall_cue = None;
+                if testing {
+                    // the fast inhibitory loop keeps running when slow learning is off
+                    column.fast_inhibit(&enc.codes[next]);
+                }
                 if !testing {
                     column.learn(&input, &enc.codes[next], &mut rng);
                     // dopamine: did the followed item's recall contain what came next?

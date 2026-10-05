@@ -293,6 +293,12 @@ impl CorticalColumn {
         self.l23.feedback(l4, target, rng);
     }
 
+    /// Without slow learning (e.g. at test): run only the L2/3 fast inhibitory loop on
+    /// what actually came next. `learn` includes it.
+    pub fn fast_inhibit(&mut self, target: &BitVector) {
+        self.l23.fast_inhibit(target);
+    }
+
     /// L5: the latest prediction.
     pub fn prediction(&self) -> &BitVector {
         &self.prediction

@@ -275,6 +275,49 @@ growth, pruning and sleep. The speed (seed 0):
    memoising only the frames that recur (current and previous word), not the memory frame.
    Left off by default.
 
+## 9. Canonical kernels (Hashlife's hash-consed nodes)
+Hashlife stores each distinct sub-pattern once. Here the duplicates came from sampling:
+each growth drew a *random* subset of a word's bits, so the same context produced a new,
+different-looking kernel every time. Sleep then had to find and merge thousands of them
+by replay. With `CANON=1` (`KernelClass::set_canonical`):
+- **Canonical sampling:** each frame's sample is its active bits with the smallest fixed
+  hash rank (splitmix64), so the same context always yields the same kernel.
+- **Hash-consing:** a table maps connection sets, (input positions, output positions), to
+  their kernel. A growth that would duplicate a live kernel refreshes it instead. The
+  table is kept current through recycling, pruning and sleep removals.
+- **Test:** growing twice from the same context with different random states gives one
+  kernel; a different output gives a second.
+
+Results, added to compaction, the surprise gate and the memo:
+
+| Task | Kernels, seed 0 (before → canonical) | Held-out, seeds 0 / 1 / 2 | Training / answering µs/word |
+|---|---|---|---|
+| Elimination | 2,880 → **24** (every seed) | 100 / 100 / 100% | 42 / 43 → **6–7 / 5–6** |
+| Varied (1–2 and 1–3 facts) | 2,607–2,964 → 2,000–2,210 | 100% on every seed | 60 / 37–46 → 42–50 / 30–41 |
+| Topic | 2,476 → 1,935–2,045 | 100 / 100 / 100% (seen pairs 93.4 → 100%) | 61 / 40 → 42–53 / 35–40 |
+| Give | 5,251 → 2,848–2,959 | 99.8 / 99.8 / 100% | 157 / 46 → 106–114 / 44–53 |
+| Two-hop | 6,450 → 5,187–5,397 | 93.0 / 83.6 / 80.4% | 149 / 77 → 104–122 / 51–62 |
+
+Two-hop's earlier seeds were 88.6 / 89.8 / 81.6% (surprise gate, before the tie-break fix;
+not a same-build comparison). The mean is about the same, within this task's usual spread.
+
+1. **Elimination collapses to 24 kernels**, six places across a few contexts. With random
+   sampling the evidence about "is it the → ?" was split across thousands of duplicates,
+   so no kernel ever saw enough to be recognised as unpredictable, and growth went on.
+   With canonical sampling it all lands on one kernel. The uncertainty gate recognises the
+   context within a few observations and suppresses growth (10,665 times), and answering
+   takes 5–6 µs per word.
+2. **Fewer kernels and faster training everywhere,** with accuracy unchanged (topic's
+   seen pairs even recover to 100%). 1,700–6,400 growths per run found their kernel
+   already present.
+3. **Sleep is still needed.** Without it, kernel counts grow to 9,000–25,000 (seed 0) and
+   topic falls to 70%. Hash-consing stops *identical* duplicates; replay merging still
+   removes kernels that differ in their sample but respond to the same inputs (e.g.
+   kernels grown from different memory contents).
+4. **The feared cost did not show up.** Canonical samples always use the same bits of a
+   word, so a collision with another word's code would affect every use. No accuracy loss
+   on these tasks.
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the

@@ -51,24 +51,23 @@ costs it speed there).
 | | Transformer (28k / 106k / 800k params) | This network |
 |---|---|---|
 | **Model memory** | 0.11 / 0.42 / 3.2 MB (fp32) | **0.65–3.1 MB** in all: kernel connections stored sparsely (0.25–1.5 MB), inverted index (0.2–1.4 MB), 200 KB episodic store |
-| **Answering, per word** | 16–31 / 21–45 / 55–100 µs | 31–43 µs (elimination), 37–46 µs (varied, topic), 42–53 µs (give), 66–76 µs (two-hop), with the memos of [23 §7–8](../experiments/23-compaction.md#7-memoised-interpretation-after-hashlife) |
-| **Training, per word per pass** | 9–16 / 25–42 / 90–160 µs | 39 µs (elimination), 54–57 µs (varied, topic), 147–161 µs (two-hop, give), learning inline |
+| **Answering, per word** | 16–31 / 21–45 / 55–100 µs | **5–6 µs** (elimination), 30–41 µs (varied, topic), 44–53 µs (give), 51–62 µs (two-hop), with canonical kernels ([23 §9](../experiments/23-compaction.md#9-canonical-kernels-hashlifes-hash-consed-nodes)) |
+| **Training, per word per pass** | 9–16 / 25–42 / 90–160 µs | 6–7 µs (elimination), 42–53 µs (varied, topic), 104–122 µs (two-hop, give), learning inline |
 | **Passes needed** | 3–100, or never (binding tasks) | 1 |
-| **Total training to its best** | Elimination ~4–13 s; topic ~3 s; varied ~3 s (to 70–77%); give / two-hop: no amount of training reached ours | Elimination ~5 s; varied ~5 s; topic ~4 s; give ~12 s; two-hop ~18 s |
+| **Total training to its best** | Elimination ~4–13 s; topic ~3 s; varied ~3 s (to 70–77%); give / two-hop: no amount of training reached ours | Elimination **~1 s**; varied ~4 s; topic ~4 s; give ~8 s; two-hop ~14 s |
 
 ### So: faster, or less memory, for more function?
 - **More function:** yes, on held-out binding, which is the part that needs one-shot
   memory of *this* story: 100% against 70–77% on varied, 72–89% against 29% on two-hop,
   and 98–100% against 25% on give. Equal (100%) where attention alone suffices.
 - **Speed:** per word, now in the same range as the transformers when answering.
-  - **Elimination:** 31–43 µs, between the 28k and 106k models and about 2× faster than
-    the 800k model. It was 19 µs before winner ties were made order-independent
-    ([23 §8](../experiments/23-compaction.md#8-per-frame-memo-hashlifes-sub-nodes-exact-but-not-a-net-win)).
-  - **Varied and topic:** 37–44 µs, level with the 106k model (21–45 µs) and about 2×
+  - **Elimination:** 5–6 µs, about 3× faster than the 28k model and 10× faster than the
+    800k model. Canonical kernels leave it 24 kernels.
+  - **Varied and topic:** 30–41 µs, level with the 106k model (21–45 µs) and about 2–3×
     faster than the 800k model (74–102 µs).
-  - **Give:** 42–53 µs, about 1.7× faster than the 800k model (79–90 µs).
-  - **Two-hop:** 66–76 µs, level with the 800k model (60–70 µs).
-  - **Training** reaches the result in one pass, so total training time is 4–18 seconds,
+  - **Give:** 44–53 µs, about 1.7× faster than the 800k model (79–90 µs).
+  - **Two-hop:** 51–62 µs, level with or faster than the 800k model (60–70 µs).
+  - **Training** reaches the result in one pass, so total training time is 1–14 seconds,
     against 3–13 seconds for the transformer on the tasks it can learn.
   - This is after a ~85–190× speed-up today, from making the path event-based, compacting
     the prior, gating learning on surprise and indexing recall. Before it, we were

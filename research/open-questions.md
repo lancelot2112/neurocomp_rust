@@ -10,9 +10,9 @@ Ordered roughly by how much they matter for "reading like a transformer".
   ([23 §7](experiments/23-compaction.md#7-memoised-interpretation-after-hashlife)): exact,
   but it hits only 4–21%. The per-frame memo is exact but not a net
   win ([23 §8](experiments/23-compaction.md#8-per-frame-memo-hashlifes-sub-nodes-exact-but-not-a-net-win));
-  eager per-kernel updates might fix that. Next from Hashlife (Gosper 1984): hash-cons kernels at growth
-  (canonical bit samples, so duplicates are never created); and chunking, i.e.
-  time-skipping through a hierarchy. Also the dense
+  eager per-kernel updates might fix that. Canonical kernels (hash-consing) are built and
+  a clear win ([23 §9](experiments/23-compaction.md#9-canonical-kernels-hashlifes-hash-consed-nodes)).
+  Next from Hashlife (Gosper 1984): chunking, i.e. time-skipping through a hierarchy. Also the dense
   8,192-bit frame copies L4 still builds every word.
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where

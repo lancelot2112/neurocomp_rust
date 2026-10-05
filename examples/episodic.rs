@@ -653,6 +653,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // HIER_GATE=1: a corticothalamic gate on the top-down channel, learned from use (L5
     // attribution); HIER_GATE_WARMUP stories all open, weakening × HIER_GATE_WEAKEN
     let hier_gate_on = std::env::var("HIER_GATE").is_ok();
+    let hier_gate_area = std::env::var("HIER_GATE_SIGNAL").map_or(false, |v| v == "area");
     let hier_gate_warmup: usize = std::env::var("HIER_GATE_WARMUP").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
     let mut hier_gate = CorticothalamicGate::new(BITS, 1, seed + 31);
     hier_gate.weaken = std::env::var("HIER_GATE_WEAKEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.25);
@@ -1302,7 +1303,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // did the prediction read its frame and come true?
                 // the top-down frame's L4 index, for L5 attribution
                 let td_frame = if hier_early { 1 } else { 1 + base_frames };
-                let td_used = hier_gate_step.is_some() && column.outcome_via(td_frame, &enc.codes[next]) >= 0.5;
+                // the gate's learning signal: by default the column read the top-down frame and
+                // came true (use); HIER_GATE_SIGNAL=area: the higher area's own prediction came
+                // true (its L5 outcome: the source's reliability, whoever the column followed)
+                let td_used = hier_gate_step.is_some()
+                    && if hier_gate_area { area.column.outcome(&enc.codes[next]) >= 0.5 } else { column.outcome_via(td_frame, &enc.codes[next]) >= 0.5 };
                 let l6_used: Vec<bool> = match &l6_step {
                     Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + early_shift + c, &enc.codes[next]) >= 0.5).collect(),
                     None => Vec::new(),

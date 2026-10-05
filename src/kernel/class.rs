@@ -153,6 +153,10 @@ struct PredictiveState {
     canon: Option<std::collections::HashMap<u64, u32>>,
     /// Growth events that found an identical kernel already present.
     canon_reused: usize,
+    /// Rank winners by reliability before depth (see `set_reliability_first`).
+    reliability_first: bool,
+    /// Grow past empty frames (see `set_skip_empty`).
+    skip_empty: bool,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -424,6 +428,8 @@ impl KernelClass<SimpleKernel> {
             frame_memo: None,
             canon: None,
             canon_reused: 0,
+            reliability_first: false,
+            skip_empty: false,
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -522,9 +528,10 @@ impl KernelClass<SimpleKernel> {
         let agrees = |k: &SimpleKernel| bias.map_or(false, |(b, _)| predicts(k, b));
         // (not inhibited, agree-first, trusted, depth, agree-within-depth, reliability, count)
         let trust_floor = st.trust_floor;
+        let rel_first = st.reliability_first;
         // ... then the older kernel (lower id): ties must not depend on the order kernels
         // are visited, which differs between the index fan-out and the frame memo
-        let mut best: Option<((bool, bool, bool, usize, bool, Rate, u32, std::cmp::Reverse<usize>), usize)> = None;
+        let mut best: Option<((bool, bool, bool, Rate, usize, bool, Rate, u32, std::cmp::Reverse<usize>), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -545,7 +552,9 @@ impl KernelClass<SimpleKernel> {
             let r = Rate::of(&kern.stats);
             let trusted = trust_floor.map_or(true, |f| r >= f);
             let free = st.fast.as_ref().map_or(true, |f| !f.inhibits(k));
-            let key = (free, prefer, trusted, kern.context_frames, tie, r, count, std::cmp::Reverse(k));
+            // reliability-first puts the rate ahead of depth; otherwise that slot is constant
+            let first = if rel_first { r } else { Rate::new(0, 1) };
+            let key = (free, prefer, trusted, first, kern.context_frames, tie, r, count, std::cmp::Reverse(k));
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
             }
@@ -600,10 +609,12 @@ impl KernelClass<SimpleKernel> {
             .filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold)
             .map(|(k, c)| {
                 let kern = &self.active_kernels[k as usize];
-                ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
+                let r = Rate::of(&kern.stats);
+                let first = if st.reliability_first { r } else { Rate::new(0, 1) };
+                ((first, kern.context_frames, r, c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-            .map(|((_, rel, _), k)| (self.active_kernels[k].output_vector(), rel.value()))
+            .map(|((_, _, rel, _), k)| (self.active_kernels[k].output_vector(), rel.value()))
     }
 
     /// Restrict which input bits newly grown kernels may sample (None = all).
@@ -788,6 +799,27 @@ impl KernelClass<SimpleKernel> {
     pub fn set_canonical(&mut self, on: bool) {
         if let Some(st) = self.predictive.as_mut() {
             st.canon = if on { Some(std::collections::HashMap::new()) } else { None };
+        }
+    }
+
+    /// Winner ranking: with `on`, the most reliable matching kernel wins and depth only
+    /// breaks ties (default: the deepest wins and reliability breaks ties). Every
+    /// matching kernel is scored at feedback, winner or not, so a deep kernel that never
+    /// wins still earns the evidence to win later. Sources (frames) are then arbitrated by
+    /// how often each has been right in this context, not by their order in L4.
+    pub fn set_reliability_first(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.reliability_first = on;
+            st.version += 1;
+        }
+    }
+
+    /// Growth: with `on`, deepening skips empty frames, so a kernel can reach a frame
+    /// behind one that is empty now (e.g. a gated-off top-down frame). Default: growth
+    /// stops at the first empty frame.
+    pub fn set_skip_empty(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.skip_empty = on;
         }
     }
 
@@ -1339,9 +1371,18 @@ impl KernelClass<SimpleKernel> {
         if !depth_has_target[depth] {
             self.grow(input, target, depth, rng);
         }
-        // Grow one frame deeper only if that frame carries something new.
-        if winner.is_some() && depth < cfg.max_frames && frame_has_bits(input, depth, cfg.frame_words) {
-            self.grow(input, target, depth + 1, rng);
+        // Grow one frame deeper only if that frame carries something new (with skip_empty,
+        // the next frame that does).
+        if winner.is_some() {
+            let mut d = depth;
+            if self.predictive.as_ref().map_or(false, |st| st.skip_empty) {
+                while d < cfg.max_frames && !frame_has_bits(input, d, cfg.frame_words) {
+                    d += 1;
+                }
+            }
+            if d < cfg.max_frames && frame_has_bits(input, d, cfg.frame_words) {
+                self.grow(input, target, d + 1, rng);
+            }
         }
     }
 
@@ -2059,6 +2100,49 @@ mod tests {
         assert_eq!(step(&mut kc, &ya, &c), 0xFF0000);
         assert_eq!(step(&mut kc, &xa, &b), 0xFF00);
         assert_eq!(kc.winner_depth(), Some(2));
+    }
+
+    #[test]
+    fn reliability_first_ranks_rate_before_depth() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
+        let b = BitVector::from_words(vec![0xFF00]);
+        let c = BitVector::from_words(vec![0xFF0000]);
+        let a = frames(&[0xFF, 0]);
+        let xa = frames(&[0xFF, 0xF000_0000_0000_0000]);
+        for (rel_first, want) in [(false, 0xFF0000), (true, 0xFF00)] {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_reliability_first(rel_first);
+            for _ in 0..8 {
+                step(&mut kc, &a, &b); // "A -> B", well established
+            }
+            step(&mut kc, &xa, &c); // one "xA -> C": a fresh deep kernel
+            assert!(kc.kernels().iter().any(|k| k.context_frames == 2));
+            // depth-first: the fresh deep kernel wins; reliability-first: the proven one
+            assert_eq!(step(&mut kc, &xa, &c), want);
+        }
+    }
+
+    #[test]
+    fn skip_empty_grows_past_an_empty_frame() {
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 3, sample_bits: 8, ..GrowthConfig::default() };
+        let t1 = BitVector::from_words(vec![0xFF00]);
+        let t2 = BitVector::from_words(vec![0xFF0000]);
+        // the current word alone is ambiguous; only frame 2 (behind an empty frame 1) tells
+        let x = frames(&[0xFF, 0, 0xF0]);
+        let y = frames(&[0xFF, 0, 0x0F]);
+        for (skip, deepest) in [(false, 1), (true, 3)] {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_skip_empty(skip);
+            for _ in 0..4 {
+                step(&mut kc, &x, &t1);
+                step(&mut kc, &y, &t2);
+            }
+            assert_eq!(kc.kernels().iter().map(|k| k.context_frames).max(), Some(deepest));
+            if skip {
+                assert_eq!(step(&mut kc, &x, &t1), 0xFF00);
+                assert_eq!(step(&mut kc, &y, &t2), 0xFF0000);
+            }
+        }
     }
 
     #[test]

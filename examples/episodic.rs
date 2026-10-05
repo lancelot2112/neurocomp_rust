@@ -599,6 +599,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_frame_memo(std::env::var("FRAME_MEMO").is_ok());
     // CANON=1: canonical kernels (deterministic sampling + hash-consing at growth)
     class.set_canonical(std::env::var("CANON").is_ok());
+    // RANK=reliability: L2/3 winners ranked by reliability before depth (sources arbitrated
+    // by how often each has been right, not by frame order); SKIP_EMPTY=1: growth deepens
+    // past empty frames
+    class.set_reliability_first(std::env::var("RANK").map_or(false, |v| v == "reliability"));
+    class.set_skip_empty(std::env::var("SKIP_EMPTY").is_ok());
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));

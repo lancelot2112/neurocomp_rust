@@ -34,6 +34,13 @@ pub struct BasalGanglia {
     /// Probability of choosing a random candidate when exploring.
     pub explore: f64,
     last_value: Option<(u64, u64)>, // (counter sum, max possible sum) of the latest choice
+    /// Reward baseline: with `Some(rate)`, the reward-prediction error is reward minus a
+    /// running average of rewards (updated at `rate`), not minus the latest choice's value.
+    /// Needed when one reward credits a long trace of choices: subtracting the last
+    /// choice's value makes almost every error negative when rewards are rare, which
+    /// drags down whichever action is chosen most.
+    pub baseline_rate: Option<f64>,
+    baseline: f64,
 }
 
 impl BasalGanglia {
@@ -49,6 +56,8 @@ impl BasalGanglia {
             gain: 1.5,
             explore: 0.1,
             last_value: None,
+            baseline_rate: None,
+            baseline: 0.0,
         }
     }
 
@@ -97,7 +106,14 @@ impl BasalGanglia {
     /// Returns the reward-prediction error.
     pub fn reward<R: Rng>(&mut self, reward: f32, rng: &mut R) -> f32 {
         let Some((s, m)) = self.last_value else { return 0.0 };
-        let delta = reward as f64 - s as f64 / m as f64;
+        let delta = match self.baseline_rate {
+            Some(rate) => {
+                let d = reward as f64 - self.baseline;
+                self.baseline += rate * (reward as f64 - self.baseline);
+                d
+            }
+            None => reward as f64 - s as f64 / m as f64,
+        };
         let mut p = (self.gain * delta.abs()).min(1.0);
         for mask in &self.trace {
             // stochastic step: each eligible bit moves with probability p

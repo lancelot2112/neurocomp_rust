@@ -77,6 +77,8 @@ impl PfcGate {
         let mut bg = BasalGanglia::new(bits);
         bg.trace_len = trace_len;
         bg.trace_decay = trace_decay;
+        // one reward per episode credits a long trace: use a running-average baseline
+        bg.baseline_rate = Some(0.01);
         Self { bg, bits, load_code, keep_code }
     }
 

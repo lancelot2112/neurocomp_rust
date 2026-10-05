@@ -18,10 +18,22 @@
 //!
 //! (Until this split, `ContextBuffer` was called `Thalamus`; that name remains as an
 //! alias in `thalamus`.)
+//!
+//! `CorticalColumn` puts the pieces of one area together as layers:
+//! - **L4** (`assemble`): the input frames: the current input, frames relayed in through the
+//!   thalamus (relay routes, memory recall), and the previous input from L6.
+//! - **L2/3** (`l23`): the predictive `KernelClass`, which learns to predict the next input
+//!   from L4 (`predict`, `learn`).
+//! - **L5** (`prediction`, `confidence`, `surprise`): what the column sends to subcortex:
+//!   the prediction, how reliable it is, and how surprising the actual input was (the
+//!   probability-weighted comparator of experiment 14, as a column output).
+//! - **L6** (`l6`): context held over time, the previous-input frame, and the match rules
+//!   over it that the thalamus gates.
 
 use std::collections::HashMap;
 
 use crate::bitvec::BitVector;
+use crate::kernel::{KernelClass, SimpleKernel};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RelayChannel {
@@ -53,6 +65,11 @@ impl ContextBuffer {
     /// The most recently observed frame.
     pub fn current(&self) -> Option<&BitVector> {
         self.history.last()
+    }
+
+    /// The frame `lag` steps before the most recent one (0 = the most recent).
+    pub fn back(&self, lag: usize) -> Option<&BitVector> {
+        self.history.len().checked_sub(1 + lag).map(|i| &self.history[i])
     }
 
     /// Forget everything observed so far (e.g. between independent episodes).
@@ -226,9 +243,104 @@ pub(crate) fn overlap(a: &BitVector, b: &BitVector) -> u32 {
     a.as_words().iter().zip(b.as_words()).map(|(x, y)| (x & y).count_ones()).sum()
 }
 
+/// One cortical area as layers (see the module docs).
+pub struct CorticalColumn {
+    /// L2/3: the predictor.
+    pub l23: KernelClass<SimpleKernel>,
+    /// L6: context over time (and the match rules over it).
+    pub l6: ContextBuffer,
+    bits: usize,
+    prediction: BitVector,
+    confidence: f32,
+}
+
+impl CorticalColumn {
+    pub fn new(bits: usize, l23: KernelClass<SimpleKernel>, l6: ContextBuffer) -> Self {
+        Self { l23, l6, bits, prediction: BitVector::new(bits, Some(0)), confidence: 0.0 }
+    }
+
+    /// L6: record this step's input in context.
+    pub fn observe(&mut self, input: &BitVector) {
+        self.l6.observe(input);
+    }
+
+    /// L6: the input before the current one (an empty frame if none).
+    pub fn previous(&self) -> BitVector {
+        self.l6.back(1).cloned().unwrap_or_else(|| BitVector::new(self.bits, Some(0)))
+    }
+
+    /// L4: `[current | frames… | previous]`, the input L2/3 predicts from.
+    pub fn assemble(&self, current: &BitVector, frames: &[BitVector]) -> BitVector {
+        let mut words = current.as_words().to_vec();
+        for f in frames {
+            words.extend_from_slice(f.as_words());
+        }
+        words.extend_from_slice(self.previous().as_words());
+        BitVector::from_words(words)
+    }
+
+    /// L2/3 → L5: predict the next input from an assembled L4 input.
+    pub fn predict(&mut self, l4: &BitVector) -> &BitVector {
+        let mut out = BitVector::new(self.bits, Some(0));
+        self.l23.process_predictive(l4, &mut out);
+        self.prediction = out;
+        self.confidence = self.l23.confidence().unwrap_or(0.0);
+        &self.prediction
+    }
+
+    /// L2/3: learn from what actually came next.
+    pub fn learn<R: rand::Rng + ?Sized>(&mut self, l4: &BitVector, target: &BitVector, rng: &mut R) {
+        self.l23.feedback(l4, target, rng);
+    }
+
+    /// L5: the latest prediction.
+    pub fn prediction(&self) -> &BitVector {
+        &self.prediction
+    }
+
+    /// L5: reliability of the kernel that made the latest prediction (0 if none).
+    pub fn confidence(&self) -> f32 {
+        self.confidence
+    }
+
+    /// L5: how surprising `actual` is given the latest prediction: 1 − (its share of the
+    /// prediction × the predicting kernel's reliability).
+    pub fn surprise(&self, actual: &BitVector) -> f32 {
+        let predicted = self.prediction.count_ones();
+        if predicted == 0 {
+            return 1.0;
+        }
+        let share = overlap(actual, &self.prediction) as f32 / predicted as f32;
+        1.0 - share * self.confidence
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::GrowthConfig;
+
+    #[test]
+    fn column_learns_a_sequence_and_reports_surprise() {
+        let bits = 64;
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 4, ..GrowthConfig::default() };
+        let mut col = CorticalColumn::new(bits, KernelClass::predictive(cfg), ContextBuffer::new(bits, 8, Vec::new()));
+        let (a, b) = (sym(1), sym(2));
+        let mut rng = rand::thread_rng();
+        for _ in 0..5 {
+            col.observe(&a);
+            let l4 = col.assemble(&a, &[]);
+            col.predict(&l4);
+            col.learn(&l4, &b, &mut rng);
+            col.observe(&b);
+        }
+        col.observe(&a);
+        let l4 = col.assemble(&a, &[]);
+        assert_eq!(col.predict(&l4).as_words(), b.as_words()); // L5: a is followed by b
+        assert!(col.surprise(&b) < 0.5);
+        assert!(col.surprise(&sym(3)) > 0.9);
+        assert_eq!(col.previous().as_words(), b.as_words()); // L6: the input before a
+    }
 
     fn sym(i: usize) -> BitVector {
         BitVector::from_bits(&[i * 4, i * 4 + 1, i * 4 + 2, i * 4 + 3], 64)

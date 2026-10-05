@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, Thalamus};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, DentateGyrus, EpisodicMemory, RelayChannel, RouteScores, Thalamus};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -77,6 +77,10 @@ enum Policy {
     /// channels; `BasalGanglia` releases one per step, valued per (channel, current word);
     /// reward = the released content contained the next word. One frame.
     ThalamicGate,
+    /// Same gate, but the relay routes are learned: discovered from surprises and ranked
+    /// by consistency (`RouteScores`, as in experiment 10), top 8 refreshed every 50
+    /// stories; memory recall is one more channel.
+    LearnedGate,
 }
 
 struct Story {
@@ -207,7 +211,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         Policy::Loop(hops) => hops,
         Policy::Branch(b) => b + 1,
         Policy::Select => 2,
-        Policy::ThalamicGate => 1,
+        Policy::ThalamicGate | Policy::LearnedGate => 1,
         Policy::FixedRelay => routes.len(),
     };
     let mut th = Thalamus::new(BITS, 60, routes.clone());
@@ -235,13 +239,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // ThalamicGate: channel identity codes (routes, then memory), bound to the current word
     // by rotation, so the striatum holds a value per (channel, context)
     let mut gate_bg = BasalGanglia::new(BITS);
-    let channel_codes: Vec<BitVector> = {
-        let mut crng = StdRng::seed_from_u64(seed + 7);
+    // channel identity code: a fixed random sparse code per route (q, v), and one for memory
+    let channel_code = |r: Option<RelayChannel>| -> BitVector {
+        let key = r.map_or(0, |r| 1 + r.query_lag as u64 * 64 + r.value_offset as u64);
+        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(1_000_003) ^ (key + 7));
         let all: Vec<usize> = (0..BITS).collect();
-        (0..routes.len() + 1).map(|_| BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)).collect()
+        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
     };
     let mut gate_pending: Option<BitVector> = None; // released content, awaiting reward
-    let mut gate_chosen_at_answer = vec![0usize; routes.len() + 1];
+    let mut gate_chosen_at_answer: HashMap<String, usize> = HashMap::new();
+    // LearnedGate: route discovery and the current pool
+    let mut route_scores = RouteScores::default();
+    let mut gate_routes: Vec<RelayChannel> = if policy == Policy::ThalamicGate { routes.clone() } else { Vec::new() };
     // CA1-style comparator (NOVELTY=prediction): store, cue and read out only what the
     // predictor failed to predict, instead of frequency habituation.
     let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
@@ -301,6 +310,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let full_stop = index["."];
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
+        if policy == Policy::LearnedGate && !testing && s_i % 50 == 0 && s_i > 0 {
+            gate_routes = route_scores.top(8, 2.0);
+        }
         if s_i == TRAIN && std::env::var("DIAG").is_ok() {
             // Coverage after training: per place, kernels that predict it from the
             // question context ("?" as current word) and read the memory frame.
@@ -383,12 +395,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 match policy {
                     Policy::NoMemory => words.extend(std::iter::repeat(0).take(BITS / 64)),
                     Policy::FixedRelay => words.extend_from_slice(th.relay().as_words()),
-                    Policy::ThalamicGate => {
-                        // channel contents: each relay route, then memory recall
-                        let mut contents: Vec<(usize, BitVector)> = Vec::new();
-                        for (i, r) in routes.iter().enumerate() {
+                    Policy::ThalamicGate | Policy::LearnedGate => {
+                        // channel contents: each relay route, then memory recall (None)
+                        let mut contents: Vec<(Option<RelayChannel>, BitVector)> = Vec::new();
+                        for r in &gate_routes {
                             if let Some(v) = th.relay_channel(*r) {
-                                contents.push((i, v.clone()));
+                                contents.push((Some(*r), v.clone()));
                             }
                         }
                         let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
@@ -400,7 +412,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     *r &= !c;
                                 }
                                 if recalled.count_ones() > 0 {
-                                    contents.push((routes.len(), recalled));
+                                    contents.push((None, recalled));
                                 }
                             }
                         }
@@ -410,7 +422,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let cands: Vec<BitVector> = contents
                                 .iter()
                                 .map(|(c, _)| {
-                                    let mut code = channel_codes[*c].clone();
+                                    let mut code = channel_code(*c);
                                     code.rotl_mut((ids[t] * 131) % BITS);
                                     code
                                 })
@@ -420,7 +432,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 released = contents[i].1.clone();
                                 gate_pending = Some(released.clone());
                                 if testing && t + 1 == s.answer_at {
-                                    gate_chosen_at_answer[contents[i].0] += 1;
+                                    let name = contents[i].0.map_or("memory".to_string(), |r| format!("({},{})", r.query_lag, r.value_offset));
+                                    *gate_chosen_at_answer.entry(name).or_default() += 1;
                                 }
                             }
                         }
@@ -683,6 +696,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if !testing {
                     class.feedback(&input, &enc.codes[next], &mut rng);
                     // dopamine: did the followed item's recall contain what came next?
+                    if policy == Policy::LearnedGate && enc.decode(&out) != Some(next) {
+                        // surprise: discover and score routes that would have relayed `next`
+                        route_scores.observe_surprise(&th, &enc.codes[next], 3, 8);
+                    }
                     if let Some(rel) = gate_pending.take() {
                         let hit = rel.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
                         gate_bg.reward(hit as u32 as f32, &mut rng);
@@ -715,11 +732,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
-    if policy == Policy::ThalamicGate {
-        let total = gate_chosen_at_answer.iter().sum::<usize>().max(1) as f64;
-        let names: Vec<String> = routes.iter().map(|r| format!("({},{})", r.query_lag, r.value_offset)).chain(["memory".to_string()]).collect();
-        let shares: Vec<String> = names.iter().zip(&gate_chosen_at_answer).map(|(n, &c)| format!("{n} {:.0}%", 100.0 * c as f64 / total)).collect();
-        eprintln!("  GATE seed {seed} channel released at test answers: {}", shares.join(", "));
+    if matches!(policy, Policy::ThalamicGate | Policy::LearnedGate) {
+        let total = gate_chosen_at_answer.values().sum::<usize>().max(1) as f64;
+        let mut shares: Vec<(String, usize)> = gate_chosen_at_answer.into_iter().collect();
+        shares.sort_by(|a, b| b.1.cmp(&a.1));
+        let shares: Vec<String> = shares.iter().map(|(n, c)| format!("{n} {:.0}%", 100.0 * *c as f64 / total)).collect();
+        let pool: Vec<String> = gate_routes.iter().map(|r| format!("({},{})", r.query_lag, r.value_offset)).collect();
+        eprintln!("  GATE seed {seed} routes in pool [{}]; channel released at test answers: {}", pool.join(" "), shares.join(", "));
     }
     if std::env::var("DIAG").is_ok() {
         let c = cover[1].max(1) as f64;
@@ -796,6 +815,7 @@ fn main() {
                 Ok("bg") => vec![Policy::Loop(2), Policy::Branch(3), Policy::Select],
                 Ok("twohop_learned") => vec![Policy::Branch(3), Policy::Select],
                 Ok("gate") => vec![Policy::FixedRelay, Policy::Episodic, Policy::ThalamicGate],
+                Ok("learned_gate") => vec![Policy::LearnedGate],
                 Ok("episodic") => vec![Policy::Episodic],
                 Ok("ca1") => vec![Policy::Episodic, Policy::Loop(2), Policy::Branch(3), Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],
                 Ok("ca3_high") => vec![Policy::Ca3 { cells: 16384, k: 32, settle: 2 }],

@@ -182,6 +182,10 @@ struct PredictiveState {
 struct Chunking {
     /// Repeats needed before a link is used.
     min: u8,
+    /// Habits only: a link may only hand over to a kernel that reads nothing but frame 0
+    /// (the current word). Steps that depend on memory, relays or older context stay
+    /// goal-directed (full matching), so a chunk ends before them.
+    local: bool,
     /// kernel -> (successor, successor's slot generation, consecutive confirmations).
     links: std::collections::HashMap<u32, (u32, u32, u8)>,
     /// Slot generations (bumped when a slot is reused), so a link never jumps to a kernel
@@ -565,7 +569,8 @@ impl KernelClass<SimpleKernel> {
                 let link = ch.links.get(&(p as u32)).copied();
                 if let Some((next, g, n)) = link {
                     let next = next as usize;
-                    if n >= ch.min && g == ch.gen_of(next) && next < self.active_kernels.len() && !self.active_kernels[next].output_set.is_empty() {
+                    let local_ok = !ch.local || self.active_kernels.get(next).map_or(false, |k| k.input_set.last().map_or(false, |&b| (b as usize) < fb));
+                    if n >= ch.min && local_ok && g == ch.gen_of(next) && next < self.active_kernels.len() && !self.active_kernels[next].output_set.is_empty() {
                         ch.jumped_from = Some(p as u32);
                         ch.jumps += 1;
                         st.matches_stale = true;
@@ -892,10 +897,11 @@ impl KernelClass<SimpleKernel> {
 
     /// Chunking (after Hashlife's time-skipping; see `Chunking`): a link a → b becomes solid
     /// after `min` identical confirmed hand-overs, and then skips matching. None = off.
-    pub fn set_chunking(&mut self, min: Option<u8>) {
+    pub fn set_chunking(&mut self, min: Option<u8>, local: bool) {
         if let Some(st) = self.predictive.as_mut() {
             st.chunk = min.map(|m| Chunking {
                 min: m.max(1),
+                local,
                 links: std::collections::HashMap::new(),
                 generation: Vec::new(),
                 jumped_from: None,
@@ -2031,7 +2037,7 @@ mod tests {
         let run = |chunk: Option<u8>| {
             let mut kc = KernelClass::predictive(cfg);
             kc.set_surprise_gate(true);
-            kc.set_chunking(chunk);
+            kc.set_chunking(chunk, false);
             let mut rng = rand::rngs::StdRng::seed_from_u64(1);
             let mut outs = Vec::new();
             for t in 1..seq.len() {

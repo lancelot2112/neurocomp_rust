@@ -565,7 +565,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // CANON=1: canonical kernels (deterministic sampling + hash-consing at growth)
     class.set_canonical(std::env::var("CANON").is_ok());
     // CHUNK=n: chunking; a kernel-to-kernel hand-over seen n times in a row skips matching
-    class.set_chunking(std::env::var("CHUNK").ok().and_then(|v| v.parse().ok()));
+    // CHUNK_LOCAL=1: habits only (hand over only to kernels reading the current word alone)
+    class.set_chunking(std::env::var("CHUNK").ok().and_then(|v| v.parse().ok()), std::env::var("CHUNK_LOCAL").is_ok());
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));

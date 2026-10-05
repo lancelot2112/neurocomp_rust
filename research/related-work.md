@@ -272,6 +272,14 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   cortex.* J. Neuroscience 28; **Murray, J. D. et al. (2014).** *A hierarchy of intrinsic
   timescales across primate cortex.* Nature Neuroscience 17. Higher areas integrate over
   longer windows: the slow state.
+- **Ernst, M. O. & Banks, M. S. (2002).** *Humans integrate visual and haptic information
+  in a statistically optimal fashion.* Nature 415. Cues weighted by reliability, as in a
+  Kalman update: the model for `SourceMix`.
+- **Feldman, H. & Friston, K. (2010).** *Attention, uncertainty, and free-energy.*
+  Frontiers in Human Neuroscience 4. Precision weighting of prediction errors.
+- **Daw, N., Niv, Y. & Dayan, P. (2005).** *Uncertainty-based competition between
+  prefrontal and dorsolateral striatal systems for behavioral control.* Nature
+  Neuroscience 8. Arbitration between systems by their uncertainty.
 - Predictive coding across levels: **Rao & Ballard (1999)**, **Friston (2005)** (under
   [top-down feedback](#top-down-feedback-and-predictive-coding)); the higher area learns
   the column's residual.

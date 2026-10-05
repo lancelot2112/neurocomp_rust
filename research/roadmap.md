@@ -59,11 +59,14 @@ ganglia select among competing cortical inputs.
 
 **Test.** Habit + memory above 85% on every seed, with topic, two-hop and give unchanged.
 
-**Status** ([24](experiments/24-cortical-hierarchy.md#basal-ganglia-arbitration-between-memory-and-top-down)):
-built as `ARBITRATE=1`, replacing the L2/3 ranking rules (removed).
-- Habit + memory: 76 → 81.5% (82 / 78 / 84%). Two-hop +2.5 points.
-- Topic −2 points: one choice per context, not per question.
-- Next: add each source's confidence to the selector's context.
+**Status** ([24](experiments/24-cortical-hierarchy.md#precision-weighted-mixing-instead-of-switching)):
+the switching selector was built and removed. Its replacement is precision-weighted
+mixing (`SourceMix`, `MIX=1`): every source votes with its learned reliability per
+context and per-question confidence.
+- Habit + memory 76 → 79% with no loss elsewhere.
+- The column's own copy kernels already do most of the mixing.
+- Next: make sources independent, by voting only with frames the column's winner did not
+  read, so agreement is not counted twice.
 
 ## 3. Thinking in steps
 **Why.** Two-hop chains one recall into another, but the chain is fixed by hand. Reasoning

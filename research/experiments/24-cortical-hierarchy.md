@@ -306,6 +306,9 @@ that is reliably better than the incumbent from a lucky kernel. Per-source arbit
 kernel, would carry the "how reliable is memory here" statistic.
 
 ## Basal-ganglia arbitration between memory and top-down
+> **Removed from the code**, replaced by the precision-weighted mixing below (it lost on
+> topic, where mixing does not). The results are kept as a record.
+
 The ranking rules above were removed: they gained little for their complexity, and
 habits should emerge from learning, not be built into the ranking. Instead, the choice of
 source is made by a basal-ganglia selector (`ARBITRATE=1` in the example;
@@ -364,6 +367,74 @@ confidence (the higher area's L5 confidence; recall cleanness, i.e. how many pla
 recall offers). Then it can follow memory when recall is clean and top-down when it is
 not, within the same context.
 
+## Precision-weighted mixing instead of switching
+The thalamus mostly scales streams rather than switching them off: pulvinar and the
+reticular nucleus set each stream's gain (Saalmann et al. 2012). People combine cues by
+weighting each with its reliability, so the combined estimate is better than either cue
+alone (Ernst & Banks 2002). That is a Kalman update, where precisions add, and it is
+precision weighting in predictive coding (Feldman & Friston 2010). So instead of choosing
+one source, every source now votes.
+
+**`SourceMix`** in [`src/program/thalamus.rs`](../../src/program/thalamus.rs) (`MIX=1` in
+the example):
+- **Sources and their candidates:** the column's own predicted word; the words in the
+  memory / relay frames; the words in the higher area's top-down frame.
+- **Reliability per source** is kept per key = (previous word, current word, a bucket of
+  the source's own confidence on this question). The buckets are the column's and the
+  higher area's L5 confidence (5 bins), and for memory how many words the recall offers
+  (1, 2, 3+). It is p = (hits + 1) / (hits + misses + 2) that a candidate it proposed was
+  right, in 8-bit counters halved together. Learned in training only.
+- **Vote weight** = −log2(1 − p), in 1/16 bits, from an integer log table:
+  log2(h + m + 2) − log2(m + 1). A source never seen in a context weighs 1 bit.
+- **Combination:** each candidate sums the weights of the sources proposing it. The one
+  with the most evidence is the prediction, and 1 − 2^(−total) its confidence. Agreement
+  adds; a reliable source outweighs an unreliable one without silencing it.
+- The column itself is unchanged: it learns from its own winner, as before.
+
+Held-out, seeds 0 / 1 / 2 (varied: seed 0, 100% throughout):
+
+| | Habit | Habit + memory | Topic | Give | Two-hop |
+|---|---|---|---|---|---|
+| Top-down late (default) | 81 / 82 / 80% | 70 / 79 / 80% (76.3) | 100 / 96 / 95% (97.1) | 99.6 / 99 / 100% | 94 / 81 / 62% |
+| **+ mixing** | 81 / 80 / 80% | **80 / 78 / 80% (79.2)** | 100 / 96 / 94% (96.7) | 99.6 / 99 / 100% | 94 / 81 / 62% |
+| + switching selector (removed) | – | 82 / 78 / 84% (81.5) | 84 / 100 / 100% (94.8) | 99.8 / 99.8 / 100% | 89 / 72 / 84% |
+| Top-down early | – | 67 / 67 / 83% (72.5) | 37 / 35 / 59% | 99.8 / 99.8 / 100% | 90 / 80 / 80% |
+| + mixing | – | 77 / 74 / 83% (77.9) | 37 / 35 / 51% | 99.8 / 99.8 / 100% | 90 / 80 / 80% |
+| No hierarchy (column + memory) | – | – | 100 / 100 / 100% | 99.8 / 99.8 / 100% | 93 / 84 / 80% |
+| + mixing | – | – | 100 / 100 / 100% | 99.8 / 99.8 / 100% | 93 / 84 / 80% |
+| + mixing keyed by candidate word too | – | 80 / 80 / 81% | 100 / 97 / 97% (with hierarchy) | 86–95% | 43–92% |
+
+1. **Mixing helps where it should and nowhere hurts.** It changes the column's answer
+   only where the column is weak. On habit + memory seed 0 it changed 16% of answers,
+   77% of those to the right one (+10 points). Elsewhere it agrees with the column at
+   nearly every answer, so topic, give, two-hop and varied are unchanged. Habit + memory
+   rises 3 points on average with top-down late, 5 with it early. Unlike the switching
+   selector it costs nothing on topic.
+2. **The column is already the main integrator.** Memory and top-down are frames of the
+   column's L4, and its copy kernels learn per context which word of which frame to
+   copy. That is a learned, word-level mixing inside L2/3. An outside mixer can only add
+   what those kernels miss: the conflicts between top-down and memory.
+3. **Memory cannot outvote the column, even where the column is broken** (top-down early,
+   topic 37–51%). A recall brings back a whole episode (name, verb, "the", the place), so
+   memory's vote is spread over about five words, each rarely right. Picking the right
+   word of the episode is exactly what the column's copy kernels do.
+4. **Keying reliability by the candidate word breaks generalisation.** With `p` per
+   (source, context, word), memory does learn "the place word, not the name". But it also
+   learns which places tend to be answers, which pulls held-out questions back towards
+   the pairs seen in training: give 86–95%, two-hop 43–92%. This is the binding failure
+   the hippocampus was built to avoid ([06](06-meaning.md), [11](11-episodic-memory.md)).
+   Removed.
+5. **Calibration needs independent sources.** Summing evidence assumes the sources err
+   independently. Here the column often copies top-down or memory, so their agreement is
+   one opinion counted twice. The mixed confidence is overconfident on habit + memory
+   (ECE 0.08 → 0.15), and better where the sources really differ (two-hop 0.15 → 0.08).
+
+**Kept:** `MIX=1` (off by default), as the way further sources such as more areas join.
+**Next:** let a source's weight discount what the column already copied from it. One
+option is to vote only with sources the column's winner did not read, using
+`winner_reads` on the frame. Together with the per-question buckets, that is the
+independence a Kalman-style mix needs.
+
 ## Biology
 - **Hierarchy and predictive coding:** each level predicts the activity of the level below
   and is driven by its prediction errors (Rao & Ballard 1999; Friston 2005). Here the
@@ -374,6 +445,9 @@ not, within the same context.
 - **Feedback through layer 6 and apical dendrites:** top-down predictions arrive in layer 1
   on apical dendrites and through L6, modulating what the lower area does. Here that is a
   frame the column learns to use or ignore.
+- **Mixing by precision:** cue combination weights each cue by its reliability (Ernst &
+  Banks 2002), as a Kalman update; predictive coding weights each stream by its precision
+  (Feldman & Friston 2010), which pulvinar gain can implement (Saalmann et al. 2012).
 - **Arbitration by the basal ganglia:** the striatum receives converging input from many
   cortical areas and the hippocampus and selects which one drives behaviour, learning
   from dopamine (Redgrave et al. 1999; Daw, Niv & Dayan 2005 on arbitration between

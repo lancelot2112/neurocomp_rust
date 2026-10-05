@@ -21,12 +21,12 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where
   0.3–2.3 MB is needed.
-- **Arbitration between sources** ([24](experiments/24-cortical-hierarchy.md#basal-ganglia-arbitration-between-memory-and-top-down)):
-  the L2/3 ranking rules (reliability-first, evidence gate, probation) were tried and
-  removed. A basal-ganglia selector now chooses memory, top-down or neither per context:
-  habit + memory 76 → 81.5%. But it makes one choice per context, not per question.
-  Next: put each source's confidence (higher area's L5 confidence, recall cleanness)
-  into the selector's context.
+- **Mixing sources** ([24](experiments/24-cortical-hierarchy.md#precision-weighted-mixing-instead-of-switching)):
+  L2/3 ranking rules and a switching selector were tried and removed. Precision-weighted
+  mixing (`SourceMix`) adds 3–5 points on habit + memory and costs nothing elsewhere. But
+  the column's copy kernels already mix most of what it could, and the sources are not
+  independent (the column copies them), which makes the mixed confidence overconfident.
+  Next: vote only with frames the winner did not read.
 - **The hierarchy's next steps**: run the higher area on a truly slower clock (only on
   the column's surprises, or once per sentence) to remove its cost; a third level;
   several columns side by side; then real text again

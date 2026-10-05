@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, DentateGyrus, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, CorticothalamicGate, DentateGyrus, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -103,6 +103,11 @@ enum Policy {
     /// if the recall contained the answer, delayed through the eligibility trace);
     /// otherwise a hand-set rule (load names) as the upper bound.
     Pfc { learned: bool },
+    /// Layer-6 corticothalamic gating: each channel (the fixed relay routes, then memory
+    /// recall) has its own frame, and `CorticothalamicGate` opens any number of them per
+    /// context, learned Hebbian-style from L5 attribution (no reward). `gated: false`
+    /// keeps every channel open (the baseline).
+    L6Gate { gated: bool },
     /// Same gate, but the relay routes are learned: discovered from surprises and ranked
     /// by consistency (`RouteScores`, as in experiment 10), top 8 refreshed every 50
     /// stories; memory recall is one more channel.
@@ -336,6 +341,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         Policy::Branch(b) => b + 1,
         Policy::Select => 2,
         Policy::ThalamicGate | Policy::LearnedGate => 1,
+        Policy::L6Gate { .. } => routes.len() + 1,
         Policy::FixedRelay => routes.len(),
     };
     let mut th = Thalamus::new(BITS, 60, routes.clone());
@@ -414,6 +420,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
     };
     let mut gate_pending: Option<BitVector> = None; // released content, awaiting reward
+    // L6Gate: the corticothalamic gate, this step's context and which channels were open
+    // with content; test counts: open channels per word, and per channel at answers
+    let mut l6_gate = CorticothalamicGate::new(BITS, routes.len() + 1, seed + 21);
+    let mut l6_step: Option<(BitVector, Vec<bool>)> = None;
+    let (mut l6_open_sum, mut l6_words) = (0usize, 0usize);
+    let mut l6_open_at_answer = vec![0usize; routes.len() + 1];
     let mut gate_chosen_at_answer: HashMap<String, usize> = HashMap::new();
     // LearnedGate: route discovery and the current pool
     let mut route_scores = RouteScores::default();
@@ -622,6 +634,52 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                         }
                         words.extend_from_slice(released.as_words());
+                    }
+                    Policy::L6Gate { gated } => {
+                        // channel contents: each route's relay, then memory recall
+                        let mut contents: Vec<Option<BitVector>> = routes.iter().map(|r| column.l6.relay_channel(*r).cloned()).collect();
+                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let mut recalled = None;
+                        if cue.count_ones() > 0 {
+                            let need = ((cue.count_ones() as f32 * 0.7) as u32).max(min_overlap);
+                            if let Some(ep) = memory.recall(&cue, need) {
+                                let mut r = memory.novel(ep, habituation);
+                                for (x, &c) in r.as_words_mut().iter_mut().zip(cue.as_words()) {
+                                    *x &= !c;
+                                }
+                                if r.count_ones() > 0 {
+                                    recalled = Some(r);
+                                }
+                            }
+                        }
+                        contents.push(recalled);
+                        // L6: the cortical context is the current input
+                        let open = if gated {
+                            let explore = if testing { None } else { Some(&mut rng) };
+                            l6_gate.open(code, explore)
+                        } else {
+                            vec![true; contents.len()]
+                        };
+                        let mut passed = vec![false; contents.len()];
+                        for (c, content) in contents.iter().enumerate() {
+                            match content {
+                                Some(v) if open[c] => {
+                                    passed[c] = true;
+                                    words.extend_from_slice(v.as_words());
+                                }
+                                _ => words.extend(std::iter::repeat(0).take(BITS / 64)),
+                            }
+                        }
+                        if testing {
+                            l6_open_sum += passed.iter().filter(|&&p| p).count();
+                            l6_words += 1;
+                            if t + 1 == s.answer_at {
+                                for (c, &p) in passed.iter().enumerate() {
+                                    l6_open_at_answer[c] += p as usize;
+                                }
+                            }
+                        }
+                        l6_step = Some((code.clone(), passed));
                     }
                     Policy::Loop(hops) => {
                         let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
@@ -924,6 +982,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 // L5 → basal ganglia: the column's outcome for this prediction
+                // L5 attribution for the L6 gate, read before L2/3 learns: per channel passed,
+                // did the prediction read its frame and come true?
+                let l6_used: Vec<bool> = match &l6_step {
+                    Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + c, &enc.codes[next]) >= 0.5).collect(),
+                    None => Vec::new(),
+                };
                 let l5 = if l5_used { column.outcome_via(choice_frame, &enc.codes[next]) } else { column.outcome(&enc.codes[next]) };
                 if !testing && t + 1 == s.answer_at {
                     if let Policy::Pfc { learned: true } = policy {
@@ -945,6 +1009,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if policy == Policy::LearnedGate && enc.decode(&out) != Some(next) {
                         // surprise: discover and score routes that would have relayed `next`
                         route_scores.observe_surprise(&column.l6, &enc.codes[next], 3, 8);
+                    }
+                    if let (Policy::L6Gate { gated: true }, Some((ctx, passed))) = (policy, l6_step.take()) {
+                        // corticothalamic Hebbian update: an open channel is strengthened if
+                        // the prediction read its frame and came true (L5 attribution)
+                        for (c, &p) in passed.iter().enumerate() {
+                            if p {
+                                l6_gate.learn(c, &ctx, l6_used[c], &mut rng);
+                            }
+                        }
                     }
                     if let Some(rel) = gate_pending.take() {
                         let hit = rel.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
@@ -1031,6 +1104,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             "  CONSOLIDATE seed {seed} ({replay_mode}): memory frame from the cortex at {from_cortex} test answers; semantic kernels {}; {} question tags / awake replays",
             semantic.len(),
             tagged_or_replayed
+        );
+    }
+    if let Policy::L6Gate { gated } = policy {
+        let names: Vec<String> = routes.iter().map(|r| format!("({},{})", r.query_lag, r.value_offset)).chain(["memory".to_string()]).collect();
+        let at: Vec<String> = names.iter().zip(&l6_open_at_answer).map(|(n, &c)| format!("{n} {:.0}%", 100.0 * c as f64 / TEST as f64)).collect();
+        eprintln!(
+            "  L6 seed {seed} ({}): channels passed per word at test {:.2} of {}; open at test answers: {}",
+            if gated { "gated" } else { "all open" },
+            l6_open_sum as f64 / l6_words.max(1) as f64,
+            names.len(),
+            at.join(", ")
         );
     }
     if matches!(policy, Policy::ThalamicGate | Policy::LearnedGate) {
@@ -1124,6 +1208,9 @@ fn main() {
                 Ok("gate") => vec![Policy::FixedRelay, Policy::Episodic, Policy::ThalamicGate],
                 Ok("learned_gate") => vec![Policy::LearnedGate],
                 Ok("thalamic_gate") => vec![Policy::ThalamicGate],
+                Ok("l6") => vec![Policy::L6Gate { gated: false }, Policy::L6Gate { gated: true }],
+                Ok("l6_gated") => vec![Policy::L6Gate { gated: true }],
+                Ok("l6_open") => vec![Policy::L6Gate { gated: false }],
                 Ok("consolidate") => vec![Policy::NoMemory, Policy::Episodic, Policy::Consolidate],
                 Ok("consolidate_only") => vec![Policy::Consolidate],
                 Ok("pfc") => vec![Policy::NoMemory, Policy::Episodic, Policy::Pfc { learned: false }, Policy::Pfc { learned: true }],

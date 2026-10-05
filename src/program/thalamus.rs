@@ -217,6 +217,91 @@ impl KernelGate {
     }
 }
 
+/// Layer-6 corticothalamic gating: cortex sets the gain of each thalamic relay channel.
+///
+/// Unlike the basal-ganglia gate (one channel released, learned from dopamine), every
+/// channel has its own relay frame and any number can be open at once, as L6 feedback
+/// (directly and through the reticular nucleus) enhances some relays and suppresses
+/// others. The gain is a facilitation value per (channel, cortical context): the
+/// channel's sparse code bound to the context by rotation, read through bit-sliced
+/// counters, as in `BasalGanglia`. A channel is open when its facilitation is at least
+/// `threshold`; every channel starts there (relays pass until cortex learns to suppress
+/// them).
+///
+/// Learning is Hebbian and needs no reward: after a prediction, each open channel that
+/// relayed something is strengthened if the column's prediction read its frame and came
+/// true (L5 attribution, `CorticalColumn::outcome_via`), and weakened if not. A closed
+/// channel relays nothing, so it can never be read; with `explore` probability it opens
+/// anyway during learning, so a suppressed channel can recover.
+pub struct CorticothalamicGate {
+    gain: crate::bitvec::SlicedCounter,
+    bits: usize,
+    codes: Vec<BitVector>,
+    /// Open if facilitation >= threshold (0..=1).
+    pub threshold: f32,
+    /// Probability that a closed channel opens anyway while learning.
+    pub explore: f64,
+    /// Probability that each bit of a channel steps per update.
+    pub rate: f64,
+}
+
+impl CorticothalamicGate {
+    pub fn new(bits: usize, channels: usize, seed: u64) -> Self {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let all: Vec<usize> = (0..bits).collect();
+        let codes = (0..channels)
+            .map(|_| BitVector::from_bits(&all.choose_multiple(&mut rng, 32).copied().collect::<Vec<_>>(), bits))
+            .collect();
+        let planes = 4;
+        Self { gain: crate::bitvec::SlicedCounter::new(bits, planes, 1 << (planes - 1)), bits, codes, threshold: 0.5, explore: 0.05, rate: 0.3 }
+    }
+
+    fn bound(&self, channel: usize, context: &BitVector) -> BitVector {
+        let mut c = self.codes[channel].clone();
+        c.rotl_mut((frame_hash(context) % self.bits as u64) as usize);
+        c
+    }
+
+    /// Facilitation of `channel` in `context`, in 0..=1.
+    pub fn facilitation(&self, channel: usize, context: &BitVector) -> f32 {
+        let c = self.bound(channel, context);
+        self.gain.sum(&c) as f32 / (c.count_ones() as f32 * self.gain.max() as f32)
+    }
+
+    /// Which channels are open in `context`. With `rng`, closed channels open with
+    /// probability `explore`.
+    pub fn open<R: rand::Rng>(&self, context: &BitVector, mut rng: Option<&mut R>) -> Vec<bool> {
+        (0..self.codes.len())
+            .map(|ch| {
+                self.facilitation(ch, context) >= self.threshold
+                    || rng.as_mut().map_or(false, |r| r.gen_bool(self.explore))
+            })
+            .collect()
+    }
+
+    /// Hebbian update for one open channel: `used` = the prediction read its frame and
+    /// came true.
+    pub fn learn<R: rand::Rng>(&mut self, channel: usize, context: &BitVector, used: bool, rng: &mut R) {
+        let c = self.bound(channel, context);
+        let mut step = BitVector::new(self.bits, Some(0));
+        for (wi, &w) in c.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                let b = w.trailing_zeros() as usize;
+                w &= w - 1;
+                if rng.gen_bool(self.rate) {
+                    step.bit_set(wi * 64 + b);
+                }
+            }
+        }
+        if used {
+            self.gain.increment(&step);
+        } else {
+            self.gain.decrement(&step);
+        }
+    }
+}
+
 fn frame_hash(frame: &BitVector) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -226,6 +311,26 @@ fn frame_hash(frame: &BitVector) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn corticothalamic_gate_opens_what_cortex_uses_per_context() {
+        let mut g = CorticothalamicGate::new(1024, 2, 1);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(2);
+        let (ctx_a, ctx_b) = (BitVector::from_bits(&[1, 2, 3], 1024), BitVector::from_bits(&[9, 10, 11], 1024));
+        let none: Option<&mut rand::rngs::StdRng> = None;
+        assert_eq!(g.open(&ctx_a, none), vec![true, true]); // relays pass until suppressed
+        for _ in 0..40 {
+            // context a uses channel 0, context b uses channel 1
+            g.learn(0, &ctx_a, true, &mut rng);
+            g.learn(1, &ctx_a, false, &mut rng);
+            g.learn(0, &ctx_b, false, &mut rng);
+            g.learn(1, &ctx_b, true, &mut rng);
+        }
+        let none: Option<&mut rand::rngs::StdRng> = None;
+        assert_eq!(g.open(&ctx_a, none), vec![true, false]);
+        let none: Option<&mut rand::rngs::StdRng> = None;
+        assert_eq!(g.open(&ctx_b, none), vec![false, true]);
+    }
+
     use super::*;
 
     fn sym(i: usize) -> BitVector {

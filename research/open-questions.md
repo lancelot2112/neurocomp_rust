@@ -3,10 +3,12 @@
 Ordered roughly by how much they matter for "reading like a transformer".
 
 ## Current (after [23](experiments/23-compaction.md))
-- **Surprise-gated learning.** Learning is now ~60% of the time: every matched kernel is
-  scored at every word, even when the prediction was right. Score only on surprise, or
-  only the winner and its rivals, so an expected word costs almost nothing (the brain's
-  energy trick).
+- **Event-based hippocampal recall.** With surprise-gated learning
+  ([23](experiments/23-compaction.md#4-surprise-gated-learning)) learning is no longer the
+  main cost; recall is (32–47% of the time). It scans every stored episode as a dense
+  vector at every word. An inverted index from bits to episodes (as the predictor has)
+  would make it event-based.
+- **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where
   0.3–2.3 MB is needed.
 - **Several columns, a hierarchy, and real text.** Everything runs through one column on

@@ -114,6 +114,38 @@ compacted, and it is the seed that has always been weakest (70% in
      word, even when the prediction was right. Surprise-gated learning, where an expected
      word costs almost nothing, is the next step.
 
+## 4. Surprise-gated learning
+**Mechanism** (`SURPRISE_GATE=1`, `KernelClass::set_surprise_gate`):
+- **Expected word** (the winner predicted it): only the winner is confirmed: its hit,
+  its recency and its copy-credit tags. Fast-inhibition tags still run.
+- **Surprise** (wrong winner, or none): the full update. Every matched kernel is scored,
+  near misses are pruned and new kernels grown.
+
+This is the predictive-coding reading of plasticity: an expected input carries no error.
+Results are with compaction on (seed 0 timings, run together on a quiet machine):
+
+| Task | Words expected in training | Held-out (compaction only → + surprise gate) | Training µs/word | Learning share of time |
+|---|---|---|---|---|
+| Elimination | 82% | 100% → 100 / 100 / 100% | 42 → 41–44 | 61 → 52% |
+| Varied (1–2 and 1–3 facts) | 66–67% | 100% → 100% on every seed | 94–103 → 83–98 | 25 → 19–20% |
+| Topic | 66–68% | 100% → 100 / 100 / 100% | 98 → 77–78 | 27 → 17% |
+| Give | 61% | 100% → 100 / 100 / 100% | 220 → 198–209 | 38 → 33% |
+| Two-hop | 61% | 89.0 / 86.4 / 71.8% → **88.6 / 89.8 / 81.6%** | 240 → 208–217 | 35 → 31% |
+
+1. **Accuracy holds, and two-hop's weak seed improves** (71.8% to 81.6%). Not re-scoring
+   the losing kernels on every expected word seems to help: alternatives that win in
+   other contexts are no longer pushed down each time they lose here.
+2. **The speed-up is modest (8–21%).** About a third of the words are surprises, and they
+   carry most of learning's cost: growth, scoring every matched kernel and pruning near
+   misses.
+3. **On elimination the gate left more kernels** (2,909 against 1,193 live), so
+   answering slowed from 20 to 43–53 µs per word. Not yet diagnosed.
+4. **The bottleneck has moved to the hippocampus.** L4 assembly, which is mostly recall,
+   is now 32–47% of the time on the memory tasks. Recall scans all 200 stored episodes as
+   dense 8,192-bit vectors at every word. That is the next event-based target: an
+   inverted index from active bits to the episodes that contain them, as the predictor
+   already has.
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the

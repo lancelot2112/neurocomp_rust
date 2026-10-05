@@ -562,6 +562,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_memo(std::env::var("MEMO").is_ok());
     // FRAME_MEMO=1: per-frame memo of match counts, invalidated per kernel
     class.set_frame_memo(std::env::var("FRAME_MEMO").is_ok());
+    // CANON=1: canonical kernels (deterministic sampling + hash-consing at growth)
+    class.set_canonical(std::env::var("CANON").is_ok());
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
@@ -1357,6 +1359,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if dump.is_none() {
         // COST: what the column stores, densely as now and as sparse indices
         let kernels = column.l23.kernels();
+        if column.l23.canon_reused() > 0 {
+            eprintln!("  CANON seed {seed}: {} growths found an identical kernel already present", column.l23.canon_reused());
+        }
         let (fl, fh, fp) = column.l23.frame_memo_stats();
         if fl > 0 {
             eprintln!("  FRAME_MEMO seed {seed}: {fl} frame lookups: {:.0}% hits, {:.0}% patched, {:.0}% rebuilt", 100.0 * fh as f64 / fl as f64, 100.0 * fp as f64 / fl as f64, 100.0 * (fl - fh - fp) as f64 / fl as f64);

@@ -149,6 +149,10 @@ struct PredictiveState {
     free: Vec<usize>,
     /// Per-frame memo of match counts (see `set_frame_memo`).
     frame_memo: Option<FrameMemo>,
+    /// Canonical kernels (see `set_canonical`): connection-set hash -> kernel.
+    canon: Option<std::collections::HashMap<u64, u32>>,
+    /// Growth events that found an identical kernel already present.
+    canon_reused: usize,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -418,6 +422,8 @@ impl KernelClass<SimpleKernel> {
             expected_steps: 0,
             memo: None,
             frame_memo: None,
+            canon: None,
+            canon_reused: 0,
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -775,6 +781,21 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().map_or((0, 0), |st| (st.memo_lookups, st.memo_hits))
     }
 
+    /// Canonical kernels (after Hashlife's hash-consed nodes): growth samples each frame's
+    /// active bits deterministically (smallest fixed hash first), so the same context
+    /// always yields the same kernel, and a table of connection sets stops an identical
+    /// kernel from being grown twice.
+    pub fn set_canonical(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.canon = if on { Some(std::collections::HashMap::new()) } else { None };
+        }
+    }
+
+    /// Growth events that found an identical kernel already present.
+    pub fn canon_reused(&self) -> usize {
+        self.predictive.as_ref().map_or(0, |st| st.canon_reused)
+    }
+
     /// Per-frame memo of match counts (see `FrameMemo`). Exact: the counts are those of the
     /// index fan-out.
     pub fn set_frame_memo(&mut self, on: bool) {
@@ -1107,6 +1128,12 @@ impl KernelClass<SimpleKernel> {
         // free the removed kernels and rebuild the index from the survivors
         for k in 0..remove.len() {
             if remove[k] {
+                if let Some(canon) = st.canon.as_mut() {
+                    let key = connection_key(&self.active_kernels[k].input_set, &self.active_kernels[k].output_set);
+                    if canon.get(&key) == Some(&(k as u32)) {
+                        canon.remove(&key);
+                    }
+                }
                 let kern = &mut self.active_kernels[k];
                 kern.input_mask = BitVector::new(64, Some(0));
                 kern.output_mask = BitVector::new(64, Some(0));
@@ -1388,9 +1415,17 @@ impl KernelClass<SimpleKernel> {
                 st.index[b].retain(|&x| x as usize != k);
                 counts.remove(&b);
             }
+            let old_key = connection_key(&self.active_kernels[k].input_set, &self.active_kernels[k].output_set);
             self.active_kernels[k].remove_inputs(&drop);
             if let Some(f) = st.frame_memo.as_mut() {
                 f.note(k);
+            }
+            if let Some(canon) = st.canon.as_mut() {
+                if canon.get(&old_key) == Some(&(k as u32)) {
+                    canon.remove(&old_key);
+                }
+                let kern = &self.active_kernels[k];
+                canon.entry(connection_key(&kern.input_set, &kern.output_set)).or_insert(k as u32);
             }
             // The match tolerance scales with the kernel's smallest remaining frame, so a
             // frame pruned to a few bits must still be (almost) fully present: otherwise
@@ -1448,7 +1483,17 @@ impl KernelClass<SimpleKernel> {
                     active = copies;
                 }
             }
-            for &b in active.choose_multiple(rng, cfg.sample_bits) {
+            // canonical: the active bits with the smallest fixed hash, so the same context
+            // always yields the same sample (and the same kernel); else a random sample
+            let picked: Vec<usize> = if st.canon.is_some() {
+                let mut v = active.clone();
+                v.sort_unstable_by_key(|&b| bit_rank(b));
+                v.truncate(cfg.sample_bits);
+                v
+            } else {
+                active.choose_multiple(rng, cfg.sample_bits).copied().collect()
+            };
+            for &b in &picked {
                 input_set.push(b as u32);
                 sampled += 1;
                 reach = f + 1;
@@ -1471,6 +1516,21 @@ impl KernelClass<SimpleKernel> {
                 w &= w - 1;
             }
         }
+        // hash-consing: an identical kernel (same connections, same output) already
+        // exists, so growing another would only duplicate it
+        if let Some(canon) = st.canon.as_ref() {
+            let mut sorted = input_set.clone();
+            sorted.sort_unstable();
+            sorted.dedup();
+            if let Some(&k) = canon.get(&connection_key(&sorted, &output_set)) {
+                let kern = &mut self.active_kernels[k as usize];
+                if kern.input_set == sorted && kern.output_set == output_set {
+                    kern.stats.last_useful = tick;
+                    st.canon_reused += 1;
+                    return;
+                }
+            }
+        }
         let mut k = SimpleKernel::sparse(input_set, output_set, target.bit_len(), threshold, KernelOp::Or);
         // Depth is how far back the connections really reach: a kernel grown over
         // empty frames is no more specific than a shallower one and must not
@@ -1478,6 +1538,7 @@ impl KernelClass<SimpleKernel> {
         k.context_frames = reach;
         k.stats.last_useful = tick;
 
+        let canon_old = |kern: &SimpleKernel| connection_key(&kern.input_set, &kern.output_set);
         let slot = if let Some(free) = st.free.pop() {
             // a slot emptied by sleep: nothing points to it any more
             st.silent_counts.remove(&free);
@@ -1499,6 +1560,12 @@ impl KernelClass<SimpleKernel> {
                 .filter(|&i| Some(i) != st.last_winner)
                 .min_by_key(|&i| self.active_kernels[i].stats.last_useful)
                 .expect("budget must allow at least two kernels");
+            if let Some(canon) = st.canon.as_mut() {
+                let key = canon_old(&self.active_kernels[victim]);
+                if canon.get(&key) == Some(&(victim as u32)) {
+                    canon.remove(&key);
+                }
+            }
             for &b in &self.active_kernels[victim].input_set {
                 let b = b as usize;
                 st.index[b].retain(|&x| x as usize != victim);
@@ -1537,6 +1604,10 @@ impl KernelClass<SimpleKernel> {
         if let Some(f) = st.frame_memo.as_mut() {
             f.note(slot);
         }
+        if let Some(canon) = st.canon.as_mut() {
+            let kern = &self.active_kernels[slot];
+            canon.insert(connection_key(&kern.input_set, &kern.output_set), slot as u32);
+        }
     }
 }
 
@@ -1561,6 +1632,28 @@ fn target_in_frames(input: &BitVector, target: &BitVector, frame_words: usize) -
         return false;
     }
     (0..input.bit_len() / fb).any(|f| bits.iter().filter(|&&b| input.bit_get(f * fb + b)).count() * 2 >= bits.len())
+}
+
+/// A fixed pseudo-random rank for an input bit (splitmix64): canonical sampling takes the
+/// lowest-ranked active bits.
+fn bit_rank(b: usize) -> u64 {
+    let mut z = (b as u64).wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// Hash of a kernel's connections (sorted input and output positions).
+fn connection_key(input: &[u32], output: &[u32]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for &x in input {
+        h = (h ^ x as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    h = (h ^ 0xFFFF_FFFF).wrapping_mul(0x0100_0000_01b3);
+    for &x in output {
+        h = (h ^ x as u64).wrapping_mul(0x0100_0000_01b3);
+    }
+    h
 }
 
 /// A 64-bit hash of an input's active bits (word index and word, mixed).
@@ -1789,6 +1882,23 @@ mod tests {
         // (the pile-up it prevents needs real history; see experiment 23)
         assert!(suppressed > 0);
         assert!(gated <= open, "gated {gated} vs open {open}");
+    }
+
+    #[test]
+    fn canonical_growth_never_duplicates_a_kernel() {
+        use rand::SeedableRng;
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 4, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        kc.set_canonical(true);
+        let (ctx, b, c) = (frames(&[0xFFFF]), BitVector::from_words(vec![0xFF << 16]), BitVector::from_words(vec![0xFF << 32]));
+        let mut r1 = rand::rngs::StdRng::seed_from_u64(1);
+        let mut r2 = rand::rngs::StdRng::seed_from_u64(2);
+        kc.grow(&ctx, &b, 1, &mut r1);
+        kc.grow(&ctx, &b, 1, &mut r2); // different randomness, same canonical sample
+        assert_eq!((kc.live(), kc.canon_reused()), (1, 1));
+        kc.grow(&ctx, &c, 1, &mut r1); // a different output is a different kernel
+        assert_eq!(kc.live(), 2);
+        assert_eq!(kc.kernels()[0].input_set, kc.kernels()[1].input_set); // same canonical sample
     }
 
     #[test]

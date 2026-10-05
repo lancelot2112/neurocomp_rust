@@ -146,6 +146,28 @@ Results are with compaction on (seed 0 timings, run together on a quiet machine)
    inverted index from active bits to the episodes that contain them, as the predictor
    already has.
 
+## 5. Event-based hippocampal recall
+Recall compared the cue with every stored episode at full width (200 × 128-word AND and
+popcount), at every word and more than once for the big-loop hops and branches. The
+episodic memory now keeps an inverted index from each bit to the episodes containing it,
+maintained on store and on forgetting. A cue's active bits vote for the episodes that
+contain them. Since cues are rare bits, that touches a few entries.
+- **Exactly equivalent:** overlaps and the most-recent tie-break are the same, checked
+  against a full scan over 200 stores with forgetting and exclusions. Every task's
+  results were identical.
+- **Speed:** with compaction and the surprise gate on, seed 0:
+
+| Task | Training µs/word | Answering µs/word | L4 (mostly recall) share of time |
+|---|---|---|---|
+| Varied, 1–2 / 1–3 facts | 91 / 83 → **54 / 57** | 67 / 67 → **40 / 46** | 32–47% → 25–26% |
+| Topic | 78 → **54** | 67 → **45** | → 13% |
+| Give | 204 → **161** | 109 → **75** | → 23% |
+| Two-hop | 214 → **147** | 142 → **107** | → 17% |
+
+Over the whole day, answering on varied stories went from about 3,500 µs per word to
+40 µs (~87×), and on elimination from 3,570 to 19 µs (~190×). Results are the same or
+better.
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the

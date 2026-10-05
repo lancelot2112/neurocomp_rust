@@ -43,16 +43,18 @@ three sizes (28k, 106k and 800k parameters) and 1, 3, 10, 30 or 100 passes.
   data or tuning would likely help it, so the fair claim is "on this data".
 
 ## Cost
-Both run single-threaded on the same (shared, loaded) machine, so ratios are rough. Our
-figures are with compaction ([23](../experiments/23-compaction.md)).
+Both run single-threaded on the same machine, so ratios are rough. Our figures are with
+compaction, surprise-gated learning and event-based recall
+([23](../experiments/23-compaction.md); elimination without the surprise gate, which
+costs it speed there).
 
 | | Transformer (28k / 106k / 800k params) | This network |
 |---|---|---|
 | **Model memory** | 0.11 / 0.42 / 3.2 MB (fp32) | 0.3–2.3 MB as sparse indices plus inverted index; **5–50 MB as currently stored** (dense masks); plus a 200 KB episodic store |
-| **Answering, per word** | 16–31 / 21–45 / 55–100 µs | 19 µs (elimination) to 67–150 µs (other tasks) |
-| **Training, per word per pass** | 9–16 / 25–42 / 90–160 µs | 39 µs (elimination) to 95–240 µs, learning inline |
+| **Answering, per word** | 16–31 / 21–45 / 55–100 µs | 19 µs (elimination), 40–46 µs (varied, topic), 75 µs (give), 107 µs (two-hop) |
+| **Training, per word per pass** | 9–16 / 25–42 / 90–160 µs | 39 µs (elimination), 54–57 µs (varied, topic), 147–161 µs (two-hop, give), learning inline |
 | **Passes needed** | 3–100, or never (binding tasks) | 1 |
-| **Total training to its best** | Elimination ~4–13 s; topic ~3 s; varied ~3 s (to 70–77%); give / two-hop: no amount of training reached ours | Elimination ~5 s; varied ~8 s; topic ~8 s; give ~17 s; two-hop ~29 s |
+| **Total training to its best** | Elimination ~4–13 s; topic ~3 s; varied ~3 s (to 70–77%); give / two-hop: no amount of training reached ours | Elimination ~5 s; varied ~5 s; topic ~4 s; give ~12 s; two-hop ~18 s |
 
 ### So: faster, or less memory, for more function?
 - **More function:** yes, on held-out binding, which is the part that needs one-shot
@@ -60,13 +62,15 @@ figures are with compaction ([23](../experiments/23-compaction.md)).
   and 98–100% against 25% on give. Equal (100%) where attention alone suffices.
 - **Speed:** per word, now in the same range as the transformers when answering.
   - **Elimination:** 19 µs, level with the 28k model and 3× faster than the 800k model.
-  - **Varied and topic:** 67–84 µs, level with or faster than the 800k model (74–102 µs)
-    and 2–3× slower than the 106k model.
-  - **Give and two-hop:** 110–150 µs, 1.5–2× slower than the 800k model.
-  - **Training** reaches the result in one pass, so total training time is a few seconds
-    to half a minute either way.
-  - This is after a ~50–190× speed-up today, from making the path event-based and
-    compacting the prior. Before it, we were 100–500× slower.
+  - **Varied and topic:** 40–46 µs, level with the 106k model (21–45 µs) and about 2×
+    faster than the 800k model (74–102 µs).
+  - **Give:** 75 µs, level with the 800k model (79–90 µs).
+  - **Two-hop:** 107 µs, 1.6× slower than the 800k model (60–70 µs).
+  - **Training** reaches the result in one pass, so total training time is 4–18 seconds,
+    against 3–13 seconds for the transformer on the tasks it can learn.
+  - This is after a ~85–190× speed-up today, from making the path event-based, compacting
+    the prior, gating learning on surprise and indexing recall. Before it, we were
+    100–500× slower.
 - **Memory:** comparable in what is actually needed (0.3–2.3 MB against 0.1–3.2 MB).
   Today's dense mask storage wastes about 50×, a storage choice, not a property of the
   method.

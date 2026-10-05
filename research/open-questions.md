@@ -3,11 +3,10 @@
 Ordered roughly by how much they matter for "reading like a transformer".
 
 ## Current (after [23](experiments/23-compaction.md))
-- **Event-based hippocampal recall.** With surprise-gated learning
-  ([23](experiments/23-compaction.md#4-surprise-gated-learning)) learning is no longer the
-  main cost; recall is (32–47% of the time). It scans every stored episode as a dense
-  vector at every word. An inverted index from bits to episodes (as the predictor has)
-  would make it event-based.
+- **Remaining per-word cost.** After event-based recall
+  ([23](experiments/23-compaction.md#5-event-based-hippocampal-recall)), L2/3 matching is
+  25–50% and learning 24–38%. Next: sparse mask storage, and the dense 8,192-bit frame
+  copies that L4 still builds every word.
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where
   0.3–2.3 MB is needed.

@@ -654,6 +654,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // attribution); HIER_GATE_WARMUP stories all open, weakening × HIER_GATE_WEAKEN
     let hier_gate_on = std::env::var("HIER_GATE").is_ok();
     let hier_gate_area = std::env::var("HIER_GATE_SIGNAL").map_or(false, |v| v == "area");
+    let hier_gate_conf: Option<f32> = std::env::var("HIER_GATE_CONF").ok().and_then(|v| v.parse().ok());
     let hier_gate_warmup: usize = std::env::var("HIER_GATE_WARMUP").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
     let mut hier_gate = CorticothalamicGate::new(BITS, 1, seed + 31);
     hier_gate.weaken = std::env::var("HIER_GATE_WEAKEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.25);
@@ -1104,7 +1105,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     // HIER_GATE: the corticothalamic gain on the top-down channel, per context
                     // (the current word); all open during the warm-up
-                    let passed = if hier_gate_on && s_i >= hier_gate_warmup {
+                    // HIER_GATE_CONF=c: pass only predictions the higher area is confident in
+                    // (its winning kernel's reliability, the L5 confidence it sends up)
+                    let confident = s_i < hier_gate_warmup || hier_gate_conf.map_or(true, |c| area.column.confidence() >= c);
+                    let passed = confident && if hier_gate_on && s_i >= hier_gate_warmup {
                         let explore = if testing { None } else { Some(&mut rng) };
                         hier_gate.open(code, explore)[0]
                     } else {

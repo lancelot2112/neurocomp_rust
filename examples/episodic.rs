@@ -496,6 +496,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut l6_gate = CorticothalamicGate::new(BITS, routes.len() + 1, seed + 21);
     let mut l6_step: Option<(BitVector, Vec<bool>)> = None;
     let l6_pair = std::env::var("L6_CONTEXT").map_or(false, |v| v == "pair");
+    // L6_WARMUP=n: all channels stay open for the first n training stories while the gate
+    // learns (cortex first learns to use the relays); L6_WEAKEN=w: weakening rate factor
+    let l6_warmup: usize = std::env::var("L6_WARMUP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    l6_gate.weaken = std::env::var("L6_WEAKEN").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
     let (mut l6_open_sum, mut l6_words) = (0usize, 0usize);
     // [question kind][channel]: kind 1 = "what did X give ?", else 0
     let mut l6_open_at_answer = vec![vec![0usize; routes.len() + 1]; 2];
@@ -747,7 +751,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         } else {
                             code.clone()
                         };
-                        let open = if gated {
+                        let open = if gated && s_i >= l6_warmup {
                             let explore = if testing { None } else { Some(&mut rng) };
                             l6_gate.open(&ctx, explore)
                         } else {

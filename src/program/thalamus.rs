@@ -243,6 +243,10 @@ pub struct CorticothalamicGate {
     pub explore: f64,
     /// Probability that each bit of a channel steps per update.
     pub rate: f64,
+    /// Weakening is `rate × weaken` (strengthening is `rate`): with weaken w < 1, a
+    /// channel stays open in a context if it is used in at least about w / (1 + w) of
+    /// its uses there, so a relay that matters in only some of a context's cases is kept.
+    pub weaken: f64,
 }
 
 impl CorticothalamicGate {
@@ -253,7 +257,7 @@ impl CorticothalamicGate {
             .map(|_| BitVector::from_bits(&all.choose_multiple(&mut rng, 32).copied().collect::<Vec<_>>(), bits))
             .collect();
         let planes = 4;
-        Self { gain: crate::bitvec::SlicedCounter::new(bits, planes, 1 << (planes - 1)), bits, codes, threshold: 0.5, explore: 0.05, rate: 0.3 }
+        Self { gain: crate::bitvec::SlicedCounter::new(bits, planes, 1 << (planes - 1)), bits, codes, threshold: 0.5, explore: 0.05, rate: 0.3, weaken: 1.0 }
     }
 
     fn bound(&self, channel: usize, context: &BitVector) -> BitVector {
@@ -289,7 +293,7 @@ impl CorticothalamicGate {
             while w != 0 {
                 let b = w.trailing_zeros() as usize;
                 w &= w - 1;
-                if rng.gen_bool(self.rate) {
+                if rng.gen_bool(if used { self.rate } else { self.rate * self.weaken }) {
                     step.bit_set(wi * 64 + b);
                 }
             }

@@ -27,10 +27,15 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   the column's copy kernels already mix most of what it could, and the sources are not
   independent (the column copies them), which makes the mixed confidence overconfident.
   Next: vote only with frames the winner did not read.
-- **The hierarchy's next steps**: run the higher area on a truly slower clock (only on
-  the column's surprises, or once per sentence) to remove its cost; a third level;
-  several columns side by side; then real text again
-  ([comparison](concepts/brain-transformer-comparison.md)).
+- **The chain of areas** ([25](experiments/25-area-chain.md)): each added area extends
+  the reach, but only as a source in the mix (as frames into the area below it hurt), and
+  accuracy stays low (9–38%). Three fixes:
+  - recency in the windows (a bag cannot say which season came last);
+  - more teaching signal for the upper areas, from self-supervised read-back
+    ([output and self-supervision](concepts/output-and-self-supervision.md));
+  - an event-driven clock (cost now 6× for three higher areas).
+- **Output** ([plan](concepts/output-and-self-supervision.md)): answering by speaking
+  with abstention, recitation, and read-back with an efference copy ("self" frame).
 - **Basal ganglia and L6 together** on the same relays (select by reward among what L6
   lets through).
 - **Two-hop's weak seed.** The selector picks well (answer in recall 86–89%), but the

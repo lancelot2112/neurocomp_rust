@@ -117,6 +117,14 @@ al. 2014).
 **Test.** Cost on memory tasks back to within 1.5× of no hierarchy; a question needing
 story-level structure answered above 80%.
 
+**Status** ([25](experiments/25-area-chain.md)): a chain of three higher areas (windows
+of 4, 16 and 64 sentences) is built. Each area extends the reach on the season task,
+but only as a source in the mix, and accuracy stays low (9–38%).
+- Needed: recency in the windows, and more teaching signal for the upper areas.
+- The planned source of that signal is output with self-supervised read-back
+  ([plan](concepts/output-and-self-supervision.md)). It comes before the event-driven
+  clock.
+
 ## 6. A ladder of harder tasks
 Each new stage is measured on accuracy, calibration and abstention, plus cost against
 the transformer baseline ([comparison](concepts/brain-transformer-comparison.md)):

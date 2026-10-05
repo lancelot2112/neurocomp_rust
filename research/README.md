@@ -38,6 +38,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Elimination ("which place hasn't been named?") by a fast-learning inhibitory loop in L2/3, gated by reliability in integers | **100%** every seed, varied stories still 100% | no inhibition 14–17% (chance); ungated: varied falls to 78–84% | [22](experiments/22-fast-inhibition.md) |
 | – | Compaction: event-based fast path, uncertainty-gated growth, sleep (downscale, prune, merge by replay) | **5–14× fewer kernels**, accuracy kept on every task; answering 5–62 µs/word (from 160–3,600) with surprise-gated learning, event-based recall, sparse storage and canonical kernels | transformer 16–100 µs/word, but 25–77% on held-out binding where we get 72–100% | [23](experiments/23-compaction.md), [comparison](concepts/brain-transformer-comparison.md) |
 | – | A cortical hierarchy: a higher area (sentence + slow state of past surprises) learns the column's errors and feeds back a top-down frame | **81 / 82 / 80%** on a task needing story-level context | column alone 0%, episodic memory 49–52% | [24](experiments/24-cortical-hierarchy.md) |
+| – | A chain of areas (windows of 4, 16, 64 sentences), each voting in a precision-weighted mix: how far back a fact can be used | each area extends the reach (4–7 stories back: 5 → 18 → 23%), but accuracy stays low | as frames into the area below: worse (0%) | [25](experiments/25-area-chain.md) |
 
 **Short version.** Local growth rules driven by surprise turn the network into a
 competent variable-order sequence memory (comparable to PPM-style n-gram back-off
@@ -91,6 +92,7 @@ Experiments (chronological)
 22. [A fast-learning inhibitory loop in L2/3](experiments/22-fast-inhibition.md)
 23. [Compaction: an event-based fast path, uncertainty-gated growth and sleep](experiments/23-compaction.md)
 24. [A cortical hierarchy: a higher area that predicts the column's errors](experiments/24-cortical-hierarchy.md)
+25. [A chain of cortical areas: does each area reach further back in time?](experiments/25-area-chain.md)
 
 Concepts
 - [Brain, this network, and a transformer: function vs speed and memory](concepts/brain-transformer-comparison.md)
@@ -104,6 +106,7 @@ Concepts
 - [Basal ganglia and cerebellum: two more credit-assignment loops](concepts/basal-ganglia-and-cerebellum.md)
 - [Probability in bits: what is bitwise now, and how to keep it that way](concepts/probability-in-bits.md)
 - [Architecture map: which brain systems we model, and how they connect](concepts/architecture-map.md)
+- [Output and self-supervision: speaking, and hearing yourself speak](concepts/output-and-self-supervision.md)
 
 Reference
 - [Bugs found and fixed](bugs-and-fixes.md)

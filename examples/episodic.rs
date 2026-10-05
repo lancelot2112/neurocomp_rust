@@ -82,10 +82,11 @@ enum Task {
     /// "X went to the" -> X's habitual place for that time of day (a fixed mapping learned
     /// over training). The lower column cannot see the name and the time at the answer.
     Habit,
-    /// Long reach (experiment 25): a season ("winter came .") is announced once every
-    /// SEASON_LEN stories (default 32); every story ends "X went to the" -> X's place for
-    /// the current season. The deciding word lies 0 to SEASON_LEN − 1 stories back, so
-    /// accuracy by that distance shows how far back the areas reach.
+    /// Long reach (experiment 25): one episode per story. A season is announced ("winter
+    /// came ."), then D season-free filler stories (1-2 distractor sentences each; D drawn
+    /// from 0 to SEASON_LEN − 1, default 32), then "X went to the" -> X's place in that
+    /// season. Nothing between the announcement and the question reveals the season, so
+    /// accuracy by D shows how far back the areas reach.
     Season,
 }
 
@@ -247,17 +248,18 @@ fn season_place(n: usize, s: usize) -> usize {
     (2 * n + [0, 1, 3, 4][s] + 1) % PLACES.len()
 }
 
-fn season_story(rng: &mut StdRng, season: usize, announce: bool, held_out: bool) -> Story {
-    let mut words: Vec<&'static str> = Vec::new();
-    if announce {
-        words.extend([SEASONS[season], "came", "."]);
+fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
+    let season = rng.gen_range(0..SEASONS.len());
+    let mut words: Vec<&'static str> = vec![SEASONS[season], "came", "."];
+    for _ in 0..distance {
+        for _ in 0..rng.gen_range(1..=2) {
+            words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+        }
     }
     if rng.gen_bool(0.5) {
         words.push(FILLERS.choose(rng).unwrap());
     }
-    for _ in 0..rng.gen_range(1..=3) {
-        words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
-    }
+    words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
     let n = rng.gen_range(0..NAMES.len());
     words.extend([NAMES[n], "went", "to", "the"]);
     let answer_at = words.len();
@@ -664,6 +666,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // times area k's, and each area (but the top) also reads the prediction of the area
     // above it as one more frame, so top-down flows down the chain to the column
     let hier_levels: usize = std::env::var("HIER_LEVELS").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+    // HIER_CHAIN=mix: the upper areas do not feed the area below; each votes in the
+    // precision-weighted mix (MIX) as one more source, weighted by its own reliability
+    let chain_mix = std::env::var("HIER_CHAIN").map_or(false, |v| v == "mix");
     let make_area = |span: usize, with_above: bool| {
         let mut c: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
             max_kernels: 100_000,
@@ -696,8 +701,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         a.focus = std::env::var("HIER_FOCUS").is_ok();
         a
     };
-    let mut area = make_area(hier_span, hier_levels > 1);
-    let mut upper: Vec<HigherArea> = (1..hier_levels).map(|j| make_area(hier_span.pow(j as u32 + 1), j + 1 < hier_levels)).collect();
+    let mut area = make_area(hier_span, hier_levels > 1 && !chain_mix);
+    let mut upper: Vec<HigherArea> = (1..hier_levels).map(|j| make_area(hier_span.pow(j as u32 + 1), j + 1 < hier_levels && !chain_mix)).collect();
+    // this step's prediction of each upper area (for the mix)
+    let mut upper_pred: Vec<Option<BitVector>> = vec![None; upper.len()];
     let mut upper_in: Vec<Option<BitVector>> = vec![None; upper.len()];
     // test answers where each upper area's prediction held the answer
     let mut upper_has_answer = vec![0usize; upper.len()];
@@ -743,10 +750,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let path = format!("{dir}/{task:?}_{max_facts}_{seed}.txt").to_lowercase();
         std::io::BufWriter::new(std::fs::File::create(path).expect("dump file"))
     });
-    // Season task: the current season, stories since it was announced, and test accuracy
-    // by that distance in bins [0, 1, 2-3, 4-7, 8-15, 16+]: (answers, right)
+    // Season task: filler stories between the announcement and the question, and test
+    // accuracy by that distance in bins [0, 1, 2-3, 4-7, 8-15, 16+]: (answers, right)
     let season_len: usize = std::env::var("SEASON_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
-    let (mut season, mut season_distance) = (0usize, 0usize);
+    let mut season_distance = 0usize;
     let mut season_bins = [(0usize, 0usize); 6];
     // COST: wall time and words for training and test
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
@@ -825,13 +832,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         let s = if task == Task::Season {
-            // a new season (never the same one twice running) every season_len stories
-            let d = s_i % season_len;
-            if d == 0 {
-                season = (season + rng.gen_range(1..SEASONS.len())) % SEASONS.len();
-            }
-            season_distance = d;
-            season_story(&mut rng, season, d == 0, testing && s_i % 2 == 1)
+            season_distance = rng.gen_range(0..season_len);
+            season_story(&mut rng, season_distance, testing && s_i % 2 == 1)
         } else if task == Task::Habit {
             habit_story(&mut rng, testing && s_i % 2 == 1)
         } else if task == Task::Elim {
@@ -1177,15 +1179,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // prediction of the area above it
                     let mut above: Option<BitVector> = None;
                     for i in (0..upper.len()).rev() {
-                        let hin_u = upper[i].input_with(&sentence, &surprising, above.as_ref());
+                        let hin_u = upper[i].input_with(&sentence, &surprising, if chain_mix { None } else { above.as_ref() });
                         let p = upper[i].predict(&hin_u);
+                        upper_pred[i] = (p.count_ones() > 0).then(|| p.clone());
                         if testing && t + 1 == s.answer_at {
                             upper_has_answer[i] += (p.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
                         }
                         above = Some(p);
                         upper_in[i] = Some(hin_u);
                     }
-                    let hin = area.input_with(&sentence, &surprising, above.as_ref());
+                    let hin = area.input_with(&sentence, &surprising, if chain_mix { None } else { above.as_ref() });
                     let td = area.predict(&hin);
                     if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
                         let names = |bv: &BitVector| -> Vec<&str> {
@@ -1308,6 +1311,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let tw = words_of(td);
                         if !tw.is_empty() {
                             proposals.push((2, ctx + bucket(area.column.confidence()), tw));
+                        }
+                    }
+                    // the upper areas of the chain, one source each
+                    for (i, p) in upper_pred.iter().enumerate() {
+                        if let Some(p) = p {
+                            let uw = words_of(p);
+                            if !uw.is_empty() {
+                                proposals.push((3 + i as u8, ctx + bucket(upper[i].column.confidence()), uw));
+                            }
                         }
                     }
                     let votes: Vec<(usize, u32)> = proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, mix.weight(*src, *key))).collect::<Vec<_>>()).collect();
@@ -1722,7 +1734,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .zip(names)
                 .map(|(b, n)| if b.0 > 0 { format!("{n}: {:.0}% of {}", 100.0 * b.1 as f64 / b.0 as f64, b.0) } else { format!("{n}: -") })
                 .collect();
-            eprintln!("  SEASON seed {seed}: accuracy by stories since the season was announced: {}", parts.join(", "));
+            eprintln!("  SEASON seed {seed}: accuracy by filler stories since the season was announced: {}", parts.join(", "));
         }
         if hier {
             eprintln!(

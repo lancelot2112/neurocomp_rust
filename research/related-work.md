@@ -280,9 +280,34 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
 - **Daw, N., Niv, Y. & Dayan, P. (2005).** *Uncertainty-based competition between
   prefrontal and dorsolateral striatal systems for behavioral control.* Nature
   Neuroscience 8. Arbitration between systems by their uncertainty.
+- **Lerner, Y. et al. (2011).** *Topographic mapping of a hierarchy of temporal receptive
+  windows using a narrated story.* J. Neuroscience 31. Longer windows higher up: the area
+  chain of [25](experiments/25-area-chain.md).
+- **Felleman, D. J. & Van Essen, D. C. (1991).** *Distributed hierarchical processing in
+  the primate cerebral cortex.* Cerebral Cortex 1; **Shipp, S. (2003).** *The functional
+  logic of cortico-pulvinar connections.* Phil. Trans. R. Soc. B 358. Feedback reaches
+  many lower areas and the pulvinar, not only the next area down.
 - Predictive coding across levels: **Rao & Ballard (1999)**, **Friston (2005)** (under
   [top-down feedback](#top-down-feedback-and-predictive-coding)); the higher area learns
   the column's residual.
+
+## Output and self-supervision ([plan](concepts/output-and-self-supervision.md))
+- **Sperry, R. W. (1950)**; **von Holst, E. & Mittelstaedt, H. (1950).** Efference copy /
+  corollary discharge: a copy of the motor command predicts its sensory result.
+- **Blakemore, S.-J., Wolpert, D. & Frith, C. (1998).** *Central cancellation of
+  self-produced tickle sensation.* Nature Neuroscience 1. Self-produced input is
+  attenuated.
+- **Houde, J. F. & Jordan, M. I. (1998).** *Sensorimotor adaptation in speech production.*
+  Science 279. Speakers correct for altered auditory feedback.
+- **Guenther, F. H. (2006).** *Cortical interactions underlying the production of speech
+  sounds.* J. Communication Disorders 39 (the DIVA model); **Hickok, G. & Poeppel, D.
+  (2007).** *The cortical organization of speech processing.* Nature Reviews
+  Neuroscience 8.
+- **Baddeley, A. (1986).** *Working Memory.* Oxford. The phonological loop: rehearsal by
+  inner speech.
+- **Hinton, G. E., Dayan, P., Frey, B. J. & Neal, R. M. (1995).** *The wake-sleep
+  algorithm for unsupervised neural networks.* Science 268. Recognition and generation
+  train each other.
 
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the

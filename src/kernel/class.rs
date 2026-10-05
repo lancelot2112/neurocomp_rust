@@ -147,6 +147,8 @@ struct PredictiveState {
     gated: usize,
     /// Slots of kernels removed by `sleep`, reused by growth.
     free: Vec<usize>,
+    /// Per-frame memo of match counts (see `set_frame_memo`).
+    frame_memo: Option<FrameMemo>,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -163,6 +165,69 @@ struct PredictiveState {
     /// to exactly the same inputs. Capacity `replay_len` (0 = off).
     replay: std::collections::VecDeque<Vec<u32>>,
     replay_len: usize,
+}
+
+/// Per-frame memo of match counts, after Hashlife's memoised sub-nodes: the input is a
+/// stack of frames (current word, relayed / recalled content, previous word), and each
+/// frame's content recurs far more often than the whole input does. An entry keyed by
+/// (frame, content) holds that content's contribution to every kernel's match count, so
+/// matching sums a few cached lists instead of fanning every active bit out through the
+/// index. Entries are invalidated per kernel, not globally: every change to a kernel's
+/// connections (growth, pruning, removal) is logged, and a stale entry is patched by
+/// recounting only the changed kernels against its stored bits.
+struct FrameMemo {
+    entries: std::collections::HashMap<(u32, u64), FrameEntry>,
+    /// (change number, kernel) for recent connection changes, oldest first.
+    log: std::collections::VecDeque<(u64, u32)>,
+    /// Connection changes so far.
+    changes: u64,
+    lookups: usize,
+    hits: usize,
+    patched: usize,
+}
+
+struct FrameEntry {
+    /// The frame's active bits (absolute input positions, sorted).
+    bits: Vec<u32>,
+    /// `changes` when the entry was last brought up to date.
+    seen: u64,
+    /// (kernel, matched bits), sorted by kernel.
+    contrib: Vec<(u32, u16)>,
+}
+
+const FRAME_LOG: usize = 4096; // changes kept for patching
+const FRAME_PATCH: u64 = 512; // patch at most this many changes; rebuild beyond
+const FRAME_ENTRIES: usize = 200_000; // clear the memo beyond this
+
+impl FrameMemo {
+    fn new() -> Self {
+        Self { entries: std::collections::HashMap::new(), log: std::collections::VecDeque::new(), changes: 0, lookups: 0, hits: 0, patched: 0 }
+    }
+
+    fn note(&mut self, k: usize) {
+        self.changes += 1;
+        self.log.push_back((self.changes, k as u32));
+        if self.log.len() > FRAME_LOG {
+            self.log.pop_front();
+        }
+    }
+}
+
+/// Bits shared by two sorted position lists.
+fn sorted_overlap(a: &[u32], b: &[u32]) -> u16 {
+    let (mut i, mut j, mut n) = (0, 0, 0u16);
+    while i < a.len() && j < b.len() {
+        match a[i].cmp(&b[j]) {
+            std::cmp::Ordering::Less => i += 1,
+            std::cmp::Ordering::Greater => j += 1,
+            std::cmp::Ordering::Equal => {
+                n += 1;
+                i += 1;
+                j += 1;
+            }
+        }
+    }
+    n
 }
 
 /// A fast-learning inhibitory loop on the winner competition: one-shot inhibitory tags on
@@ -352,6 +417,7 @@ impl KernelClass<SimpleKernel> {
             surprise_gate: false,
             expected_steps: 0,
             memo: None,
+            frame_memo: None,
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -439,21 +505,8 @@ impl KernelClass<SimpleKernel> {
             }
         }
 
-        for (wi, &w) in input.as_words().iter().enumerate() {
-            let mut w = w;
-            while w != 0 {
-                let b = wi * 64 + w.trailing_zeros() as usize;
-                w &= w - 1;
-                if let Some(ks) = st.index.get(b) {
-                    for &k in ks {
-                        if st.counts[k as usize] == 0 {
-                            st.touched.push(k);
-                        }
-                        st.counts[k as usize] += 1;
-                    }
-                }
-            }
-        }
+        self.accumulate(input);
+        let st = self.predictive.as_mut().expect("predictive");
 
         // fast inhibition: one step later (tags expire by comparison, not by counting down)
         if let Some(f) = st.fast.as_mut() {
@@ -720,6 +773,131 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().map_or((0, 0), |st| (st.memo_lookups, st.memo_hits))
     }
 
+    /// Per-frame memo of match counts (see `FrameMemo`). Exact: the counts are those of the
+    /// index fan-out.
+    pub fn set_frame_memo(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.frame_memo = if on { Some(FrameMemo::new()) } else { None };
+        }
+    }
+
+    /// (lookups, hits, patched) of the frame memo.
+    pub fn frame_memo_stats(&self) -> (usize, usize, usize) {
+        self.predictive.as_ref().and_then(|st| st.frame_memo.as_ref()).map_or((0, 0, 0), |f| (f.lookups, f.hits, f.patched))
+    }
+
+    /// Record that kernel `k`'s connections changed (for the frame memo).
+    fn note_connections(&mut self, k: usize) {
+        if let Some(f) = self.predictive.as_mut().and_then(|st| st.frame_memo.as_mut()) {
+            f.note(k);
+        }
+    }
+
+    /// Match counts for `input` into `counts` / `touched`: through the frame memo if on,
+    /// else by fanning every active bit out through the index.
+    fn accumulate(&mut self, input: &BitVector) {
+        let kernels = &self.active_kernels;
+        let Some(st) = self.predictive.as_mut() else { return };
+        if st.counts.len() < kernels.len() {
+            st.counts.resize(kernels.len(), 0);
+        }
+        let Some(fm) = st.frame_memo.as_mut() else {
+            for (wi, &w) in input.as_words().iter().enumerate() {
+                let mut w = w;
+                while w != 0 {
+                    let b = wi * 64 + w.trailing_zeros() as usize;
+                    w &= w - 1;
+                    if let Some(ks) = st.index.get(b) {
+                        for &k in ks {
+                            if st.counts[k as usize] == 0 {
+                                st.touched.push(k);
+                            }
+                            st.counts[k as usize] += 1;
+                        }
+                    }
+                }
+            }
+            return;
+        };
+        if fm.entries.len() > FRAME_ENTRIES {
+            fm.entries.clear();
+        }
+        let fw = st.cfg.frame_words.max(1);
+        let words = input.as_words();
+        for f in 0..words.len().div_ceil(fw) {
+            let span = &words[f * fw..((f + 1) * fw).min(words.len())];
+            if span.iter().all(|&w| w == 0) {
+                continue;
+            }
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ f as u64;
+            for (i, &w) in span.iter().enumerate() {
+                if w != 0 {
+                    h = (h ^ i as u64).wrapping_mul(0x0100_0000_01b3);
+                    h = (h ^ w).wrapping_mul(0x0100_0000_01b3).rotate_left(29);
+                }
+            }
+            fm.lookups += 1;
+            let key = (f as u32, h);
+            let mut bits: Vec<u32> = Vec::new();
+            for (i, &w) in span.iter().enumerate() {
+                let mut w = w;
+                while w != 0 {
+                    bits.push(((f * fw + i) * 64 + w.trailing_zeros() as usize) as u32);
+                    w &= w - 1;
+                }
+            }
+            let usable = fm.entries.get(&key).map_or(false, |e| e.bits == bits);
+            let oldest = fm.log.front().map_or(fm.changes + 1, |&(c, _)| c);
+            let mut rebuild = !usable;
+            if usable {
+                let e = fm.entries.get_mut(&key).expect("entry");
+                if e.seen == fm.changes {
+                    fm.hits += 1;
+                } else if fm.changes - e.seen <= FRAME_PATCH && oldest <= e.seen + 1 {
+                    // patch: recount only the kernels whose connections changed since
+                    let mut changed: Vec<u32> = fm.log.iter().filter(|&&(c, _)| c > e.seen).map(|&(_, k)| k).collect();
+                    changed.sort_unstable();
+                    changed.dedup();
+                    for k in changed {
+                        let n = kernels.get(k as usize).map_or(0, |kern| sorted_overlap(&kern.input_set, &e.bits));
+                        match e.contrib.binary_search_by_key(&k, |&(x, _)| x) {
+                            Ok(i) if n == 0 => {
+                                e.contrib.remove(i);
+                            }
+                            Ok(i) => e.contrib[i].1 = n,
+                            Err(i) if n > 0 => e.contrib.insert(i, (k, n)),
+                            Err(_) => {}
+                        }
+                    }
+                    e.seen = fm.changes;
+                    fm.patched += 1;
+                } else {
+                    rebuild = true;
+                }
+            }
+            if rebuild {
+                let mut tally: std::collections::HashMap<u32, u16> = std::collections::HashMap::new();
+                for &b in &bits {
+                    if let Some(ks) = st.index.get(b as usize) {
+                        for &k in ks {
+                            *tally.entry(k).or_default() += 1;
+                        }
+                    }
+                }
+                let mut contrib: Vec<(u32, u16)> = tally.into_iter().collect();
+                contrib.sort_unstable();
+                fm.entries.insert(key, FrameEntry { bits, seen: fm.changes, contrib });
+            }
+            let e = &fm.entries[&key];
+            for &(k, n) in &e.contrib {
+                if st.counts[k as usize] == 0 {
+                    st.touched.push(k);
+                }
+                st.counts[k as usize] += n as u32;
+            }
+        }
+    }
+
     /// Recompute the last step's matched and near-matched kernels for `input` (after a memo
     /// hit skipped matching), without changing the winner or any statistics.
     fn recount(&mut self, input: &BitVector) {
@@ -730,21 +908,8 @@ impl KernelClass<SimpleKernel> {
         if st.counts.len() < self.active_kernels.len() {
             st.counts.resize(self.active_kernels.len(), 0);
         }
-        for (wi, &w) in input.as_words().iter().enumerate() {
-            let mut w = w;
-            while w != 0 {
-                let b = wi * 64 + w.trailing_zeros() as usize;
-                w &= w - 1;
-                if let Some(ks) = st.index.get(b) {
-                    for &k in ks {
-                        if st.counts[k as usize] == 0 {
-                            st.touched.push(k);
-                        }
-                        st.counts[k as usize] += 1;
-                    }
-                }
-            }
-        }
+        self.accumulate(input);
+        let st = self.predictive.as_mut().expect("predictive");
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -955,6 +1120,9 @@ impl KernelClass<SimpleKernel> {
                     }
                 }
                 st.free.push(k);
+                if let Some(f) = st.frame_memo.as_mut() {
+                    f.note(k);
+                }
             }
         }
         for list in st.index.iter_mut() {
@@ -1219,6 +1387,9 @@ impl KernelClass<SimpleKernel> {
                 counts.remove(&b);
             }
             self.active_kernels[k].remove_inputs(&drop);
+            if let Some(f) = st.frame_memo.as_mut() {
+                f.note(k);
+            }
             // The match tolerance scales with the kernel's smallest remaining frame, so a
             // frame pruned to a few bits must still be (almost) fully present: otherwise
             // the kernel could fire with that frame absent and turn into a guesser.
@@ -1359,6 +1530,10 @@ impl KernelClass<SimpleKernel> {
             if st.sticky_factor > 0 && t < target.bit_len() && target.bit_get(t) {
                 st.sticky_tags.entry(slot).or_default().insert(b);
             }
+        }
+        // the slot's connections changed (new kernel, or a recycled one replaced)
+        if let Some(f) = st.frame_memo.as_mut() {
+            f.note(slot);
         }
     }
 }
@@ -1612,6 +1787,39 @@ mod tests {
         // (the pile-up it prevents needs real history; see experiment 23)
         assert!(suppressed > 0);
         assert!(gated <= open, "gated {gated} vs open {open}");
+    }
+
+    #[test]
+    fn frame_memo_gives_exactly_the_same_counts_through_growth_pruning_and_sleep() {
+        use rand::{Rng, SeedableRng};
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 3, sample_bits: 8, generalize: Some(0.5), ..GrowthConfig::default() };
+        let words: Vec<u64> = (0..8).map(|i| 0xFFu64 << (8 * i)).collect();
+        let mut src = rand::rngs::StdRng::seed_from_u64(5);
+        let seq: Vec<usize> = (0..4000).map(|i| if src.gen_bool(0.8) { (i * 3) % 8 } else { src.gen_range(0..8) }).collect();
+        let run = |frame_memo: bool| {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_frame_memo(frame_memo);
+            kc.set_replay(64);
+            let mut rng = rand::rngs::StdRng::seed_from_u64(9);
+            let mut outs = Vec::new();
+            for t in 3..seq.len() {
+                if t % 500 == 0 {
+                    kc.sleep();
+                }
+                let ctx = frames(&[words[seq[t - 1]], words[seq[t - 2]], words[seq[t - 3]]]);
+                let mut out = BitVector::new(64, Some(0));
+                kc.process(&ctx, &mut out, 0, 0);
+                kc.feedback(&ctx, &frames(&[words[seq[t]]]), &mut rng);
+                outs.push(out.as_words()[0]);
+            }
+            let stats: Vec<(u8, u8, usize)> = kc.kernels().iter().map(|k| (k.stats.hits, k.stats.misses, k.input_bits)).collect();
+            (outs, stats, kc.frame_memo_stats())
+        };
+        let (plain, plain_stats, _) = run(false);
+        let (memo, memo_stats, (lookups, hits, patched)) = run(true);
+        assert_eq!(plain, memo);
+        assert_eq!(plain_stats, memo_stats);
+        assert!(hits + patched > lookups / 2, "lookups {lookups} hits {hits} patched {patched}");
     }
 
     #[test]

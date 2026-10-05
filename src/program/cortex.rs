@@ -312,6 +312,30 @@ impl CorticalColumn {
         1.0 - self.surprise(actual)
     }
 
+    /// L5: did the latest prediction read L4 frame `frame` (0 = current input, then the
+    /// frames passed to `assemble`, then the previous input)? True if the winning kernel's
+    /// input mask covers any bit of that frame. This is the column's attribution: a
+    /// selector whose choice filled a frame the prediction never read had no effect on it.
+    pub fn winner_reads(&self, frame: usize) -> bool {
+        let Some(k) = self.l23.winner() else { return false };
+        let words = self.bits / 64;
+        k.input_mask
+            .as_words()
+            .iter()
+            .enumerate()
+            .any(|(wi, &m)| m != 0 && (k.input_idx + wi) / words == frame)
+    }
+
+    /// L5 → basal ganglia, attributed: the outcome if the prediction read `frame`, else 0.
+    /// The reward for a choice that fed `frame` (a route, a recalled item, a held cue).
+    pub fn outcome_via(&self, frame: usize, actual: &BitVector) -> f32 {
+        if self.winner_reads(frame) {
+            self.outcome(actual)
+        } else {
+            0.0
+        }
+    }
+
     /// L5: how surprising `actual` is given the latest prediction: 1 − (its share of the
     /// prediction × the predicting kernel's reliability).
     pub fn surprise(&self, actual: &BitVector) -> f32 {
@@ -349,6 +373,7 @@ mod tests {
         assert!(col.surprise(&b) < 0.5);
         assert!(col.surprise(&sym(3)) > 0.9);
         assert!(col.outcome(&b) > 0.5 && col.outcome(&sym(3)) < 0.1); // L5 → BG
+        assert!(col.winner_reads(0) && !col.winner_reads(1)); // read the current input only
         assert_eq!(col.previous().as_words(), b.as_words()); // L6: the input before a
     }
 

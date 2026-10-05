@@ -368,7 +368,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut wm = WorkingMemory::new(BITS, 1);
     // REWARD=l5: every basal-ganglia selector learns from the column's L5 outcome (did the
     // whole prediction come true?) instead of checking its own content against the target
-    let l5_reward = std::env::var("REWARD").map_or(false, |v| v == "l5");
+    let l5_reward = std::env::var("REWARD").map_or(false, |v| v.starts_with("l5"));
+    // REWARD=l5_used: only if the prediction read the chosen content's L4 frame
+    let l5_used = std::env::var("REWARD").map_or(false, |v| v == "l5_used");
+    // L4 frame that the selector's choice fills: hop 2 for Select, else the memory frame
+    let choice_frame = if policy == Policy::Select { 2 } else { 1 };
     let mut l5_sum = [0f64; 2]; // training: summed L5 reward, count
     let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
     let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
@@ -920,7 +924,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 // L5 → basal ganglia: the column's outcome for this prediction
-                let l5 = column.outcome(&enc.codes[next]);
+                let l5 = if l5_used { column.outcome_via(choice_frame, &enc.codes[next]) } else { column.outcome(&enc.codes[next]) };
                 if !testing && t + 1 == s.answer_at {
                     if let Policy::Pfc { learned: true } = policy {
                         // dopamine: the recall that working memory cued contained the answer

@@ -70,4 +70,21 @@ prediction), **yes**. The [08](../experiments/08-credit-assignment.md) experimen
 shows local activity statistics choose the wrong features, and naive credit is fooled
 by co-activation.
 
+## Copy credit for a predictor that reads memory
+In [12](../experiments/12-dentate-gyrus-ca3.md) the predictor has to *copy* a recalled
+place into its prediction. Generic growth and pruning got this wrong on some seeds in
+several ways. Each was found with a diagnostic of which kernels win, which exist, and why:
+- **Credit the bits that carry the answer, at birth:** a bit whose frame-relative position
+  is in the target is tagged (synaptic tagging) and never pruned. Without tags, pruning
+  strips exactly the variable content to be copied.
+- **Grow from the credited bits:** a new kernel samples only the target's bits where a
+  frame contains them, so copy kernels are born specific and robust.
+- **Trust before depth:** longest-context ranking let unreliable kernels win (when
+  answering) and block growth (when learning); both now require reliability ≥ 0.5.
+- **Tolerance per frame:** a pruned kernel's miss tolerance scales with its smallest frame.
+
+Result: 99–100% held-out on every seed and load, from 90–93% with seed failures down to
+75%. The same copy-credit rule should apply wherever a predictor reads content it must
+pass through (thalamic relays, multi-hop recall).
+
 See [related work](../related-work.md#credit-assignment).

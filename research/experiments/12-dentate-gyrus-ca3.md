@@ -319,7 +319,54 @@ Settings: `GENERALIZE=0.5 GENERALIZE_AFTER=1 STICKY=4 TRUST_AT_TEST=0.5`. **Thre
   a copy kernel is born with only ~1–4 bits of the word it copies. Next: credit-guided
   growth (`COPY_GROW=1`): in a frame that carries the target's bits, sample only those.
 
-12. Method lesson: compare variants **in the same build and run**. Numbers from different
+**Credit-guided growth, and growth that lucky guessers can't block.** Two last fixes, both
+found with diagnostics:
+- **Credit-guided growth** (`COPY_GROW=1`, `KernelClass::set_copy_growth`): when a kernel is
+  grown to predict a word and a frame carries that word's bits (a recalled place), it
+  samples *only* those bits. A copy kernel is then born keyed on 16 bits of the place
+  (tagged, permanent) instead of 1–4 bits picked at random from a 4–5-word recall.
+  Alone, it fixed some seeds and not others (1–2 facts 82.6–99.6%, 1–3 facts 69.4–100%).
+- **Per-place coverage** (`COVER`, printed after training): question-context copy kernels
+  for each place, and memory-blind guessers. On seed 1 (1–2 facts) **"office" had zero copy
+  kernels and five guessers**; every other place had 1–3 at reliability 0.98–1.00. Each
+  failing cell in the tables above is one uncovered place, about one question in six.
+- **Why:** after a wrong prediction a same-depth kernel is grown *unless* a matching kernel
+  at that depth already predicted the target. The "office" guessers need only "?" and
+  "now", so one of them was usually right by luck when the answer was office, and blocked
+  growth of the copy kernel forever.
+- **Growth trust** (`GROW_TRUST=0.5`, `KernelClass::set_growth_trust`): a kernel that was
+  right blocks same-depth growth only if it is at least 0.5 reliable. After it, every place
+  is covered (1–7 copy kernels each) in all 12 runs.
+
+**Final results** (varied stories, large delay-line CA3, held-out; settings
+`COPY_GROW=1 GROW_TRUST=0.5 STICKY=255 GENERALIZE=0.5 GENERALIZE_AFTER=1 TRUST_AT_TEST=0.5`):
+
+| Seed | 1–2 facts, settle 2 | 1–2 facts, no settling | 1–3 facts, settle 2 | 1–3 facts, no settling |
+|---|---|---|---|---|
+| 0 | 99.0% | 99.2% | **100%** | **100%** |
+| 1 | 99.4% | 99.4% | **100%** | **100%** |
+| 2 | 99.8% | 99.8% | **100%** | **100%** |
+| mean | **99.4%** | **99.5%** | **100%** | **100%** |
+
+Before the predictor fixes the same store scored 99.3 / 99.5 / 92.7 / 90.0%, with one seed
+at 75–85% in every 1–3-fact row. The remaining 1–2-fact errors (0.2–1%) are recalls that
+lack the place's bits, not predictor errors.
+
+**What the predictor needed, in order of discovery:**
+1. Copy credit, given at birth: bits that carry the predicted word are tagged when the
+   kernel is grown, and tagged bits are never pruned (`STICKY=255`).
+2. Tolerance that scales with the smallest pruned frame, so a pruned kernel cannot fire
+   with that frame absent.
+3. Depth ranks only among trusted kernels when answering (`TRUST_AT_TEST`).
+4. Credit-guided growth: copy kernels are born on the whole copied word.
+5. Growth that unreliable kernels can't block (`GROW_TRUST`).
+
+Tried and dropped: tags only on hits (too late), finite stickiness, a minimum partial frame
+(4 or 6 bits: trades rejection of other words against tolerance of recall noise), tags
+released by blame (perfect on 1–3 facts but pruned good copy kernels on seed 1), and the
+trust floor during training (starves growth). See [credit assignment](../concepts/credit-assignment.md#copy-credit-for-a-predictor-that-reads-memory).
+
+13. Method lesson: compare variants **in the same build and run**. Numbers from different
    builds of an example are not comparable, even with the same seed.
 
 See [hippocampal functions](../concepts/hippocampal-functions.md) for the wider map, and

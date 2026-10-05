@@ -148,6 +148,10 @@ were tried (`HIER_GATE`, `HIER_GATE_SIGNAL`, `HIER_GATE_CONF`), each with the fr
    the default.
 
 ## Reliability-first ranking in L2/3
+> **Removed from the code** (all options of this section except the `CALIB` report),
+> in favour of arbitration by the basal ganglia (below): habits should emerge from
+> learning, not from ranking rules. The results are kept as a record.
+
 Two options in `KernelClass` (`src/kernel/class.rs`), both off by default:
 - **`set_reliability_first`** (`RANK=reliability`): the matching kernel with the highest hit
   rate wins, and depth only breaks ties. Every matching kernel is scored at feedback,
@@ -196,7 +200,7 @@ Held-out, same settings as above (habit seeds 0 / 1 / 2; the rest seed 0):
    - score every matching kernel on expected steps too, so deep kernels earn their record
      as fast as shallow ones (at some cost in speed).
 
-### Evidence-gated ranking (`RANK_MIN`): worse
+### Evidence-gated ranking (`RANK_MIN`): worse (removed)
 `set_reliability_first(Some(min))`. A kernel with fewer than `min` scored predictions
 (hits + misses) has no record yet and ranks as fully reliable (rate 1/1). Among new
 kernels the deepest wins, as by default, and a fresh specific kernel gets to fire and
@@ -229,6 +233,10 @@ else gets worse, often by 20–40 points.
    to score every matching kernel on expected steps too.
 
 ## Scoring every kernel, probation, and calibration
+> **Removed from the code** (all options of this section except the `CALIB` report),
+> in favour of arbitration by the basal ganglia (below): habits should emerge from
+> learning, not from ranking rules. The results are kept as a record.
+
 Three more options in `KernelClass`, all off by default:
 - **`set_score_all`** (`SCORE_ALL=1`). Under the surprise gate, a correct guess scores
   every matching kernel, not only the winner. Rates are measured, not inferred from the
@@ -297,6 +305,65 @@ that is reliably better than the incumbent from a lucky kernel. Per-source arbit
 (stage 2 of the [roadmap](../roadmap.md)) is the next candidate: the selector, not each
 kernel, would carry the "how reliable is memory here" statistic.
 
+## Basal-ganglia arbitration between memory and top-down
+The ranking rules above were removed: they gained little for their complexity, and
+habits should emerge from learning, not be built into the ranking. Instead, the choice of
+source is made by a basal-ganglia selector (`ARBITRATE=1` in the example;
+`CorticalColumn::predict_biased`):
+- **When:** at a step where memory (the column's recall / relay frames) and the higher
+  area's top-down frame offer different words.
+- **Actions:** follow neither (the column's own ranking), follow memory, follow top-down.
+  The selector is `BasalGanglia`: action codes bound to the context (previous word, current
+  word) by rotation, so it keeps a value per (context, action).
+- **Effect:** the chosen source's content biases L2/3 (`BiasMode::Prefer`). A matching
+  kernel that predicts that content beats any kernel that doesn't; depth and reliability
+  decide within each group. The column itself is unchanged.
+- **Learning:** in training, the value of the chosen action steps towards whether the
+  prediction came true (no baseline: a bandit estimate). So the selector learns how
+  reliable each source is per context. Exploration 10%; greedy at test.
+
+Held-out, seeds 0 / 1 / 2 (varied: seed 0, 100% throughout):
+
+| | Habit + memory | Topic | Give | Two-hop |
+|---|---|---|---|---|
+| Top-down late, no arbitration (default) | 70 / 79 / 80% (76.3) | 100 / 96 / 95% (97.1) | 99.6 / 99.0 / 100% | 94 / 81 / 62% (79.3) |
+| **Late + arbitration** | **82 / 78 / 84% (81.5)** | 84 / 100 / 100% (94.8) | 99.8 / 99.8 / 100% | 89 / 72 / 84% (81.8) |
+| Top-down early, no arbitration | 67 / 67 / 83% (72.5) | 37 / 35 / 59% | 99.8 / 99.8 / 100% | 90 / 80 / 80% (83.5) |
+| Early + arbitration | 82 / 76 / 87% (81.4) | 46 / 45 / 31% | 100 / 98 / 100% | 91 / 91 / 86% (89.3) |
+
+What the selector chose at test answers where the sources disagreed (about half of the
+answers on habit and topic, 92–95% on two-hop):
+
+| | Seed 0 | Seed 1 | Seed 2 |
+|---|---|---|---|
+| Habit + memory, late | top-down (79% right) | top-down (74%) | neither (77%) |
+| Topic, late | neither (77%) | neither (100%) | memory (100%) |
+| Two-hop, late | memory 2/3, neither 1/3 (89–90%) | memory 2/3 (90%), neither (54%) | memory 4/5 (87%) |
+| Topic, early | top-down (51%) | top-down (58%) | top-down (20%) |
+
+1. **Arbitration helps where the sources really compete.** Habit + memory gains 5 points
+   on average (82 / 78 / 84%), two-hop 2.5 points. On habit the selector learns to follow
+   the higher area at the answer; on two-hop, to follow memory.
+2. **It is one choice per context, not per question.** The answer context ("to the") is
+   the same in every story, so the selector settles on one action per task and seed. On
+   topic seed 0 it settled on "neither" (77%) where memory was right 100% of the time:
+   94.8% against 97.1%. The selector's input says nothing about this particular
+   question: how confident each source is, or whether recall was clean. Instance-level
+   arbitration needs that information in the context.
+3. **Early placement still breaks topic, and the selector learns the wrong lesson from
+   it.** With top-down right after the current word, the column builds its kernels on
+   top-down first. Following memory then rarely finds a matching kernel that predicts
+   the memory word, so the selector sees memory fail and picks top-down (20–58% right).
+   The selector can only choose among predictions the column can make.
+4. **No new mechanism in the column.** Arbitration is a bias over its existing winners.
+   The habit result (81.5% with memory) is close to what reliability-first ranking gave
+   (78–85%), without any change to how kernels are ranked or learned.
+
+**Next:** give the selector the per-question signals it needs: each source's own
+confidence (the higher area's L5 confidence; recall cleanness, i.e. how many places the
+recall offers). Then it can follow memory when recall is clean and top-down when it is
+not, within the same context.
+
 ## Biology
 - **Hierarchy and predictive coding:** each level predicts the activity of the level below
   and is driven by its prediction errors (Rao & Ballard 1999; Friston 2005). Here the
@@ -307,5 +374,9 @@ kernel, would carry the "how reliable is memory here" statistic.
 - **Feedback through layer 6 and apical dendrites:** top-down predictions arrive in layer 1
   on apical dendrites and through L6, modulating what the lower area does. Here that is a
   frame the column learns to use or ignore.
+- **Arbitration by the basal ganglia:** the striatum receives converging input from many
+  cortical areas and the hippocampus and selects which one drives behaviour, learning
+  from dopamine (Redgrave et al. 1999; Daw, Niv & Dayan 2005 on arbitration between
+  systems by their uncertainty).
 - **Timescales:** higher areas integrate over longer windows (Hasson et al. 2008; Murray et
   al. 2014). The 4-sentence slow state is the crude version.

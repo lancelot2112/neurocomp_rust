@@ -21,21 +21,12 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
 - **Why the surprise gate leaves more kernels on elimination** (2,909 against 1,193).
 - **Sparse mask storage.** Kernel masks are stored at full input width: 5–50 MB where
   0.3–2.3 MB is needed.
-- **Arbitration in L2/3** ([24](experiments/24-cortical-hierarchy.md#a-thalamic-gate-on-the-top-down-frame)):
-  growth stops at an empty frame and winners are ranked by depth before reliability, so
-  frame order, not reliability, decides between memory and top-down, and no thalamic gate
-  on the top-down frame helped (use, reliability, confidence). Reliability-first ranking
-  plus growth past empty frames plus the confidence gate
-  ([24](experiments/24-cortical-hierarchy.md#reliability-first-ranking-in-l23)) makes
-  early top-down work (topic 94%, 3–6× fewer kernels on habit) and memory + top-down reaches
-  81–86%. But reliability alone over-trusts established shallow kernels against fresh deep
-  ones. Ranking kernels without a record optimistically (`RANK_MIN`) made it much worse
-  (new kernels flood the ranking; topic 15–77%). Probation for new kernels
-  ([24](experiments/24-cortical-hierarchy.md#scoring-every-kernel-probation-and-calibration))
-  lifts habit to 93–95% but an absolute 0.8 floor breaks memory copying (sources right
-  ~70%); passing by beating the winner fixes memory but loses the habit gain. Next: a
-  probation test that separates a reliably better source from a lucky kernel, or
-  per-source arbitration in the basal ganglia ([roadmap](roadmap.md) stage 2).
+- **Arbitration between sources** ([24](experiments/24-cortical-hierarchy.md#basal-ganglia-arbitration-between-memory-and-top-down)):
+  the L2/3 ranking rules (reliability-first, evidence gate, probation) were tried and
+  removed. A basal-ganglia selector now chooses memory, top-down or neither per context:
+  habit + memory 76 → 81.5%. But it makes one choice per context, not per question.
+  Next: put each source's confidence (higher area's L5 confidence, recall cleanness)
+  into the selector's context.
 - **The hierarchy's next steps**: run the higher area on a truly slower clock (only on
   the column's surprises, or once per sentence) to remove its cost; a third level;
   several columns side by side; then real text again

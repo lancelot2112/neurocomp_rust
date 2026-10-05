@@ -59,6 +59,12 @@ ganglia select among competing cortical inputs.
 
 **Test.** Habit + memory above 85% on every seed, with topic, two-hop and give unchanged.
 
+**Status** ([24](experiments/24-cortical-hierarchy.md#basal-ganglia-arbitration-between-memory-and-top-down)):
+built as `ARBITRATE=1`, replacing the L2/3 ranking rules (removed).
+- Habit + memory: 76 → 81.5% (82 / 78 / 84%). Two-hop +2.5 points.
+- Topic −2 points: one choice per context, not per question.
+- Next: add each source's confidence to the selector's context.
+
 ## 3. Thinking in steps
 **Why.** Two-hop chains one recall into another, but the chain is fixed by hand. Reasoning
 is a sequence of internal steps whose number depends on the question.

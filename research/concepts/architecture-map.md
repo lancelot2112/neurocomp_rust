@@ -18,7 +18,7 @@ connections between them exist. "Not modelled" is as important as what is.
 | **Subiculum** | Hippocampal output hub, to thalamus / PFC | — | Not modelled |
 | **Big loop** (EC→HC→EC) | Recalled content re-enters as the next cue | `recall_chain`, `recall_branches` ([13](../experiments/13-big-loop.md)) | Built |
 | **Red nucleus** | Cerebellum → red nucleus → spinal cord (and → inferior olive) | — | Not modelled: **no motor or action output** at all |
-| **Prefrontal / working memory** | Holds items; BG gates updates (PBWM); directs retrieval (via nucleus reuniens) | A question's recall cue, used to tag or immediately replay the recalled episode into cortex ([17](../experiments/17-consolidation.md#prioritised-replay-questions-decide-what-is-consolidated)) | Partial: retrieval-driven consolidation only |
+| **Prefrontal / working memory** | Holds items; BG gates updates (PBWM); directs retrieval (via nucleus reuniens) | `WorkingMemory` slot + `PfcGate` (basal-ganglia load / keep, credit to the load whose content is held); the slot's content cues hippocampal recall ([18](../experiments/18-prefrontal-working-memory.md)). A question's cue also tags or replays episodes into cortex ([17](../experiments/17-consolidation.md#prioritised-replay-questions-decide-what-is-consolidated)) | Built: one slot, gate keyed on the word alone (no context yet) |
 | **Neuromodulators** | Dopamine (reward), ACh (encode vs retrieve), NE (surprise) | Reward in `BasalGanglia`; surprise drives growth; novelty gates storage | Signals exist, no separate systems |
 
 ## Connections that exist
@@ -44,6 +44,8 @@ connections between them exist. "Not modelled" is as important as what is.
 - Thalamus → cortex: relayed words are input frames; the gate is learned from whether the
   relay helped predict.
 - Basal ganglia → hippocampal loop: chooses what the second hop follows.
+- Basal ganglia → prefrontal → hippocampus: the gate loads a word into working memory; its
+  content cues recall at the question ([18](../experiments/18-prefrontal-working-memory.md)).
 
 ## Connections that are missing
 - ~~Basal ganglia → thalamus~~ and ~~hippocampus → thalamus~~: done in

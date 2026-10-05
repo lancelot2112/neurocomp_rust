@@ -43,6 +43,11 @@ impl EpisodicMemory {
         id.checked_sub(self.first_id).and_then(|i| self.episodes.get(i))
     }
 
+    /// Id of the `i`-th held episode.
+    pub fn id_of(&self, i: usize) -> usize {
+        self.first_id + i
+    }
+
     /// Replay priority of the `i`-th held episode.
     pub fn priority(&self, i: usize) -> u32 {
         self.priority.get(i).copied().unwrap_or(0)

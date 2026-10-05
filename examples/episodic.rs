@@ -317,6 +317,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let tag_boost: u32 = std::env::var("TAG_BOOST").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     let mut last_recall_id: Option<usize> = None; // hippocampal episode recalled this step
     let mut last_recall_cue: Option<BitVector> = None; // the cue that recalled it
+    // tagged replay: the question's cue, stored with the tag, keys the sleep replay
+    let mut tag_cues: HashMap<usize, BitVector> = HashMap::new();
     let mut tagged_or_replayed = 0usize;
     let mut from_cortex = 0usize; // test answers where the memory frame came from the cortex
     let (dg, mut ca3) = match policy {
@@ -822,6 +824,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         match replay_mode.as_str() {
                             "tagged" => {
                                 memory.tag(id);
+                                if let Some(c) = &last_recall_cue {
+                                    tag_cues.insert(id, c.clone());
+                                }
                                 tagged_or_replayed += 1;
                             }
                             "awake" => {
@@ -894,7 +899,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             for _ in 0..replays {
                 let i = memory.sample_replay(&mut rng, boost).unwrap();
                 let ep = memory.get(i).unwrap().clone();
-                let cue = memory.rarest(&ep, 0.1, rarity_ratio);
+                // a tagged episode is replayed under the cue of the question that tagged it
+                let cue = tag_cues.get(&memory.id_of(i)).cloned().unwrap_or_else(|| memory.rarest(&ep, 0.1, rarity_ratio));
                 if cue.count_ones() == 0 {
                     continue;
                 }

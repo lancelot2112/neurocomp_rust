@@ -7,6 +7,11 @@
 //! the cue most, the most recent one on ties: content-addressed retrieval with
 //! a hard max, i.e. attention over stored episodes (Ramsauer et al. 2020).
 //!
+//! Recall is event-based: an inverted index maps each bit to the stored episodes that
+//! contain it, so a cue touches only the episodes sharing its bits (as the predictor's
+//! kernels are reached through their input bits) instead of comparing it with every
+//! episode at full width. Overlaps, and so recalls, are exactly those of the full scan.
+//!
 //! Habituation: the memory counts how often each bit occurs across stored
 //! episodes. `novel` keeps only bits that are rare, so content shared by most
 //! episodes (function words) neither drives recall nor fills the output.
@@ -21,11 +26,12 @@ pub struct EpisodicMemory {
     bit_counts: Vec<u32>,     // how many stored episodes (ever) had each bit
     stored: u32,
     first_id: usize,          // id of episodes[0]; ids stay stable as old episodes are forgotten
+    index: Vec<Vec<u32>>,     // bit -> ids of the stored episodes that contain it
 }
 
 impl EpisodicMemory {
     pub fn new(bits: usize, capacity: usize) -> Self {
-        Self { bits, capacity, episodes: Vec::new(), priority: Vec::new(), bit_counts: vec![0; bits], stored: 0, first_id: 0 }
+        Self { bits, capacity, episodes: Vec::new(), priority: Vec::new(), bit_counts: vec![0; bits], stored: 0, first_id: 0, index: vec![Vec::new(); bits] }
     }
 
     /// Tag episode `id` (as returned by `recall_excluding`) for prioritised replay, e.g.
@@ -78,16 +84,29 @@ impl EpisodicMemory {
 
     /// Store one episode in a single shot (the oldest is forgotten at capacity).
     pub fn store(&mut self, episode: &BitVector) {
+        let id = (self.first_id + self.episodes.len()) as u32;
         for b in set_bits(episode) {
             if b < self.bits {
                 self.bit_counts[b] += 1;
+                self.index[b].push(id);
             }
         }
         self.stored += 1;
         self.episodes.push(episode.clone());
         self.priority.push(0);
         if self.episodes.len() > self.capacity {
-            self.episodes.remove(0);
+            let old = self.episodes.remove(0);
+            let old_id = self.first_id as u32;
+            for b in set_bits(&old) {
+                if b < self.bits {
+                    // ids are appended in order, so the oldest is at the front
+                    if self.index[b].first() == Some(&old_id) {
+                        self.index[b].remove(0);
+                    } else {
+                        self.index[b].retain(|&x| x != old_id);
+                    }
+                }
+            }
             self.priority.remove(0);
             self.first_id += 1;
         }
@@ -147,12 +166,25 @@ impl EpisodicMemory {
 
     /// Like `recall`, skipping episodes whose ids are in `exclude`; returns (id, episode).
     pub fn recall_excluding(&self, cue: &BitVector, min_overlap: u32, exclude: &[usize]) -> Option<(usize, &BitVector)> {
+        // event-based: each active cue bit votes for the episodes that contain it
+        let mut counts = vec![0u32; self.episodes.len()];
+        for (wi, &w) in cue.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                let b = wi * 64 + w.trailing_zeros() as usize;
+                w &= w - 1;
+                if let Some(ids) = self.index.get(b) {
+                    for &id in ids {
+                        counts[id as usize - self.first_id] += 1;
+                    }
+                }
+            }
+        }
         let mut best: Option<(u32, usize)> = None;
-        for (i, e) in self.episodes.iter().enumerate() {
-            if exclude.contains(&(self.first_id + i)) {
+        for (i, &o) in counts.iter().enumerate() {
+            if o == 0 || exclude.contains(&(self.first_id + i)) {
                 continue;
             }
-            let o = overlap(e, cue);
             if o >= min_overlap && best.map_or(true, |(bo, _)| o >= bo) {
                 best = Some((o, i));
             }
@@ -267,6 +299,37 @@ fn set_bits(bv: &BitVector) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn indexed_recall_matches_a_full_scan() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(7);
+        let bits = 512;
+        let mut mem = EpisodicMemory::new(bits, 20);
+        let random = |rng: &mut rand::rngs::StdRng, n: usize| {
+            let v: Vec<usize> = (0..n).map(|_| rng.gen_range(0..bits)).collect();
+            BitVector::from_bits(&v, bits)
+        };
+        for step in 0..200 {
+            mem.store(&random(&mut rng, 24)); // wraps capacity many times
+            let cue = random(&mut rng, 12);
+            let need = rng.gen_range(1..4);
+            let exclude = if step % 3 == 0 { vec![mem.first_id + 5] } else { vec![] };
+            // brute force, as recall used to be
+            let mut best: Option<(u32, usize)> = None;
+            for (i, e) in mem.episodes.iter().enumerate() {
+                if exclude.contains(&(mem.first_id + i)) {
+                    continue;
+                }
+                let o = overlap(e, &cue);
+                if o >= need && best.map_or(true, |(bo, _)| o >= bo) {
+                    best = Some((o, i));
+                }
+            }
+            let want = best.map(|(_, i)| mem.first_id + i);
+            assert_eq!(mem.recall_excluding(&cue, need, &exclude).map(|(id, _)| id), want, "step {step}");
+        }
+    }
     use super::*;
 
     fn sym(i: usize) -> BitVector {

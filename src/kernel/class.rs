@@ -147,6 +147,10 @@ struct PredictiveState {
     gated: usize,
     /// Slots of kernels removed by `sleep`, reused by growth.
     free: Vec<usize>,
+    /// Recent inputs (active bits only), replayed by `sleep` to find kernels that respond
+    /// to exactly the same inputs. Capacity `replay_len` (0 = off).
+    replay: std::collections::VecDeque<Vec<u32>>,
+    replay_len: usize,
 }
 
 /// A fast-learning inhibitory loop on the winner competition: one-shot inhibitory tags on
@@ -331,6 +335,8 @@ impl KernelClass<SimpleKernel> {
             growth_gate: None,
             gated: 0,
             free: Vec::new(),
+            replay: std::collections::VecDeque::new(),
+            replay_len: 0,
         });
         kc
     }
@@ -370,6 +376,20 @@ impl KernelClass<SimpleKernel> {
         }
         st.last_matches.clear();
         st.last_near.clear();
+        if st.replay_len > 0 {
+            let mut bits = Vec::new();
+            for (wi, &w) in input.as_words().iter().enumerate() {
+                let mut w = w;
+                while w != 0 {
+                    bits.push((wi * 64 + w.trailing_zeros() as usize) as u32);
+                    w &= w - 1;
+                }
+            }
+            if st.replay.len() == st.replay_len {
+                st.replay.pop_front();
+            }
+            st.replay.push_back(bits);
+        }
         if st.counts.len() < self.active_kernels.len() {
             st.counts.resize(self.active_kernels.len(), 0);
         }
@@ -591,6 +611,14 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().map_or(0, |st| st.gated)
     }
 
+    /// Keep the last `n` inputs for sleep replay (0 = off).
+    pub fn set_replay(&mut self, n: usize) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.replay_len = n;
+            st.replay.clear();
+        }
+    }
+
     /// Kernels in use (removed ones excluded).
     pub fn live(&self) -> usize {
         self.active_kernels.len() - self.predictive.as_ref().map_or(0, |st| st.free.len())
@@ -669,6 +697,60 @@ impl KernelClass<SimpleKernel> {
             if !remove[a] {
                 remove[a] = true;
                 merged += 1;
+            }
+        }
+        // 3b. merge by replay: kernels with the same output that match exactly the same
+        // replayed inputs carry the same information (e.g. two random bit samples of the
+        // same words); keep the most reliable (then most used), drop the rest. Kernels
+        // that match nothing in the replay are left alone.
+        if !st.replay.is_empty() {
+            let n = self.active_kernels.len();
+            let mut signature = vec![0u64; n];
+            let mut fired = vec![0u32; n];
+            let mut counts = vec![0u32; n];
+            let mut touched: Vec<usize> = Vec::new();
+            for (i, bits) in st.replay.iter().enumerate() {
+                for &b in bits {
+                    if let Some(ks) = st.index.get(b as usize) {
+                        for &k in ks {
+                            let k = k as usize;
+                            if counts[k] == 0 {
+                                touched.push(k);
+                            }
+                            counts[k] += 1;
+                        }
+                    }
+                }
+                // a replay step's identity, mixed into every kernel that matched it
+                let tag = (i as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                for &k in &touched {
+                    if counts[k] as usize >= self.active_kernels[k].threshold && !remove[k] {
+                        signature[k] = signature[k].rotate_left(5) ^ tag;
+                        fired[k] += 1;
+                    }
+                    counts[k] = 0;
+                }
+                touched.clear();
+            }
+            let mut best: std::collections::HashMap<(&[u32], u64, u32), usize> = std::collections::HashMap::new();
+            for &k in &live {
+                if remove[k] || fired[k] == 0 {
+                    continue;
+                }
+                let key = (self.active_kernels[k].output_set.as_slice(), signature[k], fired[k]);
+                match best.get(&key).copied() {
+                    None => {
+                        best.insert(key, k);
+                    }
+                    Some(j) => {
+                        let (rk, rj) = (Rate::of(&self.active_kernels[k].stats), Rate::of(&self.active_kernels[j].stats));
+                        let uses = |x: usize| self.active_kernels[x].stats.hits as u16 + self.active_kernels[x].stats.misses as u16;
+                        let (keep, drop) = if (rk, uses(k)) > (rj, uses(j)) { (k, j) } else { (j, k) };
+                        best.insert(key, keep);
+                        remove[drop] = true;
+                        merged += 1;
+                    }
+                }
             }
         }
         // free the removed kernels and rebuild the index from the survivors
@@ -1305,6 +1387,27 @@ mod tests {
         // (the pile-up it prevents needs real history; see experiment 23)
         assert!(suppressed > 0);
         assert!(gated <= open, "gated {gated} vs open {open}");
+    }
+
+    #[test]
+    fn sleep_replay_merges_kernels_that_respond_to_the_same_inputs() {
+        // two kernels read different halves of the same word (neither contains the other),
+        // predict the same thing, and always fire together: replay finds them
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 1, sample_bits: 8, ..GrowthConfig::default() };
+        let mut kc = KernelClass::predictive(cfg);
+        kc.set_replay(64);
+        let b = BitVector::from_words(vec![0xFF00]);
+        let mut rng = rand::thread_rng();
+        kc.grow(&frames(&[0x0F]), &b, 1, &mut rng);
+        kc.grow(&frames(&[0xF0]), &b, 1, &mut rng);
+        for i in 0..8 {
+            step(&mut kc, &frames(&[0xFF]), &b); // the word: both fire
+            step(&mut kc, &frames(&[0xFF << (16 + i % 4)]), &BitVector::from_words(vec![0])); // others: neither
+        }
+        let (_, merged) = kc.sleep();
+        assert_eq!(merged, 1);
+        assert_eq!(kc.live(), 1);
+        assert_eq!(step(&mut kc, &frames(&[0xFF]), &b), 0xFF00);
     }
 
     #[test]

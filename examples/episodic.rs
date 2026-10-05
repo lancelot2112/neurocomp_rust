@@ -556,6 +556,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         class.set_fast_inhibition(Some(fast));
     }
     class.set_growth_trust(ratio_env("GROW_TRUST"));
+    // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
+    if std::env::var("SLEEP_EVERY").is_ok() {
+        class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
+    }
     // GROW_GATE=k: uncertainty-gated growth (no growth on misses in contexts known to be
     // random, hit rate < 2^k/(2^k+1) over at least UNC_MIN observations, when no input
     // frame carries the target)

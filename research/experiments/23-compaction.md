@@ -168,6 +168,29 @@ Over the whole day, answering on varied stories went from about 3,500 µs per wo
 40 µs (~87×), and on elimination from 3,570 to 19 µs (~190×). Results are the same or
 better.
 
+## 6. Sparse kernel storage
+Grown kernels were stored as dense masks over the whole input (3 × 8,192 bits) plus an
+8,192-bit output, about 4 KB each, to hold roughly 40 input and 32 output connections.
+They are now sorted lists of bit positions (`SimpleKernel::sparse`), about 300 bytes
+each.
+- **Everything on the predictive path reads the lists:** prediction writes, unpredicted
+  counts, pruning, `peek`, credited inputs and L5's `winner_reads`.
+- **Hand-built Hebbian kernels** in the other examples keep dense masks.
+- **Growth** finds a frame's active bits word by word, not bit by bit.
+
+Results are **identical** (same kernel counts, same accuracy on all five tasks, seed 0):
+
+| Task | Kernel connections stored | Whole model (+ inverted index, + 200 KB episodes) |
+|---|---|---|
+| Elimination | 4.9 → **0.25 MB** | 0.65 MB |
+| Varied | 11.2–12.1 → **0.64–0.71 MB** | 1.4–1.6 MB |
+| Topic | 10.9 → **0.61 MB** | 1.4 MB |
+| Give | 48.2 → **1.29 MB** | 2.7 MB |
+| Two-hop | 33.3 → **1.51 MB** | 3.1 MB |
+
+Time per word is unchanged within noise; the dense masks were no longer read on the hot
+path after section 2. The model is now as small as the transformer baselines (0.1–3.2 MB).
+
 ## Biology
 - **Expected versus unexpected uncertainty** (Yu & Dayan 2005): acetylcholine is thought
   to signal known, irreducible noise, and noradrenaline a change in the world. Only the

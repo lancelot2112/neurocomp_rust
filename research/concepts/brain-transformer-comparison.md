@@ -50,7 +50,7 @@ costs it speed there).
 
 | | Transformer (28k / 106k / 800k params) | This network |
 |---|---|---|
-| **Model memory** | 0.11 / 0.42 / 3.2 MB (fp32) | 0.3–2.3 MB as sparse indices plus inverted index; **5–50 MB as currently stored** (dense masks); plus a 200 KB episodic store |
+| **Model memory** | 0.11 / 0.42 / 3.2 MB (fp32) | **0.65–3.1 MB** in all: kernel connections stored sparsely (0.25–1.5 MB), inverted index (0.2–1.4 MB), 200 KB episodic store |
 | **Answering, per word** | 16–31 / 21–45 / 55–100 µs | 19 µs (elimination), 40–46 µs (varied, topic), 75 µs (give), 107 µs (two-hop) |
 | **Training, per word per pass** | 9–16 / 25–42 / 90–160 µs | 39 µs (elimination), 54–57 µs (varied, topic), 147–161 µs (two-hop, give), learning inline |
 | **Passes needed** | 3–100, or never (binding tasks) | 1 |
@@ -71,9 +71,9 @@ costs it speed there).
   - This is after a ~85–190× speed-up today, from making the path event-based, compacting
     the prior, gating learning on surprise and indexing recall. Before it, we were
     100–500× slower.
-- **Memory:** comparable in what is actually needed (0.3–2.3 MB against 0.1–3.2 MB).
-  Today's dense mask storage wastes about 50×, a storage choice, not a property of the
-  method.
+- **Memory:** comparable: 0.65–3.1 MB for the whole model against 0.1–3.2 MB, now that
+  kernels are stored as bit-position lists
+  ([23](../experiments/23-compaction.md#6-sparse-kernel-storage)).
 
 ## Against the brain
 - **What we share:**

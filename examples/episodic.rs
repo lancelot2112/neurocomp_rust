@@ -366,6 +366,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut tag_cues: HashMap<usize, BitVector> = HashMap::new();
     // Pfc: one-slot working memory and its basal-ganglia gate
     let mut wm = WorkingMemory::new(BITS, 1);
+    // REWARD=l5: every basal-ganglia selector learns from the column's L5 outcome (did the
+    // whole prediction come true?) instead of checking its own content against the target
+    let l5_reward = std::env::var("REWARD").map_or(false, |v| v == "l5");
+    let mut l5_sum = [0f64; 2]; // training: summed L5 reward, count
     let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
     let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
     let mut pfc_loads = HashMap::<&str, (usize, usize)>::new(); // word -> (loads, decisions) at test
@@ -913,10 +917,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
+                // L5 → basal ganglia: the column's outcome for this prediction
+                let l5 = column.outcome(&enc.codes[next]);
                 if !testing && t + 1 == s.answer_at {
                     if let Policy::Pfc { learned: true } = policy {
                         // dopamine: the recall that working memory cued contained the answer
-                        pfc_gate.reward(recall_had_answer as u32 as f32, &mut rng);
+                        // (local), or the column predicted the answer (L5)
+                        let r = if l5_reward { l5 } else { recall_had_answer as u32 as f32 };
+                        pfc_gate.reward(r, &mut rng);
+                        l5_sum[0] += l5 as f64;
+                        l5_sum[1] += 1.0;
                         pfc_rewards += recall_had_answer as usize;
                         pfc_questions += 1;
                     }
@@ -932,11 +942,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     if let Some(rel) = gate_pending.take() {
                         let hit = rel.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                        gate_bg.reward(hit as u32 as f32, &mut rng);
+                        gate_bg.reward(if l5_reward { l5 } else { hit as u32 as f32 }, &mut rng);
+                        l5_sum[0] += l5 as f64;
+                        l5_sum[1] += 1.0;
                     }
                     if let Some(hop2) = bg_pending.take() {
                         let hit = hop2.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                        bg.reward(hit as u32 as f32, &mut rng);
+                        bg.reward(if l5_reward { l5 } else { hit as u32 as f32 }, &mut rng);
+                        l5_sum[0] += l5 as f64;
+                        l5_sum[1] += 1.0;
                     }
                 }
                 bg_pending = None;
@@ -990,6 +1004,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
+    if l5_sum[1] > 0.0 {
+        eprintln!("  L5 seed {seed} ({}): mean training outcome at rewarded steps {:.3} over {}", if l5_reward { "reward = L5" } else { "local reward" }, l5_sum[0] / l5_sum[1], l5_sum[1]);
+    }
     if let Policy::Pfc { learned } = policy {
         let mut rows: Vec<(&&str, &(usize, usize))> = pfc_loads.iter().filter(|(_, (l, _))| *l > 0).collect();
         rows.sort_by(|a, b| (b.1 .0 * 1000 / b.1 .1.max(1)).cmp(&(a.1 .0 * 1000 / a.1 .1.max(1))));
@@ -1100,6 +1117,7 @@ fn main() {
                 Ok("twohop_learned") => vec![Policy::Branch(3), Policy::Select],
                 Ok("gate") => vec![Policy::FixedRelay, Policy::Episodic, Policy::ThalamicGate],
                 Ok("learned_gate") => vec![Policy::LearnedGate],
+                Ok("thalamic_gate") => vec![Policy::ThalamicGate],
                 Ok("consolidate") => vec![Policy::NoMemory, Policy::Episodic, Policy::Consolidate],
                 Ok("consolidate_only") => vec![Policy::Consolidate],
                 Ok("pfc") => vec![Policy::NoMemory, Policy::Episodic, Policy::Pfc { learned: false }, Policy::Pfc { learned: true }],

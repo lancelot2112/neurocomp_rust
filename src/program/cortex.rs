@@ -303,6 +303,15 @@ impl CorticalColumn {
         self.confidence
     }
 
+    /// L5 → basal ganglia: the outcome of the latest prediction, the column's shared
+    /// reward signal (dopamine-like): `actual`'s share of the prediction × the predicting
+    /// kernel's reliability, in 0..=1 (= 1 − surprise). Any selector whose choice fed this
+    /// prediction (a route, a recalled item, what working memory held) can learn from it,
+    /// instead of each one checking its own content against the target.
+    pub fn outcome(&self, actual: &BitVector) -> f32 {
+        1.0 - self.surprise(actual)
+    }
+
     /// L5: how surprising `actual` is given the latest prediction: 1 − (its share of the
     /// prediction × the predicting kernel's reliability).
     pub fn surprise(&self, actual: &BitVector) -> f32 {
@@ -339,6 +348,7 @@ mod tests {
         assert_eq!(col.predict(&l4).as_words(), b.as_words()); // L5: a is followed by b
         assert!(col.surprise(&b) < 0.5);
         assert!(col.surprise(&sym(3)) > 0.9);
+        assert!(col.outcome(&b) > 0.5 && col.outcome(&sym(3)) < 0.1); // L5 → BG
         assert_eq!(col.previous().as_words(), b.as_words()); // L6: the input before a
     }
 

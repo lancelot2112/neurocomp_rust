@@ -340,7 +340,7 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
                         for b in (c + 1) * BITS..(c + 2) * BITS {
                             ablated.bit_clear(b);
                         }
-                        let right_without = class.peek(&ablated).and_then(|o| enc.decode(o)) == Some(next);
+                        let right_without = class.peek(&ablated).and_then(|o| enc.decode(&o)) == Some(next);
                         credit[c] += (right && !right_without) as u8 as f64 - (!right && right_without) as u8 as f64;
                     }
                 }

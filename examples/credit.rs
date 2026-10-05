@@ -224,7 +224,7 @@ fn run(policy: Policy, k: usize, generalize: Option<f32>, patient: bool, guided:
                     for &b in &mem.out_bits[u] {
                         ablated.bit_clear(2 * BITS + b);
                     }
-                    let right_without = class.peek(&ablated).and_then(|o| enc.decode(o)) == Some(next);
+                    let right_without = class.peek(&ablated).and_then(|o| enc.decode(&o)) == Some(next);
                     mem.credit[u] += (right && !right_without) as u8 as f64 - (!right && right_without) as u8 as f64;
                 }
             }

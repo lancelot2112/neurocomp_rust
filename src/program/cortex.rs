@@ -325,11 +325,7 @@ impl CorticalColumn {
     pub fn winner_reads(&self, frame: usize) -> bool {
         let Some(k) = self.l23.winner() else { return false };
         let words = self.bits / 64;
-        k.input_mask
-            .as_words()
-            .iter()
-            .enumerate()
-            .any(|(wi, &m)| m != 0 && (k.input_idx + wi) / words == frame)
+        k.input_set.iter().any(|&b| (k.input_idx + b as usize / 64) / words == frame)
     }
 
     /// L5 → basal ganglia, attributed: the outcome if the prediction read `frame`, else 0.

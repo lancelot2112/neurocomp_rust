@@ -173,7 +173,7 @@ impl KernelGate {
             if let Some(v) = th.relay_channel(r) {
                 let input = self.input(r, &ctx, v);
                 if let Some((out, rel)) = self.class.peek_scored(&input) {
-                    if rel >= self.threshold && self.says_right(out) {
+                    if rel >= self.threshold && self.says_right(&out) {
                         open.push((rel, r, v));
                     }
                 }

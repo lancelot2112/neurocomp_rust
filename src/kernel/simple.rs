@@ -66,6 +66,12 @@ pub struct SimpleKernel {
     /// checking a prediction against a target touches only these ~32 bits, not the
     /// whole output width.
     pub output_set: Vec<u32>,
+    /// Sparse kernel (`SimpleKernel::sparse`): `input_set` / `output_set` are the only
+    /// storage, and `input_mask` / `output_mask` are empty placeholders. Predictive growth
+    /// makes these; hand-built Hebbian kernels keep dense masks.
+    pub sparse: bool,
+    /// Output width in bits (for building the prediction of a sparse kernel).
+    pub output_len: u32,
 }
 
 impl SimpleKernel {
@@ -73,6 +79,7 @@ impl SimpleKernel {
         let input_set = Self::positions(&input_mask, 0);
         let input_bits = input_set.len();
         let output_set = Self::positions(&output_mask, output_idx);
+        let output_len = ((output_idx + output_mask.word_len()) * 64) as u32;
         Self {
             input_mask,
             input_idx,
@@ -86,7 +93,69 @@ impl SimpleKernel {
             input_bits,
             input_set,
             output_set,
+            sparse: false,
+            output_len,
         }
+    }
+
+    /// A kernel stored only as sorted bit positions: it reads input bits `input_set`
+    /// (positions in the input), writes output bits `output_set` (positions in an output
+    /// of `output_len` bits), and fires at `threshold` matching bits. About 4 bytes per
+    /// connection instead of a dense mask over the whole input width.
+    pub fn sparse(mut input_set: Vec<u32>, mut output_set: Vec<u32>, output_len: usize, threshold: usize, op: KernelOp) -> Self {
+        input_set.sort_unstable();
+        input_set.dedup();
+        output_set.sort_unstable();
+        output_set.dedup();
+        Self {
+            input_mask: BitVector::new(64, Some(0)),
+            input_idx: 0,
+            output_mask: BitVector::new(64, Some(0)),
+            output_idx: 0,
+            threshold,
+            op,
+            plastic: false,
+            context_frames: 1,
+            stats: KernelStats::default(),
+            input_bits: input_set.len(),
+            input_set,
+            output_set,
+            sparse: true,
+            output_len: output_len as u32,
+        }
+    }
+
+    /// Drop input connections (positions in `input_set`), for pruning.
+    pub fn remove_inputs(&mut self, drop: &[usize]) {
+        if !self.sparse {
+            for &b in drop {
+                self.input_mask.bit_clear(b);
+            }
+        }
+        self.input_set.retain(|&b| !drop.contains(&(b as usize)));
+        self.input_bits = self.input_set.len();
+    }
+
+    /// The output as a bit vector of `output_len` bits.
+    pub fn output_vector(&self) -> BitVector {
+        let v: Vec<usize> = self.output_set.iter().map(|&b| b as usize).collect();
+        BitVector::from_bits(&v, self.output_len as usize)
+    }
+
+    /// The input connections as `words` dense words (for inspection and tests).
+    pub fn input_words(&self, words: usize) -> Vec<u64> {
+        let mut out = vec![0u64; words];
+        for &b in &self.input_set {
+            if let Some(w) = out.get_mut(b as usize / 64) {
+                *w |= 1 << (b % 64);
+            }
+        }
+        out
+    }
+
+    /// Storage actually used by this kernel's connections, in bytes.
+    pub fn connection_bytes(&self) -> usize {
+        (self.input_set.len() + self.output_set.len()) * 4 + (self.input_mask.word_len() + self.output_mask.word_len()) * 8
     }
 
     fn positions(mask: &BitVector, word_offset: usize) -> Vec<u32> {
@@ -103,6 +172,9 @@ impl SimpleKernel {
 
     /// Recompute `input_bits` after changing `input_mask` directly.
     pub fn sync_input_bits(&mut self) {
+        if self.sparse {
+            return; // the position list is the storage; nothing to resync from
+        }
         self.input_set = Self::positions(&self.input_mask, 0);
         self.input_bits = self.input_set.len();
     }

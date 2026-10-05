@@ -459,7 +459,11 @@ impl KernelClass<SimpleKernel> {
             return 0;
         };
         let k = &mut self.active_kernels[w];
-        output.mask_mut(k.output_idx, &k.output_mask, |a, b| a | b);
+        for &b in &k.output_set {
+            if (b as usize) < output.bit_len() {
+                output.bit_set(b as usize);
+            }
+        }
         k.stats.fired_last = true;
         k.stats.fires += 1;
         st.last_winner = Some(w);
@@ -470,12 +474,12 @@ impl KernelClass<SimpleKernel> {
     /// (no stats, no winner bookkeeping). Returns the winning kernel's output
     /// pattern, or None if no kernel matches. Used for counterfactual
     /// (ablation) credit: compare the prediction with and without some inputs.
-    pub fn peek(&self, input: &BitVector) -> Option<&BitVector> {
+    pub fn peek(&self, input: &BitVector) -> Option<BitVector> {
         self.peek_scored(input).map(|(out, _)| out)
     }
 
     /// Like `peek`, also returning the winning kernel's smoothed hit rate.
-    pub fn peek_scored(&self, input: &BitVector) -> Option<(&BitVector, f32)> {
+    pub fn peek_scored(&self, input: &BitVector) -> Option<(BitVector, f32)> {
         let st = self.predictive.as_ref()?;
         let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
         for b in set_bits(input) {
@@ -493,7 +497,7 @@ impl KernelClass<SimpleKernel> {
                 ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-            .map(|((_, rel, _), k)| (&self.active_kernels[k].output_mask, rel.value()))
+            .map(|((_, rel, _), k)| (self.active_kernels[k].output_vector(), rel.value()))
     }
 
     /// Restrict which input bits newly grown kernels may sample (None = all).
@@ -521,10 +525,10 @@ impl KernelClass<SimpleKernel> {
         let mut out = BitVector::new(bits, Some(0));
         if let Some(st) = self.predictive.as_ref() {
             for &k in pick(st) {
-                let m = &self.active_kernels[k].input_mask;
-                let n = out.word_len().min(m.word_len());
-                for (o, &w) in out.as_words_mut()[..n].iter_mut().zip(&m.as_words()[..n]) {
-                    *o |= w;
+                for &b in &self.active_kernels[k].input_set {
+                    if (b as usize) < bits {
+                        out.bit_set(b as usize);
+                    }
                 }
             }
         }
@@ -863,7 +867,7 @@ impl KernelClass<SimpleKernel> {
     /// Distinct outputs among the kernels that matched on the last step.
     pub fn matched_outputs(&self) -> usize {
         let Some(st) = self.predictive.as_ref() else { return 0 };
-        let mut outs: Vec<&[u64]> = st.last_matches.iter().map(|&k| self.active_kernels[k].output_mask.as_words()).collect();
+        let mut outs: Vec<&[u32]> = st.last_matches.iter().map(|&k| self.active_kernels[k].output_set.as_slice()).collect();
         outs.sort();
         outs.dedup();
         outs.len()
@@ -993,7 +997,7 @@ impl KernelClass<SimpleKernel> {
         let unpredicted = match winner {
             Some(w) => {
                 let k = &self.active_kernels[w];
-                target_bits - target.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m)
+                target_bits - k.output_set.iter().filter(|&&b| (b as usize) < target.bit_len() && target.bit_get(b as usize)).count()
             }
             None => target_bits,
         };
@@ -1093,11 +1097,10 @@ impl KernelClass<SimpleKernel> {
                 continue;
             }
             for &b in &drop {
-                self.active_kernels[k].input_mask.bit_clear(b);
                 st.index[b].retain(|&x| x as usize != k);
                 counts.remove(&b);
             }
-            self.active_kernels[k].sync_input_bits();
+            self.active_kernels[k].remove_inputs(&drop);
             // The match tolerance scales with the kernel's smallest remaining frame, so a
             // frame pruned to a few bits must still be (almost) fully present: otherwise
             // the kernel could fire with that frame absent and turn into a guesser.
@@ -1124,14 +1127,25 @@ impl KernelClass<SimpleKernel> {
         let Some(st) = self.predictive.as_mut() else { return };
         let cfg = st.cfg;
 
-        let mut input_mask = BitVector::new(input.bit_len(), Some(0));
+        let mut input_set: Vec<u32> = Vec::new();
         let mut sampled = 0;
         let mut reach = 0; // frames back the kernel actually connects to
         for f in 0..depth {
             let first = f * cfg.frame_words * 64;
             let last = ((f + 1) * cfg.frame_words * 64).min(input.bit_len());
             let allowed = |b: usize| st.growth_mask.as_ref().map_or(true, |m| b < m.bit_len() && m.bit_get(b));
-            let mut active: Vec<usize> = (first..last).filter(|&b| input.bit_get(b) && allowed(b)).collect();
+            // the frame's active bits, word by word (not bit by bit)
+            let mut active: Vec<usize> = Vec::new();
+            for wi in first / 64..last.div_ceil(64) {
+                let mut w = input.as_words()[wi];
+                while w != 0 {
+                    let b = wi * 64 + w.trailing_zeros() as usize;
+                    w &= w - 1;
+                    if b >= first && b < last && allowed(b) {
+                        active.push(b);
+                    }
+                }
+            }
             // Credit-guided growth: in a frame that carries the target's bits (a copy of
             // the word to predict, e.g. a recalled place), sample only those bits, so the
             // kernel is born keyed on the whole copied word rather than on incidental words.
@@ -1143,7 +1157,7 @@ impl KernelClass<SimpleKernel> {
                 }
             }
             for &b in active.choose_multiple(rng, cfg.sample_bits) {
-                input_mask.bit_set(b);
+                input_set.push(b as u32);
                 sampled += 1;
                 reach = f + 1;
             }
@@ -1156,15 +1170,16 @@ impl KernelClass<SimpleKernel> {
         let tolerance = (sampled.min(cfg.sample_bits) as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
         let threshold = sampled - tolerance;
 
-        let mut k = SimpleKernel::new(
-            input_mask,
-            0,
-            target.clone(),
-            0,
-            threshold,
-            KernelOp::Or,
-        );
-        k.plastic = false;
+        // stored sparse: the sampled input positions and the target's bits
+        let mut output_set: Vec<u32> = Vec::new();
+        for (wi, &w) in target.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                output_set.push((wi * 64 + w.trailing_zeros() as usize) as u32);
+                w &= w - 1;
+            }
+        }
+        let mut k = SimpleKernel::sparse(input_set, output_set, target.bit_len(), threshold, KernelOp::Or);
         // Depth is how far back the connections really reach: a kernel grown over
         // empty frames is no more specific than a shallower one and must not
         // outrank (or block the growth of) kernels that use those frames later.
@@ -1591,7 +1606,7 @@ mod tests {
         assert_eq!((kc.len(), kc.grown(), kc.recycled()), (2, 2, 1));
         // the first kernel (oldest, never useful since) was replaced, and the
         // index no longer routes its old input to the new occupant
-        let outs: Vec<u64> = kc.kernels().iter().map(|k| k.output_mask.as_words()[0]).collect();
+        let outs: Vec<u64> = kc.kernels().iter().map(|k| k.output_vector().as_words()[0]).collect();
         assert!(!outs.contains(&1) && outs.contains(&2) && outs.contains(&4));
         assert_eq!(step(&mut kc, &frames(&[0xFF0000]), &BitVector::from_words(vec![4])), 4);
         assert_eq!(step(&mut kc, &frames(&[0xFF]), &BitVector::from_words(vec![8])), 0);
@@ -1667,7 +1682,7 @@ mod tests {
         kc2.process(&a_f2, &mut out, 0, 0);
         assert_eq!(out.count_ones(), 0); // too specific: no match
         kc2.feedback(&a_f2, &b, &mut rng); // but it would have been right -> generalize
-        assert_eq!(kc2.kernels()[0].input_mask.as_words(), &[0xFF, 0]);
+        assert_eq!(kc2.kernels()[0].input_words(2).as_slice(), &[0xFF, 0]);
         out.bit_clear_all();
         kc2.process(&frames(&[0xFF, 0xF000]), &mut out, 0, 0); // any filler now
         assert_eq!(out.as_words()[0], 0xFF00);
@@ -1694,7 +1709,7 @@ mod tests {
         let mut kc = KernelClass::predictive(cfg);
         kc.set_growth_mask(Some(BitVector::from_words(vec![0x0F])));
         step(&mut kc, &frames(&[0xFF]), &BitVector::from_words(vec![0xFF00]));
-        assert_eq!(kc.kernels()[0].input_mask.as_words()[0], 0x0F);
+        assert_eq!(kc.kernels()[0].input_words(1)[0], 0x0F);
     }
 
     #[test]
@@ -1713,9 +1728,9 @@ mod tests {
         kc.grow(&frames(&[0xFF, 0x0F]), &b, 2, &mut rng); // A + filler1 -> B
         let a_f2 = frames(&[0xFF, 0xF0]);
         step(&mut kc, &a_f2, &b); // first confirmation: not yet dropped
-        assert_eq!(kc.kernels()[0].input_mask.as_words(), &[0xFF, 0x0F]);
+        assert_eq!(kc.kernels()[0].input_words(2).as_slice(), &[0xFF, 0x0F]);
         step(&mut kc, &a_f2, &b); // second: filler connections dropped
-        assert_eq!(kc.kernels()[0].input_mask.as_words(), &[0xFF, 0]);
+        assert_eq!(kc.kernels()[0].input_words(2).as_slice(), &[0xFF, 0]);
     }
 
     #[test]

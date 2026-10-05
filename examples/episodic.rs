@@ -628,13 +628,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let code = &enc.codes[index[p]];
                 let (mut copy_q, mut blind_q, mut best_rel) = (0usize, 0usize, 0f32);
                 for k in column.l23.kernels() {
-                    if code.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 < k.output_mask.count_ones() {
+                    if k.output_set.iter().filter(|&&b| code.bit_get(b as usize)).count() * 2 < k.output_set.len() {
                         continue;
                     }
                     let mut cur_ok = 0u32;
                     let mut cur_n = 0u32;
                     let mut mem = false;
-                    for (wi, &m) in k.input_mask.as_words().iter().enumerate() {
+                    for (wi, m) in k.input_words(k.input_set.last().map_or(0, |&b| b as usize / 64 + 1)).into_iter().enumerate() {
                         let w = k.input_idx + wi;
                         if w < frame {
                             cur_ok += (m & q[w]).count_ones();
@@ -1044,14 +1044,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let answer = &enc.codes[next];
                         let mut best: Option<(f32, [usize; 3], f32, u32)> = None;
                         for k in column.l23.kernels() {
-                            let out_ok = answer.mask_and_count(k.output_idx, &k.output_mask, |a, m| a & m) * 2 >= k.output_mask.count_ones();
+                            let out_ok = k.output_set.iter().filter(|&&b| answer.bit_get(b as usize)).count() * 2 >= k.output_set.len();
                             if !out_ok {
                                 continue;
                             }
                             let mut missing = [0usize; 3];
                             let mut reads_memory = false;
                             let mut matched = 0usize;
-                            for (wi, &m) in k.input_mask.as_words().iter().enumerate() {
+                            for (wi, m) in k.input_words(k.input_set.last().map_or(0, |&b| b as usize / 64 + 1)).into_iter().enumerate() {
                                 let w = k.input_idx + wi;
                                 let f = w / frame;
                                 let slot = if f == 0 { 0 } else if f <= mid_frames { 1 } else { 2 };
@@ -1096,7 +1096,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 // which input frames the kernel's mask covers
                                 let frame = BITS / 64;
                                 let mut per = [0usize; 3]; // current word, memory frames, previous word
-                                for (wi, &m) in k.input_mask.as_words().iter().enumerate() {
+                                for (wi, m) in k.input_words(k.input_set.last().map_or(0, |&b| b as usize / 64 + 1)).into_iter().enumerate() {
                                     let f = (k.input_idx + wi) / frame;
                                     let slot = if f == 0 { 0 } else if f <= mid_frames { 1 } else { 2 };
                                     per[slot] += m.count_ones() as usize;
@@ -1367,11 +1367,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 column.l23.live()
             );
         }
-        let dense: usize = kernels.iter().map(|k| (k.input_mask.word_len() + k.output_mask.word_len()) * 8).sum();
-        let set: usize = kernels.iter().map(|k| (k.input_mask.count_ones() + k.output_mask.count_ones()) as usize).sum();
+        let dense: usize = kernels.iter().map(|k| k.connection_bytes()).sum();
+        let set: usize = kernels.iter().map(|k| k.input_set.len() + k.output_set.len()).sum();
         let sparse = set * 2 + kernels.len() * 8; // u16 bit indices + offsets, threshold, 2 × u8 counters
         eprintln!(
-            "  COST seed {seed}: {} live kernels; masks stored {:.1} MB dense, {} set bits ({:.2} MB as u16 indices, + {:.2} MB inverted index); {} episodes × {} B; train {:.1} µs/word over {} words, test {:.1} µs/word",
+            "  COST seed {seed}: {} live kernels; connections stored {:.2} MB, {} set bits ({:.2} MB as u16 indices, + {:.2} MB inverted index); {} episodes × {} B; train {:.1} µs/word over {} words, test {:.1} µs/word",
             column.l23.live(),
             dense as f64 / 1e6,
             set,

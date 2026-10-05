@@ -482,7 +482,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // REWARD=l5_used: only if the prediction read the chosen content's L4 frame
     let l5_used = std::env::var("REWARD").map_or(false, |v| v == "l5_used");
     // L4 frame that the selector's choice fills: hop 2 for Select, else the memory frame
-    let choice_frame = if policy == Policy::Select { 2 } else { 1 };
+    // (with HIER_EARLY the top-down frame sits at 1 and the policy's frames move up by one)
+    let early_shift = (std::env::var("HIER").is_ok() && std::env::var("HIER_EARLY").is_ok()) as usize;
+    let choice_frame = if policy == Policy::Select { 2 } else { 1 } + early_shift;
     let mut l5_sum = [0f64; 2]; // training: summed L5 reward, count
     let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
     let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
@@ -648,6 +650,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     };
     let mut hier_in: Option<BitVector> = None;
     let hier_residual = std::env::var("HIER_RESIDUAL").map_or(true, |v| v != "0");
+    // HIER_GATE=1: a corticothalamic gate on the top-down channel, learned from use (L5
+    // attribution); HIER_GATE_WARMUP stories all open, weakening × HIER_GATE_WEAKEN
+    let hier_gate_on = std::env::var("HIER_GATE").is_ok();
+    let hier_gate_warmup: usize = std::env::var("HIER_GATE_WARMUP").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
+    let mut hier_gate = CorticothalamicGate::new(BITS, 1, seed + 31);
+    hier_gate.weaken = std::env::var("HIER_GATE_WEAKEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.25);
+    let mut hier_gate_step: Option<BitVector> = None;
+    let mut topdown_passed_at_answer = 0usize;
+    // HIER_EARLY=1: the top-down frame right after the current word
+    let hier_early = std::env::var("HIER_EARLY").is_ok();
     let mut topdown_has_answer = 0usize;
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
@@ -1067,9 +1079,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(recalled.as_words());
                     }
                 }
-                // the higher area: [sentence bag | slow state] -> top-down frame, after the
-                // memory / relay frames (so the column first learns to use its own frames,
-                // and top-down context only where they do not suffice)
+                // the higher area: [sentence bag | slow state] -> top-down frame, through a
+                // thalamic gate (HIER_GATE) and placed after the memory / relay frames, or right
+                // after the current word with HIER_EARLY
                 if hier {
                     let hin = area.input(&sentence, &surprising);
                     let td = area.predict(&hin);
@@ -1089,7 +1101,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if testing && t + 1 == s.answer_at {
                         topdown_has_answer += (td.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
                     }
-                    words.extend_from_slice(td.as_words());
+                    // HIER_GATE: the corticothalamic gain on the top-down channel, per context
+                    // (the current word); all open during the warm-up
+                    let passed = if hier_gate_on && s_i >= hier_gate_warmup {
+                        let explore = if testing { None } else { Some(&mut rng) };
+                        hier_gate.open(code, explore)[0]
+                    } else {
+                        true
+                    };
+                    let has = td.count_ones() > 0;
+                    if testing && t + 1 == s.answer_at {
+                        topdown_passed_at_answer += (passed && has) as usize;
+                    }
+                    hier_gate_step = (hier_gate_on && has && passed).then(|| code.clone());
+                    let frame = if passed { td } else { BitVector::new(BITS, Some(0)) };
+                    if hier_early {
+                        let at = BITS / 64; // right after the current word
+                        words.splice(at..at, frame.as_words().iter().copied());
+                    } else {
+                        words.extend_from_slice(frame.as_words());
+                    }
                     hier_in = Some(hin);
                 }
                 words.extend_from_slice(column.previous().as_words()); // L6: the previous input
@@ -1269,8 +1300,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // L5 → basal ganglia: the column's outcome for this prediction
                 // L5 attribution for the L6 gate, read before L2/3 learns: per channel passed,
                 // did the prediction read its frame and come true?
+                // the top-down frame's L4 index, for L5 attribution
+                let td_frame = if hier_early { 1 } else { 1 + base_frames };
+                let td_used = hier_gate_step.is_some() && column.outcome_via(td_frame, &enc.codes[next]) >= 0.5;
                 let l6_used: Vec<bool> = match &l6_step {
-                    Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + c, &enc.codes[next]) >= 0.5).collect(),
+                    Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + early_shift + c, &enc.codes[next]) >= 0.5).collect(),
                     None => Vec::new(),
                 };
                 let l5 = if l5_used { column.outcome_via(choice_frame, &enc.codes[next]) } else { column.outcome(&enc.codes[next]) };
@@ -1299,6 +1333,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     column.learn(&input, &enc.codes[next], &mut rng);
                     // predictive coding: the higher area learns the lower column's residual,
                     // the words it failed to predict (HIER_RESIDUAL=0: every word)
+                    if let Some(ctx) = hier_gate_step.take() {
+                        hier_gate.learn(0, &ctx, td_used, &mut rng);
+                    }
                     if let Some(hin) = hier_in.take() {
                         if !hier_residual || column.surprise(&enc.codes[next]) >= 0.5 {
                             area.learn(&hin, &enc.codes[next], &mut rng);
@@ -1487,7 +1524,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  MEMO seed {seed}: {hits} of {lookups} interpretations served from the memo ({:.0}%)", 100.0 * hits as f64 / lookups as f64);
         }
         if hier {
-            eprintln!("  HIER seed {seed}: higher area {} kernels; its top-down frame held the answer at {:.1}% of test answers", area.column.l23.live(), 100.0 * topdown_has_answer as f64 / TEST as f64);
+            eprintln!(
+                "  HIER seed {seed}: higher area {} kernels; its top-down frame held the answer at {:.1}% of test answers; top-down passed the gate at {:.1}% of answers",
+                area.column.l23.live(),
+                100.0 * topdown_has_answer as f64 / TEST as f64,
+                100.0 * topdown_passed_at_answer as f64 / TEST as f64
+            );
         }
         if column.l23.expected_steps() > 0 {
             eprintln!(

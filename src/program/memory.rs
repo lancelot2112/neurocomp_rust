@@ -17,6 +17,7 @@ pub struct EpisodicMemory {
     bits: usize,
     capacity: usize,
     episodes: Vec<BitVector>, // oldest first
+    priority: Vec<u32>,       // replay priority tags, parallel to `episodes`
     bit_counts: Vec<u32>,     // how many stored episodes (ever) had each bit
     stored: u32,
     first_id: usize,          // id of episodes[0]; ids stay stable as old episodes are forgotten
@@ -24,7 +25,45 @@ pub struct EpisodicMemory {
 
 impl EpisodicMemory {
     pub fn new(bits: usize, capacity: usize) -> Self {
-        Self { bits, capacity, episodes: Vec::new(), bit_counts: vec![0; bits], stored: 0, first_id: 0 }
+        Self { bits, capacity, episodes: Vec::new(), priority: Vec::new(), bit_counts: vec![0; bits], stored: 0, first_id: 0 }
+    }
+
+    /// Tag episode `id` (as returned by `recall_excluding`) for prioritised replay, e.g.
+    /// because a question recalled it and the recall predicted the answer.
+    pub fn tag(&mut self, id: usize) {
+        if id >= self.first_id {
+            if let Some(p) = self.priority.get_mut(id - self.first_id) {
+                *p = p.saturating_add(1);
+            }
+        }
+    }
+
+    /// The episode with id `id` (as returned by `recall_excluding`), if still held.
+    pub fn get_by_id(&self, id: usize) -> Option<&BitVector> {
+        id.checked_sub(self.first_id).and_then(|i| self.episodes.get(i))
+    }
+
+    /// Replay priority of the `i`-th held episode.
+    pub fn priority(&self, i: usize) -> u32 {
+        self.priority.get(i).copied().unwrap_or(0)
+    }
+
+    /// Pick an episode to replay: index `i` with weight 1 + `boost` × its tags
+    /// (`boost` 0 = uniform).
+    pub fn sample_replay<R: rand::Rng + ?Sized>(&self, rng: &mut R, boost: u32) -> Option<usize> {
+        if self.episodes.is_empty() {
+            return None;
+        }
+        let total: u64 = self.priority.iter().map(|&p| 1 + boost as u64 * p as u64).sum();
+        let mut x = rng.gen_range(0..total);
+        for (i, &p) in self.priority.iter().enumerate() {
+            let w = 1 + boost as u64 * p as u64;
+            if x < w {
+                return Some(i);
+            }
+            x -= w;
+        }
+        Some(self.episodes.len() - 1)
     }
 
     /// The `i`-th episode currently held (0 = oldest), e.g. for replay.
@@ -41,8 +80,10 @@ impl EpisodicMemory {
         }
         self.stored += 1;
         self.episodes.push(episode.clone());
+        self.priority.push(0);
         if self.episodes.len() > self.capacity {
             self.episodes.remove(0);
+            self.priority.remove(0);
             self.first_id += 1;
         }
     }
@@ -233,6 +274,22 @@ mod tests {
             out.or_mut(&sym(w));
         }
         out
+    }
+
+    #[test]
+    fn tagged_episodes_are_replayed_more() {
+        use rand::SeedableRng;
+        let mut m = EpisodicMemory::new(64, 10);
+        for i in 0..4 {
+            m.store(&sym(i));
+        }
+        let (id, _) = m.recall_excluding(&sym(2), 4, &[]).unwrap();
+        for _ in 0..5 {
+            m.tag(id);
+        }
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1);
+        let picks = (0..1000).filter(|_| m.sample_replay(&mut rng, 4) == Some(2)).count();
+        assert!(picks > 700, "tagged episode picked {picks}/1000"); // weight 21 of 24
     }
 
     #[test]

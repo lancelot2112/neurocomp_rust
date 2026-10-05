@@ -564,6 +564,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     class.set_frame_memo(std::env::var("FRAME_MEMO").is_ok());
     // CANON=1: canonical kernels (deterministic sampling + hash-consing at growth)
     class.set_canonical(std::env::var("CANON").is_ok());
+    // CHUNK=n: chunking; a kernel-to-kernel hand-over seen n times in a row skips matching
+    class.set_chunking(std::env::var("CHUNK").ok().and_then(|v| v.parse().ok()));
     // REPLAY_LEN=n: recent inputs kept for sleep replay (default 512 when SLEEP_EVERY is set)
     if std::env::var("SLEEP_EVERY").is_ok() {
         class.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
@@ -1359,6 +1361,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if dump.is_none() {
         // COST: what the column stores, densely as now and as sparse indices
         let kernels = column.l23.kernels();
+        let (cs, cj, cb) = column.l23.chunk_stats();
+        if cs > 0 {
+            eprintln!("  CHUNK seed {seed}: {cj} of {cs} steps taken by a chunk ({:.0}%), {cb} chunk breaks", 100.0 * cj as f64 / cs as f64);
+        }
         if column.l23.canon_reused() > 0 {
             eprintln!("  CANON seed {seed}: {} growths found an identical kernel already present", column.l23.canon_reused());
         }

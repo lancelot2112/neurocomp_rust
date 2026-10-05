@@ -3,6 +3,8 @@
 Ordered roughly by how much they matter for "reading like a transformer".
 
 ## Current (after [23](experiments/23-compaction.md))
+The staged plan these feed into is in the [roadmap](roadmap.md).
+
 - **Remaining per-word cost.** After event-based recall
   ([23](experiments/23-compaction.md#5-event-based-hippocampal-recall)), L2/3 matching is
   25–50% and learning 24–38%; kernels are now stored sparsely

@@ -109,6 +109,7 @@ Reference
 - [Bugs found and fixed](bugs-and-fixes.md)
 - [Related work and reading list](related-work.md)
 - [Open questions and next steps](open-questions.md)
+- [Roadmap: towards reliable higher-order thinking](roadmap.md)
 
 ## Reproducing
 

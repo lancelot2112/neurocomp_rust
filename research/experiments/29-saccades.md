@@ -82,6 +82,51 @@ The learned reader regressed right before every test answer (100%).
      a kind appeared on the page (the hippocampus' "where" of the page). Then it can
      saccade to the location of the last season word, wherever it is.
 
+## Learned targets (a page index) and confidence
+The two hand-supplied parts above were the fixed targets and the missing "am I unsure?"
+signal. Two options replace them:
+- **Page index (`SACCADE=index`).** The page keeps an index of where each surprising
+  word was read (its landmarks). A regression's candidates are "read on" plus one
+  candidate per landmark word, at its latest position before the current sentence. The
+  candidate's code is the word's own code, bound to the context by rotation, so the
+  selector learns a value per (context, landmark word), as it learned per recalled item
+  in [15](15-basal-ganglia-selector.md). Choosing a landmark re-reads the sentence
+  holding it. Nothing marks the announcement; the reader must learn where the season was.
+- **Confidence (`SACCADE_CONF=1`).** Before choosing, the column peeks at its own
+  prediction of the next word (without top-down, no state change). That confidence (no
+  prediction, < 0.5, < 0.8, ≥ 0.8) joins the selector's context, so it can learn to look
+  back only when unsure.
+
+| Seeds 0 / 1 / 2 | Accuracy | Regressions per story | Re-read words | Before the answer, re-read the first sentence |
+|---|---|---|---|---|
+| Fixed targets (above) | 99.6 / 88 / 97% | 11 / 42 / 26 | 23–59% | – |
+| Fixed targets + confidence | 79 / 94 / 88% | 26 / 35 / 25 | 43–57% | 0 / 100 / 0% |
+| **Page index** | **97 / 90 / 97%** | 15 / 20 / 30 | 30–49% | 74 / 100 / 100% |
+| Page index + confidence | 95 / 84 / 85% | 29 / 28 / 24 | 45–52% | 100% |
+| Page index, cost 0.3 | 90 / 76 / 94% | 18 / 10 / 10 | 25–38% | 98 / 77 / 100% |
+| Page index + confidence, cost 0.3 | 90 / 91 / 96% | 19 / 4.4 / 17 | 11–40% | 100% |
+| Page index, cost 0.5 | 84 / 90 / 96% | 14 / 16 / **1.2** | 3–35% | 74 / 100 / 100% |
+| Page index + confidence, cost 0.5 | 82 / 79 / 92% | 15 / **1.5** / **1.05** | 3–41% | 77 / 77 / 100% |
+
+1. **Targets are learned.** With the page index, the reader learns which landmark to
+   look back to. Before almost every answer it re-reads the sentence holding the season
+   (74–100%), and accuracy matches the fixed "page top" target (90–97%). The last
+   hand-supplied landmark is gone.
+2. **Confidence did not reduce regressions on its own.** With a 0.1 cost, adding the
+   confidence bucket left 24–35 regressions per story and lowered accuracy on some
+   seeds. The bucket splits every context four ways, so each value is learned from a
+   quarter of the data.
+3. **The efficient policy is learnable, but not reliably.**
+   - With a higher regression cost, some seeds find about one regression per story
+     (1.05–1.5, 3–4% re-reads) at 79–96%: the oracle's policy, learned. Others stay at
+     10–19.
+   - The selector's 4-bit counters, stepped stochastically, separate "read on, 1.0"
+     from "look back, 0.9" only noisily. Whether a seed settles on looking back
+     everywhere or only at the question is close to a coin flip.
+   - Finer value resolution (8-bit counters, or the integer rates of
+     [`KernelStats`](../../src/kernel/simple.rs)) is the likely fix, rather than more
+     context.
+
 ## Biology
 - **Regressions in reading** follow comprehension difficulty; about 30% of words are
   skipped and 10–15% of saccades go backwards (Rayner 1998). Models such as E-Z Reader
@@ -96,11 +141,9 @@ The learned reader regressed right before every test answer (100%).
   movements (Sommer & Wurtz 2002).
 
 ## Next
-- **Confidence-driven regressions:** add the column's confidence bucket to the selector's
-  context, so it looks back only when unsure. Target: the oracle's one regression per
-  story.
-- **Where facts are:** a spatial index of the page (word kinds by position), so a
-  regression can target the last word of a needed kind, not a fixed landmark.
+- ~~Where facts are~~: done (page index, above).
+- **Reliable "when":** finer value resolution in the saccade selector, so the
+  one-regression policy is found on every seed (now some seeds only).
 - **Skipping:** a fourth action, skip the next word when the column is confident (about
   30% of words in human reading).
 - **Books again:** reach for the book (an action), then look back on its pages, instead of

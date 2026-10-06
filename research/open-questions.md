@@ -45,10 +45,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:
-  - **Too many regressions** (11–42 per story, against 1 for the oracle): let the choice
-    see the column's confidence.
-  - **Targets:** a spatial index of where facts appeared, instead of the fixed "page top"
-    landmark.
+  - **Targets:** learned from a page index of landmarks (90–97%). Done.
+  - **Too many regressions:** confidence in the context did not help. A higher cost finds
+    about one regression per story on some seeds only. Needed: finer value resolution
+    in the selector.
   - **Skipping** confident words.
   - **The books task** with reaching plus looking back.
 - **Actions as context** ([28](experiments/28-reading-with-actions.md)): reinstating

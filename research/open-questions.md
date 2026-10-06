@@ -76,8 +76,11 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     generalisation makes it steadier (22–27%).
   - **A schema advantage** ([39](experiments/39-schema-advantage.md)): new members of a
     known family are answered with no exposure (55–75% vs 10–28% without the schema),
-    from the cortex (54–72% with the hippocampus lesioned). Next: a family stated once
-    ("tom is a smith"), completed from memory and applied by the cortex.
+    from the cortex (54–72% with the hippocampus lesioned).
+  - **A family stated once** ([40](experiments/40-family-stated-once.md)): the cortex
+    rolls out its expectation ("tom [is a smith] went"), memory supplies the family
+    (right 74–91%, lesioned 34–70%), and the cortex's rule answers (45–55% given the
+    right family). Next: consolidate the stated family, and learn when to step.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

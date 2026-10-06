@@ -90,6 +90,12 @@ Shadlen 2007).
 **Test.** Three- and four-step chains at the accuracy of two-hop today, with the number
 of steps used tracking the number needed.
 
+**Status** ([40](experiments/40-family-stated-once.md)): a first internal step. When the
+page contradicts a definite expectation, the network continues that expectation inside,
+with memory supplying the specifics, until the page fits again ("tom [is a smith] went to
+the"). Its length follows the need, not a hand-set chain. It is triggered by surprise; the
+basal ganglia choice of answer / look again / give up is not built.
+
 ## 4. Abstraction: rules over roles
 **Why.** Held-out binding works because answers are copied from memory. Rules ("X gave Y
 to Z, so Z has Y") are still learned per word, so they do not transfer to new names.

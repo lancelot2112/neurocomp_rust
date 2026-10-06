@@ -556,6 +556,10 @@ pub trait EpisodicCircuit {
     fn memory_bytes(&self) -> usize {
         0
     }
+    /// A one-line report of circuit-specific counts.
+    fn report(&self) -> String {
+        String::new()
+    }
 }
 
 impl EpisodicCircuit for Hippocampus {

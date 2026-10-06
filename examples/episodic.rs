@@ -963,6 +963,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         cfg.capacity = henv("ENGRAM_CAPACITY", 65536.0) as usize;
         cfg.where_bonus = q16x(henv("ENGRAM_BONUS", 0.0) as f64);
         cfg.seed_place = std::env::var("ENGRAM_SEED_PLACE").is_ok();
+        // ENGRAM_WALK=1: recall walks one step through a rare cue binding (experiment 59)
+        cfg.walk = std::env::var("ENGRAM_WALK").is_ok();
+        cfg.walk_rare = henv("ENGRAM_WALK_RARE", 2.0) as usize;
         // ENGRAM_DEDUP=any | move (default) | place
         cfg.dedup = match std::env::var("ENGRAM_DEDUP").as_deref() {
             Ok("any") => Dedup::Any,
@@ -3413,6 +3416,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             bind_mem.bytes(),
             bind_mem.len()
         );
+        if let Some(hc) = &bind_hc {
+            let r = hc.report();
+            if !r.is_empty() {
+                eprintln!("  CIRCUIT seed {seed}: {r}");
+            }
+        }
         if let Some(hc) = &bind_hc {
             let (hits, all, nov_sum, nov_n) = hc.stats();
             eprintln!(

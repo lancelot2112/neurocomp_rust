@@ -82,6 +82,14 @@ pub struct EngramConfig {
     pub dedup: Dedup,
     /// Make the current place's rows candidates even when they share no id with the cue.
     pub seed_place: bool,
+    /// Ids are field × `word_space` + word; fields below `content_fields` are content
+    /// (above: context). Used to index rows by word, in any slot, for the walk.
+    pub word_space: usize,
+    pub content_fields: usize,
+    /// Recall walks one step (`recall_walk`) when the winning row was reached through a
+    /// cue id held by at most `walk_rare` rows.
+    pub walk: bool,
+    pub walk_rare: usize,
 }
 
 impl Default for EngramConfig {
@@ -101,6 +109,10 @@ impl Default for EngramConfig {
             tag_min: 1,
             dedup: Dedup::Move,
             seed_place: false,
+            word_space: 4096,
+            content_fields: 64,
+            walk: false,
+            walk_rare: 2,
         }
     }
 }
@@ -127,6 +139,9 @@ pub struct EngramStore {
     phase: Vec<u8>,
     now: u32,
     what: Vec<Vec<u32>>,
+    /// Word → rows holding it in any content slot (for the walk).
+    words: Vec<Vec<u32>>,
+    walks: Cell<usize>,
     place: HashMap<u64, Vec<u32>>,
     live: usize,
     evicted: usize,
@@ -155,6 +170,8 @@ impl EngramStore {
             phase,
             now: 0,
             what: Vec::new(),
+            words: Vec::new(),
+            walks: Cell::new(0),
             place: HashMap::default(),
             live: 0,
             evicted: 0,
@@ -294,6 +311,118 @@ impl EngramStore {
         Recall { ec: r.out.clone(), strength: o * 512, ca1_match: ratio(v.min(own), own.max(1)).min(ONE), ca3: vec![s], ca1: vec![s] }
     }
 
+    /// The words of a row's content ids (each once).
+    fn content_words(&self, what: &[u32]) -> Vec<usize> {
+        let ws = self.cfg.word_space.max(1);
+        let mut v: Vec<usize> = what.iter().map(|&i| i as usize).filter(|&i| i / ws < self.cfg.content_fields).map(|i| i % ws).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// The best row (other than `exclude`) for context `ids` (slot-specific), required
+    /// `cue_words` and bonus `words` (both matched in any content slot), each weighted 1/n:
+    /// (serial, score, overlap). A row must hold at least `need` of the cue words: the
+    /// bonus words only choose among rows that answer the cue.
+    fn best_mixed(&self, ids: &[usize], cue_words: &[usize], words: &[usize], exclude: u32, need: u32) -> Option<(u32, u64, u32)> {
+        let mut guard = self.scratch.borrow_mut();
+        let (score, overlap, touched, _) = &mut *guard;
+        if score.len() < self.ring.len() {
+            score.resize(self.ring.len(), 0);
+            overlap.resize(self.ring.len(), 0);
+        }
+        let empty = Vec::new();
+        // overlap counts the cue words in its high bits, so `need` tests them
+        let lists = ids
+            .iter()
+            .map(|&i| (self.what.get(i).unwrap_or(&empty), 1u32))
+            .chain(cue_words.iter().map(|&w| (self.words.get(w).unwrap_or(&empty), 1u32 << 16)))
+            .chain(words.iter().map(|&w| (self.words.get(w).unwrap_or(&empty), 1u32)));
+        for (list, unit) in lists {
+            if list.is_empty() {
+                continue;
+            }
+            let w = self.weight(list.len());
+            for &s in list {
+                if s == exclude || self.row(s).is_none() {
+                    continue;
+                }
+                let k = self.slot(s);
+                if score[k] == 0 && overlap[k] == 0 {
+                    touched.push(s);
+                }
+                score[k] += w;
+                overlap[k] += unit;
+            }
+        }
+        let mut best: Option<(u32, u64, u32)> = None;
+        for &s in touched.iter() {
+            let k = self.slot(s);
+            let (v, o) = (score[k], overlap[k]);
+            score[k] = 0;
+            overlap[k] = 0;
+            let (content, all) = (o >> 16, (o >> 16) + (o & 0xFFFF));
+            if content >= need && all >= self.cfg.min_overlap && best.map_or(true, |(bs, bv, _)| v > bv || (v == bv && s > bs)) {
+                best = Some((s, v, all));
+            }
+        }
+        touched.clear();
+        best
+    }
+
+    /// Recall with one step of a walk (the big loop): if the winning row is from another
+    /// episode and was reached through a rare content id of the cue (held by at most
+    /// `walk_rare` rows as a word, in any slot: e.g. a name stated once in another story),
+    /// that id is a bridge. The row's other words replace it in the cue, matched in any
+    /// content slot, and the cue recalls again: "tom went to the" → "tom is a smith" →
+    /// {is, a, smith} + "went to the" + the story's context → a smiths' event in this
+    /// season. Otherwise, as `recall`.
+    pub fn recall_walk(&self, cue: &[usize], bump: bool) -> Recall {
+        let (best, _) = self.best(cue);
+        let Some((s, _, _)) = best else { return Recall::default() };
+        let r1 = self.row(s).unwrap();
+        // a bridge: a rare content id of the cue, through a row from another episode (a
+        // fact stated elsewhere)
+        let ws = self.cfg.word_space.max(1);
+        let elsewhere = r1.phase != self.phase;
+        let bridge = cue
+            .iter()
+            .copied()
+            .filter(|&i| {
+                elsewhere
+                    && i / ws < self.cfg.content_fields
+                    && r1.what.binary_search(&(i as u32)).is_ok()
+                    // rare as a word, in any slot (slot-specific ids fragment common words)
+                    && self.words.get(i % ws).map_or(0, |l| l.len()) <= self.cfg.walk_rare
+            })
+            .min_by_key(|&i| self.words.get(i % ws).map_or(0, |l| l.len()));
+        let Some(b) = bridge else { return self.recall_row(cue, bump) };
+        let bw = b % ws;
+        // context ids stay slot-specific; the rest of the cue's content, as words in any
+        // slot, must still be answered (at least half of it)
+        let ctx: Vec<usize> = cue.iter().copied().filter(|&i| i / ws >= self.cfg.content_fields).collect();
+        let cue_ids: Vec<u32> = cue.iter().map(|&i| i as u32).filter(|&i| i as usize != b).collect();
+        let cue_words: Vec<usize> = self.content_words(&cue_ids).into_iter().filter(|&w| w != bw).collect();
+        if cue_words.is_empty() {
+            return self.recall_row(cue, bump);
+        }
+        let words: Vec<usize> = self.content_words(&r1.what).into_iter().filter(|&w| w != bw && !cue_words.contains(&w)).collect();
+        let need = (cue_words.len() as u32).div_ceil(2);
+        let Some((s2, _, o2)) = self.best_mixed(&ctx, &cue_words, &words, s, need) else { return self.recall_row(cue, bump) };
+        self.walks.set(self.walks.get() + 1);
+        let r2 = self.row(s2).unwrap();
+        if bump {
+            r2.strength.set(self.strength(r2).saturating_add(self.cfg.bump));
+            r2.touched.set(self.now);
+        }
+        Recall { ec: r2.out.clone(), strength: o2 * 512, ca1_match: 0, ca3: vec![s2], ca1: vec![s, s2] }
+    }
+
+    /// Walks taken.
+    pub fn walks(&self) -> usize {
+        self.walks.get()
+    }
+
     fn emit(&self, s: u32) -> Recall {
         match self.row(s) {
             Some(r) => Recall { ec: r.out.clone(), strength: r.what.len() as u32 * 512, ca1_match: ONE, ca3: vec![s], ca1: vec![s] },
@@ -343,6 +472,9 @@ impl EngramStore {
                 for &id in &old.what {
                     self.what[id as usize].push(old.serial);
                 }
+                for w in self.content_words(&old.what) {
+                    self.words[w].push(old.serial);
+                }
                 self.place.entry(place_key(&old.phase)).or_default().push(old.serial);
                 self.ring[k] = Some(old);
                 self.head += 1;
@@ -366,6 +498,15 @@ impl EngramStore {
                 let len = ring.len();
                 self.what[id].retain(|&s| ring[s as usize % len].as_ref().map_or(false, |r| r.serial == s));
                 self.what[id].push(row.serial);
+            }
+            for w in self.content_words(&row.what) {
+                if w >= self.words.len() {
+                    self.words.resize_with(w + 1, Vec::new);
+                }
+                let ring = &self.ring;
+                let len = ring.len();
+                self.words[w].retain(|&s| ring[s as usize % len].as_ref().map_or(false, |r| r.serial == s));
+                self.words[w].push(row.serial);
             }
             let key = place_key(&row.phase);
             let ring = &self.ring;
@@ -391,7 +532,7 @@ impl EngramStore {
 impl EpisodicCircuit for EngramStore {
     fn recall(&self, cue: &[usize]) -> Recall {
         self.recalls.set(self.recalls.get() + 1);
-        self.recall_row(cue, true)
+        if self.cfg.walk { self.recall_walk(cue, true) } else { self.recall_row(cue, true) }
     }
 
     fn familiarity(&self, ids: &[usize]) -> u64 {
@@ -542,6 +683,11 @@ impl EpisodicCircuit for EngramStore {
     }
     /// Live rows (ids as u32, phases, outputs as indices, header), the what postings and
     /// the place index.
+    fn report(&self) -> String {
+        let (live, evicted, deduped, work) = EngramStore::report(self);
+        format!("engram: {live} rows, {evicted} evicted, {deduped} events stored by strengthening a row, {work} postings walked per recall, {} walks", self.walks.get())
+    }
+
     fn memory_bytes(&self) -> usize {
         let rows: usize = self.ring.iter().flatten().map(|r| 4 * r.what.len() + r.phase.len() + 8 * r.out.len() + 24).sum();
         let what: usize = self.what.iter().map(|p| 4 * p.len() + 24).sum();
@@ -638,5 +784,33 @@ mod tests {
         let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
         let order: Vec<u32> = (0..3).map(|_| m.replay(&mut rng).ca3[0]).collect();
         assert_eq!(order, vec![rows[1], rows[2], rows[0]]);
+    }
+    /// "tom is a smith" stated once; smiths go to the kitchen in autumn and the garden in
+    /// winter (other stories); "tom went to the" in an autumn story walks through "tom".
+    #[test]
+    fn a_walk_composes_a_stated_fact_with_a_rule() {
+        let ctx = |w: usize| b(w, 64); // a context binding: the season, stated earlier
+        let (tom, is, a, smith, john, went, to, the, kitchen, garden, autumn, winter, dot) = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13);
+        let mut m = EngramStore::new(EngramConfig { walk: true, ..EngramConfig::default() });
+        for i in 0..20 {
+            let (season, place) = if i % 2 == 0 { (autumn, kitchen) } else { (winter, garden) };
+            let mut e = event(&[john, smith, went, to, the, place, dot]);
+            e.push(ctx(season));
+            m.store(&e);
+            m.end_sequence();
+        }
+        let mut st = event(&[tom, is, a, smith, dot]);
+        st.push(ctx(winter));
+        m.store(&st);
+        m.end_sequence();
+        // the question: tom went to the ___, in an autumn story
+        let mut q = event(&[tom, went, to, the]);
+        q.push(ctx(autumn));
+        let r = m.recall(&q);
+        assert!(r.ec.contains(&b(kitchen, 5)), "walked to a smiths' autumn event: {:?}", r.ec);
+        assert_eq!(m.walks(), 1);
+        // without the walk, the one row holding "tom" wins and has no place in it
+        let plain = m.recall_row(&q, false);
+        assert!(!plain.ec.iter().any(|&i| i % 4096 == kitchen || i % 4096 == garden));
     }
 }

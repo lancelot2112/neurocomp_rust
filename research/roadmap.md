@@ -104,6 +104,13 @@ representations: Whittington et al. 2020; Bernardi et al. 2020).
 **Test.** A rule trained with one set of names, tested with names never seen in that
 rule, at 90% or more.
 
+**Status** ([30](experiments/30-cortex-driven-saccades.md)): the first transfer test.
+- An unseen question wording gives 0% even with a perfect look-back: every kernel is
+  keyed on word identities.
+- Cortex-driven saccade contexts (the column's superposed continuations) help the policy
+  only partly.
+- This is the baseline the schema work has to move.
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

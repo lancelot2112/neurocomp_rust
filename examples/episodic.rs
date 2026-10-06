@@ -930,6 +930,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // CONSOLIDATE_INTERLEAVE=1: interleaved replay (novel and familiar traces mixed) that
     // also feeds sleep generalisation (needs HIER_DREAM / HIER_SLEEP_GEN)
     let consolidate_interleave = std::env::var("CONSOLIDATE_INTERLEAVE").is_ok();
+    // CONSOLIDATE_STEPS=1: besides each training story's answer, every word the network
+    // failed to predict in a novel sentence (familiarity band < 4) leaves a trace, so
+    // replay covers what surprised it, such as "smith" after "tom is a"
+    // CONSOLIDATE_STEPS=assoc: the step trace's input is only the sentence's rare words
+    // (under 1% of sentences), an association ("tom" goes with "smith") rather than a
+    // sequence ("tom is a" → "smith")
+    let consolidate_steps = std::env::var("CONSOLIDATE_STEPS").is_ok();
+    let consolidate_assoc = std::env::var("CONSOLIDATE_STEPS").map_or(false, |v| v == "assoc");
+    // ROLLOUT_AREA=1: a rollout step's word may also come from the higher area's
+    // prediction (slot memory first, then the higher area, then the column), each only if
+    // it is of the kind the column expects
+    let rollout_area = std::env::var("ROLLOUT_AREA").is_ok();
     let bind_lesion = std::env::var("BIND_LESION").is_ok();
     // COMPLETE=1: pattern completion of a skipped slot. When the next word is not of the kind
     // the column expects here, the sentence is novel (familiarity band < 4) and the slot
@@ -2069,7 +2081,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // rollout continues while the page does not match the expectation
                     let definite = (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1;
                     let skipped = (definite || rolled > 0) && expect.count_ones() > 0 && ov(ids[t + 1], &expect) < 24;
-                    let own = bind_answer.filter(|&w| !(testing && bind_lesion) && ov(w, &expect) >= 24).or_else(|| column.l23.peek(&input).and_then(|o| enc.decode(&o)));
+                    let from_area = || -> Option<usize> {
+                        let td = td_src.as_ref().filter(|_| rollout_area)?;
+                        (0..vocab.len()).filter(|&i| ov(i, td) >= 24 && ov(i, &expect) >= 24).max_by_key(|&i| ov(i, td))
+                    };
+                    let own = bind_answer
+                        .filter(|&w| !(testing && bind_lesion) && ov(w, &expect) >= 24)
+                        .or_else(from_area)
+                        .or_else(|| column.l23.peek(&input).and_then(|o| enc.decode(&o)));
+                    if std::env::var("COMPLETEDIAG").is_ok() && testing && s.words[t] == "a" && t >= 2 && NEW_NAMES.contains(&s.words[t - 2]) {
+                        let wl = |v: &BitVector| -> Vec<&str> { (0..vocab.len()).filter(|&i| ov(i, v) >= 24).map(|i| vocab[i]).collect() };
+                        eprintln!("  AREADIAG {} is a: area {:?} (conf {:.2}), column expects {:?}, column own {:?}", s.words[t - 2], td_src.as_ref().map(|v| wl(v)), area.column.confidence(), wl(&expect), column.l23.peek(&input).and_then(|o| enc.decode(&o)).map(|w| vocab[w]));
+                    }
                     if std::env::var("COMPLETEDIAG").is_ok() && testing && NEW_NAMES.contains(&s.words[t]) {
                         eprintln!("  ROLLDIAG at {}: band {band}, skipped {skipped}, own {:?}, next {}", s.words[t], own.map(|w| vocab[w]), s.words[t + 1]);
                     }
@@ -2241,6 +2264,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if bind && consolidate.is_some() && !testing && t + 1 == s.answer_at {
                     traces.push((sentence.clone(), bind_list.clone(), next, fam_band));
+                } else if bind && consolidate_steps && !testing && fam_band < 4 && enc.decode(&out) != Some(next) && s.words[t + 1] != "." {
+                    let input = if consolidate_assoc {
+                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let mut bag = BitVector::new(BITS, Some(0));
+                        for &w in &ids[start..=t] {
+                            if sentence_count > 50 && (word_count[w] as f64) < 0.01 * sentence_count as f64 {
+                                bag.or_mut(&enc.codes[w]);
+                            }
+                        }
+                        bag
+                    } else {
+                        sentence.clone()
+                    };
+                    traces.push((input, bind_list.clone(), next, fam_band));
                 }
                 // saccade reward: the prediction right, minus the cost of a regression
                 if let Some(a) = sacc_pending.take() {

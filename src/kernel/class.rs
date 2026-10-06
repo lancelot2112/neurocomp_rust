@@ -153,6 +153,11 @@ struct PredictiveState {
     canon: Option<std::collections::HashMap<u64, u32>>,
     /// Growth events that found an identical kernel already present.
     canon_reused: usize,
+    /// Near-miss generalisation spawns a general copy instead of pruning in place
+    /// (see `set_generalize_spawn`).
+    generalize_spawn: bool,
+    /// General kernels spawned so far.
+    spawned: usize,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -424,6 +429,8 @@ impl KernelClass<SimpleKernel> {
             frame_memo: None,
             canon: None,
             canon_reused: 0,
+            generalize_spawn: false,
+            spawned: 0,
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -817,6 +824,22 @@ impl KernelClass<SimpleKernel> {
         if let Some(st) = self.predictive.as_mut() {
             st.canon = if on { Some(std::collections::HashMap::new()) } else { None };
         }
+    }
+
+    /// Near-miss generalisation (`GrowthConfig::generalize`): with `on`, a confirmed near
+    /// miss does not prune the kernel's unused inputs in place. It spawns a general copy
+    /// without them and keeps the specific original. Both compete as usual (depth, then
+    /// reliability): the general kernel serves where the pruned inputs never mattered (a new
+    /// filler in a known slot), the specific one where they do.
+    pub fn set_generalize_spawn(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.generalize_spawn = on;
+        }
+    }
+
+    /// General kernels spawned by near-miss generalisation.
+    pub fn spawned(&self) -> usize {
+        self.predictive.as_ref().map_or(0, |st| st.spawned)
     }
 
     /// Growth events that found an identical kernel already present.
@@ -1377,6 +1400,42 @@ impl KernelClass<SimpleKernel> {
     /// whose prediction the target confirms keep only the connections that were
     /// active, so inputs that didn't matter stop being required.
     fn generalize_near_misses(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig) {
+        let mut spawns: Vec<(Vec<u32>, Vec<u32>)> = Vec::new();
+        self.generalize_in_place(input, target, cfg, &mut spawns);
+        // the general copies: same output, the kept inputs, a threshold tolerating a frame's
+        // worth of noise as at growth; skipped if an identical kernel exists
+        let frame_bits = cfg.frame_words * 64;
+        for (kept, output_set) in spawns {
+            if let Some(st) = self.predictive.as_ref() {
+                if let Some(canon) = st.canon.as_ref() {
+                    if let Some(&k) = canon.get(&connection_key(&kept, &output_set)) {
+                        let kern = &self.active_kernels[k as usize];
+                        if kern.input_set == kept && kern.output_set == output_set {
+                            continue;
+                        }
+                    }
+                }
+            }
+            let mut per_frame: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for &b in &kept {
+                *per_frame.entry(b as usize / frame_bits).or_default() += 1;
+            }
+            let smallest = per_frame.values().copied().min().unwrap_or(cfg.sample_bits).min(cfg.sample_bits);
+            let tolerance = (smallest as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+            let reach = kept.iter().map(|&b| b as usize / frame_bits + 1).max().unwrap_or(1);
+            let threshold = kept.len().saturating_sub(tolerance).max(1);
+            let mut k = SimpleKernel::sparse(kept, output_set, target.bit_len(), threshold, KernelOp::Or);
+            k.context_frames = reach;
+            k.stats.record_hit();
+            k.stats.last_useful = self.tick;
+            self.install(k, input, target);
+            if let Some(st) = self.predictive.as_mut() {
+                st.spawned += 1;
+            }
+        }
+    }
+
+    fn generalize_in_place(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig, spawns: &mut Vec<(Vec<u32>, Vec<u32>)>) {
         let Some(st) = self.predictive.as_mut() else { return };
         let near = std::mem::take(&mut st.last_near);
         let min_bits = cfg.sample_bits.max(2);
@@ -1437,6 +1496,16 @@ impl KernelClass<SimpleKernel> {
                 }
             }
             if drop.is_empty() || old.len() - drop.len() < min_bits {
+                continue;
+            }
+            if st.generalize_spawn {
+                // keep the specific kernel; queue a general copy without the unused inputs
+                for &b in &drop {
+                    counts.remove(&b);
+                }
+                let mut kept: Vec<u32> = old.iter().filter(|b| !drop.contains(b)).map(|&b| b as u32).collect();
+                kept.sort_unstable();
+                spawns.push((kept, self.active_kernels[k].output_set.clone()));
                 continue;
             }
             for &b in &drop {
@@ -1565,7 +1634,15 @@ impl KernelClass<SimpleKernel> {
         // outrank (or block the growth of) kernels that use those frames later.
         k.context_frames = reach;
         k.stats.last_useful = tick;
+        self.install(k, input, target);
+    }
 
+    /// Place a new kernel: in a slot freed by sleep, at the end, or (at the budget) over the
+    /// least recently useful one; index its connections and register it for hash-consing.
+    fn install(&mut self, k: SimpleKernel, input: &BitVector, target: &BitVector) -> usize {
+        let Some(st) = self.predictive.as_mut() else { return 0 };
+        let cfg = st.cfg;
+        st.version += 1;
         let canon_old = |kern: &SimpleKernel| connection_key(&kern.input_set, &kern.output_set);
         let slot = if let Some(free) = st.free.pop() {
             // a slot emptied by sleep: nothing points to it any more
@@ -1636,6 +1713,7 @@ impl KernelClass<SimpleKernel> {
             let kern = &self.active_kernels[slot];
             canon.insert(connection_key(&kern.input_set, &kern.output_set), slot as u32);
         }
+        slot
     }
 }
 
@@ -1960,6 +2038,39 @@ mod tests {
         assert_eq!(plain, memo);
         assert_eq!(plain_stats, memo_stats);
         assert!(hits + patched > lookups / 2, "lookups {lookups} hits {hits} patched {patched}");
+    }
+
+    #[test]
+    fn spawned_general_kernels_transfer_without_losing_specifics() {
+        // frame 0: a name (4 names, the last never trained), frame 1: a cue (2 cues)
+        let name = |i: usize| 0xFFu64 << (8 * i);
+        let cue = |c: usize| 0xFFu64 << (8 * (4 + c));
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, generalize: Some(0.5), ..GrowthConfig::default() };
+        // role rule: the target depends on the cue only; name rule: on name and cue
+        let role_t = |_n: usize, c: usize| BitVector::from_words(vec![0xFFu64 << (8 * c)]);
+        let name_t = |n: usize, c: usize| BitVector::from_words(vec![0xFFu64 << (8 * ((n * 2 + c) % 8))]);
+        let run = |spawn: bool, generalize: bool, rule: &dyn Fn(usize, usize) -> BitVector| -> (usize, usize) {
+            let mut kc = KernelClass::predictive(if generalize { cfg } else { GrowthConfig { generalize: None, ..cfg } });
+            kc.set_generalize_spawn(spawn);
+            for i in 0..120 {
+                let (n, c) = (i % 3, (i / 3) % 2);
+                step(&mut kc, &frames(&[name(n), cue(c)]), &rule(n, c));
+            }
+            // (known names right of 6, unseen name right of 2), predicting without learning
+            let probe = |kc: &mut KernelClass<SimpleKernel>, n: usize, c: usize| {
+                let mut out = BitVector::new(64, Some(0));
+                kc.process(&frames(&[name(n), cue(c)]), &mut out, 0, 0);
+                (out.as_words()[0] == rule(n, c).as_words()[0]) as usize
+            };
+            let known = (0..3).flat_map(|n| (0..2).map(move |c| (n, c))).map(|(n, c)| probe(&mut kc, n, c)).sum();
+            let unseen = (0..2).map(|c| probe(&mut kc, 3, c)).sum();
+            (known, unseen)
+        };
+        // role rule: spawning transfers to the unseen name; without generalisation it cannot
+        assert_eq!(run(true, true, &role_t), (6, 2));
+        assert_eq!(run(false, false, &role_t).1, 0);
+        // name rule: spawning keeps every known name right
+        assert_eq!(run(true, true, &name_t).0, 6);
     }
 
     #[test]

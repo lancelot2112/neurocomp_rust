@@ -139,6 +139,9 @@ impl Pathway {
     /// Add `amount` to row `i`'s counters under `mask` (after bringing the row up to `epoch`).
     pub(crate) fn strengthen(&mut self, i: usize, mask: &BitVector, amount: u32, planes: usize, epoch: u32) {
         let targets = self.targets;
+        if i >= self.rows.len() {
+            self.rows.resize_with(i + 1, || None);
+        }
         let (row, at) = self.rows[i].get_or_insert_with(|| (SlicedCounter::new(targets, planes, 0), epoch));
         row.shift_down((epoch - *at) as usize);
         *at = epoch;
@@ -538,6 +541,11 @@ impl Autoassociative for Ca3FloatMemory {
 /// round(16 · 2^(phase / half_life)) for each phase of a halving period: the write
 /// amounts that make later stores outweigh earlier ones as continuous decay would.
 /// Computed once per configuration.
+/// Stores per halving that approximate a per-store `decay` (round(ln 0.5 / ln decay)).
+pub(crate) fn half_life_of(decay: f32) -> u32 { // float: config
+    ((0.5f32.ln() / decay.clamp(0.01, 0.999_9).ln()).round() as u32).max(1) // float: config
+}
+
 pub(crate) fn write_amounts(half_life: u32) -> Vec<u32> {
     (0..half_life.max(1)).map(|p| (16.0 * 2f64.powf(p as f64 / half_life as f64)).round() as u32).collect() // float: config
 }

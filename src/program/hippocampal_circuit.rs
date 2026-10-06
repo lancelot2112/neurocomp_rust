@@ -189,7 +189,7 @@ impl Hippocampus {
         let all: Vec<u32> = (0..cfg.ca2_cells as u32).collect();
         let mut ca2_state: Vec<u32> = all.choose_multiple(&mut rng, cfg.ca2_k).copied().collect();
         ca2_state.sort_unstable();
-        let half_life = ((0.5f32.ln() / cfg.decay.clamp(0.01, 0.999_9).ln()).round() as u32).max(1); // float: config
+        let half_life = super::hippocampus::half_life_of(cfg.decay);
         Self {
             perforant: Pathway::new(cfg.ec_bits, cfg.ca3_cells),
             perforant_writes: vec![0; cfg.ec_bits],

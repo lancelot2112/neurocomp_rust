@@ -135,9 +135,13 @@ place earlier ones.
   - a two-level hierarchy of columns;
   - the semantic store (a predictor);
   - the dentate gyrus (`Separate`);
-  - a one-shot CA3 sequence memory.
+  - a one-shot CA3 sequence memory;
+  - the full hippocampal circuit (bit-identical to `Hippocampus`, with the Hebbian
+    `Associate` leaf, [52](../experiments/52-associate-and-hippocampus-genome.md)).
+- **Two learning rules, two base kernels:** surprise-driven growth (`Predictor`) and
+  Hebbian counting (`Associate`).
 - **Still to become leaves:**
-  - the Hebbian pathways (`Associate`);
+  - CA2, tags, replay and the sparse binding space in the hippocampus genome;
   - competitive role cells;
   - relay matching;
   - the scalar-signal systems: the thalamic mix, basal ganglia and gates.

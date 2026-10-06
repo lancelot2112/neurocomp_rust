@@ -37,7 +37,8 @@ use rand::RngCore;
 use crate::bitvec::BitVector;
 use crate::kernel::class::KernelOp;
 use crate::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use crate::program::hippocampus::DentateGyrus;
+use crate::fixed::{div_round, ratio, Q16, ONE};
+use crate::program::hippocampus::{top_k, write_amounts, DentateGyrus, Pathway};
 
 /// What a module needs from outside for a tick: randomness for learning, and whether
 /// slow learning is on (it is off at test, when only fast inhibition runs).
@@ -318,6 +319,370 @@ impl Module for Separate {
     }
 }
 
+impl Separate {
+    /// A separation with a fixed random fan-in table: each of `cells` cells samples
+    /// `fan_in` of `inputs` input bits (`DentateGyrus::new`).
+    pub fn table(inputs: usize, cells: usize, fan_in: usize, k: usize, seed: u64) -> Self {
+        Self { dg: DentateGyrus::new(inputs, cells, fan_in, k, seed), out: zeros(cells) }
+    }
+}
+
+/// A fixed one-to-one projection: input bit i drives one output bit, drawn at random
+/// once (mossy fibres: each granule cell has one "detonator" target in CA3).
+pub struct Scatter {
+    map: Vec<u32>,
+    outputs: usize,
+    out: BitVector,
+}
+
+impl Scatter {
+    pub fn new(inputs: usize, outputs: usize, seed: u64) -> Self {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        Self { map: (0..inputs).map(|_| rng.gen_range(0..outputs) as u32).collect(), outputs, out: zeros(outputs) }
+    }
+}
+
+impl Module for Scatter {
+    fn name(&self) -> String {
+        format!("Scatter({} -> {})", self.map.len(), self.outputs)
+    }
+    fn n_inputs(&self) -> usize {
+        1
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let mut out = zeros(self.outputs);
+        for b in active(inputs[0]) {
+            if let Some(&t) = self.map.get(b) {
+                out.bit_set(t as usize);
+            }
+        }
+        self.out = out;
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = zeros(self.outputs);
+    }
+}
+
+/// A mode switch: passes input 0 while input 1 has any bit, else nothing (a
+/// neuromodulatory gate, e.g. acetylcholine switching the hippocampus into encoding).
+pub struct Gate {
+    out: BitVector,
+}
+
+impl Module for Gate {
+    fn name(&self) -> String {
+        "Gate".into()
+    }
+    fn n_inputs(&self) -> usize {
+        2
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        self.out = if inputs[1].count_ones() > 0 { inputs[0].clone() } else { BitVector::EMPTY };
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = BitVector::EMPTY;
+    }
+}
+
+/// How an `Associate` population turns summed drive into active cells.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readout {
+    /// The `k` most driven cells (k-winners-take-all).
+    TopK(usize),
+    /// Every cell driven at least this fraction (`Q16`) of the most driven one.
+    Fraction(Q16),
+}
+
+/// How an `Associate` pathway weighs a presynaptic row written by n events.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Scale {
+    /// Every row counts in full.
+    None,
+    /// Each synapse's counter is shifted right by ⌊log2 n⌋ before summing (as in
+    /// `Hippocampus`; single writes round to zero once n is large).
+    Shift,
+    /// The row's summed drive is multiplied by 1/n in `Q16` (no rounding per synapse):
+    /// an input's vote is divided among the events that wrote it, like inverse document
+    /// frequency.
+    Inverse,
+}
+
+/// One learned input pathway of an `Associate` population.
+struct Path {
+    w: Pathway,
+    /// Writes per source row (for presynaptic scaling).
+    writes: Vec<u32>,
+    /// Writes per target cell, and writes in all (for centering).
+    used: Vec<u32>,
+    total: u32,
+    scale: Scale,
+}
+
+impl Path {
+    fn new(cells: usize, scale: Scale) -> Self {
+        Self { w: Pathway::new(0, cells), writes: Vec::new(), used: vec![0; cells], total: 0, scale }
+    }
+
+    fn n(&self, i: usize) -> u32 {
+        self.writes.get(i).copied().unwrap_or(0)
+    }
+
+    /// Each cell's drive from the active `sources`, in `Q16` units of write amount.
+    fn drive(&self, sources: &[usize], epoch: u32) -> Vec<u64> {
+        match self.scale {
+            Scale::None => self.w.drive(sources, epoch).into_iter().map(|v| (v as u64) << 16).collect(),
+            Scale::Shift => self.w.drive_scaled(sources, epoch, |i| log2_floor(self.n(i))).into_iter().map(|v| (v as u64) << 16).collect(),
+            Scale::Inverse => {
+                let mut out = vec![0u64; self.w_targets()];
+                for &i in sources {
+                    let per = ONE as u64 / self.n(i).max(1) as u64;
+                    for (o, v) in out.iter_mut().zip(self.w.drive(&[i], epoch)) {
+                        *o += v as u64 * per;
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    fn w_targets(&self) -> usize {
+        self.used.len()
+    }
+
+    /// A row's weight per write, in `Q16`.
+    fn weight(&self, n: u32) -> u64 {
+        match self.scale {
+            Scale::None => ONE as u64,
+            Scale::Shift => (ONE as u64) >> log2_floor(n),
+            Scale::Inverse => ONE as u64 / n.max(1) as u64,
+        }
+    }
+
+    fn write(&mut self, sources: &[usize], mask: &BitVector, amount: u32, planes: usize, epoch: u32, skip_self: bool) {
+        for &i in sources {
+            if skip_self {
+                let mut m = mask.clone();
+                m.bit_clear(i);
+                self.w.strengthen(i, &m, amount, planes, epoch);
+            } else {
+                self.w.strengthen(i, mask, amount, planes, epoch);
+            }
+            if i >= self.writes.len() {
+                self.writes.resize(i + 1, 0);
+            }
+            self.writes[i] = self.writes[i].saturating_add(1);
+        }
+        if !sources.is_empty() {
+            self.total += 1;
+            for j in active(mask) {
+                self.used[j] = self.used[j].saturating_add(1);
+            }
+        }
+    }
+
+    /// The drive each cell would get by chance: if the stored events were unrelated to
+    /// the cue, cell j would receive (cue rows' writes) × (j's writes) / (all writes)
+    /// write amounts. Returned as (Σ over the cue of row writes, total) for each cell's
+    /// `used` count to scale. A row's writes count as its `Scale` weighs them (`Q16`).
+    fn chance(&self, sources: &[usize]) -> (u64, u64) {
+        let rows: u64 = sources.iter().map(|&i| self.n(i) as u64 * self.weight(self.n(i))).sum();
+        (rows, self.total.max(1) as u64)
+    }
+}
+
+fn log2_floor(n: u32) -> u32 {
+    31 - n.max(1).leading_zeros()
+}
+
+fn active(x: &BitVector) -> Vec<usize> {
+    let mut v = Vec::new();
+    for (wi, &w) in x.as_words().iter().enumerate() {
+        let mut w = w;
+        while w != 0 {
+            v.push(wi * 64 + w.trailing_zeros() as usize);
+            w &= w - 1;
+        }
+    }
+    v
+}
+
+/// The second base kernel: a population of `cells` cells with Hebbian input pathways.
+///
+/// Inputs: `[teach, gain, pre_0, …, pre_{n-1}]`. Output: `[activity]`.
+/// - **Weights:** each pathway is a matrix of small counters (bit-sliced, 7 planes),
+///   one row per presynaptic bit, halved every `half_life` writes (lazy plane shifts).
+/// - **Read:** drive = Σ over pathways of the rows of the active presynaptic bits (with
+///   presynaptic scaling, a row written n times counts 1/2^⌊log2 n⌋). The readout keeps
+///   the top k cells, or every cell within a fraction of the best. With `settle` > 0 the
+///   population also has a recurrent pathway from itself: it then iterates
+///   activity ← readout(drive + recurrent(activity)), settling into an attractor.
+/// - **Write (encoding):** when `teach` has bits, the population is clamped to `teach`
+///   (it is the activity that is stored and passed on), and every pathway's active rows
+///   gain `amount` on the teach cells (the recurrent pathway: from each teach cell to
+///   the others).
+/// - **Gain:** `amount` = base × (1 + `gain` × novelty), where novelty is `gain`'s
+///   popcount over `gain_k` (a population code for a scalar: e.g. the CA1 cells the
+///   comparator found unmatched).
+pub struct Associate {
+    cells: usize,
+    readout: Readout,
+    settle: usize,
+    paths: Vec<Path>,
+    recurrent: Option<Path>,
+    half_life: u32,
+    amounts: Vec<u32>,
+    planes: usize,
+    stores: u32,
+    gain: Q16,
+    gain_k: usize,
+    /// Subtract each cell's chance drive before the readout (see `set_center`).
+    center: bool,
+    out: BitVector,
+}
+
+impl Associate {
+    /// Centering (the covariance rule): before the readout, each cell's drive has
+    /// subtracted what it would get by chance, (cue rows' writes × the cell's writes /
+    /// all writes) × the mean write amount. Count-based crosstalk is all positive and
+    /// grows with a cell's use, so much-written cells win recall by bulk; centered,
+    /// crosstalk has mean zero. Approximate under decay (uses undecayed counts).
+    pub fn set_center(&mut self, on: bool) {
+        self.center = on;
+    }
+
+    pub fn new(cells: usize, pathways: &[Scale], settle: usize, readout: Readout, half_life: u32, gain: Q16, gain_k: usize) -> Self {
+        let half_life = half_life.max(1);
+        Self {
+            cells,
+            readout,
+            settle,
+            paths: pathways.iter().map(|&scale| Path::new(cells, scale)).collect(),
+            recurrent: if settle > 0 { Some(Path::new(cells, Scale::None)) } else { None },
+            half_life,
+            amounts: write_amounts(half_life),
+            planes: 7,
+            stores: 0,
+            gain,
+            gain_k: gain_k.max(1),
+            center: false,
+            out: zeros(cells),
+        }
+    }
+
+    fn epoch(&self) -> u32 {
+        self.stores / self.half_life
+    }
+
+    fn select(&self, drive: &[u64]) -> Vec<u32> {
+        match self.readout {
+            Readout::TopK(k) => top_k(drive.iter().copied(), k),
+            Readout::Fraction(f) => {
+                let best = drive.iter().copied().max().unwrap_or(0);
+                if best == 0 {
+                    return Vec::new();
+                }
+                let floor = best as u128 * f as u128;
+                (0..drive.len()).filter(|&b| (drive[b] as u128) << 16 >= floor).map(|b| b as u32).collect()
+            }
+        }
+    }
+
+    /// Writes so far.
+    pub fn stores(&self) -> u32 {
+        self.stores
+    }
+}
+
+impl Module for Associate {
+    fn name(&self) -> String {
+        format!("Associate({} cells, {} pathways{}, {:?})", self.cells, self.paths.len(), if self.settle > 0 { " + recurrent" } else { "" }, self.readout)
+    }
+    fn n_inputs(&self) -> usize {
+        2 + self.paths.len()
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let (teach, gain) = (inputs[0], inputs[1]);
+        let pres: Vec<Vec<usize>> = inputs[2..].iter().map(|x| active(x)).collect();
+        if teach.count_ones() > 0 {
+            // encoding: clamp to teach and write
+            let novelty = ratio(gain.count_ones() as u64, self.gain_k as u64).min(ONE);
+            self.stores += 1;
+            let epoch = self.epoch();
+            let base = self.amounts[(self.stores % self.half_life) as usize] as u64;
+            let factor = ONE as u64 + ((self.gain as u64 * novelty as u64) >> 16);
+            let amount = div_round(base * factor, ONE as u64).min((1u64 << self.planes) - 1) as u32;
+            let mut mask = zeros(self.cells);
+            let t: Vec<usize> = active(teach).into_iter().filter(|&b| b < self.cells).collect();
+            for &b in &t {
+                mask.bit_set(b);
+            }
+            for (p, pre) in self.paths.iter_mut().zip(&pres) {
+                p.write(pre, &mask, amount, self.planes, epoch, false);
+            }
+            if let Some(r) = &mut self.recurrent {
+                r.write(&t, &mask, amount, self.planes, epoch, true);
+            }
+            self.out = mask;
+            return;
+        }
+        // recall
+        let epoch = self.epoch();
+        let mut drive = vec![0u64; self.cells];
+        for (p, pre) in self.paths.iter().zip(&pres) {
+            let d_p = p.drive(pre, epoch);
+            if self.center {
+                // mean write amount: the base amount at gain 0 (16..31 within a halving period)
+                let (rows, total) = p.chance(pre);
+                let amount = self.amounts[(self.stores % self.half_life) as usize] as u64;
+                for (j, (d, v)) in drive.iter_mut().zip(d_p).enumerate() {
+                    let expect = div_round(rows * p.used[j] as u64 * amount, total);
+                    *d += v.saturating_sub(expect);
+                }
+            } else {
+                for (d, v) in drive.iter_mut().zip(d_p) {
+                    *d += v;
+                }
+            }
+        }
+        let mut c = self.select(&drive);
+        if let Some(r) = &self.recurrent {
+            for _ in 0..self.settle {
+                let a: Vec<usize> = c.iter().map(|&j| j as usize).collect();
+                let rec = r.drive(&a, epoch);
+                let total: Vec<u64> = rec.iter().zip(&drive).map(|(r, f)| r + f).collect();
+                c = self.select(&total);
+            }
+        }
+        let mut out = zeros(self.cells);
+        for j in c {
+            out.bit_set(j as usize);
+        }
+        self.out = out;
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = zeros(self.cells);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Networks
 
@@ -437,19 +802,32 @@ pub enum Prim {
     Delay,
     Concat(usize),
     Separate { cells: usize, fan_out: usize, k: usize, seed: u64 },
+    /// `Separate` with a fixed random fan-in table over `inputs` bits.
+    SeparateTable { inputs: usize, cells: usize, fan_in: usize, k: usize, seed: u64 },
+    Scatter { inputs: usize, outputs: usize, seed: u64 },
+    Gate,
+    /// An `Associate` population: one input pathway per entry of `pathways` (its
+    /// presynaptic scaling), recurrent settling steps (0 = no recurrent pathway).
+    Associate { cells: usize, pathways: Vec<Scale>, settle: usize, readout: Readout, half_life: u32, gain: Q16, gain_k: usize },
 }
 
 impl Prim {
     pub fn build(&self) -> Box<dyn Module> {
-        match *self {
-            Prim::Predict { bits, frames, sample_bits } => {
+        match self {
+            &Prim::Predict { bits, frames, sample_bits } => {
                 let cfg = GrowthConfig { frame_words: bits.div_ceil(64), max_frames: frames.max(1), sample_bits, ..GrowthConfig::default() };
                 Box::new(Predictor::new(bits, KernelClass::predictive(cfg)))
             }
-            Prim::Op(op) => Box::new(BitOp::new(op)),
+            &Prim::Op(op) => Box::new(BitOp::new(op)),
             Prim::Delay => Box::<Delay>::default(),
-            Prim::Concat(n) => Box::new(Concat::new(n)),
-            Prim::Separate { cells, fan_out, k, seed } => Box::new(Separate::new(cells, fan_out, k, seed)),
+            &Prim::Concat(n) => Box::new(Concat::new(n)),
+            &Prim::Separate { cells, fan_out, k, seed } => Box::new(Separate::new(cells, fan_out, k, seed)),
+            &Prim::SeparateTable { inputs, cells, fan_in, k, seed } => Box::new(Separate::table(inputs, cells, fan_in, k, seed)),
+            &Prim::Scatter { inputs, outputs, seed } => Box::new(Scatter::new(inputs, outputs, seed)),
+            Prim::Gate => Box::new(Gate { out: BitVector::EMPTY }),
+            Prim::Associate { cells, pathways, settle, readout, half_life, gain, gain_k } => {
+                Box::new(Associate::new(*cells, pathways, *settle, *readout, *half_life, *gain, *gain_k))
+            }
         }
     }
 }
@@ -470,6 +848,8 @@ pub enum NetOp {
     Drop,
     /// Push a copy of the second signal.
     Over,
+    /// Push a copy of the signal `n` below the top (`Pick(0)` = `Dup`, `Pick(1)` = `Over`).
+    Pick(usize),
     /// Push a forward reference: a signal that will be bound later by `Close`. Reading it
     /// gives the bound signal's previous-tick value, if it is later in the network.
     Feedback,
@@ -518,7 +898,7 @@ impl Genome {
         let mut pending_wires: Vec<(usize, usize, usize)> = Vec::new(); // (child, port, feedback)
         let mut exports: Vec<Option<Sig>> = Vec::new();
 
-        let mut place = |net: &mut Network, stack: &mut Vec<Option<Sig>>, pending_wires: &mut Vec<(usize, usize, usize)>, m: Box<dyn Module>| {
+        let place = |net: &mut Network, stack: &mut Vec<Option<Sig>>, pending_wires: &mut Vec<(usize, usize, usize)>, m: Box<dyn Module>| {
             let n = m.n_inputs();
             let mut args: Vec<Option<Sig>> = (0..n).map(|_| stack.pop().flatten()).collect();
             args.reverse();
@@ -566,6 +946,12 @@ impl Genome {
                     let n = stack.len();
                     if n >= 2 {
                         stack.push(stack[n - 2]);
+                    }
+                }
+                NetOp::Pick(n) => {
+                    let len = stack.len();
+                    if *n < len {
+                        stack.push(stack[len - 1 - n]);
                     }
                 }
                 NetOp::Feedback => {
@@ -697,6 +1083,98 @@ pub fn hierarchy_genome(bits: usize, sample_bits: usize) -> Genome {
     g
 }
 
+/// The hippocampal circuit of `Hippocampus` (default settings: table projections,
+/// presynaptic scaling on the perforant path, novelty-gated encoding; no CA2, tags or
+/// hashed input), as a genome of base kernels.
+///
+/// Inputs: `[x (EC II/III), out (what EC V should give back), encode]`.
+/// Outputs: `[EC V readout, novelty (CA1 cells the comparator found unmatched), CA3]`.
+///
+/// - DG = `SeparateTable`, mossy fibres = `Scatter`;
+/// - CA3 = `Associate` with the perforant path (scaled) and a recurrent pathway, taught
+///   by the mossy-fibre code;
+/// - EC III → CA1 = `SeparateTable`; CA1 = `Associate` over the Schaffer collaterals,
+///   taught by the EC III code;
+/// - subiculum → EC V = `Associate` with a fraction readout, taught by `out`;
+/// - the comparator = `BitOp(Clear)`: the EC III code's cells that recall did not
+///   reproduce. Its popcount is the novelty, fed back as every population's gain.
+///
+/// One event is two ticks, as in a theta cycle (`theta_store`): a retrieval half
+/// (`encode` empty: recall, the comparator measures novelty) and an encoding half
+/// (`encode` set: every population is clamped to its teaching code and writes, with
+/// the previous half's novelty as gain, through the comparator's feedback wire).
+pub fn hippocampus_genome(cfg: &crate::program::HippocampusConfig) -> Genome {
+    use NetOp::*;
+    let half_life = crate::program::hippocampus::half_life_of(cfg.decay);
+    let out_bits = if cfg.out_bits == 0 { cfg.ec_bits } else { cfg.out_bits };
+    let pop = |cells: usize, scale: Scale, settle: usize, readout: Readout| Prim::Associate {
+        cells,
+        pathways: vec![scale],
+        settle,
+        readout,
+        half_life,
+        gain: cfg.novelty_gain,
+        gain_k: cfg.ca1_k,
+    };
+    let mut g = Genome::default();
+    g.define(
+        "hippocampus",
+        3,
+        vec![
+            Feedback, // [G]: novelty, bound to the comparator below
+            In(0),
+            Place(Prim::SeparateTable { inputs: cfg.ec_bits, cells: cfg.dg_cells, fan_in: cfg.dg_fan_in, k: cfg.dg_k, seed: cfg.seed.wrapping_add(1) }),
+            Place(Prim::Scatter { inputs: cfg.dg_cells, outputs: cfg.ca3_cells, seed: cfg.seed }),
+            In(2),
+            Place(Prim::Gate), // [G cT]: CA3's teaching code (mossy fibres), only when encoding
+            Pick(1),
+            In(0), // [G cT G x]
+            Place(pop(cfg.ca3_cells, Scale::Shift, cfg.settle, Readout::TopK(cfg.dg_k))), // [G ca3]
+            In(0),
+            Place(Prim::SeparateTable { inputs: cfg.ec_bits, cells: cfg.ca1_cells, fan_in: cfg.ca1_fan_in, k: cfg.ca1_k, seed: cfg.seed.wrapping_add(2) }), // [G ca3 a_cue]
+            Dup,
+            In(2),
+            Place(Prim::Gate), // [G ca3 a_cue aT]
+            Pick(3),
+            Pick(3), // [G ca3 a_cue aT G ca3]
+            Place(pop(cfg.ca1_cells, if cfg.scale_all { Scale::Shift } else { Scale::None }, 0, Readout::TopK(cfg.ca1_k))), // [G ca3 a_cue ca1]
+            In(1),
+            In(2),
+            Place(Prim::Gate), // [G ca3 a_cue ca1 oT]
+            Pick(4),
+            Pick(2), // [G ca3 a_cue ca1 oT G ca1]
+            Place(pop(out_bits, Scale::None, 0, Readout::Fraction(cfg.readout_fraction))), // [G ca3 a_cue ca1 ecv]
+            Out, // out 0: EC V
+            Place(Prim::Op(KernelOp::Clear)), // [G ca3 mismatch]: a_cue & !ca1
+            Dup,
+            Close, // G = the mismatch (read next tick)
+            Out,   // out 1: novelty bits
+            Out,   // out 2: CA3
+        ],
+    );
+    g
+}
+
+/// One bit: the `encode` signal.
+pub fn on() -> BitVector {
+    BitVector::from_words(vec![1])
+}
+
+/// Store one event in a `hippocampus_genome` network: a retrieval tick, then an encoding
+/// tick. Returns the novelty (`Q16`) the retrieval tick measured.
+pub fn theta_store(net: &mut Network, x: &BitVector, out: &BitVector, ctx: &mut Ctx, gain_k: usize) -> Q16 {
+    net.tick(&[x, &BitVector::EMPTY, &BitVector::EMPTY], ctx);
+    let novelty = ratio(net.output(1).count_ones() as u64, gain_k as u64).min(ONE);
+    net.tick(&[x, out, &on()], ctx);
+    novelty
+}
+
+/// Recall from a cue in a `hippocampus_genome` network (one retrieval tick): EC V.
+pub fn theta_recall(net: &mut Network, cue: &BitVector, ctx: &mut Ctx) -> BitVector {
+    net.tick(&[cue, &BitVector::EMPTY, &BitVector::EMPTY], ctx);
+    net.output(0).clone()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,6 +1281,9 @@ mod tests {
             Prim::Delay,
             Prim::Concat(2),
             Prim::Separate { cells: 128, fan_out: 4, k: 8, seed: 1 },
+            Prim::Scatter { inputs: 128, outputs: 64, seed: 2 },
+            Prim::Gate,
+            Prim::Associate { cells: 128, pathways: vec![Scale::Inverse, Scale::Shift], settle: 1, readout: Readout::TopK(8), half_life: 50, gain: ONE, gain_k: 8 },
         ];
         for _ in 0..50 {
             let mut g = Genome::default();
@@ -889,5 +1370,61 @@ mod tests {
             net.tick(&[&BitVector::EMPTY], &mut ctx);
         }
         assert_eq!(recalled, 7, "replayed {recalled}/7 steps");
+    }
+    /// The genome-built hippocampus against `Hippocampus`: the same events stored, the
+    /// same cues recalled, with novelty and recall compared exactly.
+    #[test]
+    fn hippocampus_genome_matches_the_circuit() {
+        use crate::program::{Hippocampus, HippocampusConfig};
+        use rand::seq::SliceRandom;
+        const BITS: usize = 2048;
+        let word = |i: usize| -> Vec<usize> {
+            let mut rng = StdRng::seed_from_u64(i as u64 + 77);
+            let all: Vec<usize> = (0..BITS).collect();
+            all.choose_multiple(&mut rng, 16).copied().collect()
+        };
+        let episode = |ws: &[usize]| -> Vec<usize> {
+            let mut x: Vec<usize> = ws.iter().flat_map(|&w| word(w)).collect();
+            x.sort_unstable();
+            x.dedup();
+            x
+        };
+        let mut cfg = HippocampusConfig::new(BITS, 5);
+        cfg.dg_cells = 4096;
+        cfg.ca3_cells = 2048;
+        cfg.ca1_cells = 2048;
+        cfg.dg_fan_in = 100;
+        cfg.ca1_fan_in = 100;
+        let mut h = Hippocampus::new(cfg.clone());
+        let mut net = hippocampus_genome(&cfg).build_top();
+        let mut rng = StdRng::seed_from_u64(9);
+        let mut r = StdRng::seed_from_u64(0);
+        let mut ctx = Ctx { rng: &mut r, learn: true };
+        let bv = |x: &[usize]| BitVector::from_bits(x, BITS);
+
+        // the one-shot test's events: common episodes, one rare one, more common ones
+        let mut events: Vec<Vec<usize>> = Vec::new();
+        for i in 0..351 {
+            if i == 300 {
+                events.push(episode(&[0, 1, 50, 51]));
+                continue;
+            }
+            let mut ws: Vec<usize> = (0..6).collect::<Vec<_>>().choose_multiple(&mut rng, 3).copied().collect();
+            ws.push(10 + rng.gen_range(0..6));
+            events.push(episode(&ws));
+        }
+        for (i, e) in events.iter().enumerate() {
+            let a = h.store(e);
+            let b = theta_store(&mut net, &bv(e), &bv(e), &mut ctx, cfg.ca1_k);
+            assert_eq!(a, b, "novelty of event {i}");
+            if i % 50 == 0 {
+                let cue = &e[..e.len() / 2];
+                assert_eq!(active(&theta_recall(&mut net, &bv(cue), &mut ctx)), h.recall(cue).ec, "recall after event {i}");
+            }
+        }
+        let cue = episode(&[0, 1, 50]);
+        let ec = active(&theta_recall(&mut net, &bv(&cue), &mut ctx));
+        assert_eq!(ec, h.recall(&cue).ec);
+        assert!(word(51).iter().filter(|b| ec.contains(b)).count() >= 12, "the one-shot family comes back");
     }
 }

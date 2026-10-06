@@ -859,6 +859,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // mix is kept per band (a name seen once is a low band, a trained name a high one)
     let bind_fam = std::env::var("BIND_FAM").is_ok();
     let mut bind_sentence: Vec<BitVector> = Vec::new();
+    // CLASS_READ=1: the slot memory's readout is filtered by the column's expectation (its
+    // possible continuations): among the words the unbound episode holds, the one the
+    // cortex expects as a kind wins. CLASS_VOTE=1: for novel items (familiarity band < 4,
+    // i.e. the rarest binding in fewer than 8 episodes; hand-set) the column and the
+    // higher area vote their whole class of continuations instead of one guessed word
+    let class_read = std::env::var("CLASS_READ").is_ok();
+    let class_vote = std::env::var("CLASS_VOTE").is_ok();
     let mut bind_list: Vec<(usize, usize)> = Vec::new(); // this story's (word, slot) bindings
     let mut bind_diag = 0usize;
     let slot_offset = |c: usize| ((c + 1) * 2_654_435_761usize) % BITS;
@@ -1867,7 +1874,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             bind_strength = (score / 64).min(7);
                             let mut u = ep.clone();
                             u.rotr_mut(slot_offset(c));
-                            bind_answer = enc.decode(&u);
+                            bind_answer = if class_read {
+                                // candidates in the unbound episode, best overlap first, kept
+                                // if the cortex expects them here
+                                let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+                                let mut cands: Vec<(u32, usize)> = (0..vocab.len()).map(|i| (ov(i, &u), i)).filter(|x| x.0 >= 24).collect();
+                                cands.sort_by(|a, b| b.cmp(a));
+                                cands.iter().find(|&&(_, i)| ov(i, &expect_prev) >= 24).or(cands.first()).map(|x| x.1)
+                            } else {
+                                enc.decode(&u)
+                            };
                             if std::env::var("BINDDIAG").is_ok() && testing && s.held_out && t + 1 == s.answer_at && bind_diag < 6 {
                                 bind_diag += 1;
                                 let unbind = |slot: usize| -> Vec<&str> {
@@ -1935,14 +1951,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // (source, key, proposed words): 0 column, 1 memory, 2 top-down
                     let mut proposals: Vec<(u8, u64, Vec<usize>)> = Vec::new();
                     let own = enc.decode(&out);
-                    if let Some(w) = own {
+                    // the cortex's class: every word in its possible continuations
+                    let class_words = |bv: &BitVector| -> Vec<usize> { (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).collect() };
+                    let novel = class_vote && bind && fam_band < 4;
+                    if novel {
+                        let cw = class_words(&expect_prev);
+                        if !cw.is_empty() {
+                            proposals.push((7, ctx + bucket(column.confidence()), cw));
+                        }
+                    } else if let Some(w) = own {
                         proposals.push((0, ctx + bucket(column.confidence()), vec![w]));
                     }
                     let mw = words_of(&mem_src);
                     if !mw.is_empty() {
                         proposals.push((1, ctx + mw.len().min(3) as u64, mw));
                     }
-                    if let Some(td) = td_src.as_ref() {
+                    if let (Some(td), false) = (td_src.as_ref(), novel) {
                         let tw = words_of(td);
                         if !tw.is_empty() {
                             proposals.push((2, ctx + bucket(area.column.confidence()), tw));

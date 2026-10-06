@@ -945,6 +945,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         cfg.ca2_weight = henv("HIPPO_CA2", 0.0) as u32;
         cfg.decay = henv("HIPPO_DECAY", 0.999);
         cfg.scale_all = std::env::var("HIPPO_SCALE_ALL").is_ok();
+        // SPARSE_BIND=1 (with HIPPO_SELF): the input is the sparse binding space (64 content
+        // and 64 context fields of BITS bits), the output stays the compact rotated code;
+        // DG and EC III → CA1 project by hash (HIPPO_FANOUT, 300, cells per active input bit)
+        if std::env::var("SPARSE_BIND").is_ok() {
+            cfg.ec_bits = 2 * SPARSE_FIELDS * BITS;
+            cfg.out_bits = BITS;
+            cfg.hashed_fan_out = Some(henv("HIPPO_FANOUT", 300.0) as usize);
+        }
         if let Ok(v) = std::env::var("HIPPO_CELLS").map(|v| v.parse::<usize>().unwrap_or(4096)) {
             (cfg.ca3_cells, cfg.ca1_cells, cfg.dg_cells) = (v, v, 2 * v);
         }
@@ -958,6 +966,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // per sleep (default 400).
     let hippo_self = std::env::var("HIPPO_SELF").is_ok() && bind_hc.is_some();
     let bind_all = std::env::var("HIPPO_BIND_ALL").is_ok();
+    let sparse_bind = std::env::var("SPARSE_BIND").is_ok() && hippo_self;
+    let mut bind_sentence_pairs: Vec<(usize, usize)> = Vec::new(); // (word, slot) of bind_sentence
     let ctx_offset = BITS / 2 + 12_345 % (BITS / 2);
     let mut bind_prev = BitVector::new(BITS, Some(0)); // the story's bindings before this sentence
     let sem_hreplays: usize = std::env::var("SEMANTIC_HREPLAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
@@ -1300,7 +1310,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 for &(w, sl) in bl {
                     let mut b = enc.codes[w].clone();
                     b.rotl_mut(slot_offset(sl));
-                    if (fam_count(&bind_hc, &bind_mem, hippo_self, &b) << 16) <= Q_03 as u64 * mem_size(&bind_hc, &bind_mem, hippo_self) as u64 {
+                    if (fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, &b, &enc.codes[w], sl) << 16) <= Q_03 as u64 * mem_size(&bind_hc, &bind_mem, hippo_self) as u64 {
                         state.or_mut(&enc.codes[w]);
                     }
                 }
@@ -1338,12 +1348,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         // SEMANTIC: sleep replay of the sentences since the last sleep into the semantic store
-        if let (Some(reps), true, Some(hc)) = (semantic_reps, hippo_self && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_ref()) {
+        if let (Some(reps), true, Some(hc)) = (semantic_reps, hippo_self && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
+            // novelty-tagged events are replayed first (REPLAY_TAGGED=1), each `reps` times,
+            // then the cue-free random replays
+            let tags = if std::env::var("REPLAY_TAGGED").is_ok() { hc.take_tags() } else { Vec::new() };
+            let hc = &*hc;
             // the hippocampus replays on its own (cue-free, from random CA3 starts); each
             // replay is read through the slot cells: in every slot, the words bound there
             let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-            for _ in 0..sem_hreplays * reps {
-                let r = hc.replay(&mut rng);
+            let tagged: Vec<&Vec<u32>> = tags.iter().flat_map(|t| std::iter::repeat(t).take(reps)).collect();
+            for i in 0..tagged.len() + sem_hreplays * reps {
+                let r = if i < tagged.len() { hc.replay_from(tagged[i]) } else { hc.replay(&mut rng) };
                 sem_hstats[0] += 1;
                 if r.ec.is_empty() {
                     continue;
@@ -1357,7 +1372,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if ov(w, &u) >= 28 && !items.iter().any(|x| x.0 == w) {
                             let mut b = enc.codes[w].clone();
                             b.rotl_mut(slot_offset(c));
-                            items.push((w, hc.familiarity(&set_bits(&b))));
+                            items.push((w, if sparse_bind { hc.familiarity(&sparse_binding(&enc.codes[w], c, false)) } else { hc.familiarity(&set_bits(&b)) }));
                         }
                     }
                 }
@@ -1697,6 +1712,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     bind_story.or_mut(&b);
                     bind_list.push((ids[t], c));
                     bind_sentence.push(b);
+                    bind_sentence_pairs.push((ids[t], c));
                 }
                 slot_prev = slot;
             }
@@ -2252,7 +2268,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // the full circuit: the story's bindings so far are the cue (on its
                             // own: this sentence's bindings with the story so far as context)
                             let cue = if hippo_self { event_vec(&bind_sentence, &bind_prev, ctx_offset) } else { cue };
-                            let r = hc.recall(&set_bits(&cue));
+                            let r = if sparse_bind {
+                                // the sparse cue: this sentence's bindings, and the story's earlier ones as context
+                                let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
+                                let mut idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, false)).collect();
+                                idx.extend(bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, true)));
+                                idx.sort_unstable();
+                                idx.dedup();
+                                hc.recall(&idx)
+                            } else {
+                                hc.recall(&set_bits(&cue))
+                            };
                             if std::env::var("SELFDIAG").is_ok() && testing && s.held_out && bind_diag < 10 && s.words[..=t].iter().any(|w| NEW_NAMES.contains(w)) {
                                 bind_diag += 1;
                                 let decode = |v: &BitVector| -> Vec<String> {
@@ -2325,8 +2351,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // the semantic store's cue: the sentence's least familiar word (on its own: by
                 // the hippocampus's counts of its bindings; else by word counts)
                 let sem_cue_w: Option<usize> = if hippo_self {
-                    let n = bind_sentence.len().min(bind_list.len());
-                    bind_list[bind_list.len() - n..].iter().zip(&bind_sentence[bind_sentence.len() - n..]).min_by_key(|(_, b)| fam_count(&bind_hc, &bind_mem, true, b)).map(|((w, _), _)| *w)
+                    bind_sentence_pairs.iter().zip(&bind_sentence).min_by_key(|((w, c), b)| fam_binding(&bind_hc, &bind_mem, true, sparse_bind, b, &enc.codes[*w], *c)).map(|((w, _), _)| *w)
                 } else {
                     let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                     ids[start..=t].iter().min_by_key(|&&w| word_count[w]).copied()
@@ -2334,7 +2359,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let mut fed_vec: Option<BitVector> = None;
                 let rollout_w = if rollout && rolled < 4 && (testing || complete.as_deref() == Some("rollout")) && bind && mem_size(&bind_hc, &bind_mem, hippo_self) > 0 {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-                    let band = bind_sentence.iter().map(|b| fam_count(&bind_hc, &bind_mem, hippo_self, b)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let expect = column.l23.peek_union(&input, BITS);
                     // a definite expectation (one word) violated starts a rollout; a started
                     // rollout continues while the page does not match the expectation
@@ -2478,7 +2503,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-                    let band = bind_sentence.iter().map(|b| fam_count(&bind_hc, &bind_mem, hippo_self, b)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                     let skipped = ov(ids[t + 1], &expect_prev) < 24;
                     let fresh = w != ids[t + 1] && !ids[start..=t].contains(&w) && s.words[t + 1] != ".";
@@ -2531,7 +2556,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let fam_band: u64 = if bind && bind_fam && mem_size(&bind_hc, &bind_mem, hippo_self) > 0 {
                     bind_sentence
                         .iter()
-                        .map(|b| fam_count(&bind_hc, &bind_mem, hippo_self, b))
+                        .zip(&bind_sentence_pairs)
+                        .map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], c))
                         .min()
                         .map_or(7, |c| (64 - c.leading_zeros() as u64).min(7))
                 } else {
@@ -2961,7 +2987,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let r = hc.recall(&set_bits(&ev));
                                 eprintln!("  SELFSTORE {:?}: bindings {:?}, {} bits, novelty {}, recall of itself before storing: {} bits", &s.words[..=t], sent, ev.count_ones(), nov, r.ec.len());
                             }
-                            hc.store_event(&set_bits(&content), &set_bits(&context));
+                            if sparse_bind {
+                                let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
+                                let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, false)).collect();
+                                let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, true)).collect();
+                                hc.store_split(&content_idx, &context_idx, &set_bits(&content));
+                            } else {
+                                hc.store_event(&set_bits(&content), &set_bits(&context));
+                            }
                             hc.advance_time();
                         }
                     }
@@ -2970,6 +3003,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 bind_sentence.clear();
+                bind_sentence_pairs.clear();
                 if semantic_reps.is_some() && !testing && !hippo_self {
                     sem_buf.push(s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect());
                 }
@@ -3460,6 +3494,24 @@ fn fam_count(hc: &Option<Hippocampus>, mem: &EpisodicMemory, own: bool, b: &BitV
     match (own, hc) {
         (true, Some(h)) => h.familiarity(&set_bits(b)),
         _ => mem.count_of(b),
+    }
+}
+
+/// SPARSE_BIND: the hippocampus's input index of a binding: word code `code` in slot
+/// `slot`, in the slot's own 8,192-bit field (context bindings in a second set of fields),
+/// so a bit belongs to essentially one binding.
+const SPARSE_FIELDS: usize = 64;
+fn sparse_binding(code: &BitVector, slot: usize, context: bool) -> Vec<usize> {
+    let field = (slot % SPARSE_FIELDS) + if context { SPARSE_FIELDS } else { 0 };
+    set_bits(code).into_iter().map(|b| field * BITS + b).collect()
+}
+
+/// Familiarity of the binding (`code` in `slot`, rotated form `b`): from the sparse binding
+/// space when SPARSE_BIND is on, else as `fam_count`.
+fn fam_binding(hc: &Option<Hippocampus>, mem: &EpisodicMemory, own: bool, sparse: bool, b: &BitVector, code: &BitVector, slot: usize) -> u64 {
+    match (sparse && own, hc) {
+        (true, Some(h)) => h.familiarity(&sparse_binding(code, slot, false)),
+        _ => fam_count(hc, mem, own, b),
     }
 }
 

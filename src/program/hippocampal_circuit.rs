@@ -84,6 +84,13 @@ pub struct HippocampusConfig {
     /// perforant path): a CA3 cell written by n events drives its targets with its weights
     /// shifted right by log2 n, so hub cells do not pull every cue into one attractor.
     pub scale_all: bool,
+    /// The output space (CA1 → subiculum → EC V), when it differs from the input space:
+    /// e.g. a compact code the cortex reads, while the input is a large sparse binding
+    /// space. 0 = the same as `ec_bits`.
+    pub out_bits: usize,
+    /// Hashed projections (DG, EC III → CA1) for a large, sparse input space: each active
+    /// input bit drives `fan_out` cells.
+    pub hashed_fan_out: Option<usize>,
     pub seed: u64,
 }
 
@@ -107,6 +114,8 @@ impl HippocampusConfig {
             novelty_gain: 3 * ONE,
             readout_fraction: ONE / 2,
             scale_all: false,
+            out_bits: 0,
+            hashed_fan_out: None,
             seed,
         }
     }
@@ -142,6 +151,7 @@ pub struct Hippocampus {
     schaffer: Pathway,
     ca2_ca1: Pathway,
     output: Pathway,
+    out_bits: usize,
     ca2_state: Vec<u32>,
     rng: StdRng,
     half_life: u32,
@@ -153,6 +163,10 @@ pub struct Hippocampus {
     pub novelty_sum: (u64, usize),
     /// Write amount per phase of a halving period (as in `Ca3Memory`).
     amounts: Vec<u32>,
+    /// Novelty tags: CA3 codes of events that contained something never stored before (at
+    /// least a word's worth of content inputs no event had written), kept until `take_tags`
+    /// (synaptic tagging; the events sleep replays first).
+    tags: Vec<Vec<u32>>,
     /// Recalls answered from the cache (events with no change), and all recalls.
     pub cache_hits: std::cell::Cell<(usize, usize)>,
 }
@@ -160,8 +174,17 @@ pub struct Hippocampus {
 impl Hippocampus {
     pub fn new(cfg: HippocampusConfig) -> Self {
         let mut rng = StdRng::seed_from_u64(cfg.seed);
-        let dg = DentateGyrus::new(cfg.ec_bits, cfg.dg_cells, cfg.dg_fan_in, cfg.dg_k, cfg.seed.wrapping_add(1));
-        let temporo = DentateGyrus::new(cfg.ec_bits, cfg.ca1_cells, cfg.ca1_fan_in, cfg.ca1_k, cfg.seed.wrapping_add(2));
+        let (dg, temporo) = match cfg.hashed_fan_out {
+            Some(f) => (
+                DentateGyrus::hashed(cfg.dg_cells, f, cfg.dg_k, cfg.seed.wrapping_add(1)),
+                DentateGyrus::hashed(cfg.ca1_cells, f, cfg.ca1_k, cfg.seed.wrapping_add(2)),
+            ),
+            None => (
+                DentateGyrus::new(cfg.ec_bits, cfg.dg_cells, cfg.dg_fan_in, cfg.dg_k, cfg.seed.wrapping_add(1)),
+                DentateGyrus::new(cfg.ec_bits, cfg.ca1_cells, cfg.ca1_fan_in, cfg.ca1_k, cfg.seed.wrapping_add(2)),
+            ),
+        };
+        let out_bits = if cfg.out_bits == 0 { cfg.ec_bits } else { cfg.out_bits };
         let mossy = (0..cfg.dg_cells).map(|_| rng.gen_range(0..cfg.ca3_cells) as u32).collect();
         let all: Vec<u32> = (0..cfg.ca2_cells as u32).collect();
         let mut ca2_state: Vec<u32> = all.choose_multiple(&mut rng, cfg.ca2_k).copied().collect();
@@ -174,7 +197,8 @@ impl Hippocampus {
             recurrent: Pathway::new(cfg.ca3_cells, cfg.ca3_cells),
             schaffer: Pathway::new(cfg.ca3_cells, cfg.ca1_cells),
             ca2_ca1: Pathway::new(cfg.ca2_cells, cfg.ca1_cells),
-            output: Pathway::new(cfg.ca1_cells, cfg.ec_bits),
+            output: Pathway::new(cfg.ca1_cells, out_bits),
+            out_bits,
             dg,
             mossy,
             temporo,
@@ -188,6 +212,7 @@ impl Hippocampus {
             novelty_sum: (0, 0),
             amounts: super::hippocampus::write_amounts(half_life),
             cache_hits: std::cell::Cell::new((0, 0)),
+            tags: Vec::new(),
             cfg,
         }
     }
@@ -210,7 +235,7 @@ impl Hippocampus {
     /// has been in (1 / 2^⌊log2 n⌋, as on the perforant path), so the novel part of an
     /// input chooses its code (pattern separation of events that share common words).
     fn ca3_code(&self, x: &[usize]) -> Vec<u32> {
-        let granules = if self.cfg.scale_all {
+        let granules = if self.cfg.scale_all || self.cfg.hashed_fan_out.is_some() {
             let writes = &self.perforant_writes;
             self.dg.separate_weighted(x, |b| ONE >> (32 - writes[b].max(1).leading_zeros() - 1))
         } else {
@@ -220,6 +245,19 @@ impl Hippocampus {
         c.sort_unstable();
         c.dedup();
         c
+    }
+
+    /// EC III → CA1: CA1's code for an input. With hashed projections (a sparse input
+    /// space, where a bit's write count is its binding's familiarity), each input drives
+    /// CA1 less the more familiar it is, so an event's new content, not its shared
+    /// context, sets its CA1 code.
+    fn ca1_code(&self, x: &[usize]) -> Vec<u32> {
+        if self.cfg.hashed_fan_out.is_some() {
+            let writes = &self.perforant_writes;
+            self.temporo.separate_weighted(x, |b| ONE >> (32 - writes.get(b).copied().unwrap_or(0).max(1).leading_zeros() - 1))
+        } else {
+            self.temporo.separate(x)
+        }
     }
 
     /// A CA3 pathway's drive from `active` cells (presynaptically scaled with `scale_all`).
@@ -259,7 +297,7 @@ impl Hippocampus {
         let a = top_k(drive.iter().map(|&v| v as u64), self.cfg.ca1_k);
         let ca1_match = match cue {
             Some(cue) if !a.is_empty() => {
-                let a_cue = self.temporo.separate(cue);
+                let a_cue = self.ca1_code(cue);
                 ratio(a.iter().filter(|j| a_cue.binary_search(j).is_ok()).count() as u64, self.cfg.ca1_k as u64)
             }
             _ => 0,
@@ -271,7 +309,7 @@ impl Hippocampus {
             return Recall { ca3: c, ca1: a, ca1_match, ..Default::default() };
         }
         let floor = best as u64 * self.cfg.readout_fraction as u64; // scaled by ONE
-        let ec = (0..self.cfg.ec_bits.min(out.len())).filter(|&b| (out[b] as u64) << 16 >= floor).collect();
+        let ec = (0..self.out_bits.min(out.len())).filter(|&b| (out[b] as u64) << 16 >= floor).collect();
         Recall { ec, strength: best, ca1_match, ca3: c, ca1: a }
     }
 
@@ -334,6 +372,16 @@ impl Hippocampus {
     /// that code through the perforant path and the readout, so it cues and is recalled.
     /// Novelty is judged on the whole pattern. Returns the novelty.
     pub fn store_event(&mut self, content: &[usize], context: &[usize]) -> Q16 {
+        let mut all: Vec<usize> = content.iter().chain(context).copied().collect();
+        all.sort_unstable();
+        all.dedup();
+        self.store_split(content, context, &all)
+    }
+
+    /// Store an event whose input (EC II / III: `content` and `context`, in the input
+    /// space) differs from what the readout should give back (`out`, in the output space,
+    /// EC V). Returns the novelty.
+    pub fn store_split(&mut self, content: &[usize], context: &[usize], out: &[usize]) -> Q16 {
         if content.is_empty() {
             return 0;
         }
@@ -342,6 +390,9 @@ impl Hippocampus {
         all.dedup();
         let x = &all[..];
         let novelty = self.novelty(x);
+        // a novelty tag: at least 16 content inputs no event has written yet (in a sparse
+        // binding space, a new binding)
+        let unseen = content.iter().filter(|&&b| self.perforant_writes.get(b).copied().unwrap_or(0) == 0).count();
         self.last_novelty = novelty;
         self.novelty_sum.0 += novelty as u64;
         self.novelty_sum.1 += 1;
@@ -351,10 +402,13 @@ impl Hippocampus {
         let factor = ONE as u64 + ((self.cfg.novelty_gain as u64 * novelty as u64) >> 16); // 1 + gain · novelty, Q16
         let amount = div_round(base * factor, ONE as u64).min((1u64 << planes) - 1) as u32;
         let c = self.ca3_code(content);
-        let a = self.temporo.separate(x);
+        if unseen >= 16 && self.tags.len() < 4096 {
+            self.tags.push(c.clone());
+        }
+        let a = self.ca1_code(x);
         let c_mask = BitVector::from_bits(&c.iter().map(|&j| j as usize).collect::<Vec<_>>(), self.cfg.ca3_cells);
         let a_mask = BitVector::from_bits(&a.iter().map(|&j| j as usize).collect::<Vec<_>>(), self.cfg.ca1_cells);
-        let x_mask = BitVector::from_bits(x, self.cfg.ec_bits);
+        let x_mask = BitVector::from_bits(out, self.out_bits);
         for &i in x {
             self.perforant.strengthen(i, &c_mask, amount, planes, epoch);
             self.perforant_writes[i] = self.perforant_writes[i].saturating_add(1);
@@ -393,6 +447,21 @@ impl Hippocampus {
         }
         self.ca2_state.sort_unstable();
         *self.cache.borrow_mut() = None;
+    }
+
+    /// The novelty-tagged CA3 codes since the last call (for prioritised replay).
+    pub fn take_tags(&mut self) -> Vec<Vec<u32>> {
+        std::mem::take(&mut self.tags)
+    }
+
+    /// Replay a given CA3 code (e.g. a novelty tag): the tagged pattern is reinstated as it
+    /// was stored and read out through CA1 and the subiculum. (Letting it settle first
+    /// lets the recurrent weights pull it into the attractor of some common event.)
+    pub fn replay_from(&self, start: &[u32]) -> Recall {
+        if self.stores == 0 || start.is_empty() {
+            return Recall::default();
+        }
+        self.read_out(start.to_vec(), None)
     }
 
     /// Replay (sharp-wave ripple): CA3 starts from random cells, settles into an attractor

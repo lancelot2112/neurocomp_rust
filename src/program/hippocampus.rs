@@ -27,6 +27,17 @@ pub struct DentateGyrus {
     pub cells: usize,
     pub k: usize,
     inputs_to_cells: Vec<Vec<u32>>, // EC bit -> granule cells sampling it
+    /// Hashed projection for large, sparse input spaces: each input bit drives `fan_out`
+    /// granule cells chosen by a fixed hash of (seed, bit, j), with no table.
+    hashed: Option<(usize, u64)>,
+}
+
+/// SplitMix64: a fixed integer hash (for hashed projections).
+pub(crate) fn mix64(mut x: u64) -> u64 {
+    x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
 }
 
 impl DentateGyrus {
@@ -39,36 +50,74 @@ impl DentateGyrus {
                 inputs_to_cells[b].push(cell as u32);
             }
         }
-        Self { cells, k, inputs_to_cells }
+        Self { cells, k, inputs_to_cells, hashed: None }
+    }
+
+    /// A dentate gyrus over a large, sparse input space: each active input bit drives
+    /// `fan_out` granule cells chosen by a fixed hash (the same statistics as a random
+    /// fan-in, without a table over every input).
+    pub fn hashed(cells: usize, fan_out: usize, k: usize, seed: u64) -> Self {
+        Self { cells, k, inputs_to_cells: Vec::new(), hashed: Some((fan_out, seed)) }
+    }
+
+    /// The granule cells input bit `b` drives.
+    fn targets(&self, b: usize, out: &mut Vec<u32>) {
+        out.clear();
+        match self.hashed {
+            Some((fan_out, seed)) => {
+                for j in 0..fan_out as u64 {
+                    out.push((mix64(seed ^ ((b as u64) << 20) ^ j) % self.cells as u64) as u32);
+                }
+            }
+            None => {
+                if let Some(cells) = self.inputs_to_cells.get(b) {
+                    out.extend_from_slice(cells);
+                }
+            }
+        }
     }
 
     /// Like `separate`, with each input bit's drive weighted by `weight(bit)` (e.g. less
     /// for familiar inputs), so the rare part of an input chooses the granule cells.
     pub fn separate_weighted(&self, x: &[usize], weight: impl Fn(usize) -> u32) -> Vec<u32> {
         let mut drive = vec![0u64; self.cells];
+        let mut t = Vec::new();
         for &b in x {
             let w = weight(b) as u64;
-            if let Some(cells) = self.inputs_to_cells.get(b) {
-                for &c in cells {
-                    drive[c as usize] += w;
-                }
+            self.targets(b, &mut t);
+            for &c in &t {
+                drive[c as usize] += w;
             }
         }
-        top_k(drive.into_iter(), self.k)
+        self.winners(drive, x)
+    }
+
+    /// The `k` most driven cells. With hashed projections, many cells tie (each gets a
+    /// few hits), and breaking ties by index would give every input the same low-index
+    /// cells; ties are broken instead by a fixed hash of (input pattern, cell), a jitter
+    /// below one unit of drive.
+    fn winners(&self, drive: Vec<u64>, x: &[usize]) -> Vec<u32> {
+        match self.hashed {
+            Some((_, seed)) => {
+                let key = x.iter().fold(seed, |h, &b| mix64(h ^ b as u64));
+                top_k(drive.into_iter().enumerate().map(|(c, d)| if d == 0 { 0 } else { (d << 16) | (mix64(key ^ c as u64) & 0xFFFF) }), self.k)
+            }
+            None => top_k(drive.into_iter(), self.k),
+        }
     }
 
     /// The sparse code for active input bits `x`: the `k` granule cells with the
     /// most active inputs (ties broken by cell index).
     pub fn separate(&self, x: &[usize]) -> Vec<u32> {
         let mut drive = vec![0u16; self.cells];
+        let mut t = Vec::new();
         for &b in x {
-            if let Some(cells) = self.inputs_to_cells.get(b) {
-                for &c in cells {
-                    drive[c as usize] += 1;
-                }
+            self.targets(b, &mut t);
+            for &c in &t {
+                drive[c as usize] += 1;
             }
         }
-        top_k(drive.iter().map(|&d| d as u64), self.k)
+        self.winners(drive.iter().map(|&d| d as u64).collect(), x)
     }
 }
 

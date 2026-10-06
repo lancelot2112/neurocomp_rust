@@ -139,6 +139,13 @@ not learned in 1–4 exposures.
 The code needed is structural, as in medial EC and the Tolman-Eichenbaum Machine: learned
 slot codes bound to content in the hippocampus, recalled by slot.
 
+**Update** ([36](experiments/36-slot-binding-memory.md)): built.
+- A setting slot emerges.
+- Slot ⊗ content episodes with rarity-weighted recall learn new name–place pairs in one
+  exposure (28–76%).
+- The answer does not use them yet in the schema group. Next: familiarity-gated
+  arbitration between cortex and hippocampus.
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

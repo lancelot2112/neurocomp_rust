@@ -845,6 +845,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut expect_prev = BitVector::new(BITS, Some(0));
     let mut slot_prev: Option<usize> = None;
     let mut bind_answer: Option<usize> = None;
+    // the recall's strength in bands of 64 (about two rare-weighted bindings), 0..7, as the
+    // memory source's own confidence in the mix
+    let mut bind_strength = 0u64;
     let mut bind_list: Vec<(usize, usize)> = Vec::new(); // this story's (word, slot) bindings
     let mut bind_diag = 0usize;
     let slot_offset = |c: usize| ((c + 1) * 2_654_435_761usize) % BITS;
@@ -859,6 +862,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     };
     // test answers with a binding answer: (answers, binding answer right)
     let mut bind_stats = (0usize, 0usize);
+    let mut bind_new = (0usize, 0usize); // the same, for held-out (new-name) answers
     // this step's prediction of each upper area (for the mix)
     let mut upper_pred: Vec<Option<BitVector>> = vec![None; upper.len()];
     let mut upper_in: Vec<Option<BitVector>> = vec![None; upper.len()];
@@ -1842,8 +1846,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             _ => bind_story.clone(),
                         };
                         // BIND_RARE=1: rarity-weighted recall
-                        let found = if std::env::var("BIND_RARE").is_ok() { bind_mem.recall_rare(&cue, 64) } else { bind_mem.recall(&cue, 64) };
-                        if let Some(ep) = found {
+                        let found = if std::env::var("BIND_RARE").is_ok() {
+                            bind_mem.recall_rare_scored(&cue, 64)
+                        } else {
+                            bind_mem.recall(&cue, 64).map(|e| (64, e))
+                        };
+                        if let Some((score, ep)) = found {
+                            bind_strength = (score / 64).min(7);
                             let mut u = ep.clone();
                             u.rotr_mut(slot_offset(c));
                             bind_answer = enc.decode(&u);
@@ -1918,7 +1927,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     // slot ⊗ content memory (BIND)
                     if let Some(w) = bind_answer {
-                        proposals.push((6, ctx, vec![w]));
+                        proposals.push((6, ctx + bind_strength, vec![w]));
                     }
                     // the upper areas of the chain, one source each
                     for (i, p) in upper_pred.iter().enumerate() {
@@ -1956,6 +1965,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Some(w) = bind_answer {
                         bind_stats.0 += 1;
                         bind_stats.1 += (w == next) as usize;
+                        if s.held_out {
+                            bind_new.0 += 1;
+                            bind_new.1 += (w == next) as usize;
+                        }
                     }
                 }
                 if testing {
@@ -2468,12 +2481,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if bind {
             eprintln!(
-                "  BIND seed {seed}: {} slot cells, {} episodes; at test the slot memory answered {} of {} answers ({:.1}% of those right)",
+                "  BIND seed {seed}: {} slot cells, {} episodes; at test the slot memory answered {} of {} answers ({:.1}% of those right); held-out answers: {:.1}% right of {}",
                 roles.used(),
                 bind_mem.len(),
                 bind_stats.0,
                 TEST,
-                100.0 * bind_stats.1 as f64 / bind_stats.0.max(1) as f64
+                100.0 * bind_stats.1 as f64 / bind_stats.0.max(1) as f64,
+                100.0 * bind_new.1 as f64 / bind_new.0.max(1) as f64,
+                bind_new.0
             );
         }
         if role_mode.as_deref() == Some("cells") {

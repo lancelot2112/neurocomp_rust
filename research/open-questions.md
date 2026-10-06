@@ -61,6 +61,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     is not enough. It must be structural: a learned slot code (medial EC / TEM) with
     episodes bound as slot ⊗ content and recalled by slot;
   - **then a learned copy-from-memory procedure** that carries over to new names.
+
+  Slot ⊗ content memory ([36](experiments/36-slot-binding-memory.md)) learns new pairs
+  in one exposure (28–76%), and a setting slot emerges. But the schema group's mix keeps
+  trusting its cortex on new names. Next: familiarity-gated arbitration.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

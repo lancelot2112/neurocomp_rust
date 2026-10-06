@@ -362,6 +362,10 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   102. General structure is learned slowly, specifics quickly.
 
 ## Entorhinal codes ([35](experiments/35-fading-state-and-entorhinal-codes.md))
+- **Eichenbaum, H., Yonelinas, A. P. & Ranganath, C. (2007).** *The medial temporal lobe
+  and recognition memory.* Annual Review of Neuroscience 30. Familiarity and
+  recollection as separate signals: the arbitration [36](experiments/36-slot-binding-memory.md)
+  is missing.
 - **Tsao, A. et al. (2018).** *Integrating time from experience in the lateral entorhinal
   cortex.* Nature 561. A drifting population code for time: the fading state.
 - **Constantinescu, A. O., O'Reilly, J. X. & Behrens, T. E. J. (2016).** *Organizing

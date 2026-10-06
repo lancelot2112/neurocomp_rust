@@ -170,6 +170,11 @@ impl EpisodicMemory {
     /// ones (filler words shared by many episodes). Returns the best episode scoring at
     /// least `min_score`, the most recent on ties.
     pub fn recall_rare(&self, cue: &BitVector, min_score: u64) -> Option<&BitVector> {
+        self.recall_rare_scored(cue, min_score).map(|(_, e)| e)
+    }
+
+    /// `recall_rare` with the winning score (the recall's strength).
+    pub fn recall_rare_scored(&self, cue: &BitVector, min_score: u64) -> Option<(u64, &BitVector)> {
         let bitlen = |x: u64| 64 - x.leading_zeros();
         let total = bitlen(self.stored as u64 + 1);
         let mut scores = vec![0u64; self.episodes.len()];
@@ -193,7 +198,7 @@ impl EpisodicMemory {
                 best = Some((o, i));
             }
         }
-        best.map(|(_, i)| &self.episodes[i])
+        best.map(|(o, i)| (o, &self.episodes[i]))
     }
 
     /// Like `recall`, skipping episodes whose ids are in `exclude`; returns (id, episode).

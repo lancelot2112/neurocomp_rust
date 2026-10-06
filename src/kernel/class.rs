@@ -885,6 +885,30 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().map_or((0, 0), |st| st.slept_general)
     }
 
+    /// Add an (input, target) pair to the replay that sleep generalisation reads (e.g. a
+    /// hippocampal replay of an episode). Needs `set_sleep_generalize` and `set_replay`.
+    pub fn add_replay(&mut self, input: &BitVector, target: &BitVector) {
+        let Some(st) = self.predictive.as_mut() else { return };
+        if st.sleep_generalize.is_none() || st.replay_len == 0 {
+            return;
+        }
+        let bits = |v: &BitVector| -> Vec<u32> {
+            let mut out = Vec::new();
+            for (wi, &w) in v.as_words().iter().enumerate() {
+                let mut w = w;
+                while w != 0 {
+                    out.push((wi * 64 + w.trailing_zeros() as usize) as u32);
+                    w &= w - 1;
+                }
+            }
+            out
+        };
+        if st.replay_pairs.len() >= st.replay_len {
+            st.replay_pairs.pop_front();
+        }
+        st.replay_pairs.push_back((bits(input), bits(target)));
+    }
+
     /// Generalisation from the replay alone, without sleep's downscaling, pruning and merging:
     /// new general rules are added, nothing is removed.
     pub fn generalize_from_replay(&mut self) {

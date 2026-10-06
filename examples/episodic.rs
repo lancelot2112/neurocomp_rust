@@ -874,6 +874,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // of stored episodes) are reinstated, not the filler of that moment.
     // BIND_LESION=1: the slot memory is switched off at test (only the cortex can answer)
     let consolidate: Option<usize> = std::env::var("CONSOLIDATE").ok().and_then(|v| v.parse().ok());
+    // CONSOLIDATE_INTERLEAVE=1: interleaved replay (novel and familiar traces mixed) that
+    // also feeds sleep generalisation (needs HIER_DREAM / HIER_SLEEP_GEN)
+    let consolidate_interleave = std::env::var("CONSOLIDATE_INTERLEAVE").is_ok();
     let bind_lesion = std::env::var("BIND_LESION").is_ok();
     // (question sentence bag, the story's (word, slot) bindings, answer word, familiarity band)
     let mut traces: Vec<(BitVector, Vec<(usize, usize)>, usize, u64)> = Vec::new();
@@ -1071,9 +1074,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // consolidation replay: at every sleep, and the night before the test
         if let (Some(reps), true) = (consolidate, hier && bind && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             let n_ep = bind_mem.len() as f32;
-            for (sent, bl, ans, band) in traces.iter().filter(|tr| tr.3 < 4) {
-                let _ = band;
-                // the gist: words of the story's uncommon bindings
+            // the replayed input of a trace: [question sentence | gist], the gist being the
+            // words of the story's uncommon bindings
+            let replay_input = |sent: &BitVector, bl: &[(usize, usize)]| -> BitVector {
                 let mut state = BitVector::new(BITS, Some(0));
                 for &(w, sl) in bl {
                     let mut b = enc.codes[w].clone();
@@ -1084,10 +1087,34 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 let mut words = sent.as_words().to_vec();
                 words.extend_from_slice(state.as_words());
-                let x = BitVector::from_words(words);
+                BitVector::from_words(words)
+            };
+            let novel: Vec<usize> = (0..traces.len()).filter(|&i| traces[i].3 < 4).collect();
+            if consolidate_interleave {
+                // interleaved: the novel traces mixed with as many familiar ones, shuffled each
+                // round; every replay also feeds sleep generalisation, which then runs
+                let familiar: Vec<usize> = (0..traces.len()).filter(|&i| traces[i].3 >= 4).collect();
+                let mut order: Vec<usize> = novel.clone();
+                order.extend(familiar.choose_multiple(&mut rng, novel.len()).copied());
                 for _ in 0..reps {
-                    area.learn(&x, &enc.codes[*ans], &mut rng);
-                    replayed += 1;
+                    order.shuffle(&mut rng);
+                    for &i in &order {
+                        let (sent, bl, ans, _) = &traces[i];
+                        let x = replay_input(sent, bl);
+                        area.learn(&x, &enc.codes[*ans], &mut rng);
+                        area.column.l23.add_replay(&x, &enc.codes[*ans]);
+                        replayed += 1;
+                    }
+                }
+                area.column.l23.generalize_from_replay();
+            } else {
+                for &i in &novel {
+                    let (sent, bl, ans, _) = &traces[i];
+                    let x = replay_input(sent, bl);
+                    for _ in 0..reps {
+                        area.learn(&x, &enc.codes[*ans], &mut rng);
+                        replayed += 1;
+                    }
                 }
             }
         }

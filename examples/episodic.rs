@@ -282,6 +282,11 @@ fn family_of(name_i: usize, new: bool) -> usize {
 fn family_stated() -> bool {
     std::env::var("FAMILY_STATED").is_ok()
 }
+/// FAMILY_SHORT=p (with FAMILY): a trained name's question omits the surname with
+/// probability p ("mary went to the"), as people are often named by first name only.
+fn family_short() -> Option<f64> {
+    std::env::var("FAMILY_SHORT").ok().and_then(|v| v.parse().ok())
+}
 
 /// Schema test (SCHEMA_K): the new names' own places, one per season. The mapping has the
 /// opposite parity to every trained name's, so it cannot be copied from any of them.
@@ -354,6 +359,10 @@ fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: 
     if held_out && new_wording() {
         words.extend([name, "walked", "into", "the"]);
     } else if let (Some(_), true, true) = (new_i, family_stated(), forced.is_none()) {
+        words.extend([name, "went", "to", "the"]);
+    } else if let (Some(_), Some(p)) = (fam.filter(|_| new_i.is_none()), family_short().filter(|&p| rng.gen_bool(p))) {
+        // FAMILY_SHORT: a trained name's question without the surname
+        let _ = p;
         words.extend([name, "went", "to", "the"]);
     } else if let Some(f) = fam {
         words.extend([name, SURNAMES[f], "went", "to", "the"]);
@@ -1143,6 +1152,32 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let saccade = std::env::var("SACCADE").ok();
     let saccade_cost: f32 = std::env::var("SACCADE_COST").ok().and_then(|v| v.parse().ok()).unwrap_or(0.1);
     let mut sacc_bg = BasalGanglia::new(BITS);
+    // STEP=learned (with COMPLETE=rollout*): the basal ganglia decide each internal step.
+    // Wherever the page contradicts the column's expectation and some source offers a word
+    // of the expected kind, they choose whether to start a rollout ("look again") or read
+    // on, per context: (definite expectation, column confidence in 3 bands, novel sentence,
+    // the offering source: slot memory / semantic store / higher area / column). A started
+    // rollout runs on until the page fits again, as with the hand-set trigger.
+    // Every choice in a story is rewarded at its answer: right (0 or 1), minus STEP_COST
+    // (default 0.05) for a step. They learn in training, and at test with STEP_TEST_LEARN.
+    let step_learned = std::env::var("STEP").map_or(false, |v| v == "learned");
+    let step_test_learn = std::env::var("STEP_TEST_LEARN").is_ok();
+    let step_cost: f32 = std::env::var("STEP_COST").ok().and_then(|v| v.parse().ok()).unwrap_or(0.05);
+    let mut step_bg = BasalGanglia::new(BITS);
+    let step_code = |ctx: usize, act: usize| {
+        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(7_000_003) ^ ((ctx * 2 + act) as u64 + 5000));
+        let all: Vec<usize> = (0..BITS).collect();
+        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
+    };
+    let mut step_pending: Vec<(BitVector, bool)> = Vec::new(); // this story's choices
+    let mut step_stats = [[0usize; 2]; 4]; // at test, per offering source: (offered, stepped)
+    // SEMANTIC_MIX=1: the semantic store votes in the mix as source 8 (its word of the kind
+    // the column expects, for the sentence's rarest word), with its own learned reliability.
+    // ROLLOUT_MIX=1: a rollout step's word comes from the mix of the offering sources (each
+    // with its learned weight here) instead of a fixed order.
+    let semantic_mix = std::env::var("SEMANTIC_MIX").is_ok();
+    let rollout_mix = std::env::var("ROLLOUT_MIX").is_ok();
+    let mut inner: Vec<bool> = Vec::new(); // per position of the current story: an internal step
     let sacc_code = |a: usize| -> BitVector {
         let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(4_000_037) ^ (a as u64 + 3000));
         let all: Vec<usize> = (0..BITS).collect();
@@ -1398,6 +1433,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         rolled = 0;
         rolled_surname = None;
         page_marks = vec![false; ids.len()];
+        inner = vec![false; ids.len()];
+        step_pending.clear();
         // the previous story's bindings become one episode (training stories only)
         if bind {
             if bind_story.count_ones() > 0 && s_i > 0 && s_i - 1 < TRAIN {
@@ -2135,7 +2172,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // a definite expectation (one word) violated starts a rollout; a started
                     // rollout continues while the page does not match the expectation
                     let definite = (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1;
-                    let skipped = (definite || rolled > 0) && expect.count_ones() > 0 && ov(ids[t + 1], &expect) < 24;
+                    let contradicted = expect.count_ones() > 0 && ov(ids[t + 1], &expect) < 24;
+                    let skipped = if step_learned { contradicted } else { (definite || rolled > 0) && contradicted };
                     let from_area = || -> Option<usize> {
                         let td = td_src.as_ref().filter(|_| rollout_area)?;
                         (0..vocab.len()).filter(|&i| ov(i, td) >= 24 && ov(i, &expect) >= 24).max_by_key(|&i| ov(i, td))
@@ -2153,10 +2191,32 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         sem_used[0] += 1;
                         sem_used[1] += (testing && s.held_out) as usize;
                     }
-                    let own = mem_w
-                        .or(sem_w)
-                        .or_else(from_area)
-                        .or_else(|| column.l23.peek(&input).and_then(|o| enc.decode(&o)));
+                    let col_w = column.l23.peek(&input).and_then(|o| enc.decode(&o));
+                    // (word, offering source: 0 slot memory, 1 semantic store, 2 higher area, 3 column)
+                    let offer: Option<(usize, usize)> = if rollout_mix && mixing {
+                        let prev = if t > 0 { ids[t - 1] } else { vocab.len() };
+                        let fb = if bind_fam { band } else { 0 };
+                        let ctx = ((prev * (vocab.len() + 1) + ids[t]) as u64 * 8 + fb) * 8;
+                        let bucket = |c: f32| [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count() as u64;
+                        let sem_any = from_sem();
+                        let cands: Vec<(usize, u8, u64, usize)> = [
+                            mem_w.map(|w| (w, 6u8, ctx + bind_strength, 0usize)),
+                            sem_any.map(|w| (w, 8, ctx, 1)),
+                            from_area().map(|w| (w, 2, ctx + bucket(area.column.confidence()), 2)),
+                            col_w.filter(|&w| ov(w, &expect) >= 24).map(|w| (w, 0, ctx + bucket(column.confidence()), 3)),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect();
+                        let votes: Vec<(usize, u32)> = cands.iter().map(|&(w, src, key, _)| (w, mix.weight(src, key))).collect();
+                        SourceMix::combine(&votes).map(|(w, _)| {
+                            let src = cands.iter().filter(|c| c.0 == w).max_by_key(|c| mix.weight(c.1, c.2)).map_or(3, |c| c.3);
+                            (w, src)
+                        })
+                    } else {
+                        mem_w.map(|w| (w, 0)).or(sem_w.map(|w| (w, 1))).or_else(|| from_area().map(|w| (w, 2))).or(col_w.map(|w| (w, 3)))
+                    };
+                    let own = offer.map(|o| o.0);
                     if std::env::var("COMPLETEDIAG").is_ok() && testing && s.words[t] == "a" && t >= 2 && NEW_NAMES.contains(&s.words[t - 2]) {
                         let wl = |v: &BitVector| -> Vec<&str> { (0..vocab.len()).filter(|&i| ov(i, v) >= 24).map(|i| vocab[i]).collect() };
                         eprintln!("  AREADIAG {} is a: area {:?} (conf {:.2}), column expects {:?}, column own {:?}", s.words[t - 2], td_src.as_ref().map(|v| wl(v)), area.column.confidence(), wl(&expect), column.l23.peek(&input).and_then(|o| enc.decode(&o)).map(|w| vocab[w]));
@@ -2165,7 +2225,29 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         eprintln!("  ROLLDIAG at {}: band {band}, skipped {skipped}, own {:?}, next {}", s.words[t], own.map(|w| vocab[w]), s.words[t + 1]);
                     }
                     let _ = band;
-                    own.filter(|&w| skipped && w != ids[t + 1] && vocab[w] != "." && s.words[t + 1] != ".")
+                    let offered = own.filter(|&w| skipped && w != ids[t + 1] && vocab[w] != "." && s.words[t + 1] != ".");
+                    match (step_learned, offered, offer) {
+                        // a started rollout runs on until the page fits again: the choice is
+                        // whether to start one ("look again" or "read on")
+                        (true, Some(w), Some(_)) if rolled > 0 => Some(w),
+                        (true, Some(w), Some((_, src))) => {
+                            let conf = column.confidence();
+                            let cb = if conf < 0.5 { 0 } else if conf < 0.8 { 1 } else { 2 };
+                            let ctx = definite as usize + 2 * cb + 12 * (band < 4) as usize + 24 * src;
+                            let cands = [step_code(ctx, 0), step_code(ctx, 1)];
+                            let explore = if !testing || step_test_learn { Some(&mut rng) } else { None };
+                            let choice = step_bg.select(&cands, explore).unwrap_or(1);
+                            if !testing || step_test_learn {
+                                step_pending.push((cands[choice].clone(), choice == 0));
+                            }
+                            if testing {
+                                step_stats[src][0] += 1;
+                                step_stats[src][1] += (choice == 0) as usize;
+                            }
+                            (choice == 0).then_some(w)
+                        }
+                        _ => offered,
+                    }
                 } else {
                     None
                 };
@@ -2179,6 +2261,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     ids.insert(t + 1, w);
                     s.words.insert(t + 1, vocab[w]);
                     page_marks.insert(t + 1, false);
+                    inner.insert(t + 1, true);
                     if s.answer_at > t {
                         s.answer_at += 1;
                     }
@@ -2203,6 +2286,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         ids.insert(t + 1, w);
                         s.words.insert(t + 1, vocab[w]);
                         page_marks.insert(t + 1, false);
+                        inner.insert(t + 1, true);
                         if s.answer_at > t {
                             s.answer_at += 1;
                         }
@@ -2279,6 +2363,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             proposals.push((2, ctx + bucket(area.column.confidence()), tw));
                         }
                     }
+                    // the semantic store (SEMANTIC_MIX)
+                    if let (true, Some(_)) = (semantic_mix, semantic_reps) {
+                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        if let Some(&cue_w) = ids[start..=t].iter().min_by_key(|&&w| word_count[w]) {
+                            if let Some(o) = sem_store.peek(&enc.codes[cue_w]) {
+                                let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+                                if let Some(w) = (0..vocab.len()).filter(|&i| ov(i, &o) >= 24 && ov(i, &expect_prev) >= 24).max_by_key(|&i| ov(i, &o)) {
+                                    proposals.push((8, ctx, vec![w]));
+                                }
+                            }
+                        }
+                    }
                     // slot ⊗ content memory (BIND)
                     if let Some(w) = bind_answer {
                         proposals.push((6, ctx + bind_strength, vec![w]));
@@ -2307,7 +2403,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         out = enc.codes[w].clone();
                         mix_conf = Some(SourceMix::confidence(total));
                     }
-                    if !testing || mix_test_learn {
+                    // (not on an internal step: its "next word" is the network's own)
+                    if (!testing || mix_test_learn) && !inner[t + 1] {
                         for (src, key, ws) in &proposals {
                             for &w in ws {
                                 mix.record(*src, *key, w == next);
@@ -2328,6 +2425,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if testing {
                     if let Some(c) = role_now.take() {
                         *role_words.entry(c).or_default().entry(next).or_default() += 1;
+                    }
+                }
+                if step_learned && t + 1 == s.answer_at {
+                    let right = enc.decode(&out) == Some(next);
+                    for (code, stepped) in step_pending.drain(..) {
+                        step_bg.reward_candidate(&code, right as u8 as f32 - if stepped { step_cost } else { 0.0 }, &mut rng);
                     }
                 }
                 if bind && consolidate.is_some() && !testing && t + 1 == s.answer_at {
@@ -2548,14 +2651,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // PROF: [2] evaluation, diagnostics, rewards
                     prof[2] += prof_t.elapsed().as_secs_f64();
                     prof_t = std::time::Instant::now();
-                    column.learn(&input, &enc.codes[next], &mut rng);
+                    // the cortex learns from the page only: not from an internal step's word,
+                    // which is its own (or memory's) prediction
+                    let page = !inner[t + 1];
+                    if page {
+                        column.learn(&input, &enc.codes[next], &mut rng);
+                    }
                     // predictive coding: the higher area learns the lower column's residual,
                     // the words it failed to predict (HIER_RESIDUAL=0: every word)
                     if let Some(ctx) = hier_gate_step.take() {
                         hier_gate.learn(0, &ctx, td_used, &mut rng);
                     }
                     if let Some(hin) = hier_in.take() {
-                        if !hier_residual || column.surprise(&enc.codes[next]) >= 0.5 {
+                        if page && (!hier_residual || column.surprise(&enc.codes[next]) >= 0.5) {
                             area.learn(&hin, &enc.codes[next], &mut rng);
                             for (u, x) in upper.iter_mut().zip(upper_in.iter_mut()) {
                                 if let Some(x) = x.take() {
@@ -2869,6 +2977,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
             );
+        }
+        if step_learned {
+            let src = ["slot memory", "semantic store", "higher area", "column"];
+            let parts: Vec<String> = (0..4).filter(|&i| step_stats[i][0] > 0).map(|i| format!("{} {}/{}", src[i], step_stats[i][1], step_stats[i][0])).collect();
+            eprintln!("  STEP seed {seed}: at test, steps taken / offered by source: {}", parts.join(", "));
+            // learned values: start a rollout vs read on, per source and definite expectation
+            // (averaged over confidence bands and novelty)
+            let mut vals = Vec::new();
+            for (i, name) in src.iter().enumerate() {
+                for def in 0..2 {
+                    let (mut a, mut b) = (0.0, 0.0);
+                    for cb in 0..3 {
+                        for nov in 0..2 {
+                            let ctx = def + 2 * cb + 12 * nov + 24 * i;
+                            a += step_bg.value(&step_code(ctx, 0));
+                            b += step_bg.value(&step_code(ctx, 1));
+                        }
+                    }
+                    vals.push(format!("{name}{} {:.2}/{:.2}", if def == 1 { " (definite)" } else { "" }, a / 6.0, b / 6.0));
+                }
+            }
+            eprintln!("  STEP seed {seed}: value of looking again / reading on: {}", vals.join(", "));
         }
         if semantic_reps.is_some() {
             eprintln!(

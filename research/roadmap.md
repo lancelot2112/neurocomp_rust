@@ -96,6 +96,13 @@ with memory supplying the specifics, until the page fits again ("tom [is a smith
 the"). Its length follows the need, not a hand-set chain. It is triggered by surprise; the
 basal ganglia choice of answer / look again / give up is not built.
 
+**Update** ([43](experiments/43-learned-stepping.md)): "look again" vs "read on" is now a
+basal-ganglia choice at each contradiction, rewarded by the answer minus a step cost. It
+recovers most of the hand rule's benefit (hippocampus off: 56–62% against 61–67%) but
+learns mostly at test, since training holds little where thinking pays. Mixing the
+rollout's sources needs reliabilities credited from the outcome: there is no page word to
+check an inner step against. Still to come: "give up", and tasks that need several steps.
+
 ## 4. Abstraction: rules over roles
 **Why.** Held-out binding works because answers are copied from memory. Rules ("X gave Y
 to Z, so Z has Y") are still learned per word, so they do not transfer to new names.

@@ -91,6 +91,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     (95–100% right; held out 61–67% with answer-trace consolidation, as good as intact).
     Random replay with the same budget misses it. Open: several facts per entity, real
     text, and the store as a mix source.
+  - **Learned stepping** ([43](experiments/43-learned-stepping.md)): the basal ganglia
+    learn when to look again (56–62% with the hippocampus off, hand rule 61–67%).
+    Open: training that rewards thinking, and reliabilities for inner steps credited from
+    the outcome, so rollout sources can be mixed.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

@@ -32,12 +32,22 @@ use neurocomp::det::HashMap;
 
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
+use neurocomp::fixed::{chance, q16, q16x, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
 use neurocomp::program::{Hippocampus, HippocampusConfig, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
+/// Fixed-point constants (`Q16`, `ONE` = 1): the model's per-step arithmetic is integer.
+const Q_TENTH: Q16 = 6554;
+const Q_03: Q16 = 19661;
+const Q_04: Q16 = 26214;
+const Q_HALF: Q16 = 32768;
+const Q_08: Q16 = 52429;
+const SEVEN_TENTHS: Q16 = 45875;
+/// Confidence bands 0.5 / 0.7 / 0.8 / 0.9 (mix keys and calibration).
+const CONF_BANDS: [Q16; 4] = [32768, 45875, 52429, 58982];
 const BITS: usize = 8192; // sparse enough that words rarely share bits (habituation is per bit)
 const NAMES: &[&str] = &["mary", "john", "sandra", "daniel", "anna", "peter"];
 const PLACES: &[&str] = &["kitchen", "garden", "office", "hallway", "bathroom", "bedroom"];
@@ -661,7 +671,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     });
     let replays: usize = std::env::var("REPLAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(5);
     // sleep happens after a training story with this probability (small budgets)
-    let replay_prob: f64 = std::env::var("REPLAY_PROB").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    let replay_prob: Q16 = q16(std::env::var("REPLAY_PROB").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0));
     // REPLAY_MODE: random (default) | tagged (a question whose recall predicted the answer
     // tags that episode; sleep replay favours tags) | awake (that episode is replayed into
     // cortex at once, at the question: prefrontal-driven retrieval)
@@ -684,7 +694,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let choice_frame = if policy == Policy::Select { 2 } else { 1 } + early_shift;
     let mut l5_sum = [0f64; 2]; // training: summed L5 reward, count
     let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
-    let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
+    let mut pfc_gate = PfcGate::new(BITS, pfc_trace, q16(0.9), seed + 11);
     let mut pfc_loads = HashMap::<&str, (usize, usize)>::default(); // word -> (loads, decisions) at test
     let (mut pfc_rewards, mut pfc_questions) = (0usize, 0usize); // training
     let names_set: neurocomp::det::HashSet<usize> = NAMES.iter().map(|n| index[n]).collect();
@@ -701,7 +711,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 Ok("float") => Box::new(Ca3FloatMemory::new(BITS, cells, k, decay, settle)),
                 _ => Box::new(Ca3Memory::new(BITS, cells, k, decay, settle)),
             };
-            ca3.set_readout_fraction(env("CA3_READOUT", 0.5));
+            ca3.set_readout_fraction(q16(env("CA3_READOUT", 0.5) as f64));
             (Some(DentateGyrus::new(BITS, cells, fan_in, k, seed + 100)), Some(ca3))
         }
         _ => (None, None),
@@ -746,7 +756,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // L6_WARMUP=n: all channels stay open for the first n training stories while the gate
     // learns (cortex first learns to use the relays); L6_WEAKEN=w: weakening rate factor
     let l6_warmup: usize = std::env::var("L6_WARMUP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    l6_gate.weaken = std::env::var("L6_WEAKEN").ok().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    l6_gate.weaken = q16x(std::env::var("L6_WEAKEN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0));
     let (mut l6_open_sum, mut l6_words) = (0usize, 0usize);
     // [question kind][channel]: kind 1 = "what did X give ?", else 0
     let mut l6_open_at_answer = vec![vec![0usize; routes.len() + 1]; 2];
@@ -759,12 +769,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // predictor failed to predict, instead of frequency habituation.
     let predictive_novelty = std::env::var("NOVELTY").map_or(false, |v| v == "prediction");
     let mut surprising = BitVector::new(BITS, Some(0)); // unpredicted bits of the sentence so far
-    let predicted_share: f32 = std::env::var("PREDICTED_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+    let predicted_share: Q16 = q16(std::env::var("PREDICTED_SHARE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
     // recalled content: drop bits in more than 40% of episodes (all kept with prediction novelty)
-    let habituation = if predictive_novelty { 1.0 } else { 0.4 };
+    let habituation: Q16 = if predictive_novelty { ONE } else { Q_04 };
     // which recalled item to cue with: the rarest among stored items (an IDF-like
     // specificity); RARITY=all cues with everything unpredicted
-    let rarity_ratio = if std::env::var("RARITY").map_or(false, |v| v == "all") { f32::INFINITY } else { 1.5 };
+    let rarity_ratio: Q16 = if std::env::var("RARITY").map_or(false, |v| v == "all") { u32::MAX } else { ONE * 3 / 2 };
     let min_overlap = 8; // floor for the recall threshold
 
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
@@ -906,7 +916,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let bind = std::env::var("BIND").is_ok();
     // BIND_HAB=f: habituation of the cue, leaving out bindings present in more than a share f
     // of stored episodes (the store's own frequency statistics)
-    let bind_hab: Option<f32> = std::env::var("BIND_HAB").ok().and_then(|v| v.parse().ok());
+    let bind_hab: Option<Q16> = std::env::var("BIND_HAB").ok().and_then(|v| v.parse::<f64>().ok()).map(q16);
     let mut bind_mem = EpisodicMemory::new(BITS, 5000);
     // HIPPO=ca3: the slot ⊗ content episodes are stored in and recalled from the learned
     // hippocampus of experiment 12: a dentate gyrus (random expansion + k-WTA) gives each
@@ -921,7 +931,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let hippo_ca3 = std::env::var("HIPPO").map_or(false, |v| v == "ca3");
     let henv = |name: &str, default: f32| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
     let (hcells, hk) = (henv("HIPPO_CELLS", 8192.0) as usize, henv("HIPPO_K", 32.0) as usize);
-    let hippo_hab = henv("HIPPO_HAB", 0.3);
+    let hippo_hab: Q16 = q16(henv("HIPPO_HAB", 0.3) as f64);
     let bind_dg = hippo_ca3.then(|| DentateGyrus::new(BITS, hcells, 300, hk, seed + 200));
     // HIPPO=full: the full circuit (`program::Hippocampus`): EC II → DG → CA3 by mossy
     // fibres at storage, EC II → CA3 (presynaptically scaled) at recall, CA3 recurrent
@@ -930,7 +940,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // HIPPO_GAIN (novelty gain, 3), HIPPO_CA2 (CA2 → CA1 weight in quarters, 0 = off).
     let mut bind_hc = (std::env::var("HIPPO").map_or(false, |v| v == "full")).then(|| {
         let mut cfg = HippocampusConfig::new(BITS, seed + 300);
-        cfg.novelty_gain = henv("HIPPO_GAIN", 3.0);
+        cfg.novelty_gain = q16x(henv("HIPPO_GAIN", 3.0) as f64);
         cfg.ca2_weight = henv("HIPPO_CA2", 0.0) as u32;
         Hippocampus::new(cfg)
     });
@@ -1055,7 +1065,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // 0.5). The boundary lies just after the older fact: each area forgets it and everything
     // older (`HigherArea::forget_through`)
     let bound_detect = std::env::var("BOUNDARY").is_ok();
-    let bound_kind: f64 = std::env::var("BOUNDARY_KIND").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+    let bound_kind: Q16 = q16(std::env::var("BOUNDARY_KIND").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
     // context signature per word: the words seen just before (< V) and just after (V + w)
     let mut word_ctx: Vec<neurocomp::det::HashSet<usize>> = vec![neurocomp::det::HashSet::default(); vocab.len()];
     // test sentences with a detected boundary: (story-opening, other); story-opening sentences
@@ -1068,7 +1078,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // learns from the mismatch (training only), and what it says is heard: it joins the
     // next sentence's surprising words, so it re-enters every area's window (rehearsal)
     let readback = std::env::var("READBACK").ok();
-    let readback_rare: f64 = std::env::var("READBACK_RARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.02);
+    let readback_rare: Q16 = q16(std::env::var("READBACK_RARE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.02));
     let mut word_count = vec![0u32; vocab.len()];
     // BOUNDDIAG: the column's surprise per sentence (sum, words, first word's), and per
     // test sentence (is it a story's first sentence?, mean surprise, first-word surprise)
@@ -1083,10 +1093,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // attribution); HIER_GATE_WARMUP stories all open, weakening × HIER_GATE_WEAKEN
     let hier_gate_on = std::env::var("HIER_GATE").is_ok();
     let hier_gate_area = std::env::var("HIER_GATE_SIGNAL").map_or(false, |v| v == "area");
-    let hier_gate_conf: Option<f32> = std::env::var("HIER_GATE_CONF").ok().and_then(|v| v.parse().ok());
+    let hier_gate_conf: Option<Q16> = std::env::var("HIER_GATE_CONF").ok().and_then(|v| v.parse::<f64>().ok()).map(q16);
     let hier_gate_warmup: usize = std::env::var("HIER_GATE_WARMUP").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
     let mut hier_gate = CorticothalamicGate::new(BITS, 1, seed + 31);
-    hier_gate.weaken = std::env::var("HIER_GATE_WEAKEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.25);
+    hier_gate.weaken = q16x(std::env::var("HIER_GATE_WEAKEN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.25));
     let mut hier_gate_step: Option<BitVector> = None;
     let mut topdown_passed_at_answer = 0usize;
     // HIER_EARLY=1: the top-down frame right after the current word
@@ -1177,7 +1187,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // word. Reward: the next prediction right, minus SACCADE_COST (default 0.1) for a
     // regression. oracle: look back to the page top exactly at the answer, never elsewhere
     let saccade = std::env::var("SACCADE").ok();
-    let saccade_cost: f32 = std::env::var("SACCADE_COST").ok().and_then(|v| v.parse().ok()).unwrap_or(0.1);
+    let saccade_cost: i32 = q16(std::env::var("SACCADE_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.1)) as i32;
     let mut sacc_bg = BasalGanglia::new(BITS);
     // STEP=learned (with COMPLETE=rollout*): the basal ganglia decide each internal step.
     // Wherever the page contradicts the column's expectation and some source offers a word
@@ -1189,7 +1199,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // (default 0.05) for a step. They learn in training, and at test with STEP_TEST_LEARN.
     let step_learned = std::env::var("STEP").map_or(false, |v| v == "learned");
     let step_test_learn = std::env::var("STEP_TEST_LEARN").is_ok();
-    let step_cost: f32 = std::env::var("STEP_COST").ok().and_then(|v| v.parse().ok()).unwrap_or(0.05);
+    let step_cost: i32 = q16(std::env::var("STEP_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05)) as i32;
     let mut step_bg = BasalGanglia::new(BITS);
     let step_code = |ctx: usize, act: usize| {
         let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(7_000_003) ^ ((ctx * 2 + act) as u64 + 5000));
@@ -1265,7 +1275,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
         // consolidation replay: at every sleep, and the night before the test
         if let (Some(reps), true) = (consolidate, hier && bind && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
-            let n_ep = bind_mem.len() as f32;
             // the replayed input of a trace: [question sentence | gist], the gist being the
             // words of the story's uncommon bindings
             let replay_input = |sent: &BitVector, bl: &[(usize, usize)]| -> BitVector {
@@ -1273,7 +1282,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 for &(w, sl) in bl {
                     let mut b = enc.codes[w].clone();
                     b.rotl_mut(slot_offset(sl));
-                    if bind_mem.frequency(&b) * n_ep <= 0.3 * n_ep {
+                    if bind_mem.frequency(&b) <= Q_03 {
                         state.or_mut(&enc.codes[w]);
                     }
                 }
@@ -1312,7 +1321,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         // SEMANTIC: sleep replay of the sentences since the last sleep into the semantic store
         if let (Some(reps), true) = (semantic_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
-            let rare = |w: usize| (word_count[w] as f64) < 0.01 * sentence_count as f64;
+            let rare = |w: usize| (word_count[w] as u64) * 100 < sentence_count as u64;
             let novel: Vec<usize> = (0..sem_buf.len()).filter(|&i| sem_buf[i].iter().any(|&w| rare(w))).collect();
             let others: Vec<usize> = (0..sem_buf.len()).filter(|&i| !novel.contains(&i)).collect();
             let mut order = novel.clone();
@@ -1363,7 +1372,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             phase_start = std::time::Instant::now();
         }
         if policy == Policy::LearnedGate && !testing && s_i % 50 == 0 && s_i > 0 {
-            gate_routes = route_scores.top(8, 2.0);
+            gate_routes = route_scores.top(8, 2 * ONE as u64);
         }
         if s_i == TRAIN && std::env::var("DIAG").is_ok() {
             // Coverage after training: per place, kernels that predict it from the
@@ -1576,11 +1585,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // the actual member still counts as unpredicted. Bitwise mismatch would not.
             // L5: the probability the column gave this word (its share of the prediction
             // times the predicting kernel's reliability); a lucky guess is still a surprise
-            let share = 1.0 - column.surprise(code);
+            let share = ONE - column.surprise(code);
             if sent_words == 0 {
-                first_surprise = 1.0 - share;
+                first_surprise = to_f32(ONE - share); // report
             }
-            sent_surprise += 1.0 - share;
+            sent_surprise += to_f32(ONE - share); // report
             sent_words += 1;
             if share < predicted_share {
                 surprising.or_mut(code);
@@ -1590,12 +1599,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // old context is gone before the next prediction
                 if hier && bound_detect {
                     let w = ids[t];
-                    let rare = |w: usize| sentence_count > 50 && (word_count[w] as f64) < readback_rare * sentence_count as f64;
+                    let rare = |w: usize| sentence_count > 50 && ((word_count[w] as u64) << 16) < readback_rare as u64 * sentence_count as u64;
                     if rare(w) {
                         let same_kind = |a: usize, b: usize| {
                             let (x, y) = (&word_ctx[a], &word_ctx[b]);
                             let union = x.union(y).count();
-                            union > 0 && x.intersection(y).count() as f64 >= bound_kind * union as f64
+                            union > 0 && ((x.intersection(y).count() as u64) << 16) >= bound_kind as u64 * union as u64
                         };
                         let conflicts = |c: &BitVector| enc.decode(c).map_or(false, |h| h != w && rare(h) && same_kind(h, w));
                         bound_fired |= area.forget_through(conflicts);
@@ -1612,7 +1621,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             }
             if std::env::var("TRACE_SHARE").is_ok() && testing && s_i < TRAIN + 3 {
-                eprint!("{}:{share:.2} ", s.words[t]);
+                eprint!("{}:{:.2} ", s.words[t], to_f32(share));
                 if t + 1 == ids.len() {
                     eprintln!();
                 }
@@ -1641,8 +1650,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let bucket = match (sacc_conf || sacc_cortex, peek_l4.as_ref().and_then(|x| column.l23.peek_scored(x))) {
                     (false, _) => 0,
                     (true, None) => 0,
-                    (true, Some((_, c))) if c < 0.5 => 1,
-                    (true, Some((_, c))) if c < 0.8 => 2,
+                    (true, Some((_, c))) if c < Q_HALF => 1,
+                    (true, Some((_, c))) if c < Q_08 => 2,
                     _ => 3,
                 };
                 // the cortical state: possible continuations + confidence code
@@ -1735,7 +1744,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     for j in start..=end {
                         let c = &enc.codes[ids[j]];
                         column.observe(c);
-                        if 1.0 - column.surprise(c) < predicted_share {
+                        if ONE - column.surprise(c) < predicted_share {
                             re_surprising.or_mut(c);
                             area.note_word(c);
                             for u in upper.iter_mut() {
@@ -1805,9 +1814,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 contents.push((Some(*r), v.clone()));
                             }
                         }
-                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let cue = memory.rarest(cue_source, Q_TENTH, rarity_ratio);
                         if cue.count_ones() > 0 {
-                            let need = ((cue.count_ones() as f32 * 0.7) as u32).max(min_overlap);
+                            let need = (neurocomp::fixed::mul_floor(cue.count_ones() as u64, SEVEN_TENTHS) as u32).max(min_overlap);
                             if let Some(ep) = memory.recall(&cue, need) {
                                 let mut recalled = memory.novel(ep, habituation);
                                 for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {
@@ -1844,10 +1853,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     Policy::L6Gate { gated } => {
                         // channel contents: each route's relay, then memory recall
                         let mut contents: Vec<Option<BitVector>> = routes.iter().map(|r| column.l6.relay_channel(*r).cloned()).collect();
-                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let cue = memory.rarest(cue_source, Q_TENTH, rarity_ratio);
                         let mut recalled = None;
                         if cue.count_ones() > 0 {
-                            let need = ((cue.count_ones() as f32 * 0.7) as u32).max(min_overlap);
+                            let need = (neurocomp::fixed::mul_floor(cue.count_ones() as u64, SEVEN_TENTHS) as u32).max(min_overlap);
                             if let Some(ep) = memory.recall(&cue, need) {
                                 let mut r = memory.novel(ep, habituation);
                                 for (x, &c) in r.as_words_mut().iter_mut().zip(cue.as_words()) {
@@ -1899,8 +1908,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         l6_step = Some((ctx, passed));
                     }
                     Policy::Loop(hops) => {
-                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
-                        let chain = memory.recall_chain(&cue, hops, habituation, 0.1, rarity_ratio);
+                        let cue = memory.rarest(cue_source, Q_TENTH, rarity_ratio);
+                        let chain = memory.recall_chain(&cue, hops, habituation, Q_TENTH, rarity_ratio);
                         if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 3 {
                             let names = |bv: &BitVector| -> Vec<&str> {
                                 (0..vocab.len())
@@ -1924,9 +1933,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                     Policy::Select => {
-                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let cue = memory.rarest(cue_source, Q_TENTH, rarity_ratio);
                         let (mut hop1, mut hop2) = (BitVector::new(BITS, Some(0)), BitVector::new(BITS, Some(0)));
-                        let need = ((cue.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+                        let need = (neurocomp::fixed::mul_ceil(cue.count_ones() as u64, SEVEN_TENTHS) as u32).max(1);
                         if cue.count_ones() > 0 {
                             if let Some((id, ep)) = memory.recall_excluding(&cue, need, &[]) {
                                 hop1 = memory.novel(ep, habituation);
@@ -1937,7 +1946,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let explore = if testing { None } else { Some(&mut rng) };
                                 if let Some(i) = bg.select(&items, explore) {
                                     let item = &items[i];
-                                    let need = ((item.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+                                    let need = (neurocomp::fixed::mul_ceil(item.count_ones() as u64, SEVEN_TENTHS) as u32).max(1);
                                     if let Some((_, ep2)) = memory.recall_excluding(item, need, &[id]) {
                                         hop2 = memory.novel(ep2, habituation);
                                         for (c, (&u, &it)) in hop2.as_words_mut().iter_mut().zip(cue.as_words().iter().zip(item.as_words())) {
@@ -1962,13 +1971,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(hop2.as_words());
                     }
                     Policy::Branch(b) => {
-                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let cue = memory.rarest(cue_source, Q_TENTH, rarity_ratio);
                         for frame in memory.recall_branches(&cue, b, habituation, 16) {
                             words.extend_from_slice(frame.as_words());
                         }
                     }
                     Policy::Ca3 { .. } => {
-                        let cue = memory.rarest(cue_source, 0.1, rarity_ratio);
+                        let cue = memory.rarest(cue_source, Q_TENTH, rarity_ratio);
                         let mut recalled = BitVector::new(BITS, Some(0));
                         let cue_bits = set_bits(&cue);
                         if !cue_bits.is_empty() {
@@ -1983,7 +1992,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 };
                                 eprintln!("{:?}\n  CA3 cue {:?} -> raw recall {:?} ({} bits, strength {strength:.2})", s.words, names(&cue), names(&raw), bits.len());
                             }
-                            if strength > 0.0 {
+                            if strength > 0 {
                                 recalled = memory.novel(&BitVector::from_bits(&bits, BITS), habituation);
                                 for (r, &c) in recalled.as_words_mut().iter_mut().zip(cue.as_words()) {
                                     *r &= !c;
@@ -1994,11 +2003,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     Policy::Episodic | Policy::Consolidate | Policy::Pfc { .. } => {
                         // Pfc: the cue is what working memory holds (prefrontal-directed retrieval)
-                        let cue = if matches!(policy, Policy::Pfc { .. }) { wm.content() } else { memory.rarest(cue_source, 0.1, rarity_ratio) };
+                        let cue = if matches!(policy, Policy::Pfc { .. }) { wm.content() } else { memory.rarest(cue_source, Q_TENTH, rarity_ratio) };
                         let mut recalled = BitVector::new(BITS, Some(0));
                         if cue.count_ones() > 0 {
                             // recall needs most of the cue to be present in the episode
-                            let need = ((cue.count_ones() as f32 * 0.7) as u32).max(min_overlap);
+                            let need = (neurocomp::fixed::mul_floor(cue.count_ones() as u64, SEVEN_TENTHS) as u32).max(min_overlap);
                             if let Some((id, ep)) = memory.recall_excluding(&cue, need, &[]) {
                                 last_recall_id = Some(id);
                                 last_recall_cue = Some(cue.clone());
@@ -2184,7 +2193,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             (!r.ec.is_empty()).then(|| (64 * (32 - r.strength.leading_zeros() as u64).saturating_sub(5), BitVector::from_bits(&r.ec, BITS)))
                         } else if let Some(ca3) = &bind_ca3 {
                             // the learned hippocampus: pattern completion from the (habituated) cue
-                            let cue = if hippo_hab > 0.0 && bind_mem.len() > 50 { bind_mem.novel(&bind_story, hippo_hab) } else { bind_story.clone() };
+                            let cue = if hippo_hab > 0 && bind_mem.len() > 50 { bind_mem.novel(&bind_story, hippo_hab) } else { bind_story.clone() };
                             let (bits, strength) = ca3.recall(&set_bits(&cue), BITS);
                             (!bits.is_empty()).then(|| (64 * (64 - (strength as u64).leading_zeros() as u64).saturating_sub(5), BitVector::from_bits(&bits, BITS)))
                         } else if std::env::var("BIND_RARE").is_ok() {
@@ -2235,8 +2244,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let mut fed_vec: Option<BitVector> = None;
                 let rollout_w = if rollout && rolled < 4 && (testing || complete.as_deref() == Some("rollout")) && bind && !bind_mem.is_empty() {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-                    let n = bind_mem.len() as f32;
-                    let band = bind_sentence.iter().map(|b| (bind_mem.frequency(b) * n).round() as u64).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let band = bind_sentence.iter().map(|b| bind_mem.count_of(b)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let expect = column.l23.peek_union(&input, BITS);
                     // a definite expectation (one word) violated starts a rollout; a started
                     // rollout continues while the page does not match the expectation
@@ -2266,7 +2274,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let prev = if t > 0 { ids[t - 1] } else { vocab.len() };
                         let fb = if bind_fam { band } else { 0 };
                         let ctx = ((prev * (vocab.len() + 1) + ids[t]) as u64 * 8 + fb) * 8;
-                        let bucket = |c: f32| [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count() as u64;
+                        let bucket = |c: Q16| CONF_BANDS.iter().filter(|&&e| c >= e).count() as u64;
                         let sem_any = from_sem();
                         let cands: Vec<(usize, u8, u64, usize)> = [
                             mem_w.map(|w| (w, 6u8, ctx + bind_strength, 0usize)),
@@ -2335,7 +2343,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         (true, Some(w), Some(_)) if rolled > 0 => Some(w),
                         (true, Some(w), Some((_, src))) => {
                             let conf = column.confidence();
-                            let cb = if conf < 0.5 { 0 } else if conf < 0.8 { 1 } else { 2 };
+                            let cb = if conf < Q_HALF { 0 } else if conf < Q_08 { 1 } else { 2 };
                             let ctx = definite as usize + 2 * cb + 12 * (band < 4) as usize + 24 * src;
                             let cands = [step_code(ctx, 0), step_code(ctx, 1)];
                             let explore = if !testing || step_test_learn { Some(&mut rng) } else { None };
@@ -2382,8 +2390,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-                    let n = bind_mem.len() as f32;
-                    let band = bind_sentence.iter().map(|b| (bind_mem.frequency(b) * n).round() as u64).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let band = bind_sentence.iter().map(|b| bind_mem.count_of(b)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                     let skipped = ov(ids[t + 1], &expect_prev) < 24;
                     let fresh = w != ids[t + 1] && !ids[start..=t].contains(&w) && s.words[t + 1] != ".";
@@ -2427,17 +2434,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     ctx_pending = false;
                     if !testing {
                         let right = enc.decode(&out) == Some(next);
-                        ctx_bg.reward(right as u32 as f32, &mut rng);
+                        ctx_bg.reward(if right { ONE as i32 } else { 0 }, &mut rng);
                     }
                 }
                 // MIX: every source votes for its words with its reliability as the weight
-                let mut mix_conf: Option<f32> = None;
+                let mut mix_conf: Option<Q16> = None;
                 // familiarity band of the current sentence (BIND_FAM), 7 = familiar / none
                 let fam_band: u64 = if bind && bind_fam && !bind_mem.is_empty() {
-                    let n = bind_mem.len() as f32;
                     bind_sentence
                         .iter()
-                        .map(|b| (bind_mem.frequency(b) * n).round() as u64)
+                        .map(|b| bind_mem.count_of(b))
                         .min()
                         .map_or(7, |c| (64 - c.leading_zeros() as u64).min(7))
                 } else {
@@ -2446,7 +2452,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if mixing {
                     let prev = if t > 0 { ids[t - 1] } else { vocab.len() };
                     let ctx = ((prev * (vocab.len() + 1) + ids[t]) as u64 * 8 + fam_band) * 8;
-                    let bucket = |c: f32| [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count() as u64;
+                    let bucket = |c: Q16| CONF_BANDS.iter().filter(|&&e| c >= e).count() as u64;
                     let words_of = |bv: &BitVector| -> Vec<usize> {
                         (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).collect()
                     };
@@ -2541,7 +2547,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if step_learned && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     for (code, stepped) in step_pending.drain(..) {
-                        step_bg.reward_candidate(&code, right as u8 as f32 - if stepped { step_cost } else { 0.0 }, &mut rng);
+                        step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut rng);
                     }
                 }
                 if bind && consolidate.is_some() && !testing && t + 1 == s.answer_at {
@@ -2551,7 +2557,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                         let mut bag = BitVector::new(BITS, Some(0));
                         for &w in &ids[start..=t] {
-                            if sentence_count > 50 && (word_count[w] as f64) < 0.01 * sentence_count as f64 {
+                            if sentence_count > 50 && (word_count[w] as u64) * 100 < sentence_count as u64 {
                                 bag.or_mut(&enc.codes[w]);
                             }
                         }
@@ -2565,7 +2571,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if let Some(a) = sacc_pending.take() {
                     if !testing {
                         let right = enc.decode(&out) == Some(next);
-                        let r = (right as u32 as f32 - if a > 0 { saccade_cost } else { 0.0 }).max(0.0);
+                        let r = (if right { ONE as i32 } else { 0 } - if a > 0 { saccade_cost } else { 0 }).max(0);
                         sacc_bg.reward(r, &mut rng);
                     }
                 }
@@ -2638,7 +2644,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 for i in 0..3 {
                                     kd[2 + i] += per[i];
                                 }
-                                kd[5] += (1000.0 * column.l23.confidence().unwrap_or(0.0)) as usize;
+                                kd[5] += ((1000 * column.l23.confidence().unwrap_or(0) as u64) >> 16) as usize;
                             }
                         }
                     }
@@ -2686,10 +2692,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         season_bins[b].1 += right as usize;
                     }
                     let c = mix_conf.unwrap_or_else(|| column.confidence());
-                    let b = [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count();
+                    let b = CONF_BANDS.iter().filter(|&&e| c >= e).count();
                     calib[b].0 += 1;
                     calib[b].1 += right as usize;
-                    calib[b].2 += c as f64;
+                    calib[b].2 += to_f32(c) as f64; // report
                 }
                 // the question's recall contained the answer: good credit for that episode
                 // (whether or not the still-learning predictor used it)
@@ -2734,9 +2740,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // came true (use); HIER_GATE_SIGNAL=area: the higher area's own prediction came
                 // true (its L5 outcome: the source's reliability, whoever the column followed)
                 let td_used = hier_gate_step.is_some()
-                    && if hier_gate_area { area.column.outcome(&enc.codes[next]) >= 0.5 } else { column.outcome_via(td_frame, &enc.codes[next]) >= 0.5 };
+                    && if hier_gate_area { area.column.outcome(&enc.codes[next]) >= Q_HALF } else { column.outcome_via(td_frame, &enc.codes[next]) >= Q_HALF };
                 let l6_used: Vec<bool> = match &l6_step {
-                    Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + early_shift + c, &enc.codes[next]) >= 0.5).collect(),
+                    Some((_, passed)) => passed.iter().enumerate().map(|(c, &p)| p && column.outcome_via(1 + early_shift + c, &enc.codes[next]) >= Q_HALF).collect(),
                     None => Vec::new(),
                 };
                 let l5 = if l5_used { column.outcome_via(choice_frame, &enc.codes[next]) } else { column.outcome(&enc.codes[next]) };
@@ -2744,9 +2750,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Policy::Pfc { learned: true } = policy {
                         // dopamine: the recall that working memory cued contained the answer
                         // (local), or the column predicted the answer (L5)
-                        let r = if l5_reward { l5 } else { recall_had_answer as u32 as f32 };
+                        let r = if l5_reward { l5 as i32 } else if recall_had_answer { ONE as i32 } else { 0 };
                         pfc_gate.reward(r, &mut rng);
-                        l5_sum[0] += l5 as f64;
+                        l5_sum[0] += to_f32(l5) as f64; // report
                         l5_sum[1] += 1.0;
                         pfc_rewards += recall_had_answer as usize;
                         pfc_questions += 1;
@@ -2774,7 +2780,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         hier_gate.learn(0, &ctx, td_used, &mut rng);
                     }
                     if let Some(hin) = hier_in.take() {
-                        if page && (!hier_residual || column.surprise(&enc.codes[next]) >= 0.5) {
+                        if page && (!hier_residual || column.surprise(&enc.codes[next]) >= Q_HALF) {
                             area.learn(&hin, &enc.codes[next], &mut rng);
                             for (u, x) in upper.iter_mut().zip(upper_in.iter_mut()) {
                                 if let Some(x) = x.take() {
@@ -2802,14 +2808,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     if let Some(rel) = gate_pending.take() {
                         let hit = rel.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                        gate_bg.reward(if l5_reward { l5 } else { hit as u32 as f32 }, &mut rng);
-                        l5_sum[0] += l5 as f64;
+                        gate_bg.reward(if l5_reward { l5 as i32 } else if hit { ONE as i32 } else { 0 }, &mut rng);
+                        l5_sum[0] += to_f32(l5) as f64; // report
                         l5_sum[1] += 1.0;
                     }
                     if let Some(hop2) = bg_pending.take() {
                         let hit = hop2.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                        bg.reward(if l5_reward { l5 } else { hit as u32 as f32 }, &mut rng);
-                        l5_sum[0] += l5 as f64;
+                        bg.reward(if l5_reward { l5 as i32 } else if hit { ONE as i32 } else { 0 }, &mut rng);
+                        l5_sum[0] += to_f32(l5) as f64; // report
                         l5_sum[1] += 1.0;
                     }
                 }
@@ -2849,7 +2855,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // Encode the novel part: content shared by most episodes ("went to the")
                     // would otherwise dominate the dentate gyrus, give every episode the same
                     // code, and swamp recall.
-                    let x = set_bits(&if predictive_novelty { surprising.clone() } else { memory.novel(&sentence, 0.4) });
+                    let x = set_bits(&if predictive_novelty { surprising.clone() } else { memory.novel(&sentence, Q_04) });
                     if !x.is_empty() {
                         ca3.store(&x, &dg.separate(&x));
                     }
@@ -2884,7 +2890,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Some(mode) = readback.as_deref() {
                         let n = upper.len();
                         let empty = BitVector::new(BITS, Some(0));
-                        let rare = |w: usize| (word_count[w] as f64) < readback_rare * sentence_count as f64;
+                        let rare = |w: usize| ((word_count[w] as u64) << 16) < readback_rare as u64 * sentence_count as u64;
                         let words_of = |bv: &BitVector| -> Option<usize> { enc.decode(bv) };
                         let mut heard: Vec<usize> = Vec::new();
                         // areas that read back: the top one, or all; index n = area 2
@@ -2928,14 +2934,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
             prev = Some(ids[t]);
         }
-        if policy == Policy::Consolidate && !testing && !memory.is_empty() && rng.gen_bool(replay_prob) {
+        if policy == Policy::Consolidate && !testing && !memory.is_empty() && chance(&mut rng, replay_prob) {
             // sleep: replay stored episodes into the cortical semantic store
             let boost = if replay_mode == "tagged" { tag_boost } else { 0 };
             for _ in 0..replays {
                 let i = memory.sample_replay(&mut rng, boost).unwrap();
                 let ep = memory.get(i).unwrap().clone();
                 // a tagged episode is replayed under the cue of the question that tagged it
-                let cue = tag_cues.get(&memory.id_of(i)).cloned().unwrap_or_else(|| memory.rarest(&ep, 0.1, rarity_ratio));
+                let cue = tag_cues.get(&memory.id_of(i)).cloned().unwrap_or_else(|| memory.rarest(&ep, Q_TENTH, rarity_ratio));
                 if cue.count_ones() == 0 {
                     continue;
                 }
@@ -3094,7 +3100,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!(
                 "  HIPPO seed {seed}: {} episodes stored, mean novelty {:.2}; recalls {} ({:.0}% answered from the cache, no change in the cue)",
                 hc.len(),
-                hc.novelty_sum.0 / hc.novelty_sum.1.max(1) as f64,
+                to_f32((hc.novelty_sum.0 / hc.novelty_sum.1.max(1) as u64) as Q16),
                 all,
                 100.0 * hits as f64 / all.max(1) as f64
             );
@@ -3115,8 +3121,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     for cb in 0..3 {
                         for nov in 0..2 {
                             let ctx = def + 2 * cb + 12 * nov + 24 * i;
-                            a += step_bg.value(&step_code(ctx, 0));
-                            b += step_bg.value(&step_code(ctx, 1));
+                            a += to_f32(step_bg.value(&step_code(ctx, 0)));
+                            b += to_f32(step_bg.value(&step_code(ctx, 1)));
                         }
                     }
                     vals.push(format!("{name}{} {:.2}/{:.2}", if def == 1 { " (definite)" } else { "" }, a / 6.0, b / 6.0));

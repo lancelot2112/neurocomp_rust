@@ -16,6 +16,10 @@
 //! episodes. `novel` keeps only bits that are rare, so content shared by most
 //! episodes (function words) neither drives recall nor fills the output.
 
+use crate::fixed::{mul_ceil, mul_floor, ratio, Q16, ONE};
+
+/// 0.7 in `Q16`: the share of a cue's bits an episode must contain to be recalled in a chain.
+const SEVEN_TENTHS: Q16 = 45875;
 use crate::bitvec::BitVector;
 
 pub struct EpisodicMemory {
@@ -113,12 +117,13 @@ impl EpisodicMemory {
     }
 
     /// Only the bits of `pattern` that occurred in at most `max_fraction` of the
-    /// stored episodes (habituation to frequent content).
-    pub fn novel(&self, pattern: &BitVector, max_fraction: f32) -> BitVector {
+    /// stored episodes (habituation to frequent content). `max_fraction` in `Q16`.
+    pub fn novel(&self, pattern: &BitVector, max_fraction: Q16) -> BitVector {
         let mut out = BitVector::new(self.bits, Some(0));
-        let limit = (self.stored as f32 * max_fraction).max(1.0);
+        // count ≤ max(stored · fraction, 1), all scaled by ONE
+        let limit = (self.stored as u64 * max_fraction as u64).max(ONE as u64);
         for b in set_bits(pattern) {
-            if b < self.bits && (self.bit_counts[b] as f32) <= limit {
+            if b < self.bits && ((self.bit_counts[b] as u64) << 16) <= limit {
                 out.bit_set(b);
             }
         }
@@ -130,7 +135,8 @@ impl EpisodicMemory {
     /// stored count as rarest). Taking a low percentile rather than the single
     /// rarest bit keeps a whole rare word even when a few of its bits are shared
     /// with other words. "where is peter ?" keeps *peter*.
-    pub fn rarest(&self, pattern: &BitVector, percentile: f32, ratio: f32) -> BitVector {
+    /// `percentile` and `ratio` in `Q16` (`ratio` may exceed `ONE`).
+    pub fn rarest(&self, pattern: &BitVector, percentile: Q16, ratio: Q16) -> BitVector {
         let bits = set_bits(pattern);
         let mut seen: Vec<u32> = bits.iter().map(|&b| self.bit_counts.get(b).copied().unwrap_or(0)).filter(|&c| c > 0).collect();
         let mut out = BitVector::new(self.bits, Some(0));
@@ -138,24 +144,35 @@ impl EpisodicMemory {
             return out;
         }
         seen.sort_unstable();
-        let reference = seen[((seen.len() - 1) as f32 * percentile.clamp(0.0, 1.0)) as usize];
-        let limit = reference as f32 * ratio;
+        let reference = seen[mul_floor((seen.len() - 1) as u64, percentile.min(ONE)) as usize];
+        let limit = reference as u64 * ratio as u64; // scaled by ONE
         for b in bits {
             let c = self.bit_counts.get(b).copied().unwrap_or(0);
-            if b < self.bits && (c == 0 || c as f32 <= limit) {
+            if b < self.bits && (c == 0 || (c as u64) << 16 <= limit) {
                 out.bit_set(b);
             }
         }
         out
     }
 
-    /// Mean fraction of stored episodes containing each bit of `pattern`.
-    pub fn frequency(&self, pattern: &BitVector) -> f32 {
+    /// Mean fraction of stored episodes containing each bit of `pattern`, in `Q16`.
+    pub fn frequency(&self, pattern: &BitVector) -> Q16 {
         let bits = set_bits(pattern);
         if bits.is_empty() || self.stored == 0 {
-            return 0.0;
+            return 0;
         }
-        bits.iter().map(|&b| self.bit_counts.get(b).copied().unwrap_or(0) as f32).sum::<f32>() / (bits.len() as f32 * self.stored as f32)
+        let sum: u64 = bits.iter().map(|&b| self.bit_counts.get(b).copied().unwrap_or(0) as u64).sum();
+        ratio(sum, bits.len() as u64 * self.stored as u64)
+    }
+
+    /// Mean number of stored episodes containing each bit of `pattern` (rounded).
+    pub fn count_of(&self, pattern: &BitVector) -> u64 {
+        let bits = set_bits(pattern);
+        if bits.is_empty() {
+            return 0;
+        }
+        let sum: u64 = bits.iter().map(|&b| self.bit_counts.get(b).copied().unwrap_or(0) as u64).sum();
+        (sum + bits.len() as u64 / 2) / bits.len() as u64
     }
 
     /// The stored episode overlapping `cue` the most (at least `min_overlap`
@@ -237,13 +254,14 @@ impl EpisodicMemory {
     ///
     /// "where is the ball ?" -> hop 1: "mary picked up the ball" -> *mary* ->
     /// hop 2: "mary went to the kitchen" -> *kitchen*.
-    pub fn recall_chain(&self, cue: &BitVector, hops: usize, habituation: f32, percentile: f32, ratio: f32) -> Vec<BitVector> {
+    /// `habituation`, `percentile` and `ratio` in `Q16`.
+    pub fn recall_chain(&self, cue: &BitVector, hops: usize, habituation: Q16, percentile: Q16, ratio: Q16) -> Vec<BitVector> {
         let mut out = Vec::new();
         let mut visited = Vec::new();
         let mut used = cue.clone(); // everything cued so far
         let mut cue = cue.clone();
         for _ in 0..hops {
-            let need = ((cue.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+            let need = (mul_ceil(cue.count_ones() as u64, SEVEN_TENTHS) as u32).max(1);
             if cue.count_ones() == 0 {
                 break;
             }
@@ -283,20 +301,21 @@ impl EpisodicMemory {
     /// (like several attention heads). Returns `[hop 1, branch 1, ..]`; a reader that
     /// learns (the predictor) decides which branch carries the answer. Missing
     /// recalls are empty frames, so positions stay fixed.
-    pub fn recall_branches(&self, cue: &BitVector, branches: usize, habituation: f32, min_item_bits: usize) -> Vec<BitVector> {
+    /// `habituation` in `Q16`.
+    pub fn recall_branches(&self, cue: &BitVector, branches: usize, habituation: Q16, min_item_bits: usize) -> Vec<BitVector> {
         let empty = BitVector::new(self.bits, Some(0));
         let mut out = vec![empty.clone(); branches + 1];
         if cue.count_ones() == 0 {
             return out;
         }
-        let need = ((cue.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+        let need = (mul_ceil(cue.count_ones() as u64, SEVEN_TENTHS) as u32).max(1);
         let Some((id, ep)) = self.recall_excluding(cue, need, &[]) else { return out };
         let mut hop1 = self.novel(ep, habituation);
         for (c, &u) in hop1.as_words_mut().iter_mut().zip(cue.as_words()) {
             *c &= !u;
         }
         for (b, item) in self.items(&hop1, min_item_bits).into_iter().take(branches).enumerate() {
-            let need = ((item.count_ones() as f32 * 0.7).ceil() as u32).max(1);
+            let need = (mul_ceil(item.count_ones() as u64, SEVEN_TENTHS) as u32).max(1);
             if let Some((_, ep2)) = self.recall_excluding(&item, need, &[id]) {
                 let mut content = self.novel(ep2, habituation);
                 for (c, (&u, &i)) in content.as_words_mut().iter_mut().zip(cue.as_words().iter().zip(item.as_words())) {
@@ -441,7 +460,7 @@ mod tests {
             m.store(&bag(&[name, 10, place])); // "went to the" (10) in every episode
         }
         let ep = m.recall(&sym(3), 4).unwrap().clone();
-        let novel = m.novel(&ep, 0.5);
+        let novel = m.novel(&ep, crate::fixed::q16(0.5));
         assert_eq!(novel.as_words(), bag(&[3, 22]).as_words()); // 10 is gone
     }
 
@@ -453,7 +472,7 @@ mod tests {
             m.store(&bag(&[10, 11, name]));
             m.store(&bag(&[10, 11]));
         }
-        let cue = m.rarest(&bag(&[10, 11, 3]), 0.1, 1.5);
+        let cue = m.rarest(&bag(&[10, 11, 3]), crate::fixed::q16(0.1), crate::fixed::ONE * 3 / 2);
         assert_eq!(cue.as_words(), sym(3).as_words());
     }
 
@@ -468,7 +487,7 @@ mod tests {
         m.store(&bag(&[1, 31, 30])); // mary picked up the ball
         m.store(&bag(&[2, 10, 21])); // john went to the garden
         m.store(&bag(&[1, 10, 20])); // mary went to the kitchen
-        let hops = m.recall_chain(&sym(30), 2, 0.4, 0.1, 1.5);
+        let hops = m.recall_chain(&sym(30), 2, crate::fixed::q16(0.4), crate::fixed::q16(0.1), crate::fixed::ONE * 3 / 2);
         assert_eq!(hops.len(), 2);
         assert_eq!(hops[0].as_words(), sym(1).as_words(), "hop 1 brings back mary");
         assert_eq!(hops[1].as_words(), sym(20).as_words(), "hop 2 brings back kitchen");

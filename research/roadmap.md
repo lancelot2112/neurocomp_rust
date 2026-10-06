@@ -256,3 +256,6 @@ These are not research stages. They keep earlier results trustworthy as the code
     generalisation (33), slot memory (36), schema advantage (39), stated family (40).
   - **Run it before every commit** that touches `src/` or the harness. Add an entry with
     each new experiment.
+- **Integer only** ([47](experiments/47-integer-only.md)). Every per-step computation is
+  bitwise or integer (`Q16` fixed point, `src/fixed.rs`). A unit test fails on any float
+  in `src/` outside test code and marked configuration or report lines.

@@ -53,7 +53,7 @@ impl DentateGyrus {
                 }
             }
         }
-        top_k(drive.iter().map(|&d| d as f32), self.k)
+        top_k(drive.iter().map(|&d| d as u64), self.k)
     }
 }
 
@@ -188,8 +188,10 @@ pub struct Ca3Memory {
     pub half_life: u32,
     pub settle_steps: usize,
     /// Readout keeps EC bits scoring at least this fraction of the best score
-    /// (higher = sharper clean-up toward the single strongest memory).
-    pub readout_fraction: f32,
+    /// (higher = sharper clean-up toward the single strongest memory). In `Q16`.
+    pub readout_fraction: crate::fixed::Q16,
+    /// Write amount per phase of a halving period: round(16 · 2^(phase / half_life)).
+    amounts: Vec<u32>,
     planes: usize,
     /// Delay-line weight per age (empty when using counters).
     age_weights: Vec<u32>,
@@ -207,13 +209,15 @@ impl Ca3Memory {
     /// (0..127). Within a halving period, the n-th store adds 16·2^(n/half_life)
     /// (16 up to 31), so later stores outweigh earlier ones exactly as continuous decay
     /// would; each write survives about 5 halvings.
-    pub fn new(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self {
-        let half_life = ((0.5f32.ln() / decay.clamp(0.01, 0.999).ln()).round() as u32).max(1);
+    pub fn new(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self { // float: config
+        let half_life = ((0.5f32.ln() / decay.clamp(0.01, 0.999).ln()).round() as u32).max(1); // float: config
+        let amounts = write_amounts(half_life);
         Self {
             k,
             half_life,
             settle_steps,
-            readout_fraction: 0.5,
+            readout_fraction: crate::fixed::ONE / 2,
+            amounts,
             planes: 7,
             age_weights: Vec::new(),
             ec_to_ca3: Weights::Counters(Pathway::new(ec_bits, ca3_cells)),
@@ -227,10 +231,10 @@ impl Ca3Memory {
 
     /// The same store with delay-line weights: each write goes into the plane for the
     /// current store, weighted round(1024·decay^age) when read, until decay^age < 0.02.
-    pub fn new_delay_line(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self {
+    pub fn new_delay_line(ec_bits: usize, ca3_cells: usize, k: usize, decay: f32, settle_steps: usize) -> Self { // float: config
         let mut m = Self::new(ec_bits, ca3_cells, k, decay, settle_steps);
         let d = decay.clamp(0.01, 0.999);
-        m.age_weights = (0..).map(|a| d.powi(a)).take_while(|&w| w >= 0.02).map(|w| (1024.0 * w).round() as u32).collect();
+        m.age_weights = (0..).map(|a| d.powi(a)).take_while(|&w| w >= 0.02).map(|w| (1024.0 * w).round() as u32).collect(); // float: config
         m.ec_to_ca3 = Weights::Ring(RingPathway::new(ec_bits, ca3_cells));
         m.ca3_to_ca3 = Weights::Ring(RingPathway::new(ca3_cells, ca3_cells));
         m.ca3_to_ec = Weights::Ring(RingPathway::new(ca3_cells, ec_bits));
@@ -271,8 +275,7 @@ impl Ca3Memory {
     pub fn store(&mut self, x: &[usize], c: &[u32]) {
         self.stores += 1;
         let (epoch, planes) = (self.epoch(), self.planes);
-        let phase = (self.stores % self.half_life) as f32 / self.half_life as f32;
-        let amount = (16.0 * 2f32.powf(phase)).round() as u32;
+        let amount = self.amounts[(self.stores % self.half_life) as usize];
         let c_idx: Vec<usize> = c.iter().map(|&j| j as usize).collect();
         let (store, len) = (self.stores, self.age_weights.len().max(1));
         let c_mask = BitVector::from_bits(&c_idx, self.ca3_cells);
@@ -291,22 +294,22 @@ impl Ca3Memory {
     /// Recall from a partial EC cue: drive CA3 from the cue, settle through the
     /// recurrent weights, read EC out. Returns the EC bits scoring at least
     /// `readout_fraction` of the best score, and that best score (0 if nothing was recalled).
-    pub fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
+    pub fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, u32) {
         let from_cue = self.read(&self.ec_to_ca3, cue);
-        let mut c = top_k(from_cue.iter().map(|&v| v as f32), self.k);
+        let mut c = top_k(from_cue.iter().map(|&v| v as u64), self.k);
         for _ in 0..self.settle_steps {
             let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
             let rec = self.read(&self.ca3_to_ca3, &active);
-            c = top_k(rec.iter().zip(&from_cue).map(|(r, f)| (r + f) as f32), self.k);
+            c = top_k(rec.iter().zip(&from_cue).map(|(r, f)| (r + f) as u64), self.k);
         }
         let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
         let out = self.read(&self.ca3_to_ec, &active);
         let best = out.iter().copied().max().unwrap_or(0);
         if best == 0 {
-            return (Vec::new(), 0.0);
+            return (Vec::new(), 0);
         }
-        let floor = self.readout_fraction * best as f32;
-        ((0..ec_bits.min(out.len())).filter(|&b| out[b] as f32 >= floor).collect(), best as f32)
+        let floor = best as u64 * self.readout_fraction as u64; // scaled by ONE
+        ((0..ec_bits.min(out.len())).filter(|&b| (out[b] as u64) << 16 >= floor).collect(), best)
     }
 
     /// Number of stored synapses (all three pathways; counters only, else 0).
@@ -319,7 +322,7 @@ impl Ca3Memory {
 }
 
 /// Weight with lazy exponential decay: (value at `t`, `t`).
-type Synapses = crate::det::HashMap<u32, (f32, u32)>;
+type Synapses = crate::det::HashMap<u32, (f32, u32)>; // float: the reference store's weights
 
 /// The original float version of `Ca3Memory` (f32 weights, exact exponential decay),
 /// kept for comparison.
@@ -414,11 +417,11 @@ impl Ca3FloatMemory {
     pub fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
         let ca3_cells = self.ca3_to_ca3.len();
         let from_cue = self.drive(&self.ec_to_ca3, cue, ca3_cells);
-        let mut c = top_k(from_cue.iter().copied(), self.k);
+        let mut c = top_k_float(from_cue.iter().copied(), self.k);
         for _ in 0..self.settle_steps {
             let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
             let rec = self.drive(&self.ca3_to_ca3, &active, ca3_cells);
-            c = top_k(rec.iter().zip(&from_cue).map(|(r, f)| r + f), self.k);
+            c = top_k_float(rec.iter().zip(&from_cue).map(|(r, f)| r + f), self.k);
         }
         let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
         let out = self.drive(&self.ca3_to_ec, &active, ec_bits);
@@ -436,20 +439,21 @@ impl Ca3FloatMemory {
 }
 
 /// Common interface of the CA3 stores, so experiments can swap them.
+/// The recall strength is an integer score; the readout fraction is in `Q16`.
 pub trait Autoassociative {
     fn store(&mut self, x: &[usize], c: &[u32]);
-    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32);
-    fn set_readout_fraction(&mut self, f: f32);
+    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, u32);
+    fn set_readout_fraction(&mut self, f: crate::fixed::Q16);
 }
 
 impl Autoassociative for Ca3Memory {
     fn store(&mut self, x: &[usize], c: &[u32]) {
         Ca3Memory::store(self, x, c)
     }
-    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
+    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, u32) {
         Ca3Memory::recall(self, cue, ec_bits)
     }
-    fn set_readout_fraction(&mut self, f: f32) {
+    fn set_readout_fraction(&mut self, f: crate::fixed::Q16) {
         self.readout_fraction = f;
     }
 }
@@ -458,18 +462,35 @@ impl Autoassociative for Ca3FloatMemory {
     fn store(&mut self, x: &[usize], c: &[u32]) {
         Ca3FloatMemory::store(self, x, c)
     }
-    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, f32) {
-        Ca3FloatMemory::recall(self, cue, ec_bits)
+    fn recall(&self, cue: &[usize], ec_bits: usize) -> (Vec<usize>, u32) {
+        let (bits, best) = Ca3FloatMemory::recall(self, cue, ec_bits);
+        (bits, best.round() as u32) // float: the reference store
     }
-    fn set_readout_fraction(&mut self, f: f32) {
-        self.readout_fraction = f;
+    fn set_readout_fraction(&mut self, f: crate::fixed::Q16) {
+        self.readout_fraction = crate::fixed::to_f32(f); // float: the reference store
     }
 }
 
-/// Indices of the `k` largest positive values (ties by index).
-pub(crate) fn top_k(values: impl Iterator<Item = f32>, k: usize) -> Vec<u32> {
-    let mut v: Vec<(f32, u32)> = values.enumerate().filter(|(_, x)| *x > 0.0).map(|(i, x)| (x, i as u32)).collect();
+/// round(16 · 2^(phase / half_life)) for each phase of a halving period: the write
+/// amounts that make later stores outweigh earlier ones as continuous decay would.
+/// Computed once per configuration.
+pub(crate) fn write_amounts(half_life: u32) -> Vec<u32> {
+    (0..half_life.max(1)).map(|p| (16.0 * 2f64.powf(p as f64 / half_life as f64)).round() as u32).collect() // float: config
+}
+
+/// `top_k` for the float reference store.
+fn top_k_float(values: impl Iterator<Item = f32>, k: usize) -> Vec<u32> { // float: the reference store
+    let mut v: Vec<(f32, u32)> = values.enumerate().filter(|(_, x)| *x > 0.0).map(|(i, x)| (x, i as u32)).collect(); // float: the reference store
     v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
+    let mut out: Vec<u32> = v.into_iter().take(k).map(|(_, i)| i).collect();
+    out.sort_unstable();
+    out
+}
+
+/// Indices of the `k` largest positive values (ties by index).
+pub(crate) fn top_k(values: impl Iterator<Item = u64>, k: usize) -> Vec<u32> {
+    let mut v: Vec<(u64, u32)> = values.enumerate().filter(|(_, x)| *x > 0).map(|(i, x)| (x, i as u32)).collect();
+    v.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
     let mut out: Vec<u32> = v.into_iter().take(k).map(|(_, i)| i).collect();
     out.sort_unstable();
     out
@@ -508,7 +529,7 @@ mod tests {
             m.store(&ep, &dg.separate(&ep));
         }
         let (out, strength) = m.recall(&word(1), 512);
-        assert!(strength > 0.0);
+        assert!(strength > 0);
         let has = |w: usize| word(w).iter().all(|b| out.contains(b));
         assert!(has(22) && !has(20), "should recall the recent mary episode (office)");
         let (out, _) = m.recall(&word(2), 512);

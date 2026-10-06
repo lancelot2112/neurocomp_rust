@@ -186,8 +186,8 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
     let gated = matches!(policy, Policy::Gated | Policy::GatedValue | Policy::GatedKernel);
     // frames of relay input to the predictor: one per channel, or one gated relay
     let n_ch = if gated { 1 } else { channels.len() };
-    let mut gate = RouteGate::new(0.5, 3.0, 1, policy == Policy::GatedValue);
-    let mut kgate = KernelGate::new(BITS, 0.5, 1, seed);
+    let mut gate = RouteGate::new(neurocomp::fixed::q16(0.5), 3, 1, policy == Policy::GatedValue);
+    let mut kgate = KernelGate::new(BITS, neurocomp::fixed::q16(0.5), 1, seed);
     let mut pool: Vec<RelayChannel> = Vec::new();
     let mut train_trace = (0usize, 0usize, 0usize, 0usize); // '?' ticks, relay on, right, sum of winner depth
     let mut th = Thalamus::new(BITS, 40, channels);
@@ -353,7 +353,7 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
         prev = Some(last);
 
         if gated && !testing && s_i % REVIEW_EVERY == REVIEW_EVERY - 1 {
-            pool = route_scores.top(64, 2.0);
+            pool = route_scores.top(64, 2 * neurocomp::fixed::ONE as u64);
         }
         if matches!(
             policy,
@@ -365,7 +365,7 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
             let worst = (0..n_ch).filter(|&c| age[c] >= grace).min_by(|&a, &b| credit[a].partial_cmp(&credit[b]).unwrap());
             if let Some(worst) = worst {
                 let proposal = if policy == Policy::LearnedOpen {
-                    route_scores.best_unused(&th.channels, 2.0)
+                    route_scores.best_unused(&th.channels, 2 * neurocomp::fixed::ONE as u64)
                 } else if policy == Policy::LearnedProposed {
                     votes
                         .iter()
@@ -393,7 +393,7 @@ fn run(policy: Policy, facts: usize, long: bool, seed: u64) -> Outcome {
             for v in votes.values_mut() {
                 *v *= 0.5;
             }
-            route_scores.decay(0.9);
+            route_scores.decay(neurocomp::fixed::q16(0.9));
             for c in credit.iter_mut() {
                 *c *= 0.5;
             }

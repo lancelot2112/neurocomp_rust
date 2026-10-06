@@ -52,6 +52,7 @@ use rand::{Rng, SeedableRng};
 
 use super::hippocampus::{top_k, DentateGyrus, Pathway};
 use crate::bitvec::BitVector;
+use crate::fixed::{div_round, ratio, Q16, ONE};
 
 /// Sizes and rates of the circuit.
 #[derive(Clone, Debug)]
@@ -67,17 +68,18 @@ pub struct HippocampusConfig {
     pub ca1_k: usize,
     pub ca2_cells: usize,
     pub ca2_k: usize,
-    /// Fraction of CA2's active cells replaced per `advance_time`.
-    pub ca2_drift: f32,
+    /// Fraction of CA2's active cells replaced per `advance_time` (`Q16`).
+    pub ca2_drift: Q16,
     /// Weight of CA2's drive onto CA1 at recall, in quarters of the Schaffer drive (0 = off).
     pub ca2_weight: u32,
     pub settle: usize,
-    /// Per-store decay of every weight (as in `Ca3Memory`).
-    pub decay: f32,
-    /// Write strength = base × (1 + novelty_gain × novelty), capped at the counter maximum.
-    pub novelty_gain: f32,
-    /// EC V readout keeps the bits scoring at least this fraction of the best.
-    pub readout_fraction: f32,
+    /// Per-store decay of every weight (as in `Ca3Memory`); converted once to a half-life.
+    pub decay: f32, // float: config
+    /// Write strength = base × (1 + novelty_gain × novelty), capped at the counter maximum
+    /// (`Q16`, may exceed `ONE`).
+    pub novelty_gain: Q16,
+    /// EC V readout keeps the bits scoring at least this fraction of the best (`Q16`).
+    pub readout_fraction: Q16,
     pub seed: u64,
 }
 
@@ -94,12 +96,12 @@ impl HippocampusConfig {
             ca1_k: 32,
             ca2_cells: 1024,
             ca2_k: 16,
-            ca2_drift: 0.05,
+            ca2_drift: 3277, // 0.05
             ca2_weight: 0,
             settle: 2,
             decay: 0.999,
-            novelty_gain: 3.0,
-            readout_fraction: 0.5,
+            novelty_gain: 3 * ONE,
+            readout_fraction: ONE / 2,
             seed,
         }
     }
@@ -113,8 +115,8 @@ pub struct Recall {
     /// The best readout score (0: nothing recalled).
     pub strength: u32,
     /// CA1 comparator: overlap of the CA1 code from CA3 with the CA1 code of the cue
-    /// itself (from EC III), as a fraction of `ca1_k`.
-    pub ca1_match: f32,
+    /// itself (from EC III), as a fraction of `ca1_k` (`Q16`).
+    pub ca1_match: Q16,
     pub ca3: Vec<u32>,
     pub ca1: Vec<u32>,
 }
@@ -139,9 +141,11 @@ pub struct Hippocampus {
     stores: u32,
     planes: usize,
     cache: RefCell<Option<(Vec<usize>, Recall)>>,
-    /// Novelty of the latest stored episode, and the running (sum, count).
-    pub last_novelty: f32,
-    pub novelty_sum: (f64, usize),
+    /// Novelty of the latest stored episode, and the running (sum, count), in `Q16`.
+    pub last_novelty: Q16,
+    pub novelty_sum: (u64, usize),
+    /// Write amount per phase of a halving period (as in `Ca3Memory`).
+    amounts: Vec<u32>,
     /// Recalls answered from the cache (events with no change), and all recalls.
     pub cache_hits: std::cell::Cell<(usize, usize)>,
 }
@@ -155,7 +159,7 @@ impl Hippocampus {
         let all: Vec<u32> = (0..cfg.ca2_cells as u32).collect();
         let mut ca2_state: Vec<u32> = all.choose_multiple(&mut rng, cfg.ca2_k).copied().collect();
         ca2_state.sort_unstable();
-        let half_life = ((0.5f32.ln() / cfg.decay.clamp(0.01, 0.999_9).ln()).round() as u32).max(1);
+        let half_life = ((0.5f32.ln() / cfg.decay.clamp(0.01, 0.999_9).ln()).round() as u32).max(1); // float: config
         Self {
             perforant: Pathway::new(cfg.ec_bits, cfg.ca3_cells),
             perforant_writes: vec![0; cfg.ec_bits],
@@ -172,8 +176,9 @@ impl Hippocampus {
             stores: 0,
             planes: 7,
             cache: RefCell::new(None),
-            last_novelty: 0.0,
-            novelty_sum: (0.0, 0),
+            last_novelty: 0,
+            novelty_sum: (0, 0),
+            amounts: super::hippocampus::write_amounts(half_life),
             cache_hits: std::cell::Cell::new((0, 0)),
             cfg,
         }
@@ -202,11 +207,11 @@ impl Hippocampus {
 
     /// CA3 settled from a drive, through the recurrent weights.
     fn settle(&self, from_cue: &[u32], k: usize) -> Vec<u32> {
-        let mut c = top_k(from_cue.iter().map(|&v| v as f32), k);
+        let mut c = top_k(from_cue.iter().map(|&v| v as u64), k);
         for _ in 0..self.cfg.settle {
             let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
             let rec = self.recurrent.drive(&active, self.epoch());
-            c = top_k(rec.iter().zip(from_cue).map(|(r, f)| (r + f) as f32), k);
+            c = top_k(rec.iter().zip(from_cue).map(|(r, f)| (r + f) as u64), k);
         }
         c
     }
@@ -224,13 +229,13 @@ impl Hippocampus {
                 *d += t * self.cfg.ca2_weight / 4;
             }
         }
-        let a = top_k(drive.iter().map(|&v| v as f32), self.cfg.ca1_k);
+        let a = top_k(drive.iter().map(|&v| v as u64), self.cfg.ca1_k);
         let ca1_match = match cue {
             Some(cue) if !a.is_empty() => {
                 let a_cue = self.temporo.separate(cue);
-                a.iter().filter(|j| a_cue.binary_search(j).is_ok()).count() as f32 / self.cfg.ca1_k as f32
+                ratio(a.iter().filter(|j| a_cue.binary_search(j).is_ok()).count() as u64, self.cfg.ca1_k as u64)
             }
-            _ => 0.0,
+            _ => 0,
         };
         let a_idx: Vec<usize> = a.iter().map(|&j| j as usize).collect();
         let out = self.output.drive(&a_idx, self.epoch());
@@ -238,8 +243,8 @@ impl Hippocampus {
         if best == 0 {
             return Recall { ca3: c, ca1: a, ca1_match, ..Default::default() };
         }
-        let floor = self.cfg.readout_fraction * best as f32;
-        let ec = (0..self.cfg.ec_bits.min(out.len())).filter(|&b| out[b] as f32 >= floor).collect();
+        let floor = best as u64 * self.cfg.readout_fraction as u64; // scaled by ONE
+        let ec = (0..self.cfg.ec_bits.min(out.len())).filter(|&b| (out[b] as u64) << 16 >= floor).collect();
         Recall { ec, strength: best, ca1_match, ca3: c, ca1: a }
     }
 
@@ -270,30 +275,30 @@ impl Hippocampus {
     }
 
     /// The CA1 comparator's novelty for a full episode: 1 − the match between what memory
-    /// completes it to and what it is. 1 when nothing is stored.
-    pub fn novelty(&self, x: &[usize]) -> f32 {
+    /// completes it to and what it is, in `Q16`. `ONE` when nothing is stored.
+    pub fn novelty(&self, x: &[usize]) -> Q16 {
         let r = self.recall_uncached(x);
         if r.ca1.is_empty() {
-            1.0
+            ONE
         } else {
-            1.0 - r.ca1_match
+            ONE - r.ca1_match.min(ONE)
         }
     }
 
     /// Store one episode (EC active bits), with novelty-gated strength. Returns its novelty.
-    pub fn store(&mut self, x: &[usize]) -> f32 {
+    pub fn store(&mut self, x: &[usize]) -> Q16 {
         if x.is_empty() {
-            return 0.0;
+            return 0;
         }
         let novelty = self.novelty(x);
         self.last_novelty = novelty;
-        self.novelty_sum.0 += novelty as f64;
+        self.novelty_sum.0 += novelty as u64;
         self.novelty_sum.1 += 1;
         self.stores += 1;
         let (epoch, planes) = (self.epoch(), self.planes);
-        let phase = (self.stores % self.half_life) as f32 / self.half_life as f32;
-        let base = 16.0 * 2f32.powf(phase);
-        let amount = (base * (1.0 + self.cfg.novelty_gain * novelty)).round().min(((1u32 << planes) - 1) as f32) as u32;
+        let base = self.amounts[(self.stores % self.half_life) as usize] as u64;
+        let factor = ONE as u64 + ((self.cfg.novelty_gain as u64 * novelty as u64) >> 16); // 1 + gain · novelty, Q16
+        let amount = div_round(base * factor, ONE as u64).min((1u64 << planes) - 1) as u32;
         let c = self.ca3_code(x);
         let a = self.temporo.separate(x);
         let c_mask = BitVector::from_bits(&c.iter().map(|&j| j as usize).collect::<Vec<_>>(), self.cfg.ca3_cells);
@@ -323,7 +328,7 @@ impl Hippocampus {
 
     /// CA2's temporal context drifts: a fraction of its active cells is replaced.
     pub fn advance_time(&mut self) {
-        let n = ((self.cfg.ca2_drift * self.cfg.ca2_k as f32).round() as usize).max(1);
+        let n = (div_round(self.cfg.ca2_drift as u64 * self.cfg.ca2_k as u64, ONE as u64) as usize).max(1);
         for _ in 0..n {
             let i = self.rng.gen_range(0..self.ca2_state.len());
             loop {
@@ -352,7 +357,7 @@ impl Hippocampus {
         for _ in 0..self.cfg.settle + 3 {
             let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
             let rec = self.recurrent.drive(&active, self.epoch());
-            let next = top_k(rec.iter().map(|&v| v as f32), k);
+            let next = top_k(rec.iter().map(|&v| v as u64), k);
             if next.is_empty() {
                 break;
             }
@@ -386,7 +391,7 @@ mod tests {
         a.iter().filter(|x| b.contains(x)).count()
     }
 
-    fn small(novelty_gain: f32) -> Hippocampus {
+    fn small(novelty_gain: Q16) -> Hippocampus {
         let mut cfg = HippocampusConfig::new(BITS, 5);
         cfg.dg_cells = 4096;
         cfg.ca3_cells = 2048;
@@ -399,7 +404,7 @@ mod tests {
 
     #[test]
     fn recalls_a_stored_episode_from_part_of_it() {
-        let mut h = small(3.0);
+        let mut h = small(3 * ONE);
         for e in 0..20 {
             h.store(&episode(&[e * 3 + 100, e * 3 + 101, e * 3 + 102]));
         }
@@ -411,20 +416,20 @@ mod tests {
 
     #[test]
     fn novelty_falls_with_repetition() {
-        let mut h = small(3.0);
+        let mut h = small(3 * ONE);
         let x = episode(&[1, 2, 3]);
         let first = h.store(&x);
         h.store(&x);
         let third = h.store(&x);
-        assert_eq!(first, 1.0);
-        assert!(third < 0.5, "a repeated episode should be familiar (novelty {third})");
+        assert_eq!(first, ONE);
+        assert!(third < ONE / 2, "a repeated episode should be familiar (novelty {third})");
     }
 
     /// The failure case of experiment 45: one episode with a rare word, against many
     /// episodes made of common words. The cue mixes common words with the rare one.
     #[test]
     fn a_novel_one_shot_episode_wins_recall_against_common_ones() {
-        let run = |gain: f32| {
+        let run = |gain: Q16| {
             let mut h = small(gain);
             let mut rng = StdRng::seed_from_u64(9);
             for _ in 0..300 {
@@ -442,14 +447,14 @@ mod tests {
             let r = h.recall(&episode(&[0, 1, 50]));
             overlap(&r.ec, &word(51))
         };
-        let gated = run(3.0);
-        eprintln!("one-shot family bits recalled: novelty-gated {gated}, ungated {}", run(0.0));
+        let gated = run(3 * ONE);
+        eprintln!("one-shot family bits recalled: novelty-gated {gated}, ungated {}", run(0));
         assert!(gated >= 12, "with novelty-gated encoding the rare episode's family should be recalled ({gated} of 16 bits)");
     }
 
     #[test]
     fn replay_reads_out_a_stored_episode() {
-        let mut h = small(3.0);
+        let mut h = small(3 * ONE);
         let eps: Vec<Vec<usize>> = (0..10).map(|e| episode(&[e * 2 + 200, e * 2 + 201])).collect();
         for e in &eps {
             h.store(e);
@@ -467,7 +472,7 @@ mod tests {
 
     #[test]
     fn an_unchanged_cue_is_answered_from_the_cache() {
-        let mut h = small(3.0);
+        let mut h = small(3 * ONE);
         h.store(&episode(&[1, 2, 3]));
         let cue = episode(&[1, 2]);
         let a = h.recall(&cue);

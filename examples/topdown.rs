@@ -150,6 +150,8 @@ struct Outcome {
 /// prediction is at least this (precision weighting). `oracle`: the word layer
 /// is told the true next word instead of predicting it (an upper bound).
 fn run(text: &[char], alphabet: &[char], mode: Option<BiasMode>, gate: Option<f32>, oracle: bool, seed: u64) -> Outcome {
+    // the confidence gate in Q16, converted once
+    let gate = gate.map(|g| neurocomp::fixed::q16(g as f64));
     let mut rng = StdRng::seed_from_u64(seed);
     let chars = Encoder::new(alphabet.len(), CHAR_BITS, 32, &mut rng);
     let idx = |c: char| alphabet.iter().position(|&a| a == c).unwrap();
@@ -185,7 +187,7 @@ fn run(text: &[char], alphabet: &[char], mode: Option<BiasMode>, gate: Option<f3
         let input = frames_input(&hist, &chars.codes, CHAR_FRAMES, CHAR_BITS);
 
         let expected = words.expect(&prefix, c);
-        let confident = oracle || gate.map_or(true, |g| words.class.confidence().unwrap_or(0.0) >= g);
+        let confident = oracle || gate.map_or(true, |g| words.class.confidence().unwrap_or(0) >= g);
         let bias_code = expected.map(|e| chars.codes[idx(e)].clone());
         let mut out = BitVector::new(CHAR_BITS, Some(0));
         let bias = match (mode, &bias_code) {

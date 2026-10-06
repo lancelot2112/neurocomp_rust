@@ -33,6 +33,7 @@
 use crate::det::HashMap;
 
 use crate::bitvec::BitVector;
+use crate::fixed::{chance, isqrt, mul_ceil, ratio, Q16, ONE};
 use crate::kernel::{KernelClass, SimpleKernel};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -46,12 +47,13 @@ pub struct ContextBuffer {
     capacity: usize,
     history: Vec<BitVector>, // oldest first
     pub channels: Vec<RelayChannel>,
-    pub match_fraction: f32,
+    /// In `Q16` (0.8 by default).
+    pub match_fraction: Q16,
 }
 
 impl ContextBuffer {
     pub fn new(bits: usize, capacity: usize, channels: Vec<RelayChannel>) -> Self {
-        Self { bits, capacity, history: Vec::new(), channels, match_fraction: 0.8 }
+        Self { bits, capacity, history: Vec::new(), channels, match_fraction: 52429 }
     }
 
     /// Record the cortical frame for this tick (call once per tick, before `relay`).
@@ -86,7 +88,7 @@ impl ContextBuffer {
         if q_bits == 0 {
             return None;
         }
-        let need = (q_bits as f32 * self.match_fraction).ceil() as u32;
+        let need = mul_ceil(q_bits as u64, self.match_fraction) as u32;
         // most recent earlier frame matching the query whose value is already in the past
         (0..q_pos)
             .rev()
@@ -100,7 +102,7 @@ impl ContextBuffer {
     /// it when the cortex was surprised by `target`, before observing it, to
     /// find which routes would have carried the missing information.
     pub fn routes_that_would_relay(&self, target: &BitVector, candidates: &[RelayChannel]) -> Vec<RelayChannel> {
-        let need = (target.count_ones() as f32 * self.match_fraction).ceil() as u32;
+        let need = mul_ceil(target.count_ones() as u64, self.match_fraction) as u32;
         if need == 0 {
             return Vec::new();
         }
@@ -120,7 +122,7 @@ impl ContextBuffer {
     /// "most recent match" rule, would actually deliver `target` now.
     pub fn discover_routes(&self, target: &BitVector, max_query_lag: usize, max_value_offset: usize) -> Vec<RelayChannel> {
         let n = self.history.len();
-        let need = |a: &BitVector| (a.count_ones() as f32 * self.match_fraction).ceil() as u32;
+        let need = |a: &BitVector| mul_ceil(a.count_ones() as u64, self.match_fraction) as u32;
         let t_need = need(target);
         if t_need == 0 || n == 0 {
             return Vec::new();
@@ -172,10 +174,11 @@ impl ContextBuffer {
 /// often (e.g. "the word after the last *the*" is some place 1 time in 6). Here
 /// every candidate discovered so far is re-checked on each surprise: `tries`
 /// counts surprises where it relayed something, `hits` those where it relayed the
-/// right thing. Routes are ranked by smoothed precision `hits / (tries + 2)`.
+/// right thing. Routes are ranked by smoothed precision `hits / (tries + 2)`. Counts are
+/// kept in `Q16` units (one event = `ONE`), so `decay` can scale them in integers.
 #[derive(Default)]
 pub struct RouteScores {
-    stats: HashMap<RelayChannel, (f64, f64)>, // (hits, tries)
+    stats: HashMap<RelayChannel, (u64, u64)>, // (hits, tries), in Q16 units
 }
 
 impl RouteScores {
@@ -183,54 +186,65 @@ impl RouteScores {
     /// candidates, then score every known candidate on this event.
     pub fn observe_surprise(&mut self, th: &ContextBuffer, target: &BitVector, max_query_lag: usize, max_value_offset: usize) {
         for r in th.discover_routes(target, max_query_lag, max_value_offset) {
-            self.stats.entry(r).or_insert((0.0, 0.0));
+            self.stats.entry(r).or_insert((0, 0));
         }
-        let need = (target.count_ones() as f32 * th.match_fraction).ceil() as u32;
+        let need = mul_ceil(target.count_ones() as u64, th.match_fraction) as u32;
         for (r, (hits, tries)) in self.stats.iter_mut() {
             if let Some(v) = th.relay_channel(*r) {
-                *tries += 1.0;
+                *tries += ONE as u64;
                 if overlap(v, target) >= need {
-                    *hits += 1.0;
+                    *hits += ONE as u64;
                 }
             }
         }
     }
 
-    /// Smoothed precision of a route (0 if never seen).
-    pub fn precision(&self, r: RelayChannel) -> f64 {
-        self.stats.get(&r).map_or(0.0, |&(h, t)| h / (t + 2.0))
+    /// `hits / (tries + 2)` as an exact pair, for cross-multiplied comparison.
+    fn smoothed(h: u64, t: u64) -> (u64, u64) {
+        (h, t + 2 * ONE as u64)
     }
 
-    /// The most consistent route not in `exclude`, with at least `min_hits` hits.
-    pub fn best_unused(&self, exclude: &[RelayChannel], min_hits: f64) -> Option<RelayChannel> {
+    /// Smoothed precision of a route in `Q16` (0 if never seen).
+    pub fn precision(&self, r: RelayChannel) -> Q16 {
+        self.stats.get(&r).map_or(0, |&(h, t)| {
+            let (n, d) = Self::smoothed(h, t);
+            ratio(n, d)
+        })
+    }
+
+    /// The most consistent route not in `exclude`, with at least `min_hits` hits (`min_hits`
+    /// in `Q16` units of hits).
+    pub fn best_unused(&self, exclude: &[RelayChannel], min_hits: u64) -> Option<RelayChannel> {
         self.stats
             .iter()
             .filter(|(r, (h, _))| *h >= min_hits && !exclude.contains(r))
             .max_by(|a, b| {
-                let pa = a.1 .0 / (a.1 .1 + 2.0);
-                let pb = b.1 .0 / (b.1 .1 + 2.0);
-                pa.partial_cmp(&pb).unwrap().then(b.0.query_lag.cmp(&a.0.query_lag)).then(b.0.value_offset.cmp(&a.0.value_offset))
+                let (na, da) = Self::smoothed(a.1 .0, a.1 .1);
+                let (nb, db) = Self::smoothed(b.1 .0, b.1 .1);
+                ((na as u128) * (db as u128)).cmp(&((nb as u128) * (da as u128))).then(b.0.query_lag.cmp(&a.0.query_lag)).then(b.0.value_offset.cmp(&a.0.value_offset))
             })
             .map(|(r, _)| *r)
     }
 
-    /// Up to `n` routes with at least `min_hits` hits, most consistent first.
-    pub fn top(&self, n: usize, min_hits: f64) -> Vec<RelayChannel> {
-        let mut v: Vec<(f64, RelayChannel)> = self
+    /// Up to `n` routes with at least `min_hits` hits (`Q16` units), most consistent first.
+    pub fn top(&self, n: usize, min_hits: u64) -> Vec<RelayChannel> {
+        let mut v: Vec<((u64, u64), RelayChannel)> = self
             .stats
             .iter()
             .filter(|(_, (h, _))| *h >= min_hits)
-            .map(|(r, (h, t))| (h / (t + 2.0), *r))
+            .map(|(r, (h, t))| (Self::smoothed(*h, *t), *r))
             .collect();
-        v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.query_lag.cmp(&b.1.query_lag)).then(a.1.value_offset.cmp(&b.1.value_offset)));
+        v.sort_by(|a, b| {
+            ((b.0 .0 as u128) * (a.0 .1 as u128)).cmp(&((a.0 .0 as u128) * (b.0 .1 as u128))).then(a.1.query_lag.cmp(&b.1.query_lag)).then(a.1.value_offset.cmp(&b.1.value_offset))
+        });
         v.into_iter().take(n).map(|(_, r)| r).collect()
     }
 
-    /// Multiply all counts by `factor` (forget slowly).
-    pub fn decay(&mut self, factor: f64) {
+    /// Multiply all counts by `factor` (`Q16`; forget slowly).
+    pub fn decay(&mut self, factor: Q16) {
         for (h, t) in self.stats.values_mut() {
-            *h *= factor;
-            *t *= factor;
+            *h = (*h * factor as u64) >> 16;
+            *t = (*t * factor as u64) >> 16;
         }
     }
 
@@ -251,12 +265,12 @@ pub struct CorticalColumn {
     pub l6: ContextBuffer,
     bits: usize,
     prediction: BitVector,
-    confidence: f32,
+    confidence: Q16,
 }
 
 impl CorticalColumn {
     pub fn new(bits: usize, l23: KernelClass<SimpleKernel>, l6: ContextBuffer) -> Self {
-        Self { l23, l6, bits, prediction: BitVector::new(bits, Some(0)), confidence: 0.0 }
+        Self { l23, l6, bits, prediction: BitVector::new(bits, Some(0)), confidence: 0 }
     }
 
     /// L6: record this step's input in context.
@@ -284,7 +298,7 @@ impl CorticalColumn {
         let mut out = BitVector::new(self.bits, Some(0));
         self.l23.process_predictive(l4, &mut out);
         self.prediction = out;
-        self.confidence = self.l23.confidence().unwrap_or(0.0);
+        self.confidence = self.l23.confidence().unwrap_or(0);
         &self.prediction
     }
 
@@ -304,8 +318,8 @@ impl CorticalColumn {
         &self.prediction
     }
 
-    /// L5: reliability of the kernel that made the latest prediction (0 if none).
-    pub fn confidence(&self) -> f32 {
+    /// L5: reliability of the kernel that made the latest prediction (0 if none), in `Q16`.
+    pub fn confidence(&self) -> Q16 {
         self.confidence
     }
 
@@ -314,8 +328,8 @@ impl CorticalColumn {
     /// kernel's reliability, in 0..=1 (= 1 − surprise). Any selector whose choice fed this
     /// prediction (a route, a recalled item, what working memory held) can learn from it,
     /// instead of each one checking its own content against the target.
-    pub fn outcome(&self, actual: &BitVector) -> f32 {
-        1.0 - self.surprise(actual)
+    pub fn outcome(&self, actual: &BitVector) -> Q16 {
+        ONE - self.surprise(actual)
     }
 
     /// L5: did the latest prediction read L4 frame `frame` (0 = current input, then the
@@ -330,23 +344,24 @@ impl CorticalColumn {
 
     /// L5 → basal ganglia, attributed: the outcome if the prediction read `frame`, else 0.
     /// The reward for a choice that fed `frame` (a route, a recalled item, a held cue).
-    pub fn outcome_via(&self, frame: usize, actual: &BitVector) -> f32 {
+    pub fn outcome_via(&self, frame: usize, actual: &BitVector) -> Q16 {
         if self.winner_reads(frame) {
             self.outcome(actual)
         } else {
-            0.0
+            0
         }
     }
 
     /// L5: how surprising `actual` is given the latest prediction: 1 − (its share of the
     /// prediction × the predicting kernel's reliability).
-    pub fn surprise(&self, actual: &BitVector) -> f32 {
+    /// In `Q16`.
+    pub fn surprise(&self, actual: &BitVector) -> Q16 {
         let predicted = self.prediction.count_ones();
         if predicted == 0 {
-            return 1.0;
+            return ONE;
         }
-        let share = overlap(actual, &self.prediction) as f32 / predicted as f32;
-        1.0 - share * self.confidence
+        let share = ratio(overlap(actual, &self.prediction) as u64, predicted as u64);
+        ONE - ((share as u64 * self.confidence as u64) >> 16) as Q16
     }
 }
 
@@ -381,8 +396,10 @@ pub struct RoleArea {
     codes: Vec<BitVector>,
     used: usize,
     bits: usize,
-    pub vigilance: f32,
-    pub rate: f64,
+    /// Minimum cosine to join a cell, in `Q16`.
+    pub vigilance: Q16,
+    /// Synapse gain probability per learning step, in `Q16` (loss: a quarter of it).
+    pub rate: Q16,
 }
 
 impl RoleArea {
@@ -391,25 +408,31 @@ impl RoleArea {
         let codes = (0..cells)
             .map(|_| BitVector::from_bits(&rand::seq::SliceRandom::choose_multiple(all.as_slice(), rng, 32).copied().collect::<Vec<_>>(), bits))
             .collect();
-        Self { protos: vec![BitVector::new(bits, Some(0)); cells], codes, used: 0, bits, vigilance: 0.5, rate: 0.1 }
+        Self { protos: vec![BitVector::new(bits, Some(0)); cells], codes, used: 0, bits, vigilance: ONE / 2, rate: 6554 }
     }
 
-    fn similarity(a: &BitVector, b: &BitVector) -> f32 {
-        let (mut inter, mut na, mut nb) = (0u32, 0u32, 0u32);
+    /// The cosine of two bit sets as an exact fraction of its square: (|a∧b|², |a|·|b|).
+    /// Compared by cross-multiplication, so no square root is needed.
+    fn similarity(a: &BitVector, b: &BitVector) -> (u64, u64) {
+        let (mut inter, mut na, mut nb) = (0u64, 0u64, 0u64);
         for (x, y) in a.as_words().iter().zip(b.as_words()) {
-            inter += (x & y).count_ones();
-            na += x.count_ones();
-            nb += y.count_ones();
+            inter += (x & y).count_ones() as u64;
+            na += x.count_ones() as u64;
+            nb += y.count_ones() as u64;
         }
-        if na == 0 || nb == 0 { 0.0 } else { inter as f32 / ((na as f32) * (nb as f32)).sqrt() }
+        if na == 0 || nb == 0 { (0, 1) } else { (inter * inter, na * nb) }
     }
 
-    /// The winning cell for `x` (None if `x` is empty or no cell is in use).
-    pub fn winner(&self, x: &BitVector) -> Option<(usize, f32)> {
+    /// The winning cell for `x` and its cosine in `Q16` (None if `x` is empty or no cell is
+    /// in use).
+    pub fn winner(&self, x: &BitVector) -> Option<(usize, Q16)> {
         if x.count_ones() == 0 {
             return None;
         }
-        (0..self.used).map(|c| (c, Self::similarity(x, &self.protos[c]))).max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+        (0..self.used)
+            .map(|c| (c, Self::similarity(x, &self.protos[c])))
+            .max_by(|a, b| ((a.1 .0 as u128) * (b.1 .1 as u128)).cmp(&((b.1 .0 as u128) * (a.1 .1 as u128))))
+            .map(|(c, (n, d))| (c, isqrt((ratio(n, d) as u64) << 16) as Q16))
     }
 
     /// Present `x`: returns the active cell (if any); with `learn`, the winner moves toward
@@ -429,7 +452,7 @@ impl RoleArea {
                             let b = diff.trailing_zeros();
                             diff &= diff - 1;
                             let gain = xw >> b & 1 == 1;
-                            if rng.gen_bool(if gain { self.rate } else { self.rate / 4.0 }) {
+                            if chance(rng, if gain { self.rate } else { self.rate / 4 }) {
                                 *pw ^= 1u64 << b;
                             }
                         }
@@ -487,7 +510,7 @@ pub struct HigherArea {
     pending_words: Vec<BitVector>,
     window_words: std::collections::VecDeque<Vec<BitVector>>,
     /// Fading state (see `set_fade`): the per-sentence survival probability of a bit.
-    fade: Option<f64>,
+    fade: Option<Q16>,
     faded: BitVector,
     fade_rng: rand::rngs::StdRng,
 }
@@ -515,8 +538,8 @@ impl HigherArea {
     /// 0.5^(1 / half_life); the sentence's surprising words then enter with all their
     /// bits. Newer words are stronger, older ones fade, and a word's strength is how many
     /// of its bits remain, so recency is in the code itself. None: the fixed window.
-    pub fn set_fade(&mut self, half_life: Option<f64>) {
-        self.fade = half_life.map(|h| 0.5f64.powf(1.0 / h.max(0.1)));
+    pub fn set_fade(&mut self, half_life: Option<f64>) { // float: config (converted once)
+        self.fade = half_life.map(|h| crate::fixed::q16(0.5f64.powf(1.0 / h.max(0.1)))); // float: config
     }
 
     /// The slow state: everything the lower column found surprising in the last `span`
@@ -659,13 +682,12 @@ impl HigherArea {
     /// End of a sentence: its surprising content joins the slow state.
     pub fn end_sentence(&mut self, surprising: &BitVector) {
         if let Some(p) = self.fade {
-            use rand::Rng;
             for w in self.faded.as_words_mut() {
                 let mut x = *w;
                 while x != 0 {
                     let b = x.trailing_zeros();
                     x &= x - 1;
-                    if !self.fade_rng.gen_bool(p) {
+                    if !chance(&mut self.fade_rng, p) {
                         *w &= !(1u64 << b);
                     }
                 }
@@ -764,9 +786,9 @@ mod tests {
         col.observe(&a);
         let l4 = col.assemble(&a, &[]);
         assert_eq!(col.predict(&l4).as_words(), b.as_words()); // L5: a is followed by b
-        assert!(col.surprise(&b) < 0.5);
-        assert!(col.surprise(&sym(3)) > 0.9);
-        assert!(col.outcome(&b) > 0.5 && col.outcome(&sym(3)) < 0.1); // L5 → BG
+        assert!(col.surprise(&b) < crate::fixed::q16(0.5));
+        assert!(col.surprise(&sym(3)) > crate::fixed::q16(0.9));
+        assert!(col.outcome(&b) > crate::fixed::q16(0.5) && col.outcome(&sym(3)) < crate::fixed::q16(0.1)); // L5 → BG
         assert!(col.winner_reads(0) && !col.winner_reads(1)); // read the current input only
         assert_eq!(col.previous().as_words(), b.as_words()); // L6: the input before a
     }
@@ -925,9 +947,9 @@ mod tests {
             th.observe(&sym(s));
         }
         scores.observe_surprise(&th, &sym(5), 4, 4);
-        let best = scores.best_unused(&[], 1.0).unwrap();
+        let best = scores.best_unused(&[], crate::fixed::ONE as u64).unwrap();
         assert_eq!(best, RelayChannel { query_lag: 0, value_offset: 1 });
-        assert!(scores.precision(best) > 0.4);
+        assert!(scores.precision(best) > crate::fixed::q16(0.4));
     }
 
 }

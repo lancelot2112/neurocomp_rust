@@ -1,5 +1,6 @@
 use crate::bitvec::BitVector;
 use crate::common::config;
+use crate::fixed::{div_round, mul_floor, q16, ratio, Q16, ONE};
 use crate::kernel::simple::{KernelStats, SimpleKernel};
 use rand::seq::SliceRandom;
 
@@ -71,12 +72,12 @@ pub struct GrowthConfig {
     pub frame_words: usize,      // words per history frame in the class input
     pub max_frames: usize,       // deepest context a grown kernel may span
     pub sample_bits: usize,      // active input bits sampled per frame for a new kernel
-    pub match_fraction: f32,     // per-frame match needed: threshold = sampled - floor(sample_bits * (1 - match_fraction))
-    pub surprise_fraction: f32,  // grow when more than this fraction of target bits went unpredicted
+    pub match_fraction: f32,     // float: config. per-frame match needed: threshold = sampled - floor(sample_bits * (1 - match_fraction))
+    pub surprise_fraction: f32,  // float: config. grow when more than this fraction of target bits went unpredicted
     /// Synapse-level credit: a kernel that matched at least this fraction of its
     /// connections (but not its threshold) and whose prediction the target confirms
     /// drops the connections that were silent, becoming more general. None = off.
-    pub generalize: Option<f32>,
+    pub generalize: Option<f32>, // float: config
     /// How many such confirmations a silent connection needs before it is dropped
     /// (a connection's count resets whenever it is active while its kernel is
     /// right). 1 = drop on the first near miss.
@@ -109,14 +110,40 @@ pub struct KernelClass<K: KernelTrait> {
 }
 
 /// Bookkeeping for predictive classes.
+/// The growth configuration's fractions in `Q16`, converted once (the per-step code uses
+/// only these).
+#[derive(Clone, Copy, Debug)]
+struct CfgQ {
+    /// 1 − match_fraction: the share of a frame's sampled bits a match may miss.
+    slack: Q16,
+    surprise: Q16,
+    generalize: Option<Q16>,
+}
+
+impl CfgQ {
+    fn of(cfg: &GrowthConfig) -> Self {
+        Self {
+            slack: q16(1.0 - cfg.match_fraction as f64), // float: config
+            surprise: q16(cfg.surprise_fraction as f64), // float: config
+            generalize: cfg.generalize.map(|g| q16(g as f64)), // float: config
+        }
+    }
+
+    /// Bits a kernel of `n` sampled bits per frame may miss and still match.
+    fn tolerance(&self, n: usize) -> usize {
+        mul_floor(n as u64, self.slack) as usize
+    }
+}
+
 struct PredictiveState {
+    q: CfgQ,
     cfg: GrowthConfig,
     index: Vec<Vec<u32>>,    // input bit -> kernels connected to it
     counts: Vec<u32>,        // scratch: matched bits per kernel this tick
     touched: Vec<u32>,       // scratch: kernels with a nonzero count this tick
     last_matches: Vec<usize>, // kernels at/above threshold on the last tick
     last_winner: Option<usize>,
-    last_target_prob: f32,    // see `target_probability`
+    last_target_prob: Q16,    // see `target_probability`
     last_near: Vec<usize>,    // kernels that nearly matched on the last step (see `generalize`)
     growth_mask: Option<BitVector>, // if set, new kernels may only sample these input bits
     silent_counts: crate::det::HashMap<usize, crate::det::HashMap<usize, u8>>, // kernel -> bit -> confirmations it was irrelevant
@@ -409,13 +436,14 @@ impl KernelClass<SimpleKernel> {
     pub fn predictive(cfg: GrowthConfig) -> Self {
         let mut kc = Self::default();
         kc.predictive = Some(PredictiveState {
+            q: CfgQ::of(&cfg),
             cfg,
             index: Vec::new(),
             counts: Vec::new(),
             touched: Vec::new(),
             last_matches: Vec::new(),
             last_winner: None,
-            last_target_prob: 0.0,
+            last_target_prob: 0,
             last_near: Vec::new(),
             growth_mask: None,
             silent_counts: crate::det::HashMap::default(),
@@ -554,8 +582,8 @@ impl KernelClass<SimpleKernel> {
             st.counts[k] = 0;
             let kern = &self.active_kernels[k];
             if (count as usize) < kern.threshold {
-                if let Some(frac) = st.cfg.generalize {
-                    if count as f32 >= frac * kern.input_bits as f32 {
+                if let Some(frac) = st.q.generalize {
+                    if (count as u64) << 16 >= frac as u64 * kern.input_bits as u64 {
                         st.last_near.push(k);
                     }
                 }
@@ -608,7 +636,8 @@ impl KernelClass<SimpleKernel> {
     }
 
     /// Like `peek`, also returning the winning kernel's smoothed hit rate.
-    pub fn peek_scored(&self, input: &BitVector) -> Option<(BitVector, f32)> {
+    /// The rate is in `Q16`.
+    pub fn peek_scored(&self, input: &BitVector) -> Option<(BitVector, Q16)> {
         let st = self.predictive.as_ref()?;
         let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
         for b in set_bits(input) {
@@ -626,7 +655,7 @@ impl KernelClass<SimpleKernel> {
                 ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-            .map(|((_, rel, _), k)| (self.active_kernels[k].output_vector(), rel.value()))
+            .map(|((_, rel, _), k)| (self.active_kernels[k].output_vector(), rel.q16()))
     }
 
     /// The union of what every matching kernel predicts for `input` (the column's possible
@@ -694,16 +723,18 @@ impl KernelClass<SimpleKernel> {
 
     /// Estimated probability that the current prediction is right (the winning
     /// kernel's smoothed hit rate), or None if nothing was predicted.
-    pub fn confidence(&self) -> Option<f32> {
+    /// In `Q16` (`fixed::ONE` = certain).
+    pub fn confidence(&self) -> Option<Q16> {
         let st = self.predictive.as_ref()?;
-        st.last_winner.map(|w| reliability(&self.active_kernels[w].stats))
+        st.last_winner.map(|w| Rate::of(&self.active_kernels[w].stats).q16())
     }
 
     /// How expected the last target was: the hit rate (before this update) of the
     /// longest-context matching kernel that predicted it, or 0 if none did.
     /// Low values mark surprising transitions (e.g. the start of a new word).
-    pub fn target_probability(&self) -> f32 {
-        self.predictive.as_ref().map_or(0.0, |st| st.last_target_prob)
+    /// In `Q16`.
+    pub fn target_probability(&self) -> Q16 {
+        self.predictive.as_ref().map_or(0, |st| st.last_target_prob)
     }
 
     /// Sticky synapses for gradual pruning (`GrowthConfig::generalize`): input bits that
@@ -775,7 +806,7 @@ impl KernelClass<SimpleKernel> {
         if halves {
             st.version += 1; // halving can shift a rate by rounding: re-rank
         }
-        st.last_target_prob = before.value();
+        st.last_target_prob = before.q16();
         // fast inhibition still sees what happened (adaptation tags every kernel that
         // predicted it; error tags every kernel that did not), as on the full path
         if let Some(f) = st.fast.as_mut() {
@@ -923,7 +954,8 @@ impl KernelClass<SimpleKernel> {
             return;
         }
         let cfg = st.cfg;
-        let frac = cfg.generalize.unwrap_or(0.5);
+        let q = st.q;
+        let frac = q.generalize.unwrap_or(ONE / 2);
         let frame_bits = cfg.frame_words * 64;
         let in_len = st.index.len().max(1);
         let out_len = self.active_kernels.iter().map(|k| k.output_len as usize).max().unwrap_or(1).max(1);
@@ -971,7 +1003,7 @@ impl KernelClass<SimpleKernel> {
                 let c = counts[k] as usize;
                 counts[k] = 0;
                 let kern = &self.active_kernels[k];
-                if c < kern.threshold && c as f32 >= frac * kern.input_set.len() as f32 && predicts(kern, tv) {
+                if c < kern.threshold && (c as u64) << 16 >= frac as u64 * kern.input_set.len() as u64 && predicts(kern, tv) {
                     let e = absent.entry(k).or_default();
                     e.0 += 1;
                     for &b in &kern.input_set {
@@ -1015,7 +1047,7 @@ impl KernelClass<SimpleKernel> {
                 *per_frame.entry(b as usize / frame_bits).or_default() += 1;
             }
             let smallest = per_frame.values().copied().min().unwrap_or(cfg.sample_bits).min(cfg.sample_bits);
-            let tolerance = (smallest as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+            let tolerance = q.tolerance(smallest);
             let threshold = kept.len().saturating_sub(tolerance).max(1);
             // the replay test: more general in fact, and at least as reliable
             let (gm, gr) = score(&kept, threshold, src);
@@ -1029,9 +1061,11 @@ impl KernelClass<SimpleKernel> {
             let mut g = SimpleKernel::sparse(kept, src.output_set.clone(), src.output_len as usize, threshold, KernelOp::Or);
             g.context_frames = reach;
             // its replay record, scaled into the 8-bit counters
-            let scale = ((gm as f32) / 64.0).max(1.0);
-            g.stats.hits = ((gr as f32 / scale).round() as u32).min(255) as u8;
-            g.stats.misses = (((gm - gr) as f32 / scale).round() as u32).min(255) as u8;
+            // scaled down to at most 64 trials, rounded
+            let (gm64, gr64) = (gm as u64, gr as u64);
+            let scaled = |n: u64| if gm64 <= 64 { n } else { div_round(n * 64, gm64) };
+            g.stats.hits = scaled(gr64).min(255) as u8;
+            g.stats.misses = scaled(gm64 - gr64).min(255) as u8;
             g.stats.last_useful = self.tick;
             installs.push(g);
         }
@@ -1200,8 +1234,8 @@ impl KernelClass<SimpleKernel> {
             st.counts[k] = 0;
             let kern = &self.active_kernels[k];
             if (count as usize) < kern.threshold {
-                if let Some(frac) = st.cfg.generalize {
-                    if count as f32 >= frac * kern.input_bits as f32 {
+                if let Some(frac) = st.q.generalize {
+                    if (count as u64) << 16 >= frac as u64 * kern.input_bits as u64 {
                         st.last_near.push(k);
                     }
                 }
@@ -1577,7 +1611,7 @@ impl KernelClass<SimpleKernel> {
             }
         }
         if let Some(st) = self.predictive.as_mut() {
-            st.last_target_prob = expected.map_or(0.0, |e| e.1.value());
+            st.last_target_prob = expected.map_or(0, |e| e.1.q16());
             if let Some(f) = st.fast.as_mut() {
                 let gate = |v: &Vec<usize>| -> Vec<usize> {
                     v.iter().copied().filter(|&k| f.reliable_shift.map_or(true, |sh| unreliable(&self.active_kernels[k].stats, sh))).collect()
@@ -1599,7 +1633,8 @@ impl KernelClass<SimpleKernel> {
             }
             None => target_bits,
         };
-        if (unpredicted as f32) <= cfg.surprise_fraction * target_bits as f32 {
+        let q = self.predictive.as_ref().map(|st| st.q).unwrap_or_else(|| CfgQ::of(&cfg));
+        if (unpredicted as u64) << 16 <= q.surprise as u64 * target_bits as u64 {
             return;
         }
 
@@ -1632,6 +1667,7 @@ impl KernelClass<SimpleKernel> {
     /// whose prediction the target confirms keep only the connections that were
     /// active, so inputs that didn't matter stop being required.
     fn generalize_near_misses(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig) {
+        let q = self.predictive.as_ref().map(|st| st.q).unwrap_or_else(|| CfgQ::of(cfg));
         let mut spawns: Vec<(Vec<u32>, Vec<u32>, Rate)> = Vec::new();
         self.generalize_in_place(input, target, cfg, &mut spawns);
         // the general copies: same output, the kept inputs, a threshold tolerating a frame's
@@ -1679,7 +1715,7 @@ impl KernelClass<SimpleKernel> {
                 *per_frame.entry(b as usize / frame_bits).or_default() += 1;
             }
             let smallest = per_frame.values().copied().min().unwrap_or(cfg.sample_bits).min(cfg.sample_bits);
-            let tolerance = (smallest as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+            let tolerance = q.tolerance(smallest);
             let reach = kept.iter().map(|&b| b as usize / frame_bits + 1).max().unwrap_or(1);
             let threshold = kept.len().saturating_sub(tolerance).max(1);
             let mut k = SimpleKernel::sparse(kept, output_set, target.bit_len(), threshold, KernelOp::Or);
@@ -1694,6 +1730,7 @@ impl KernelClass<SimpleKernel> {
     }
 
     fn generalize_in_place(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig, spawns: &mut Vec<(Vec<u32>, Vec<u32>, Rate)>) {
+        let q = self.predictive.as_ref().map(|st| st.q).unwrap_or_else(|| CfgQ::of(cfg));
         let Some(st) = self.predictive.as_mut() else { return };
         let near = std::mem::take(&mut st.last_near);
         let min_bits = cfg.sample_bits.max(2);
@@ -1793,7 +1830,7 @@ impl KernelClass<SimpleKernel> {
                 }
             }
             let smallest = per_frame.values().copied().min().unwrap_or(cfg.sample_bits).min(cfg.sample_bits);
-            let tolerance = (smallest as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+            let tolerance = q.tolerance(smallest);
             let kern = &mut self.active_kernels[k];
             kern.threshold = (old.len() - drop.len()).saturating_sub(tolerance).max(1);
             kern.stats.record_hit();
@@ -1807,6 +1844,7 @@ impl KernelClass<SimpleKernel> {
         let tick = self.tick;
         let Some(st) = self.predictive.as_mut() else { return };
         let cfg = st.cfg;
+        let q = st.q;
         st.version += 1;
 
         let mut input_set: Vec<u32> = Vec::new();
@@ -1859,7 +1897,7 @@ impl KernelClass<SimpleKernel> {
         }
         // Tolerate one frame's worth of noise (not a fraction of all sampled bits),
         // so a long-context kernel can't fire when a whole frame is different.
-        let tolerance = (sampled.min(cfg.sample_bits) as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+        let tolerance = q.tolerance(sampled.min(cfg.sample_bits));
         let threshold = sampled - tolerance;
 
         // stored sparse: the sampled input positions and the target's bits
@@ -2047,14 +2085,10 @@ fn is_subset(small: &[u32], big: &[u32]) -> bool {
     true
 }
 
-fn reliability(s: &KernelStats) -> f32 {
-    Rate::of(s).value()
-}
-
 /// A hit rate kept as an exact fraction of integers, num / den. Rates are compared by
 /// cross-multiplication (a/b < c/d ⇔ a·d < c·b, both denominators positive), so ranking
-/// and thresholds need no divide and no floats. `value` converts to f32 for readouts only
-/// (confidence, target probability).
+/// and thresholds need no divide and no floats. `q16` gives the rate in fixed point;
+/// `value` converts to a float for reports only.
 ///
 /// Sizes: with 8-bit hit / miss counters, num = hits + 1 ≤ 256 and den = hits + misses + 2
 /// ≤ 512 fit in u16, and a cross-product is at most 256 · 512 = 2^17, so u32 holds it.
@@ -2075,9 +2109,14 @@ impl Rate {
         Self::new(s.hits as u16 + 1, s.hits as u16 + s.misses as u16 + 2)
     }
 
-    /// The rate as a float, for readouts (never used in a comparison).
-    pub fn value(self) -> f32 {
-        self.num as f32 / self.den as f32
+    /// The rate in `Q16`.
+    pub fn q16(self) -> Q16 {
+        ratio(self.num as u64, self.den as u64)
+    }
+
+    /// The rate as a float, for reports only (never used in a comparison).
+    pub fn value(self) -> f32 { // float: report
+        self.num as f32 / self.den as f32 // float: report
     }
 }
 
@@ -2471,7 +2510,7 @@ mod tests {
         assert_eq!(step(&mut kc, &ctx, &target), 0xFF00); // correct -> no growth
         assert_eq!(kc.len(), 1);
         assert_eq!(kc.kernels()[0].stats.hits, 1);
-        assert!(kc.confidence().unwrap() > 0.5);
+        assert!(kc.confidence().unwrap() > crate::fixed::q16(0.5));
     }
 
     #[test]
@@ -2534,13 +2573,13 @@ mod tests {
         let b = BitVector::from_words(vec![0xFF00]);
         let c = BitVector::from_words(vec![0xFF0000]);
         step(&mut kc, &a, &b);
-        assert_eq!(kc.target_probability(), 0.0); // nothing predicted B yet
+        assert_eq!(kc.target_probability(), 0); // nothing predicted B yet
         for _ in 0..4 {
             step(&mut kc, &a, &b);
         }
-        assert!(kc.target_probability() > 0.7); // A->B is well established
+        assert!(kc.target_probability() > crate::fixed::q16(0.7)); // A->B is well established
         step(&mut kc, &a, &c);
-        assert_eq!(kc.target_probability(), 0.0); // C after A is a surprise
+        assert_eq!(kc.target_probability(), 0); // C after A is a surprise
     }
 
     #[test]

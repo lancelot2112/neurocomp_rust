@@ -15,12 +15,19 @@
 //! trace, and its size sets the probability that each eligible bit actually steps
 //! (`gain` × |error|; older masks scaled by `trace_decay` per step). The learning rate
 //! is a flip probability, as in stochastic binary synapses (Amit & Fusi 1994).
+//!
+//! All of it is integer: values, rewards and errors are fixed-point `Q16` (`fixed::ONE` =
+//! 1; rewards and errors signed), and every probability is an integer draw (`chance`).
 
 use std::collections::VecDeque;
 
 use rand::Rng;
 
 use crate::bitvec::{BitVector, SlicedCounter};
+use crate::fixed::{chance, ratio, Q16, ONE};
+
+/// A signed `Q16` value (rewards and reward-prediction errors).
+pub type SQ16 = i32;
 
 pub struct BasalGanglia {
     go: SlicedCounter,
@@ -28,19 +35,19 @@ pub struct BasalGanglia {
     /// Eligibility traces: the chosen candidates' bit masks, newest first.
     trace: VecDeque<BitVector>,
     pub trace_len: usize,
-    pub trace_decay: f64,
+    pub trace_decay: Q16,
     /// Step probability per unit of reward-prediction error.
-    pub gain: f64,
+    pub gain: Q16,
     /// Probability of choosing a random candidate when exploring.
-    pub explore: f64,
+    pub explore: Q16,
     last_value: Option<(u64, u64)>, // (counter sum, max possible sum) of the latest choice
     /// Reward baseline: with `Some(rate)`, the reward-prediction error is reward minus a
     /// running average of rewards (updated at `rate`), not minus the latest choice's value.
     /// Needed when one reward credits a long trace of choices: subtracting the last
     /// choice's value makes almost every error negative when rewards are rare, which
     /// drags down whichever action is chosen most.
-    pub baseline_rate: Option<f64>,
-    baseline: f64,
+    pub baseline_rate: Option<Q16>,
+    baseline: i64,
 }
 
 impl BasalGanglia {
@@ -52,12 +59,12 @@ impl BasalGanglia {
             bits,
             trace: VecDeque::new(),
             trace_len: 1,
-            trace_decay: 0.5,
-            gain: 1.5,
-            explore: 0.1,
+            trace_decay: ONE / 2,
+            gain: ONE * 3 / 2,
+            explore: 6554, // 0.1
             last_value: None,
             baseline_rate: None,
-            baseline: 0.0,
+            baseline: 0,
         }
     }
 
@@ -71,9 +78,10 @@ impl BasalGanglia {
     }
 
     /// Learned value of a candidate in [0, 1] (for inspection).
-    pub fn value(&self, candidate: &BitVector) -> f32 {
+    /// In `Q16`.
+    pub fn value(&self, candidate: &BitVector) -> Q16 {
         let (s, m) = self.score(candidate);
-        s as f32 / m as f32
+        ratio(s, m)
     }
 
     /// Index of the candidate to release, or None if there are none. With `rng`, a
@@ -92,7 +100,7 @@ impl BasalGanglia {
             }
         }
         if let Some(rng) = rng {
-            if rng.gen_bool(self.explore) {
+            if chance(rng, self.explore) {
                 best = rng.gen_range(0..candidates.len());
             }
         }
@@ -109,49 +117,55 @@ impl BasalGanglia {
     /// that starts low (e.g. the cortex's L5 outcome before it has learned to use the
     /// choice) still ranks candidates instead of dragging them all below the default.
     /// Returns the error.
-    pub fn reward_candidate<R: Rng>(&mut self, candidate: &BitVector, reward: f32, rng: &mut R) -> f32 {
+    /// `reward` is a signed `Q16`.
+    pub fn reward_candidate<R: Rng>(&mut self, candidate: &BitVector, reward: SQ16, rng: &mut R) -> SQ16 {
         let (s, m) = self.score(candidate);
-        let delta = match self.baseline_rate {
-            Some(rate) => {
-                let d = reward as f64 - self.baseline;
-                self.baseline += rate * d;
-                d
-            }
-            None => reward as f64 - s as f64 / m as f64,
-        };
-        let p = (self.gain * delta.abs()).min(1.0);
+        let delta = self.error(reward, s, m);
+        let p = self.step_probability(delta);
         let mut step = BitVector::new(self.bits, Some(0));
         for (wi, &w) in candidate.as_words().iter().enumerate() {
             let mut w = w;
             while w != 0 {
                 let b = w.trailing_zeros() as usize;
                 w &= w - 1;
-                if rng.gen_bool(p) {
+                if chance(rng, p) {
                     step.bit_set(wi * 64 + b);
                 }
             }
         }
-        if delta > 0.0 {
+        if delta > 0 {
             self.go.increment(&step);
         } else {
             self.go.decrement(&step);
         }
-        delta as f32
+        delta as SQ16
+    }
+
+    /// The reward-prediction error (signed `Q16`): reward − the running-average reward
+    /// (with a baseline, which is updated), else reward − the chosen value s / m.
+    fn error(&mut self, reward: SQ16, s: u64, m: u64) -> i64 {
+        match self.baseline_rate {
+            Some(rate) => {
+                let d = reward as i64 - self.baseline;
+                self.baseline += (rate as i64 * d) >> 16;
+                d
+            }
+            None => reward as i64 - ratio(s, m) as i64,
+        }
+    }
+
+    /// The per-bit step probability `gain` × |error|, capped at 1 (`Q16`).
+    fn step_probability(&self, delta: i64) -> Q16 {
+        ((self.gain as u64 * delta.unsigned_abs()) >> 16).min(ONE as u64) as Q16
     }
 
     /// Reward (0..=1) for the latest choice and, through the trace, earlier ones.
     /// Returns the reward-prediction error.
-    pub fn reward<R: Rng>(&mut self, reward: f32, rng: &mut R) -> f32 {
-        let Some((s, m)) = self.last_value else { return 0.0 };
-        let delta = match self.baseline_rate {
-            Some(rate) => {
-                let d = reward as f64 - self.baseline;
-                self.baseline += rate * (reward as f64 - self.baseline);
-                d
-            }
-            None => reward as f64 - s as f64 / m as f64,
-        };
-        let mut p = (self.gain * delta.abs()).min(1.0);
+    /// `reward` is a signed `Q16`.
+    pub fn reward<R: Rng>(&mut self, reward: SQ16, rng: &mut R) -> SQ16 {
+        let Some((s, m)) = self.last_value else { return 0 };
+        let delta = self.error(reward, s, m);
+        let mut p = self.step_probability(delta);
         for mask in &self.trace {
             // stochastic step: each eligible bit moves with probability p
             let mut step = BitVector::new(self.bits, Some(0));
@@ -160,19 +174,19 @@ impl BasalGanglia {
                 while w != 0 {
                     let b = w.trailing_zeros() as usize;
                     w &= w - 1;
-                    if rng.gen_bool(p) {
+                    if chance(rng, p) {
                         step.bit_set(wi * 64 + b);
                     }
                 }
             }
-            if delta > 0.0 {
+            if delta > 0 {
                 self.go.increment(&step);
             } else {
                 self.go.decrement(&step);
             }
-            p *= self.trace_decay;
+            p = ((p as u64 * self.trace_decay as u64) >> 16) as Q16;
         }
-        delta as f32
+        delta as SQ16
     }
 }
 
@@ -198,7 +212,7 @@ mod tests {
             let cands = if swap { vec![v, n] } else { vec![n, v] };
             let chosen = bg.select(&cands, Some(&mut rng)).unwrap();
             let picked_name = (chosen == 0) != swap;
-            bg.reward(if picked_name { 1.0 } else { 0.0 }, &mut rng);
+            bg.reward(if picked_name { ONE as i32 } else { 0 }, &mut rng);
         }
         let mut right = 0;
         for i in 0..5 {
@@ -213,14 +227,14 @@ mod tests {
         let mut bg = BasalGanglia::new(256);
         let mut rng = StdRng::seed_from_u64(2);
         bg.trace_len = 2;
-        bg.explore = 0.0;
+        bg.explore = 0;
         for _ in 0..5 {
             bg.select::<StdRng>(&[item(1)], None);
             bg.select::<StdRng>(&[item(2)], None);
-            bg.reward(1.0, &mut rng);
+            bg.reward(ONE as i32, &mut rng);
         }
         // both raised, the more recent more
         assert!(bg.value(&item(2)) > bg.value(&item(1)));
-        assert!(bg.value(&item(1)) > 0.5);
+        assert!(bg.value(&item(1)) > ONE / 2);
     }
 }

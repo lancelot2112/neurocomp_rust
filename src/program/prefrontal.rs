@@ -74,7 +74,8 @@ pub struct PfcGate {
 impl PfcGate {
     /// `trace_len` inputs of eligibility (how far back a reward can reach), each older one
     /// credited with probability × `trace_decay`.
-    pub fn new(bits: usize, trace_len: usize, trace_decay: f64, seed: u64) -> Self {
+    /// `trace_decay` in `Q16`.
+    pub fn new(bits: usize, trace_len: usize, trace_decay: crate::fixed::Q16, seed: u64) -> Self {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let all: Vec<usize> = (0..bits).collect();
         let mut code = || BitVector::from_bits(&all.choose_multiple(&mut rng, 32).copied().collect::<Vec<_>>(), bits);
@@ -83,11 +84,11 @@ impl PfcGate {
         bg.trace_len = trace_len;
         bg.trace_decay = trace_decay;
         // credit is an advantage: the held item's reward − the running-average reward
-        bg.baseline_rate = Some(0.01);
+        bg.baseline_rate = Some(655); // 0.01
         // step probability = |error| exactly, so a rare +1 and frequent small −errors
         // balance in expectation (with gain 1.5 the +1 side is capped at probability 1 and
         // the drift is downward, eroding whichever action is chosen most)
-        bg.gain = 1.0;
+        bg.gain = crate::fixed::ONE;
         Self { bg, bits, load_code, keep_code, held: None }
     }
 
@@ -113,20 +114,22 @@ impl PfcGate {
     }
 
     /// Learned value of an action for an input (for inspection).
-    pub fn value(&self, gate: Gate, key: usize) -> f32 {
+    /// In `Q16`.
+    pub fn value(&self, gate: Gate, key: usize) -> crate::fixed::Q16 {
         let code = if gate == Gate::Load { &self.load_code } else { &self.keep_code };
         self.bg.value(&self.bound(code, key))
     }
 
     /// Reward the gating event whose content is held: the load of the current item.
     /// Returns the error (0 if nothing was ever loaded).
-    pub fn reward<R: Rng>(&mut self, reward: f32, rng: &mut R) -> f32 {
+    /// `reward` is a signed `Q16`.
+    pub fn reward<R: Rng>(&mut self, reward: i32, rng: &mut R) -> i32 {
         match self.held {
             Some(key) => {
                 let c = self.bound(&self.load_code, key);
                 self.bg.reward_candidate(&c, reward, rng)
             }
-            None => 0.0,
+            None => 0,
         }
     }
 }
@@ -151,7 +154,7 @@ mod tests {
     fn gate_learns_to_load_the_item_that_pays_off_later() {
         // episodes: [name, distractor, distractor, question]; reward at the question if
         // the slot still holds the name. Key 1 = name, 2..=3 = distractors.
-        let mut gate = PfcGate::new(1024, 4, 0.9, 3);
+        let mut gate = PfcGate::new(1024, 4, crate::fixed::q16(0.9), 3);
         let mut rng = StdRng::seed_from_u64(5);
         for _ in 0..600 {
             let mut held = 0usize;
@@ -160,7 +163,7 @@ mod tests {
                     held = key;
                 }
             }
-            gate.reward(if held == 1 { 1.0 } else { 0.0 }, &mut rng);
+            gate.reward(if held == 1 { crate::fixed::ONE as i32 } else { 0 }, &mut rng);
         }
         // only the held item's load is credited: names gain, distractors lose
         assert!(gate.value(Gate::Load, 1) > gate.value(Gate::Keep, 1), "should load the name");

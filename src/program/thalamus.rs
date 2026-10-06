@@ -10,6 +10,7 @@
 //! episodic example.
 
 use crate::det::HashMap;
+use crate::fixed::{chance, exp2_frac, mul_ceil, ratio, Q16, ONE};
 
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -35,15 +36,17 @@ pub type Thalamus = ContextBuffer;
 /// routes, lateral inhibition keeps the `winners` most reliable (winner-take-k,
 /// a hard stand-in for softmax). The surviving relays are OR'ed into one frame.
 pub struct RouteGate {
-    pub threshold: f64,
-    pub min_tries: f64,
+    /// Minimum precision to open, in `Q16`.
+    pub threshold: Q16,
+    pub min_tries: u64,
     pub winners: usize,
     pub condition_on_value: bool,
-    stats: HashMap<(RelayChannel, u64, u64), (f64, f64)>, // (route, context, value) -> (hits, tries)
+    stats: HashMap<(RelayChannel, u64, u64), (u64, u64)>, // (route, context, value) -> (hits, tries)
 }
 
 impl RouteGate {
-    pub fn new(threshold: f64, min_tries: f64, winners: usize, condition_on_value: bool) -> Self {
+    /// `threshold` in `Q16`.
+    pub fn new(threshold: Q16, min_tries: u64, winners: usize, condition_on_value: bool) -> Self {
         Self { threshold, min_tries, winners, condition_on_value, stats: HashMap::default() }
     }
 
@@ -52,14 +55,15 @@ impl RouteGate {
     }
 
     /// Smoothed precision of route `r` relaying `value` in context `ctx`, and its tries.
-    fn reliability(&self, r: RelayChannel, ctx: &BitVector, value: &BitVector) -> (f64, f64) {
-        self.stats.get(&self.key(r, ctx, value)).map_or((0.0, 0.0), |&(h, t)| ((h + 0.5) / (t + 1.0), t))
+    /// (precision `(h + ½) / (t + 1)` in `Q16`, tries).
+    fn reliability(&self, r: RelayChannel, ctx: &BitVector, value: &BitVector) -> (Q16, u64) {
+        self.stats.get(&self.key(r, ctx, value)).map_or((0, 0), |&(h, t)| (ratio(2 * h + 1, 2 * t + 2), t))
     }
 
     /// Routes from `pool` that pass the gate now, most reliable first, with their values.
     pub fn select<'a>(&self, th: &'a Thalamus, pool: &[RelayChannel]) -> Vec<(RelayChannel, &'a BitVector)> {
         let Some(ctx) = th.current() else { return Vec::new() };
-        let mut open: Vec<(f64, RelayChannel, &BitVector)> = pool
+        let mut open: Vec<(Q16, RelayChannel, &BitVector)> = pool
             .iter()
             .filter_map(|&r| th.relay_channel(r).map(|v| (r, v)))
             .filter_map(|(r, v)| {
@@ -67,7 +71,7 @@ impl RouteGate {
                 (tries >= self.min_tries && p >= self.threshold).then_some((p, r, v))
             })
             .collect();
-        open.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        open.sort_by(|a, b| b.0.cmp(&a.0));
         open.into_iter().take(self.winners).map(|(_, r, v)| (r, v)).collect()
     }
 
@@ -86,15 +90,15 @@ impl RouteGate {
     /// that relays something now is scored right or wrong in the current context.
     pub fn learn(&mut self, th: &Thalamus, pool: &[RelayChannel], next: &BitVector) {
         let Some(ctx) = th.current() else { return };
-        let need = (next.count_ones() as f32 * th.match_fraction).ceil() as u32;
+        let need = mul_ceil(next.count_ones() as u64, th.match_fraction) as u32;
         for &r in pool {
             if let Some(v) = th.relay_channel(r) {
                 let right = overlap(v, next) >= need;
                 let key = self.key(r, ctx, v);
-                let e = self.stats.entry(key).or_insert((0.0, 0.0));
-                e.1 += 1.0;
+                let e = self.stats.entry(key).or_insert((0, 0));
+                e.1 += 1;
                 if right {
-                    e.0 += 1.0;
+                    e.0 += 1;
                 }
             }
         }
@@ -114,7 +118,8 @@ impl RouteGate {
 /// than exact identity. A route opens when the winning kernel says RIGHT with
 /// reliability >= `threshold`; the `winners` most reliable open routes pass.
 pub struct KernelGate {
-    pub threshold: f32,
+    /// Minimum reliability to open, in `Q16`.
+    pub threshold: Q16,
     pub winners: usize,
     bits: usize,
     class: KernelClass<SimpleKernel>,
@@ -125,7 +130,8 @@ pub struct KernelGate {
 }
 
 impl KernelGate {
-    pub fn new(bits: usize, threshold: f32, winners: usize, seed: u64) -> Self {
+    /// `threshold` in `Q16`.
+    pub fn new(bits: usize, threshold: Q16, winners: usize, seed: u64) -> Self {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let positions: Vec<usize> = (0..bits).collect();
         let mut code = |rng: &mut rand::rngs::StdRng| {
@@ -168,7 +174,7 @@ impl KernelGate {
     pub fn select<'a>(&mut self, th: &'a Thalamus, pool: &[RelayChannel]) -> Vec<(RelayChannel, &'a BitVector)> {
         let Some(ctx) = th.current() else { return Vec::new() };
         let ctx = ctx.clone();
-        let mut open: Vec<(f32, RelayChannel, &BitVector)> = Vec::new();
+        let mut open: Vec<(Q16, RelayChannel, &BitVector)> = Vec::new();
         for &r in pool {
             if let Some(v) = th.relay_channel(r) {
                 let input = self.input(r, &ctx, v);
@@ -179,7 +185,7 @@ impl KernelGate {
                 }
             }
         }
-        open.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+        open.sort_by(|a, b| b.0.cmp(&a.0));
         open.into_iter().take(self.winners).map(|(_, r, v)| (r, v)).collect()
     }
 
@@ -199,7 +205,7 @@ impl KernelGate {
     pub fn learn(&mut self, th: &Thalamus, pool: &[RelayChannel], next: &BitVector) {
         let Some(ctx) = th.current() else { return };
         let ctx = ctx.clone();
-        let need = (next.count_ones() as f32 * th.match_fraction).ceil() as u32;
+        let need = mul_ceil(next.count_ones() as u64, th.match_fraction) as u32;
         for &r in pool {
             if let Some(v) = th.relay_channel(r) {
                 let target = if overlap(v, next) >= need { self.right.clone() } else { self.wrong.clone() };
@@ -237,16 +243,17 @@ pub struct CorticothalamicGate {
     gain: crate::bitvec::SlicedCounter,
     bits: usize,
     codes: Vec<BitVector>,
-    /// Open if facilitation >= threshold (0..=1).
-    pub threshold: f32,
-    /// Probability that a closed channel opens anyway while learning.
-    pub explore: f64,
-    /// Probability that each bit of a channel steps per update.
-    pub rate: f64,
+    /// Open if facilitation >= threshold (`Q16`).
+    pub threshold: Q16,
+    /// Probability that a closed channel opens anyway while learning (`Q16`).
+    pub explore: Q16,
+    /// Probability that each bit of a channel steps per update (`Q16`).
+    pub rate: Q16,
     /// Weakening is `rate × weaken` (strengthening is `rate`): with weaken w < 1, a
     /// channel stays open in a context if it is used in at least about w / (1 + w) of
     /// its uses there, so a relay that matters in only some of a context's cases is kept.
-    pub weaken: f64,
+    /// In `Q16`.
+    pub weaken: Q16,
 }
 
 impl CorticothalamicGate {
@@ -257,7 +264,7 @@ impl CorticothalamicGate {
             .map(|_| BitVector::from_bits(&all.choose_multiple(&mut rng, 32).copied().collect::<Vec<_>>(), bits))
             .collect();
         let planes = 4;
-        Self { gain: crate::bitvec::SlicedCounter::new(bits, planes, 1 << (planes - 1)), bits, codes, threshold: 0.5, explore: 0.05, rate: 0.3, weaken: 1.0 }
+        Self { gain: crate::bitvec::SlicedCounter::new(bits, planes, 1 << (planes - 1)), bits, codes, threshold: ONE / 2, explore: 3277, rate: 19661, weaken: ONE }
     }
 
     fn bound(&self, channel: usize, context: &BitVector) -> BitVector {
@@ -266,10 +273,10 @@ impl CorticothalamicGate {
         c
     }
 
-    /// Facilitation of `channel` in `context`, in 0..=1.
-    pub fn facilitation(&self, channel: usize, context: &BitVector) -> f32 {
+    /// Facilitation of `channel` in `context`, in `Q16`.
+    pub fn facilitation(&self, channel: usize, context: &BitVector) -> Q16 {
         let c = self.bound(channel, context);
-        self.gain.sum(&c) as f32 / (c.count_ones() as f32 * self.gain.max() as f32)
+        ratio(self.gain.sum(&c), c.count_ones() as u64 * self.gain.max() as u64)
     }
 
     /// Which channels are open in `context`. With `rng`, closed channels open with
@@ -278,7 +285,7 @@ impl CorticothalamicGate {
         (0..self.codes.len())
             .map(|ch| {
                 self.facilitation(ch, context) >= self.threshold
-                    || rng.as_mut().map_or(false, |r| r.gen_bool(self.explore))
+                    || rng.as_mut().map_or(false, |r| chance(*r, self.explore))
             })
             .collect()
     }
@@ -293,7 +300,7 @@ impl CorticothalamicGate {
             while w != 0 {
                 let b = w.trailing_zeros() as usize;
                 w &= w - 1;
-                if rng.gen_bool(if used { self.rate } else { self.rate * self.weaken }) {
+                if chance(rng, if used { self.rate } else { ((self.rate as u64 * self.weaken as u64) >> 16) as Q16 }) {
                     step.bit_set(wi * 64 + b);
                 }
             }
@@ -304,6 +311,25 @@ impl CorticothalamicGate {
             self.gain.decrement(&step);
         }
     }
+}
+
+/// round(16 · log2 i) in integers: the integer part from the bit length, the fraction by
+/// repeated squaring of the mantissa (16 fractional bits, more than enough to round).
+fn log2_x16(i: u64) -> u16 {
+    let whole = 63 - i.leading_zeros();
+    // mantissa m = i / 2^whole in [1, 2), as Q32
+    let mut m: u128 = ((i as u128) << 32) >> whole;
+    let mut frac: u32 = 0;
+    for bit in (0..16).rev() {
+        m = (m * m) >> 32;
+        if m >= 2u128 << 32 {
+            m >>= 1;
+            frac |= 1 << bit;
+        }
+    }
+    // frac is log2's fraction in 1/65536: round to 1/16
+    let x16 = (whole << 4) + ((frac + (1 << 11)) >> 12);
+    x16 as u16
 }
 
 fn frame_hash(frame: &BitVector) -> u64 {
@@ -348,7 +374,7 @@ impl Default for SourceMix {
 
 impl SourceMix {
     pub fn new() -> Self {
-        let log2 = (0..=512usize).map(|i| if i == 0 { 0 } else { ((i as f64).log2() * 16.0).round() as u16 }).collect();
+        let log2 = (0..=512u64).map(|i| if i == 0 { 0 } else { log2_x16(i) }).collect();
         Self { stats: HashMap::default(), log2 }
     }
 
@@ -359,10 +385,10 @@ impl SourceMix {
         (self.log2[den] - self.log2[m as usize + 1]) as u32
     }
 
-    /// Smoothed rate that a candidate `source` proposed under `key` is right.
-    pub fn rate(&self, source: u8, key: u64) -> f32 {
+    /// Smoothed rate that a candidate `source` proposed under `key` is right, in `Q16`.
+    pub fn rate(&self, source: u8, key: u64) -> Q16 {
         let (h, m) = self.stats.get(&(source, key)).copied().unwrap_or((0, 0));
-        (h as f32 + 1.0) / (h as f32 + m as f32 + 2.0)
+        ratio(h as u64 + 1, h as u64 + m as u64 + 2)
     }
 
     /// Record whether a candidate `source` proposed under `key` was right.
@@ -397,9 +423,16 @@ impl SourceMix {
         best
     }
 
-    /// Probability that not all of the sources behind `total` are wrong: 1 − 2^(−total/16).
-    pub fn confidence(total: u32) -> f32 {
-        1.0 - (-(total as f32) / 16.0).exp2()
+    /// Probability that not all of the sources behind `total` are wrong: 1 − 2^(−total/16),
+    /// in `Q16`.
+    pub fn confidence(total: u32) -> Q16 {
+        let (whole, frac) = (total / 16, total % 16);
+        if whole >= 16 {
+            return ONE;
+        }
+        // 2^(−frac/16) = 1 / 2^(frac/16), then halved `whole` times
+        let part = if frac == 0 { ONE as u64 } else { ((ONE as u64) << 16) / exp2_frac(frac, 16) as u64 };
+        ONE - (part >> whole) as Q16
     }
 
     /// Number of (source, key) entries learned.
@@ -434,7 +467,7 @@ mod tests {
         assert_eq!(c, 5);
         // agreement raises confidence above either source alone
         let alone = SourceMix::confidence(w1);
-        assert!(SourceMix::confidence(total) > alone && (alone - mix.rate(1, 1)).abs() < 0.03);
+        assert!(SourceMix::confidence(total) > alone && (alone as i64 - mix.rate(1, 1) as i64).abs() < crate::fixed::q16(0.03) as i64);
         // other keys are independent
         assert_eq!(mix.weight(0, 2), 16);
     }
@@ -447,7 +480,7 @@ mod tests {
         }
         mix.record(0, 0, false);
         let r = mix.rate(0, 0);
-        assert!(r > 0.98 && r < 1.0);
+        assert!(r > crate::fixed::q16(0.98) && r < crate::fixed::ONE);
     }
 
     #[test]
@@ -483,7 +516,7 @@ mod tests {
         let good = RelayChannel { query_lag: 1, value_offset: 1 };
         let bad = RelayChannel { query_lag: 0, value_offset: 2 };
         let pool = [good, bad];
-        let mut gate = RouteGate::new(0.6, 2.0, 1, false);
+        let mut gate = RouteGate::new(crate::fixed::q16(0.6), 2, 1, false);
         let mut th = Thalamus::new(64, 40, vec![]);
         for _ in 0..4 {
             for s in [1, 2, 3, 1, 9] {
@@ -508,7 +541,7 @@ mod tests {
         let good = RelayChannel { query_lag: 1, value_offset: 1 };
         let bad = RelayChannel { query_lag: 0, value_offset: 2 };
         let pool = [good, bad];
-        let mut gate = KernelGate::new(64, 0.6, 1, 7);
+        let mut gate = KernelGate::new(64, crate::fixed::q16(0.6), 1, 7);
         let mut th = Thalamus::new(64, 40, vec![]);
         for _ in 0..8 {
             for s in [1, 2, 3, 1, 9] {

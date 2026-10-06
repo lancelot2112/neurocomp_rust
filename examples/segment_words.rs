@@ -270,12 +270,13 @@ fn main() {
     let mut correct = 0usize;
     for i in 0..n - 1 {
         p.step(&letters.codes[stream[i]]);
-        conf[i] = p.class().confidence().unwrap_or(0.0);
+        // the network's signals are integer (Q16); this post-hoc segmentation analysis reads them as floats
+        conf[i] = neurocomp::fixed::to_f32(p.class().confidence().unwrap_or(0));
         if i >= half && letters.decode(p.prediction()) == Some(stream[i + 1]) {
             correct += 1;
         }
         p.learn(&letters.codes[stream[i + 1]]);
-        prob[i] = p.class().target_probability();
+        prob[i] = neurocomp::fixed::to_f32(p.class().target_probability());
     }
     println!(
         "next-letter accuracy without spaces (2nd half): {:.1}%   [{} kernels, {frames}-letter context]",

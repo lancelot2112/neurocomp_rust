@@ -44,22 +44,22 @@ where
 }
 
 fn write_cell_rainbow<W: Write>(out: &mut W, density: u8) -> io::Result<()> {
-    let d = density as f64 / 255.0;
+    let d = density as f64 / 255.0; // float: report (display colour)
     let (r, g, b) = rainbow_color(d);
     write!(out, "\x1b[48;2;{};{};{}m \x1b[0m", r, g, b)
 }
 
 /// Map density in [0,1] onto a rainbow via HSV (hue sweep 0.0 → 0.8).
-fn rainbow_color(density: f64) -> (u8, u8, u8) {
+fn rainbow_color(density: f64) -> (u8, u8, u8) { // float: report (display colour)
     let d = density.clamp(0.0, 1.0);
     let hue = (1.0 - d) * 0.8; // start at red, go through yellow→green→cyan→blue
     hsv_to_rgb(hue, 1.0, 1.0)
 }
 
-fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) {
+fn hsv_to_rgb(h: f64, s: f64, v: f64) -> (u8, u8, u8) { // float: report (display colour)
     let h = (h.fract() * 6.0).clamp(0.0, 6.0);
     let i = h.floor() as i32;
-    let f = h - i as f64;
+    let f = h - i as f64; // float: report (display colour)
 
     let p = v * (1.0 - s);
     let q = v * (1.0 - s * f);

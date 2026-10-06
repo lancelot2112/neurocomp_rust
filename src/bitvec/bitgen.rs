@@ -24,7 +24,7 @@ pub enum FillMode {
 pub struct BitGenConfig {
     pub bits: usize,
     pub bit_sets: usize,
-    pub cluster: f64, // [0,1]
+    pub cluster: f64, // float: config, [0,1]
     pub mode: FillMode,
 }
 
@@ -37,7 +37,7 @@ impl BitGenConfig {
             mode: FillMode::Bernoulli,
         }
     }
-    pub fn with_cluster(mut self, cluster: f64) -> Self {
+    pub fn with_cluster(mut self, cluster: f64) -> Self { // float: config
         self.cluster = cluster;
         self
     }
@@ -63,30 +63,32 @@ pub fn generate_with_rng<R: Rng + ?Sized>(cfg: &BitGenConfig, rng: &mut R) -> Bi
     }
 
     let k = cfg.bit_sets.min(bits);
-    let p1 = (k as f64) / (bits as f64);
-    let s = cfg.cluster.clamp(0.0, 0.999_999); // avoid singular transitions
+    // all in Q16 fixed point
+    let one = crate::fixed::ONE as u64;
+    let p1 = crate::fixed::ratio(k as u64, bits as u64) as u64;
+    let s = (crate::fixed::q16(cfg.cluster) as u64).min(one - 1); // float: config (avoid singular transitions)
 
     // Transition probs for 2-state Markov chain with stationary p1 and "stickiness" s:
     // P(1->1)=a, P(0->0)=b
-    let a = s + (1.0 - s) * p1;
-    let b = s + (1.0 - s) * (1.0 - p1);
+    let a = s + (((one - s) * p1) >> 16);
+    let b = s + (((one - s) * (one - p1)) >> 16);
 
     // Start with all zeros
     let mut bv = BitVector::new(bits, Some(0));
 
     // Initial bit ~ Bernoulli(p1)
-    let mut state_one = rng.gen_bool(p1);
+    let mut state_one = crate::fixed::chance(rng, p1 as u32);
     if state_one {
         bv.bit_set(0);
     }
 
     // Emit remaining bits
     for i in 1..bits {
-        let u = rng.r#gen::<f64>();
+        let u = rng.gen_range(0..one);
         if state_one {
             state_one = u < a; // stay 1 with prob a
         } else {
-            state_one = !(u < (1.0 - b)); // stay 0 with prob b
+            state_one = u >= one - b; // stay 0 with prob b
         }
         if state_one {
             bv.bit_set(i);

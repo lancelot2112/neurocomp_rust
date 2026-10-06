@@ -90,7 +90,9 @@ flow that connects them is still written by hand in the experiment harness
 **Hand-coded:**
 - **Rollout control:** where a choice point is (the page contradicts the expectation),
   the source order, the 4-step cap, and stopping when the page fits again.
-- **The hippocampus in the current pipeline is algorithmic.** Slot binding is by
+- **The hippocampus in the current pipeline is algorithmic by default.** `HIPPO=ca3`
+  swaps in the learned DG + CA3 ([45](../experiments/45-superposed-thought-and-ca3.md)),
+  which does not yet recall a one-shot episode against common ones. Slot binding is by
   rotation, recall by a rarity-weighted overlap score, readout by inverse rotation. The
   learned dentate gyrus / CA3 of [12](../experiments/12-dentate-gyrus-ca3.md) is not used
   there.
@@ -102,6 +104,8 @@ flow that connects them is still written by hand in the experiment harness
   answers, context keys and reports.
 
 **Moved from hand-coded to the network:**
+- **The source order is gone** ([45](../experiments/45-superposed-thought-and-ca3.md)):
+  evidence sources are superposed within the expectation, and the column resolves them.
 - **The rollout loop is closed** ([44](../experiments/44-closed-loop.md)). An internal
   step feeds the source's output vector, gated by the column's expectation, back as the
   next input. Nothing is decoded and re-encoded, and "definite" is a bit count.

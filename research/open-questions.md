@@ -99,6 +99,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     network's own output vectors, gated by its expectation, fed back. No decoding is
     needed, and partial or blended codes work. What is still hand-coded is listed in the
     [architecture map](concepts/architecture-map.md#learned-vs-hand-coded-after-44).
+  - **Superposed thought and the learned hippocampus** ([45](experiments/45-superposed-thought-and-ca3.md)):
+    superposing the evidence sources within the expectation replaces the source order.
+    The learned DG + CA3 does not recall a one-shot episode against common ones (no
+    novelty-gated encoding), and CA1, CA2, the subiculum and EC layers are not in the loop.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

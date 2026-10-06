@@ -908,6 +908,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // of stored episodes (the store's own frequency statistics)
     let bind_hab: Option<f32> = std::env::var("BIND_HAB").ok().and_then(|v| v.parse().ok());
     let mut bind_mem = EpisodicMemory::new(BITS, 5000);
+    // HIPPO=ca3: the slot ⊗ content episodes are stored in and recalled from the learned
+    // hippocampus of experiment 12: a dentate gyrus (random expansion + k-WTA) gives each
+    // episode a sparse CA3 code; CA3 stores EC→CA3, CA3↔CA3 and CA3→EC with Hebbian,
+    // bit-sliced, decaying weights; recall drives CA3 from the cue, settles through the
+    // recurrent weights (pattern completion) and reads the EC pattern back out. The list
+    // store `bind_mem` then only supplies the familiarity statistics (perirhinal-like) and
+    // the habituated cue. HIPPO_CELLS (8192), HIPPO_K (32), HIPPO_SETTLE (2),
+    // HIPPO_DECAY (0.999 per store), HIPPO_HAB (cue habituation, default 0.3: bindings in
+    // more than that fraction of episodes are left out of the cue, as entorhinal
+    // adaptation would; 0 = the whole story's bindings).
+    let hippo_ca3 = std::env::var("HIPPO").map_or(false, |v| v == "ca3");
+    let henv = |name: &str, default: f32| std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default);
+    let (hcells, hk) = (henv("HIPPO_CELLS", 8192.0) as usize, henv("HIPPO_K", 32.0) as usize);
+    let hippo_hab = henv("HIPPO_HAB", 0.3);
+    let bind_dg = hippo_ca3.then(|| DentateGyrus::new(BITS, hcells, 300, hk, seed + 200));
+    let mut bind_ca3 = hippo_ca3.then(|| Ca3Memory::new(BITS, hcells, hk, henv("HIPPO_DECAY", 0.999), henv("HIPPO_SETTLE", 2.0) as usize));
     let mut bind_story = BitVector::new(BITS, Some(0));
     let mut expect_prev = BitVector::new(BITS, Some(0));
     let mut slot_prev: Option<usize> = None;
@@ -1185,6 +1201,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // expectation holds at most 1.5 words' worth of bits. A word is still decoded from the
     // fed-back vector, but only for the harness's bookkeeping (reports, context keys).
     let rollout_loop = std::env::var("ROLLOUT_LOOP").is_ok();
+    // ROLLOUT_SUPER=1 (with ROLLOUT_LOOP): all sources at once. Every source's output,
+    // gated by the expectation, is OR-ed into one fed-back vector, and the column resolves
+    // the superposition; no order and no per-source reliabilities. (The basal ganglia's
+    // context still names the first source present.)
+    // ROLLOUT_SUPER=evidence: only the evidence sources (slot memory, semantic store, higher
+    // area) are superposed; the column's own prediction, which is the expectation (the
+    // prior) the gate already applies, is fed back only when none of them offers anything.
+    let rollout_super = std::env::var("ROLLOUT_SUPER").is_ok();
+    let super_evidence = std::env::var("ROLLOUT_SUPER").map_or(false, |v| v == "evidence");
     let mut inner_code: Vec<Option<BitVector>> = Vec::new(); // the fed-back vector of an internal step
     let mut bind_raw: Option<BitVector> = None; // the slot memory's unbound readout (before decoding)
     let mut loop_stats = [0usize; 3]; // test: fed-back vectors, exactly one word's code, a blend (2+ words' worth)
@@ -1450,6 +1475,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if bind {
             if bind_story.count_ones() > 0 && s_i > 0 && s_i - 1 < TRAIN {
                 bind_mem.store(&bind_story);
+                if let (Some(dg), Some(ca3)) = (&bind_dg, &mut bind_ca3) {
+                    let x = set_bits(&bind_story);
+                    ca3.store(&x, &dg.separate(&x));
+                }
             }
             bind_story = BitVector::new(BITS, Some(0));
             bind_list.clear();
@@ -2134,10 +2163,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             _ => bind_story.clone(),
                         };
                         // BIND_RARE=1: rarity-weighted recall
-                        let found = if std::env::var("BIND_RARE").is_ok() {
-                            bind_mem.recall_rare_scored(&cue, 64)
+                        let found = if let Some(ca3) = &bind_ca3 {
+                            // the learned hippocampus: pattern completion from the (habituated) cue
+                            let cue = if hippo_hab > 0.0 && bind_mem.len() > 50 { bind_mem.novel(&bind_story, hippo_hab) } else { bind_story.clone() };
+                            let (bits, strength) = ca3.recall(&set_bits(&cue), BITS);
+                            (!bits.is_empty()).then(|| (64 * (64 - (strength as u64).leading_zeros() as u64).saturating_sub(5), BitVector::from_bits(&bits, BITS)))
+                        } else if std::env::var("BIND_RARE").is_ok() {
+                            bind_mem.recall_rare_scored(&cue, 64).map(|(sc, e)| (sc, e.clone()))
                         } else {
-                            bind_mem.recall(&cue, 64).map(|e| (64, e))
+                            bind_mem.recall(&cue, 64).map(|e| (64, e.clone()))
                         };
                         if let Some((score, ep)) = found {
                             bind_strength = (score / 64).min(7);
@@ -2252,7 +2286,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         ]
                         .into_iter()
                         .flatten()
-                        .next();
+                        .fold(None, |acc: Option<(BitVector, usize)>, (v, src)| match acc {
+                            None => Some((v, src)),
+                            Some((mut a, s0)) if rollout_super && !(super_evidence && src == 3) => {
+                                a.or_mut(&v);
+                                Some((a, s0))
+                            }
+                            keep => keep,
+                        });
                         let o = fed.as_ref().and_then(|(v, src)| enc.decode(v).map(|w| (w, *src)));
                         fed_vec = fed.map(|f| f.0);
                         o

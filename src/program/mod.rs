@@ -17,7 +17,7 @@ pub mod hippocampus;
 pub use hippocampus::*;
 
 pub mod hippocampal_circuit;
-pub use hippocampal_circuit::{Hippocampus, HippocampusConfig, Recall};
+pub use hippocampal_circuit::{EpisodicCircuit, Hippocampus, HippocampusConfig, Recall};
 
 pub mod basal_ganglia;
 pub use basal_ganglia::*;
@@ -27,3 +27,6 @@ pub use prefrontal::*;
 
 pub mod modules;
 pub use modules::{Genome, Module, NetOp, Network, Prim};
+
+pub mod phase_circuit;
+pub use phase_circuit::PhaseHippocampus;

@@ -178,6 +178,28 @@ impl Pathway {
         out
     }
 
+    /// Like `drive`, with each source row's (decayed) weights multiplied by `weight(i)`
+    /// (in `Q16`), summed exactly in `Q16` units (no rounding per synapse).
+    pub(crate) fn drive_weighted(&self, sources: &[usize], epoch: u32, weight: impl Fn(usize) -> u64) -> Vec<u64> {
+        let mut out = vec![0u64; self.targets];
+        for &i in sources {
+            let Some(Some((row, at))) = self.rows.get(i) else { continue };
+            let wt = weight(i);
+            let shift = (epoch - at) as usize;
+            for p in shift..row.planes() {
+                let w = wt << (p - shift);
+                for (wi, &word) in row.plane(p).as_words().iter().enumerate() {
+                    let mut word = word;
+                    while word != 0 {
+                        out[wi * 64 + word.trailing_zeros() as usize] += w;
+                        word &= word - 1;
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Number of nonzero counters (stored synapses), as of their last normalization.
     fn synapses(&self) -> usize {
         self.rows

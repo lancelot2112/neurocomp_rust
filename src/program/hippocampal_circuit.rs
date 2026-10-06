@@ -52,7 +52,7 @@ use rand::{Rng, SeedableRng};
 
 use super::hippocampus::{top_k, DentateGyrus, Pathway};
 use crate::bitvec::BitVector;
-use crate::fixed::{div_round, ratio, Q16, ONE};
+use crate::fixed::{div_round, ratio, recip32, Q16, ONE};
 
 /// Sizes and rates of the circuit.
 #[derive(Clone, Debug)]
@@ -91,6 +91,16 @@ pub struct HippocampusConfig {
     /// Hashed projections (DG, EC III → CA1) for a large, sparse input space: each active
     /// input bit drives `fan_out` cells.
     pub hashed_fan_out: Option<usize>,
+    /// The perforant path weighs each cue input by an exact 1/n (n = events that wrote
+    /// it; from a reciprocal table) instead of shifting each counter by ⌊log2 n⌋, which
+    /// rounds single writes to zero once inputs are common.
+    pub inverse: bool,
+    /// Homeostatic centering of the CA3 drive from the cue: each CA3 cell keeps the
+    /// fraction of events it was written in (a running mean over about two half-lives)
+    /// and has its share of the cue's total drive subtracted, total × rate / Σ rates,
+    /// before the k winners are chosen. The subtracted shares add up to the total drive,
+    /// so crosstalk has mean zero; much-used cells no longer win by bulk. No division.
+    pub center: bool,
     pub seed: u64,
 }
 
@@ -116,6 +126,8 @@ impl HippocampusConfig {
             scale_all: false,
             out_bits: 0,
             hashed_fan_out: None,
+            inverse: false,
+            center: false,
             seed,
         }
     }
@@ -169,6 +181,8 @@ pub struct Hippocampus {
     tags: Vec<(Vec<u32>, Vec<usize>)>,
     /// Recalls answered from the cache (events with no change), and all recalls.
     pub cache_hits: std::cell::Cell<(usize, usize)>,
+    /// Each CA3 cell's running write rate (32 fractional bits; `center`).
+    ca3_rate: Vec<u64>,
 }
 
 impl Hippocampus {
@@ -213,6 +227,7 @@ impl Hippocampus {
             amounts: super::hippocampus::write_amounts(half_life),
             cache_hits: std::cell::Cell::new((0, 0)),
             tags: Vec::new(),
+            ca3_rate: vec![0; cfg.ca3_cells],
             cfg,
         }
     }
@@ -271,12 +286,13 @@ impl Hippocampus {
     }
 
     /// CA3 settled from a drive, through the recurrent weights.
-    fn settle(&self, from_cue: &[u32], k: usize) -> Vec<u32> {
-        let mut c = top_k(from_cue.iter().map(|&v| v as u64), k);
+    /// `from_cue` is in `Q16` units of counter weight.
+    fn settle(&self, from_cue: &[u64], k: usize) -> Vec<u32> {
+        let mut c = top_k(from_cue.iter().copied(), k);
         for _ in 0..self.cfg.settle {
             let active: Vec<usize> = c.iter().map(|&j| j as usize).collect();
             let rec = self.ca3_drive(&self.recurrent, &active);
-            c = top_k(rec.iter().zip(from_cue).map(|(r, f)| (r + f) as u64), k);
+            c = top_k(rec.iter().zip(from_cue).map(|(&r, &f)| ((r as u64) << 16) + f), k);
         }
         c
     }
@@ -318,7 +334,23 @@ impl Hippocampus {
             return Recall::default();
         }
         let writes = &self.perforant_writes;
-        let from_cue = self.perforant.drive_scaled(cue, self.epoch(), |i| 32 - writes[i].max(1).leading_zeros() - 1);
+        let mut from_cue: Vec<u64> = if self.cfg.inverse {
+            self.perforant.drive_weighted(cue, self.epoch(), |i| recip32(writes[i].max(1) as u64) >> 16)
+        } else {
+            self.perforant.drive_scaled(cue, self.epoch(), |i| 32 - writes[i].max(1).leading_zeros() - 1).into_iter().map(|v| (v as u64) << 16).collect()
+        };
+        if self.cfg.center {
+            let total: u64 = from_cue.iter().sum();
+            let rates: u64 = self.ca3_rate.iter().sum::<u64>() >> 16; // Σ rates, in Q16
+            if rates > 0 {
+                let per = recip32(rates); // 2^32 / (Σ rates · 2^16)
+                for (h, &r) in from_cue.iter_mut().zip(&self.ca3_rate) {
+                    // total × (r / 2^32) / (rates / 2^16) = total × r × per / 2^48
+                    let share = ((total as u128 * r as u128 * per as u128) >> 48) as u64;
+                    *h = h.saturating_sub(share);
+                }
+            }
+        }
         let c = self.settle(&from_cue, self.cfg.dg_k);
         self.read_out(c, Some(cue))
     }
@@ -402,6 +434,20 @@ impl Hippocampus {
         let factor = ONE as u64 + ((self.cfg.novelty_gain as u64 * novelty as u64) >> 16); // 1 + gain · novelty, Q16
         let amount = div_round(base * factor, ONE as u64).min((1u64 << planes) - 1) as u32;
         let c = self.ca3_code(content);
+        if self.cfg.center {
+            // running mean over min(stores, 2^s), s ≈ log2 of two half-lives
+            let s = 32 - (2 * self.half_life).leading_zeros();
+            let step = recip32((self.stores as u64).min(1u64 << s)) as i128;
+            let mut j = 0;
+            for (cell, r) in self.ca3_rate.iter_mut().enumerate() {
+                let hit = j < c.len() && c[j] as usize == cell;
+                if hit {
+                    j += 1;
+                }
+                let x: i128 = if hit { 1 << 32 } else { 0 };
+                *r = (*r as i128 + (((x - *r as i128) * step) >> 32)).clamp(0, 1 << 32) as u64;
+            }
+        }
         if unseen.len() >= 16 && self.tags.len() < 4096 {
             self.tags.push((c.clone(), unseen));
         }
@@ -489,6 +535,66 @@ impl Hippocampus {
     }
 }
 
+/// What the episodic harness needs from a hippocampal circuit, so different circuits
+/// (`Hippocampus`, `PhaseHippocampus`) can stand in for each other. Inputs are active
+/// input indices; recall and replay give EC V patterns (`Recall::ec`).
+pub trait EpisodicCircuit {
+    fn recall(&self, cue: &[usize]) -> Recall;
+    fn familiarity(&self, bits: &[usize]) -> u64;
+    fn novelty(&self, x: &[usize]) -> Q16;
+    fn store(&mut self, x: &[usize]) -> Q16;
+    fn store_event(&mut self, content: &[usize], context: &[usize]) -> Q16;
+    fn store_split(&mut self, content: &[usize], context: &[usize], out: &[usize]) -> Q16;
+    fn advance_time(&mut self);
+    fn take_tags(&mut self) -> Vec<(Vec<u32>, Vec<usize>)>;
+    fn replay_from(&self, start: &[u32]) -> Recall;
+    fn replay(&self, rng: &mut dyn rand::RngCore) -> Recall;
+    fn len(&self) -> usize;
+    /// (recalls answered from the cache, all recalls, novelty sum in `Q16`, stores judged)
+    fn stats(&self) -> (usize, usize, u64, usize);
+}
+
+impl EpisodicCircuit for Hippocampus {
+    fn recall(&self, cue: &[usize]) -> Recall {
+        Hippocampus::recall(self, cue)
+    }
+    fn familiarity(&self, bits: &[usize]) -> u64 {
+        Hippocampus::familiarity(self, bits)
+    }
+    fn novelty(&self, x: &[usize]) -> Q16 {
+        Hippocampus::novelty(self, x)
+    }
+    fn store(&mut self, x: &[usize]) -> Q16 {
+        Hippocampus::store(self, x)
+    }
+    fn store_event(&mut self, content: &[usize], context: &[usize]) -> Q16 {
+        Hippocampus::store_event(self, content, context)
+    }
+    fn store_split(&mut self, content: &[usize], context: &[usize], out: &[usize]) -> Q16 {
+        Hippocampus::store_split(self, content, context, out)
+    }
+    fn advance_time(&mut self) {
+        Hippocampus::advance_time(self)
+    }
+    fn take_tags(&mut self) -> Vec<(Vec<u32>, Vec<usize>)> {
+        Hippocampus::take_tags(self)
+    }
+    fn replay_from(&self, start: &[u32]) -> Recall {
+        Hippocampus::replay_from(self, start)
+    }
+    fn replay(&self, rng: &mut dyn rand::RngCore) -> Recall {
+        let mut r = rng;
+        Hippocampus::replay(self, &mut r)
+    }
+    fn len(&self) -> usize {
+        Hippocampus::len(self)
+    }
+    fn stats(&self) -> (usize, usize, u64, usize) {
+        let (h, a) = self.cache_hits.get();
+        (h, a, self.novelty_sum.0, self.novelty_sum.1)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,6 +678,29 @@ mod tests {
         let gated = run(3 * ONE);
         eprintln!("one-shot family bits recalled: novelty-gated {gated}, ungated {}", run(0));
         assert!(gated >= 12, "with novelty-gated encoding the rare episode's family should be recalled ({gated} of 16 bits)");
+    }
+
+    /// The one-shot test with exact 1/n weighting and homeostatic centering.
+    #[test]
+    fn one_shot_recall_with_inverse_weights_and_centering() {
+        for (inverse, center) in [(true, false), (false, true), (true, true)] {
+            let mut cfg = HippocampusConfig::new(BITS, 5);
+            (cfg.dg_cells, cfg.ca3_cells, cfg.ca1_cells, cfg.dg_fan_in, cfg.ca1_fan_in) = (4096, 2048, 2048, 100, 100);
+            (cfg.inverse, cfg.center) = (inverse, center);
+            let mut h = Hippocampus::new(cfg);
+            let mut rng = StdRng::seed_from_u64(9);
+            for i in 0..351 {
+                if i == 300 {
+                    h.store(&episode(&[0, 1, 50, 51]));
+                    continue;
+                }
+                let mut ws: Vec<usize> = (0..6).collect::<Vec<_>>().choose_multiple(&mut rng, 3).copied().collect();
+                ws.push(10 + rng.gen_range(0..6));
+                h.store(&episode(&ws));
+            }
+            let r = h.recall(&episode(&[0, 1, 50]));
+            assert!(overlap(&r.ec, &word(51)) >= 12, "inverse {inverse}, center {center}: {} of 16 family bits", overlap(&r.ec, &word(51)));
+        }
     }
 
     #[test]

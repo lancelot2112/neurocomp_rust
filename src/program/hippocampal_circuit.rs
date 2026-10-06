@@ -546,6 +546,16 @@ pub trait EpisodicCircuit {
     fn report_error(&self, _start: &[u32], _err: Q16) {}
     /// An offline period starts: replay order may be set now.
     fn begin_sleep(&mut self) {}
+    /// Inferred events from the facts stored since the last call (generative replay): each
+    /// (content ids in reading order, context ids, the source row). Default: none.
+    fn infer(&mut self, _max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
+        Vec::new()
+    }
+    /// The row the latest store wrote or strengthened (for a caller that keeps something
+    /// per row, e.g. the cortical state it was stored in).
+    fn last_row(&self) -> Option<u32> {
+        None
+    }
     fn take_tags(&mut self) -> Vec<(Vec<u32>, Vec<usize>)>;
     fn replay_from(&self, start: &[u32]) -> Recall;
     fn replay(&self, rng: &mut dyn rand::RngCore) -> Recall;

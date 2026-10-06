@@ -86,6 +86,8 @@ pub struct EngramConfig {
     /// (above: context). Used to index rows by word, in any slot, for the walk.
     pub word_space: usize,
     pub content_fields: usize,
+    /// Inferred events also in a variant with the partner word dropped (`infer_from`).
+    pub infer_drop: bool,
     /// Recall walks one step (`recall_walk`) when the winning row was reached through a
     /// cue id held by at most `walk_rare` rows.
     pub walk: bool,
@@ -113,6 +115,7 @@ impl Default for EngramConfig {
             content_fields: 64,
             walk: false,
             walk_rare: 2,
+            infer_drop: true,
         }
     }
 }
@@ -121,6 +124,8 @@ impl Default for EngramConfig {
 struct Row {
     serial: u32,
     what: Vec<u32>,
+    /// The content ids in the order they were read.
+    order: Vec<u32>,
     phase: Vec<u8>,
     out: Vec<usize>,
     time: u32,
@@ -142,6 +147,9 @@ pub struct EngramStore {
     /// Word → rows holding it in any content slot (for the walk).
     words: Vec<Vec<u32>>,
     walks: Cell<usize>,
+    /// New facts since the last `infer`: (row, its new ids).
+    facts: Vec<(u32, Vec<usize>)>,
+    last_row: Cell<Option<u32>>,
     place: HashMap<u64, Vec<u32>>,
     live: usize,
     evicted: usize,
@@ -172,6 +180,8 @@ impl EngramStore {
             what: Vec::new(),
             words: Vec::new(),
             walks: Cell::new(0),
+            facts: Vec::new(),
+            last_row: Cell::new(None),
             place: HashMap::default(),
             live: 0,
             evicted: 0,
@@ -418,6 +428,79 @@ impl EngramStore {
         Recall { ec: r2.out.clone(), strength: o2 * 512, ca1_match: 0, ca3: vec![s2], ca1: vec![s, s2] }
     }
 
+    /// Inferred events from a new fact (generative replay): the walk run forward. The fact
+    /// row (e.g. "lucy is a jones") links its new word N (a word no other row holds) to a
+    /// partner F: among the rows of the same schema (sharing all but two content ids, "X is
+    /// a Y ."), the fact's most variable word (a filler: jones, not the frame: is, a).
+    /// Rows of that schema are not sources (they are facts of the same kind). Each row of another episode that holds F ("john jones went
+    /// to the hallway", with that story's context) becomes an inferred event: its content in
+    /// reading order with the word in N's slot replaced by N (or N put first), and F
+    /// dropped ("lucy went to the hallway"); and the same keeping F. Returns up to
+    /// `max_rows` source rows' events, most recent first, as (content ids in order, context
+    /// ids, source row).
+    pub fn infer_from(&self, fact: u32, new: &[usize], max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
+        let ws = self.cfg.word_space.max(1);
+        let Some(r) = self.row(fact) else { return Vec::new() };
+        let count = |w: usize| self.words.get(w).map_or(0, |l| l.len());
+        // N: a new word (held by this row alone), not just a known word in a new slot
+        let Some(&n_id) = new.iter().find(|&&i| i / ws < self.cfg.content_fields && count(i % ws) <= 1) else { return Vec::new() };
+        let (n_word, n_slot) = (n_id % ws, n_id / ws);
+        // the fact's schema: rows that share all but two of its content words, in any slot
+        // ("X is a Y ."); slot ids vary with the learned roles, words do not
+        let fact_words = self.content_words(&r.what);
+        let mut shared: HashMap<u32, u32> = HashMap::default();
+        for &w in &fact_words {
+            for &t in self.words.get(w).map_or(&[][..], |l| &l[..]) {
+                if t != fact && self.row(t).is_some() {
+                    *shared.entry(t).or_default() += 1;
+                }
+            }
+        }
+        let need = (fact_words.len() as u32).saturating_sub(2).max(2);
+        let similar: Vec<u32> = shared.iter().filter(|e| *e.1 >= need).map(|e| *e.0).collect();
+        // F, the partner: the fact's most variable word across its schema (a filler like
+        // "jones", not a frame word like "is" that every such row has), held elsewhere too
+        let share = |w: usize| similar.iter().filter(|&&t| self.row(t).map_or(false, |x| self.content_words(&x.what).contains(&w))).count();
+        let partner = fact_words
+            .iter()
+            .copied()
+            .filter(|&w| w != n_word && count(w) > 1 && share(w) * 10 < similar.len().max(1) * 9)
+            .min_by_key(|&w| (share(w), count(w)));
+        let Some(f) = partner else { return Vec::new() };
+        // sources: rows of other episodes holding F, outside the fact's own schema
+        let mut sources: Vec<u32> = self.words.get(f).map_or(Vec::new(), |l| l.iter().copied().filter(|&t| t != fact && !similar.contains(&t)).collect());
+        sources.sort_unstable_by(|a, b| b.cmp(a));
+        let mut out = Vec::new();
+        for t in sources.into_iter().filter_map(|t| self.row(t).map(|x| (t, x))).filter(|(_, x)| x.phase != r.phase).take(max_rows) {
+            let row = t.1;
+            let context: Vec<usize> = row.what.iter().map(|&i| i as usize).filter(|&i| i / ws >= self.cfg.content_fields).collect();
+            for keep_partner in [false, true] {
+                if !keep_partner && !self.cfg.infer_drop {
+                    continue;
+                }
+                let mut seq: Vec<usize> = Vec::new();
+                let mut placed = false;
+                for &i in &row.order {
+                    let i = i as usize;
+                    let w = i % ws;
+                    if i / ws == n_slot && !placed {
+                        seq.push(n_id);
+                        placed = true;
+                    } else if w == f && !keep_partner {
+                        continue;
+                    } else {
+                        seq.push(i);
+                    }
+                }
+                if !placed {
+                    seq.insert(0, n_id);
+                }
+                out.push((seq, context.clone(), t.0));
+            }
+        }
+        out
+    }
+
     /// Walks taken.
     pub fn walks(&self) -> usize {
         self.walks.get()
@@ -584,6 +667,7 @@ impl EpisodicCircuit for EngramStore {
             };
             if same {
                 self.deduped += 1;
+                self.last_row.set(Some(s));
                 if !here && self.cfg.dedup == Dedup::Move {
                     // last seen here: re-index the row under the current place
                     let new = place_key(&self.phase);
@@ -606,9 +690,11 @@ impl EpisodicCircuit for EngramStore {
         let mut out = out.to_vec();
         out.sort_unstable();
         out.dedup();
+        let order: Vec<u32> = content.iter().map(|&i| i as u32).collect();
         let row = Row {
             serial: 0,
             what,
+            order,
             phase: self.phase.clone(),
             out,
             time: self.now,
@@ -617,7 +703,9 @@ impl EpisodicCircuit for EngramStore {
             err: Cell::new(ONE),
         };
         let s = self.append(row);
+        self.last_row.set(Some(s));
         if unseen.len() >= self.cfg.tag_min && self.tags.len() < 4096 {
+            self.facts.push((s, unseen.clone()));
             self.tags.push((vec![s], unseen));
         }
         novelty
@@ -640,6 +728,15 @@ impl EpisodicCircuit for EngramStore {
                 r.err.set(err);
             }
         }
+    }
+
+    fn last_row(&self) -> Option<u32> {
+        self.last_row.get()
+    }
+
+    fn infer(&mut self, max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
+        let facts = std::mem::take(&mut self.facts);
+        facts.iter().flat_map(|(r, new)| self.infer_from(*r, new, max_rows)).collect()
     }
 
     fn begin_sleep(&mut self) {
@@ -812,5 +909,24 @@ mod tests {
         // without the walk, the one row holding "tom" wins and has no place in it
         let plain = m.recall_row(&q, false);
         assert!(!plain.ec.iter().any(|&i| i % 4096 == kitchen || i % 4096 == garden));
+    }
+    #[test]
+    fn a_new_fact_yields_inferred_events() {
+        let ctx = |w: usize| b(w, 64);
+        let (tom, is, a, smith, john, went, to, the, kitchen, autumn, dot) = (1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13);
+        let mut m = EngramStore::new(EngramConfig::default());
+        for _ in 0..3 {
+            let mut e = event(&[john, smith, went, to, the, kitchen, dot]);
+            e.push(ctx(autumn));
+            m.store_split(&event(&[john, smith, went, to, the, kitchen, dot]), &[ctx(autumn)], &e);
+            m.end_sequence();
+        }
+        m.take_tags();
+        m.facts.clear();
+        m.store(&event(&[tom, is, a, smith, dot]));
+        let inferred = m.infer(8);
+        // tom took john's slot; smith dropped (and kept, in the second variant)
+        assert!(inferred.iter().any(|(seq, c, _)| seq == &vec![b(tom, 0), b(went, 2), b(to, 3), b(the, 4), b(kitchen, 5), b(dot, 6)] && c == &vec![ctx(autumn)]), "{inferred:?}");
+        assert!(inferred.iter().any(|(seq, _, _)| seq.contains(&b(smith, 1))));
     }
 }

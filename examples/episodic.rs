@@ -966,6 +966,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // ENGRAM_WALK=1: recall walks one step through a rare cue binding (experiment 59)
         cfg.walk = std::env::var("ENGRAM_WALK").is_ok();
         cfg.walk_rare = henv("ENGRAM_WALK_RARE", 2.0) as usize;
+        // INFER_KEEP_ONLY=1: inferred events keep the partner word ("lucy jones went to …")
+        cfg.infer_drop = std::env::var("INFER_KEEP_ONLY").is_err();
         // ENGRAM_DEDUP=any | move (default) | place
         cfg.dedup = match std::env::var("ENGRAM_DEDUP").as_deref() {
             Ok("any") => Dedup::Any,
@@ -1020,6 +1022,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let ctx_offset = BITS / 2 + 12_345 % (BITS / 2);
     let mut bind_prev = BitVector::new(BITS, Some(0)); // the story's bindings before this sentence
     let sem_hreplays: usize = std::env::var("SEMANTIC_HREPLAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
+    // INFER_REPLAY=reps (generative replay into the higher area), INFER_ROWS (source rows per
+    // new fact, 32)
+    let infer_reps: Option<usize> = std::env::var("INFER_REPLAY").ok().and_then(|v| v.parse().ok());
+    let infer_rows = henv("INFER_ROWS", 32.0) as usize;
+    // inferred pairs only grow kernels, masked to the new word, the word before and the
+    // shared state; INFER_LEARN=1 uses area.learn instead (it blames the kernels that fire
+    // and masks growth by the live window: it lowered accuracy in every test, experiment 61)
+    let infer_grow = std::env::var("INFER_LEARN").is_err();
+    let mut infer_stats = [0usize; 2]; // inferred events, (prefix → word) pairs taught
+    let mut row_state: HashMap<u32, Vec<u32>> = HashMap::default(); // engram row → higher-area state
     let mut sem_hstats = [0usize; 4]; // replays, decoded with content, cued by a new name, marked consolidated
     // REPLAY_GEN=1 (with HIPPO_SELF, SPARSE_BIND, a higher area with HIER_SLEEP_GEN): at each
     // sleep the hippocampus replays freely (from random CA3 cells, settling into attractors:
@@ -1404,6 +1416,112 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         area.learn(&x, &enc.codes[*ans], &mut rng);
                         replayed += 1;
                     }
+                }
+            }
+        }
+        // INFER_REPLAY=reps: generative replay. At each sleep the hippocampus composes events
+        // from the facts stored since the last one (`infer`: "lucy is a jones" + a jones event
+        // of another story → "lucy went to the hallway", in that story's context), and the
+        // higher area learns each word of them from the words before it and the story's
+        // unfamiliar context words, `reps` times: the walk's results taught to the cortex.
+        if let (Some(reps), true, Some(hc)) = (infer_reps, hier && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
+            let events = hc.infer(infer_rows);
+            let size = hc.len().max(1) as u64;
+            // per inferred event: its words and the higher area's state when its source was read
+            let mut items: Vec<(Vec<usize>, BitVector)> = Vec::new();
+            for (seq, ctx, src) in &events {
+                let mut state = BitVector::new(BITS, Some(0));
+                match row_state.get(src).filter(|_| std::env::var("INFER_CTX_STATE").is_err()) {
+                    // the higher area's own state when the source event was read
+                    Some(bits) => {
+                        for &b in bits {
+                            state.bit_set(b as usize);
+                        }
+                    }
+                    None => {
+                        for &i in ctx {
+                            // unfamiliar context only, as in answer-trace consolidation
+                            if (hc.familiarity(&[i]) << 16) <= Q_03 as u64 * size {
+                                state.or_mut(&enc.codes[i % 4096]);
+                            }
+                        }
+                    }
+                }
+                let words: Vec<usize> = seq.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len()).collect();
+                if words.len() >= 2 {
+                    items.push((words, state));
+                }
+            }
+            let has = |st: &BitVector, w: usize| st.as_words().iter().zip(enc.codes[w].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 28;
+            // the schema across instances: for each new word, the targets every one of its
+            // events has are frame (went, to, the); the varying ones are taught. For each
+            // distinct event, the state is what its sources share (the season), not each
+            // source story's own names and filler.
+            let mut by_new: HashMap<usize, Vec<usize>> = HashMap::default();
+            for (i, (w, _)) in items.iter().enumerate() {
+                by_new.entry(w[0]).or_default().push(i);
+            }
+            for (_, idx) in by_new.iter() {
+                let mut freq: HashMap<usize, usize> = HashMap::default();
+                for &i in idx {
+                    let mut seen: Vec<usize> = items[i].0[1..].to_vec();
+                    seen.sort_unstable();
+                    seen.dedup();
+                    for w in seen {
+                        *freq.entry(w).or_default() += 1;
+                    }
+                }
+                let frame = |w: usize| freq.get(&w).copied().unwrap_or(0) * 10 >= idx.len() * 9;
+                let mut done: Vec<Vec<usize>> = Vec::new();
+                for &i in idx {
+                    let words = &items[i].0;
+                    if done.contains(words) {
+                        continue;
+                    }
+                    done.push(words.clone());
+                    let same: Vec<&BitVector> = idx.iter().filter(|&&j| &items[j].0 == words).map(|&j| &items[j].1).collect();
+                    let mut state = BitVector::new(BITS, Some(0));
+                    for w in 0..vocab.len() {
+                        if same.iter().filter(|st| has(st, w)).count() * 2 > same.len() {
+                            state.or_mut(&enc.codes[w]);
+                        }
+                    }
+                    if std::env::var("INFERDIAG").is_ok() {
+                        let st: Vec<&str> = (0..vocab.len()).filter(|&w| has(&state, w)).map(|w| vocab[w]).collect();
+                        eprintln!("  INFERDIAG s_i {s_i}: {:?} from {} sources | shared state {:?}", words.iter().map(|&w| vocab[w]).collect::<Vec<_>>(), same.len(), st);
+                    }
+                    for k in 1..words.len() {
+                        if infer_grow && frame(words[k]) {
+                            continue;
+                        }
+                        let mut bag = BitVector::new(BITS, Some(0));
+                        for &w in &words[..k] {
+                            bag.or_mut(&enc.codes[w]);
+                        }
+                        let mut x = bag.as_words().to_vec();
+                        x.extend_from_slice(state.as_words());
+                        let x = BitVector::from_words(x);
+                        if infer_grow {
+                            // grow only: a kernel keyed on the new word, the word before the
+                            // target and the shared state (no blame on the kernels that fire)
+                            let mut mask = BitVector::new(2 * BITS, Some(0));
+                            let (n, p) = (enc.codes[words[0]].as_words(), enc.codes[words[k - 1]].as_words());
+                            for (i, m) in mask.as_words_mut().iter_mut().enumerate() {
+                                *m = if i < BITS / 64 { n[i] | p[i] } else { state.as_words()[i - BITS / 64] };
+                            }
+                            area.column.l23.set_growth_mask(Some(mask));
+                            for _ in 0..reps {
+                                area.column.l23.grow(&x, &enc.codes[words[k]], 2, &mut rng);
+                            }
+                            area.column.l23.set_growth_mask(None);
+                        } else {
+                            for _ in 0..reps {
+                                area.learn(&x, &enc.codes[words[k]], &mut rng);
+                            }
+                        }
+                        infer_stats[1] += 1;
+                    }
+                    infer_stats[0] += 1;
                 }
             }
         }
@@ -3154,6 +3272,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
                                 let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)).collect();
                                 hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
+                                // the cortical state this event was read in (the higher area's
+                                // slow state at the sentence's start), kept per row for replay
+                                if let (true, Some(r)) = (infer_reps.is_some() && hier, hc.last_row()) {
+                                    row_state.insert(r, set_bits(&area.state(&BitVector::new(BITS, Some(0)))).into_iter().map(|b| b as u32).collect());
+                                }
                             } else {
                                 hc.store_event(&set_bits(&content), &set_bits(&context));
                             }
@@ -3401,6 +3524,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
+        }
+        if infer_reps.is_some() {
+            eprintln!("  INFER seed {seed}: {} inferred events replayed to the higher area, {} word pairs taught", infer_stats[0], infer_stats[1]);
         }
         if hippo_self {
             eprintln!(

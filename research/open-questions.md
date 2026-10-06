@@ -66,8 +66,11 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   in one exposure (28–76%), and a setting slot emerges. But the schema group's mix keeps
   trusting its cortex on new names. Familiarity-gated arbitration that keeps learning at
   test brings new names to 28–52% after 2–4 exposures. But the no-schema group learns
-  them as well or better. Next: class-level cortical predictions for novel items, so the
-  schema supports the episode instead of competing with it.
+  them as well or better. Filtering the memory's readout by the cortex's class expectation
+  ([37](experiments/37-schema-supports-episode.md)) lifts new names to 28–44% after one
+  exposure, and trained names to 71–82%. Next:
+  - **a test where new items follow the learned structure,** for a real schema advantage;
+  - **consolidation of one-shot episodes in sleep.**
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

@@ -348,6 +348,11 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   time instead of holding it: the world as external memory.
 
 ## Roles and schemas ([31](experiments/31-role-cells-and-transfer.md))
+- **van Kesteren, M. T. R., Ruiter, D. J., Fernández, G. & Henson, R. N. (2012).** *How
+  schema and novelty augment memory formation.* Trends in Neurosciences 35. Prefrontal
+  schemas and hippocampal novelty together ([37](experiments/37-schema-supports-episode.md)).
+- **Bartlett, F. C. (1932).** *Remembering.* Cambridge University Press. Recall is
+  reconstructed toward the schema.
 - **Wagner, U., Gais, S., Haider, H., Verleger, R. & Born, J. (2004).** *Sleep inspires
   insight.* Nature 427. More people discover a hidden rule after sleep. **Lewis, P. A. &
   Durrant, S. J. (2011).** *Overlapping memory replay during sleep builds cognitive

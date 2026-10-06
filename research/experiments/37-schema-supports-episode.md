@@ -47,7 +47,7 @@ once), 46–67% (twice), 59–77% (4 times).
 1. **The schema supports the episode when it supplies the kind.** Filtering the memory's
    readout by the cortex's expectation lifts new names after one exposure to 28–44% (from
    16–28%), and after four to 39–66%.
-   - It also lifts the trained names, 72–82% (from 62–70%): the same filter cleans every
+   - It also lifts the trained names, 71–82% (from 62–70%): the same filter cleans every
      recall, not only the novel ones.
    - The cortex knows "a place goes here"; memory knows "this person, in this season, went
      to the bathroom". Together they answer better than either.
@@ -68,8 +68,9 @@ once), 46–67% (twice), 59–77% (4 times).
    - recall by structure, filtered by the cortex's expectation;
    - arbitration that learns, online, when to trust memory over cortex.
 
-   It answers new names from one exposure about as well as it answers names it was
-   trained on for thousands of stories, before the filter (36–44% against 62–70%).
+   After one exposure it answers new names at 28–44%, against 0–8% for names never
+   shown.
+
 
 ## Next
 - **A schema advantage proper:** new items whose answers follow the learned structure,

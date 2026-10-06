@@ -166,7 +166,7 @@ pub struct Hippocampus {
     /// Novelty tags: CA3 codes of events that contained something never stored before (at
     /// least a word's worth of content inputs no event had written), kept until `take_tags`
     /// (synaptic tagging; the events sleep replays first).
-    tags: Vec<Vec<u32>>,
+    tags: Vec<(Vec<u32>, Vec<usize>)>,
     /// Recalls answered from the cache (events with no change), and all recalls.
     pub cache_hits: std::cell::Cell<(usize, usize)>,
 }
@@ -392,7 +392,7 @@ impl Hippocampus {
         let novelty = self.novelty(x);
         // a novelty tag: at least 16 content inputs no event has written yet (in a sparse
         // binding space, a new binding)
-        let unseen = content.iter().filter(|&&b| self.perforant_writes.get(b).copied().unwrap_or(0) == 0).count();
+        let unseen: Vec<usize> = content.iter().copied().filter(|&b| self.perforant_writes.get(b).copied().unwrap_or(0) == 0).collect();
         self.last_novelty = novelty;
         self.novelty_sum.0 += novelty as u64;
         self.novelty_sum.1 += 1;
@@ -402,8 +402,8 @@ impl Hippocampus {
         let factor = ONE as u64 + ((self.cfg.novelty_gain as u64 * novelty as u64) >> 16); // 1 + gain · novelty, Q16
         let amount = div_round(base * factor, ONE as u64).min((1u64 << planes) - 1) as u32;
         let c = self.ca3_code(content);
-        if unseen >= 16 && self.tags.len() < 4096 {
-            self.tags.push(c.clone());
+        if unseen.len() >= 16 && self.tags.len() < 4096 {
+            self.tags.push((c.clone(), unseen));
         }
         let a = self.ca1_code(x);
         let c_mask = BitVector::from_bits(&c.iter().map(|&j| j as usize).collect::<Vec<_>>(), self.cfg.ca3_cells);
@@ -449,8 +449,9 @@ impl Hippocampus {
         *self.cache.borrow_mut() = None;
     }
 
-    /// The novelty-tagged CA3 codes since the last call (for prioritised replay).
-    pub fn take_tags(&mut self) -> Vec<Vec<u32>> {
+    /// The novelty tags since the last call: each event's CA3 code (for prioritised replay)
+    /// and the content inputs that were new when it was stored (what the tag is for).
+    pub fn take_tags(&mut self) -> Vec<(Vec<u32>, Vec<usize>)> {
         std::mem::take(&mut self.tags)
     }
 

@@ -91,6 +91,10 @@ flow that connects them is still written by hand in the experiment harness
 **Hand-coded:**
 - **Rollout control:** where a choice point is (the page contradicts the expectation),
   the source order, the 4-step cap, and stopping when the page fits again.
+- **The hippocampus can now run on its own** (`HIPPO_SELF SPARSE_BIND REPLAY_TAGGED`,
+  [49](../experiments/49-sparse-binding-space.md)). Its own familiarity, novelty tags and
+  tagged replay teach the semantic store. Its binding space is still assigned (a word's
+  code in a slot's field), not a learned entorhinal code.
 - **The hippocampus in the current pipeline is algorithmic by default.** `HIPPO=full`
   swaps in the full learned circuit ([46](../experiments/46-full-hippocampus.md)). It
   recalls one-shot episodes by novelty-gated encoding and presynaptic scaling, and is as

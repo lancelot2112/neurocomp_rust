@@ -114,6 +114,11 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     the crowded binding space (about 12 bindings per EC bit), where per-synapse counts
     cannot tell a new binding from old ones. Next: a sparse binding space, then tagged
     replay.
+  - **A sparse binding space** ([49](experiments/49-sparse-binding-space.md)): with each
+    binding owning its inputs, the hippocampus stores, tags and replays one-shot facts
+    and teaches the semantic store on its own (family 87–100% with it lesioned on two
+    seeds). Open: a learned entorhinal layer instead of assigned fields, seed 1, and
+    answer-trace consolidation by the same replay.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

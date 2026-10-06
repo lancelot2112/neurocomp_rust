@@ -1356,9 +1356,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // the hippocampus replays on its own (cue-free, from random CA3 starts); each
             // replay is read through the slot cells: in every slot, the words bound there
             let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-            let tagged: Vec<&Vec<u32>> = tags.iter().flat_map(|t| std::iter::repeat(t).take(reps)).collect();
+            let tagged: Vec<&(Vec<u32>, Vec<usize>)> = tags.iter().flat_map(|t| std::iter::repeat(t).take(reps)).collect();
+            // a tag's new inputs, read as a word: field → slot, bits → the word code they match
+            let tag_word = |novel: &[usize]| -> Option<usize> {
+                let mut code = BitVector::new(BITS, Some(0));
+                for &b in novel {
+                    code.bit_set(b % BITS);
+                }
+                (0..vocab.len()).max_by_key(|&w| enc.codes[w].as_words().iter().zip(code.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>())
+            };
             for i in 0..tagged.len() + sem_hreplays * reps {
-                let r = if i < tagged.len() { hc.replay_from(tagged[i]) } else { hc.replay(&mut rng) };
+                let r = if i < tagged.len() { hc.replay_from(&tagged[i].0) } else { hc.replay(&mut rng) };
                 sem_hstats[0] += 1;
                 if r.ec.is_empty() {
                     continue;
@@ -1376,7 +1384,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
-                let Some(&(cue_w, _)) = items.iter().min_by_key(|x| x.1) else { continue };
+                if std::env::var("TAGDIAG").is_ok() && i < tagged.len() && s_i >= TRAIN - 500 {
+                    let d: Vec<String> = items.iter().map(|(w, f)| format!("{}:{}", vocab[*w], f)).collect();
+                    eprintln!("  TAGDIAG s_i {s_i} tagged replay {i}/{}: {} bits -> {:?}", tagged.len(), r.ec.len(), d);
+                }
+                // the cue: for a tagged replay, what was new in the event (its tag); else the
+                // least familiar binding read out
+                let Some(cue_w) = (if i < tagged.len() { tag_word(&tagged[i].1) } else { None }).or_else(|| items.iter().min_by_key(|x| x.1).map(|x| x.0)) else { continue };
                 let mut content = BitVector::new(BITS, Some(0));
                 for &(w, _) in items.iter().filter(|x| x.0 != cue_w) {
                     content.or_mut(&enc.codes[w]);

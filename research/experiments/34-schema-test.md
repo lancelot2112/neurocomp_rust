@@ -48,7 +48,7 @@ With memory, the recall contained the answer at 47–58% of test answers (schema
 ## Findings
 1. **No one-exposure learning, with or without a schema.** After 1, 2 or 4 exposures per
    pair, new names stay at 5–18%, no better than never seen (6–8%) or the no-schema group.
-   The schema group knows the trained names (56–74%) but does not assimilate new ones.
+   The schema group knows the trained names (46–74%) but does not assimilate new ones.
 2. **The cortical route is one-shot but over-specific.** A single exposure does grow a
    kernel (growth is one-shot), but its key is sampled from that story's window, which
    holds the story's own filler words. At test the filler differs, and the kernel does

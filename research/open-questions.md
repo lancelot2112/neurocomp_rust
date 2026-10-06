@@ -72,8 +72,9 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   - **a test where new items follow the learned structure,** for a real schema advantage;
   - **consolidation:** replaying novel episodes' gist in sleep
     ([38](experiments/38-consolidation-of-one-shot-episodes.md)) moves some pairs into the
-    cortex after 4 exposures (lesioned 13–31%), little after 1. Next: interleaved replay
-    feeding sleep generalisation.
+    cortex after 4 exposures (lesioned 13–31%), little after 1. Interleaved replay feeding
+    generalisation makes it steadier (22–27%). Next: a test where new items follow the
+    learned structure.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

@@ -66,10 +66,40 @@ Each run replayed 770–1,210 traces (r = 3).
      can then drop what varies. Here each episode is replayed alone, and generalisation
      runs on a separate buffer.
 
+## Interleaved replay feeding generalisation (`CONSOLIDATE_INTERLEAVE=1`)
+- **Interleaved.** Each sleep replays the novel traces mixed with as many randomly drawn
+  familiar ones (trained names), shuffled anew in each of r = 3 rounds.
+- **Feeding generalisation.** Every replayed (input, target) pair also enters the replay
+  that sleep generalisation reads (`KernelClass::add_replay`), and generalisation from
+  replay ([33](33-generalisation-during-sleep.md)) runs right after. Rules can then form
+  across new and old episodes.
+
+| Schema group, seeds 0 / 1 / 2 | Lesioned: trained | Lesioned: new, once | Lesioned: new, 4 times | Intact: trained | Intact: new, once | Intact: new, 4 times |
+|---|---|---|---|---|---|---|
+| No consolidation | 60–68% | 10 / 4 / 6% | 12 / 18 / 8% | 71–82% | 36 / 28 / 44% | 39 / 47 / 66% |
+| Block replay (above) | 60–68% | 8 / 10 / 14% | 31 / 22 / 13% | 64–78% | 11 / 24 / 51% | 32 / 44 / 54% |
+| **Interleaved + generalisation** | 62–73% | 15 / 10 / 9% | **27 / 23 / 22%** | 66–81% | 26 / 32 / 56% | 37 / 49 / 60% |
+
+The generalisation pass formed 35–83 general rules per run.
+
+5. **Interleaving makes consolidation steadier, not much larger.** After four exposures
+   the lesioned cortex answers 22–27% on every seed (block replay 13–31%, none 8–18%).
+   Trained names hold up slightly better under the lesion (62–73%). With the hippocampus
+   intact, interleaving no longer costs new names as block replay did (26–56% and 37–60%,
+   close to no consolidation).
+6. **One-exposure consolidation is still out of reach.** After a single exposure the
+   lesioned cortex stays at 9–15%. Generalisation needs at least three confirmed
+   near-misses per kernel, and one episode replayed among others supplies one. In Tse's
+   rats, the new pair fits a schema that already holds the structure, so consolidation
+   only has to add one association. Here every new pair is arbitrary within its kind,
+   which is the test-design point already noted in [37](37-schema-supports-episode.md).
+
 ## Next
-- **Interleaved replay with generalisation:** put the replayed gists into the replay
-  buffer that sleep generalisation reads ([33](33-generalisation-during-sleep.md)), so
-  general rules form across the new episodes and the old ones.
+- **A test where new items follow the learned structure** (a new name joining a family
+  whose places follow a known rule). There, consolidation of one exposure should be
+  possible, because the general rule already exists and only the new item's membership
+  must be learned.
+- ~~**Interleaved replay with generalisation:**~~ done (above).
 - **Diagnose the consolidated kernels:** at a lesioned new-name test, which kernels
   match, and which of their inputs are missing?
 

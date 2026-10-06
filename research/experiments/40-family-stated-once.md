@@ -16,7 +16,8 @@ thinking-in-steps problem of the [roadmap](../roadmap.md).
 Run: `… TASK=season SEASON_LEN=4 POLICIES=nomemory HIER=1 HIER_LEVELS=1 MIX=1
 HIER_DREAM=1 HIER_SLEEP_GEN=3 BIND=1 BIND_RARE=1 BIND_FAM=1 MIX_TEST_LEARN=1 CLASS_READ=1
 FAMILY=1 FAMILY_STATED=1 SCHEMA_K=1 COMPLETE=rollout-test cargo run --release --example
-episodic`. Other settings as in [39](39-schema-advantage.md).
+episodic`. The exact settings are the `family-stated` entry of
+[`scripts/regress.tsv`](../../scripts/regress.tsv).
 
 ## Task
 - **As in 39:** two families (smith, jones), and the family decides the place per season.

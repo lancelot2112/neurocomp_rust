@@ -227,21 +227,25 @@ the transformer baseline ([comparison](concepts/brain-transformer-comparison.md)
 
 Then real text again, where the earlier stages (03–05) left off.
 
-## To do: infrastructure
+## Infrastructure: repeatable runs and a regression suite (done)
 These are not research stages. They keep earlier results trustworthy as the code grows.
-- **Exactly repeatable runs.** Two runs at the same seed can differ by about a point
-  ([40](experiments/40-family-stated-once.md)). The likely cause is hash-map iteration
-  order (Rust's `HashMap` is randomly seeded per process) in kernel matching or
-  ranking. Replace it with a fixed-order map or a seeded hasher wherever iteration order
-  can change a result. Then check that two runs at one seed print identical output.
-- **An experiment regression suite.** Today `cargo test` checks only the building blocks
-  (about 120 unit tests in `src/`). The experiments are example programs run by hand,
-  so nothing checks that their numbers still hold after a code change. The plan:
-  - a script (`scripts/regress.sh`) that reruns a short version of each key experiment
-    (fewer stories, one or two seeds) with its recorded settings;
-  - a table of expected results, so the run fails if accuracy drops more than a set
-    margin below the recorded figure;
-  - first entries: the season task with story boundaries (26), saccades (29), role
-    transfer (31), sleep generalisation (33), slot memory (36), the schema advantage
-    (39) and the stated family (40);
-  - this needs repeatable runs first, or the margins must absorb the noise.
+- **Exactly repeatable runs.** Rust's `HashMap` seeds its hasher randomly per process,
+  and iteration order in kernel matching, sleep merging and pruning, and tallies moved
+  results by about a point between runs at the same seed
+  ([40](experiments/40-family-stated-once.md)). Every map and set in the library and the
+  experiment harness now uses `neurocomp::det` (a fixed-key hasher, `src/det.rs`), and two
+  runs at one seed print identical output.
+  - The fixed order is a different sample than earlier runs: seed 0 of experiment 40
+    moved from 35 to 42% held out. Figures in the experiment pages are from the old,
+    random order, one draw among several. Figures recorded from now on are exact.
+- **An experiment regression suite.** `cargo test` checks the building blocks (121 unit
+  tests in `src/`). [`scripts/regress.sh`](../scripts/regress.sh) reruns the key
+  experiments at their recorded settings (seed 0, full length, in parallel: about a
+  minute on 4 cores). It compares answer accuracy on trained and held-out items with
+  [`scripts/regress.tsv`](../scripts/regress.tsv) and fails on a drop of more than
+  `MARGIN` (3) points. Since runs are deterministic, it also reports any change within
+  the margin. `--record` writes new figures after an intended change.
+  - **Entries:** story boundary (26), saccades (29), role transfer (31), sleep
+    generalisation (33), slot memory (36), schema advantage (39), stated family (40).
+  - **Run it before every commit** that touches `src/` or the harness. Add an entry with
+    each new experiment.

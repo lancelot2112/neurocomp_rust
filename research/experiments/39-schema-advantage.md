@@ -11,8 +11,9 @@ schema now let them be answered at once, and is that knowledge in the cortex?
 
 Run: `… TASK=season SEASON_LEN=4 POLICIES=nomemory HIER=1 HIER_LEVELS=1 MIX=1
 HIER_DREAM=1 HIER_SLEEP_GEN=3 BIND=1 BIND_RARE=1 BIND_FAM=1 MIX_TEST_LEARN=1 CLASS_READ=1
-FAMILY=1 SCHEMA_K=0 cargo run --release --example episodic`. Other settings as in 31,
-with the full system of [37](37-schema-supports-episode.md).
+FAMILY=1 SCHEMA_K=0 cargo run --release --example episodic`, with the full system of
+[37](37-schema-supports-episode.md). The exact settings are the `schema-advantage` entry of
+[`scripts/regress.tsv`](../../scripts/regress.tsv).
 
 ## Task: families
 - **Two families, smith and jones.** Each has its own place per season, and every member

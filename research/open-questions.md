@@ -30,8 +30,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
 - **The chain of areas** ([25](experiments/25-area-chain.md), [26](experiments/26-context-and-readback.md)):
   with a context boundary at each story, three higher areas reach 86–98% on the season
   task, each area extending the reach as its window predicts. Open:
-  - **Detect boundaries** instead of being told (a sustained surprise jump, or a learned
-    "new story" signal).
+  - ~~Detect boundaries~~: done in [27](experiments/27-boundary-detection.md). A rare
+    fact contradicted by a newer one of the same kind gives 90–99%, as good as being
+    told. Surprise spikes do not work here. Open: learn the "rare" and "same kind"
+    thresholds.
   - **Recency within a story:** a decaying state (each bit survives a sentence with
     probability p).
   - **Order:** position-bound codes.

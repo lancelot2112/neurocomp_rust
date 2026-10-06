@@ -723,6 +723,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // test sentences with a detected boundary: (story-opening, other); story-opening sentences
     let mut bound_hits = (0usize, 0usize);
     let mut story_openings = 0usize;
+    let mut bound_fired = false; // a boundary was detected in the current sentence
     // READBACK=top|all: self-supervised read-back. At each sentence end, an area says back
     // the most recent rare word its window holds (rare: seen in fewer than READBACK_RARE of
     // the sentences so far, default 0.02). Its target is that word, from its own input; it
@@ -919,6 +920,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             sent_words += 1;
             if share < predicted_share {
                 surprising.or_mut(code);
+                // a fact conflict (BOUNDARY): this rare surprising word against a different
+                // rare word of the same kind still held; checked as the word arrives, so the
+                // old context is gone before the next prediction
+                if hier && bound_detect {
+                    let w = ids[t];
+                    let rare = |w: usize| sentence_count > 50 && (word_count[w] as f64) < readback_rare * sentence_count as f64;
+                    if rare(w) {
+                        let same_kind = |a: usize, b: usize| {
+                            let (x, y) = (&word_ctx[a], &word_ctx[b]);
+                            let union = x.union(y).count();
+                            union > 0 && x.intersection(y).count() as f64 >= bound_kind * union as f64
+                        };
+                        let conflicts = |c: &BitVector| enc.decode(c).map_or(false, |h| h != w && rare(h) && same_kind(h, w));
+                        bound_fired |= area.forget_through(conflicts);
+                        for u in upper.iter_mut() {
+                            bound_fired |= u.forget_through(conflicts);
+                        }
+                    }
+                }
                 if hier {
                     area.note_word(code);
                     for u in upper.iter_mut() {
@@ -1613,30 +1633,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
 
             if ids[t] == full_stop && hier && bound_detect {
-                // fact conflicts: this sentence's rare surprising words against the rare words
-                // each area still holds
-                let rare = |w: usize| sentence_count > 50 && (word_count[w] as f64) < readback_rare * sentence_count as f64;
-                let same_kind = |a: usize, b: usize| {
-                    let (x, y) = (&word_ctx[a], &word_ctx[b]);
-                    let inter = x.intersection(y).count();
-                    let union = x.union(y).count();
-                    union > 0 && inter as f64 >= bound_kind * union as f64
-                };
-                let new_facts: Vec<usize> = (0..vocab.len())
-                    .filter(|&w| rare(w) && enc.codes[w].as_words().iter().zip(surprising.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
-                    .collect();
-                let mut fired = false;
-                for &w in &new_facts {
-                    let conflicts = |c: &BitVector| enc.decode(c).map_or(false, |h| h != w && rare(h) && same_kind(h, w));
-                    fired |= area.forget_through(conflicts);
-                    for u in upper.iter_mut() {
-                        fired |= u.forget_through(conflicts);
-                    }
-                }
                 if testing {
                     let opening = !s.words[..t].contains(&".");
                     story_openings += opening as usize;
-                    if fired {
+                    if bound_fired {
                         if opening {
                             bound_hits.0 += 1;
                         } else {
@@ -1644,6 +1644,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
+                bound_fired = false;
             }
             if ids[t] == full_stop {
                 // one-shot: the whole sentence (or its unpredicted part) is one episode.

@@ -317,6 +317,9 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   the sequential order of events.* J. Exp. Psychology: General 142; **Ben-Yakov, A. &
   Henson, R. (2018).** *The hippocampal film editor.* J. Neuroscience 38. Boundaries
   separate memories; the hippocampus responds at them.
+- **Kurby, C. A. & Zacks, J. M. (2008).** *Segmentation in the perception and memory of
+  events.* Trends in Cognitive Sciences 12. Boundaries where the event model fails: the
+  fact-conflict detector of [27](experiments/27-boundary-detection.md).
 - **Howard, M. W. & Kahana, M. J. (2002).** *A distributed representation of temporal
   context.* J. Mathematical Psychology 46. A drifting context gives recency: the model
   for a decaying state.

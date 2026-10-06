@@ -1032,6 +1032,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let infer_grow = std::env::var("INFER_LEARN").is_err();
     let mut infer_stats = [0usize; 2]; // inferred events, (prefix → word) pairs taught
     let mut row_state: HashMap<u32, Vec<u32>> = HashMap::default(); // engram row → higher-area state
+    // engram row → the words of its story before its sentence (what was read up to it)
+    let mut row_prefix: HashMap<u32, Vec<usize>> = HashMap::default();
+    // stories queued for replay through the reading steps (INFER_REPLAY, read mode)
+    let mut replay_queue: Vec<Story> = Vec::new();
+    let mut replay_words = 0usize;
+    let mut prev_replaying = false;
+    // INFER_PAIRS=1: teach inferred events as (input, target) pairs to the higher area
+    // (experiment 61) instead of reading them as stories
+    let infer_pairs = std::env::var("INFER_PAIRS").is_ok();
     let mut sem_hstats = [0usize; 4]; // replays, decoded with content, cued by a new name, marked consolidated
     // REPLAY_GEN=1 (with HIPPO_SELF, SPARSE_BIND, a higher area with HIER_SLEEP_GEN): at each
     // sleep the hippocampus replays freely (from random CA3 cells, settling into attractors:
@@ -1426,6 +1435,35 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // unfamiliar context words, `reps` times: the walk's results taught to the cortex.
         if let (Some(reps), true, Some(hc)) = (infer_reps, hier && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
             let events = hc.infer(infer_rows);
+            if !infer_pairs {
+                // read mode: each inferred event becomes a story, its source story's opening
+                // (what was read before the source sentence) then the inferred sentence, and
+                // is read like any story before the next one (`reps` times, in a shuffled order)
+                let mut stories: Vec<Story> = Vec::new();
+                for (seq, _ctx, src) in &events {
+                    let Some(prefix) = row_prefix.get(src) else { continue };
+                    let mut words: Vec<&'static str> = prefix.iter().map(|&w| vocab[w]).collect();
+                    words.extend(seq.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len()).map(|w| vocab[w]));
+                    if words.last() != Some(&".") {
+                        words.push(".");
+                    }
+                    let answer_at = words.len().saturating_sub(2);
+                    if std::env::var("INFERDIAG").is_ok() && stories.len() < 12 {
+                        eprintln!("  INFERDIAG s_i {s_i} replay story: {}", words.join(" "));
+                    }
+                    stories.push(Story { words, answer_at, held_out: false });
+                    infer_stats[0] += 1;
+                }
+                for _ in 0..reps {
+                    let mut order: Vec<usize> = (0..stories.len()).collect();
+                    order.shuffle(&mut rng);
+                    for i in order {
+                        let st = &stories[i];
+                        replay_queue.push(Story { words: st.words.clone(), answer_at: st.answer_at, held_out: false });
+                    }
+                }
+            }
+            let events = if infer_pairs { events } else { Vec::new() };
             let size = hc.len().max(1) as u64;
             // per inferred event: its words and the higher area's state when its source was read
             let mut items: Vec<(Vec<usize>, BitVector)> = Vec::new();
@@ -1827,7 +1865,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             writeln!(out, "{}\t{}\t{}\t{}", if testing { "test" } else { "train" }, s.held_out as u8, s.answer_at, s.words.join(" ")).unwrap();
             continue;
         }
-        if testing {
+        // replay stories queued by this sleep (generative replay) are read first, through the
+        // same steps as any story, as training: the cortex learns from them; nothing is
+        // stored in memory and nothing is counted
+        let mut stories_now: Vec<(Story, bool)> = replay_queue.drain(..).map(|r| (r, true)).collect();
+        stories_now.push((s, false));
+        for (s, replaying) in stories_now {
+        #[allow(unused_mut)]
+        let mut s = s;
+        let testing = testing && !replaying;
+        if replaying {
+            replay_words += s.words.len();
+        } else if testing {
             test_words += s.words.len();
         } else {
             train_words += s.words.len();
@@ -1843,7 +1892,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         step_pending.clear();
         // the previous story's bindings become one episode (training stories only)
         if bind {
-            if bind_story.count_ones() > 0 && s_i > 0 && s_i - 1 < TRAIN && !hippo_self {
+            if bind_story.count_ones() > 0 && s_i > 0 && s_i - 1 < TRAIN && !hippo_self && !prev_replaying {
                 bind_mem.store(&bind_story);
                 if let (Some(dg), Some(ca3)) = (&bind_dg, &mut bind_ca3) {
                     let x = set_bits(&bind_story);
@@ -2943,9 +2992,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut rng);
                     }
                 }
-                if bind && consolidate.is_some() && !testing && t + 1 == s.answer_at {
+                if bind && consolidate.is_some() && !testing && !replaying && t + 1 == s.answer_at {
                     traces.push((sentence.clone(), bind_list.clone(), next, fam_band));
-                } else if bind && consolidate_steps && !testing && fam_band < 4 && enc.decode(&out) != Some(next) && s.words[t + 1] != "." {
+                } else if bind && consolidate_steps && !testing && !replaying && fam_band < 4 && enc.decode(&out) != Some(next) && s.words[t + 1] != "." {
                     let input = if consolidate_assoc {
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                         let mut bag = BitVector::new(BITS, Some(0));
@@ -3235,7 +3284,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // Persist: test questions are not stored, or the first anchor question
                 // would leak its own answer to every later one.
                 let question = sentence.as_words().iter().zip(enc.codes[index["where"]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                if !(task == Task::Persist && testing && question) {
+                if !replaying && !(task == Task::Persist && testing && question) {
                     if hier && std::env::var("MEM_CONTEXT").is_ok() {
                         let mut e = if predictive_novelty { surprising.clone() } else { sentence.clone() };
                         e.or_mut(&area.state(&surprising));
@@ -3244,7 +3293,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         memory.store(if predictive_novelty { &surprising } else { &sentence });
                     }
                 }
-                if let (Some(dg), Some(ca3)) = (&dg, &mut ca3) {
+                if let (Some(dg), Some(ca3), false) = (&dg, &mut ca3, replaying) {
                     // Encode the novel part: content shared by most episodes ("went to the")
                     // would otherwise dominate the dentate gyrus, give every episode the same
                     // code, and swamp recall.
@@ -3255,7 +3304,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sentence = BitVector::new(BITS, Some(0));
                 if hippo_self && bind && !bind_sentence.is_empty() {
-                    if !testing {
+                    if !testing && !replaying {
                         if let Some(hc) = &mut bind_hc {
                             let ev = event_vec(&bind_sentence, &bind_prev, ctx_offset);
                             let content = event_vec(&bind_sentence, &BitVector::new(BITS, Some(0)), ctx_offset);
@@ -3276,6 +3325,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 // slow state at the sentence's start), kept per row for replay
                                 if let (true, Some(r)) = (infer_reps.is_some() && hier, hc.last_row()) {
                                     row_state.insert(r, set_bits(&area.state(&BitVector::new(BITS, Some(0)))).into_iter().map(|b| b as u32).collect());
+                                    let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
+                                    row_prefix.insert(r, ids[..start].to_vec());
                                 }
                             } else {
                                 hc.store_event(&set_bits(&content), &set_bits(&context));
@@ -3289,7 +3340,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 bind_sentence.clear();
                 bind_sentence_pairs.clear();
-                if semantic_reps.is_some() && !testing && !hippo_self {
+                if semantic_reps.is_some() && !testing && !replaying && !hippo_self {
                     sem_buf.push(s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect());
                 }
                 completed_sentence = false;
@@ -3302,7 +3353,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 surprising = BitVector::new(BITS, Some(0));
                 // word frequencies (per sentence), for read-back's "rare"
-                sentence_count += 1;
+                sentence_count += !replaying as u32;
                 if testing {
                     let first_of_story = !s.words[..t].contains(&".");
                     bound_log.push((first_of_story, sent_surprise / sent_words.max(1) as f32, first_surprise));
@@ -3310,7 +3361,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 sent_surprise = 0.0;
                 sent_words = 0;
                 for w in s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".") {
-                    word_count[index[w]] += 1;
+                    word_count[index[w]] += !replaying as u32;
                 }
                 // read-back: say back the most recent rare word held, hear it
                 if hier {
@@ -3383,6 +3434,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 semantic.process_predictive(&cue, &mut out);
                 semantic.feedback(&cue, &content, &mut rng);
             }
+        }
+        prev_replaying = replaying;
         }
     }
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
@@ -3526,7 +3579,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
         }
         if infer_reps.is_some() {
-            eprintln!("  INFER seed {seed}: {} inferred events replayed to the higher area, {} word pairs taught", infer_stats[0], infer_stats[1]);
+            eprintln!("  INFER seed {seed}: {} inferred events ({} as word pairs taught to the higher area; {} words read as replay stories)", infer_stats[0], infer_stats[1], replay_words);
         }
         if hippo_self {
             eprintln!(

@@ -92,8 +92,39 @@ Final answers (after the mix):
      would let the mix learn, from the few training exposures, that the cortex is wrong
      on novel names and memory is not.
 
+## Familiarity-gated arbitration (`BIND_FAM=1`)
+- **The signal.** For each binding in the current sentence (a surprising word in its
+  slot), the store's own statistics give how many stored episodes contain it. The rarest
+  one's count, in log2 bands 0–7, is the sentence's familiarity: a name seen once falls
+  in a low band, a trained name in a high one.
+- **The use.** The band is part of every source's reliability key in the mix, so the mix
+  learns, separately for familiar and novel items, how far to trust the column, the
+  higher area and the slot memory. No threshold is set by hand.
+
+| Schema group, seeds 0 / 1 / 2 | Slot memory on new names | Final answer, new names, without familiarity | **With familiarity** |
+|---|---|---|---|
+| Never shown | 2–3% | 5–8% | 5% |
+| Shown once | 28 / 38 / 58% | 5–14% | 13 / 18 / 11% |
+| Shown twice | 56 / 50 / 67% | – | **24 / 19 / 20%** |
+| Shown 4 times | 66 / 52 / 68% | 8–17% | 10 / 29 / 26% |
+| No-schema group, shown once | 30–69% | 15–44% | 20–59% |
+
+Trained-name accuracy is unchanged (56–72%).
+
+5. **Familiarity moves the answer toward memory, but only partly.** With two or four
+   exposures, new names reach 19–29% in the final answer (from 8–17%), still well below
+   what the slot memory knows (50–68%).
+   - The mix learns its reliabilities only during training, and the novel band occurs
+     there only in the 12–48 exposure stories, so its trust in memory for novel items
+     rests on very few cases.
+   - The obvious remedies: let the reliability counters keep learning at test (the brain
+     does not stop learning), or seed the novel band from the no-schema-like case
+     (cortex unfamiliar, memory specific) as a prior.
+
 ## Next
-- **Familiarity-gated arbitration:** the familiarity band of the current sentence's
+- ~~**Familiarity-gated arbitration:**~~ partly done (above). Next: more evidence for the
+  novel band (learning at test, or a prior).
+- **Familiarity-gated arbitration (first idea):** the familiarity band of the current sentence's
   surprising words, from the store's own frequency statistics, in every source's
   reliability key. Then rerun the schema test.
 - **Consolidation:** replay the one-shot episodes in the next sleeps, so the cortex

@@ -21,6 +21,50 @@ connections between them exist. "Not modelled" is as important as what is.
 | **Prefrontal / working memory** | Holds items; BG gates updates (PBWM); directs retrieval (via nucleus reuniens) | `WorkingMemory` slot + `PfcGate` (basal-ganglia load / keep, credit to the load whose content is held); the slot's content cues hippocampal recall ([18](../experiments/18-prefrontal-working-memory.md)). A question's cue also tags or replays episodes into cortex ([17](../experiments/17-consolidation.md#prioritised-replay-questions-decide-what-is-consolidated)) | Built: one slot, gate keyed on the word alone (no context yet) |
 | **Neuromodulators** | Dopamine (reward), ACh (encode vs retrieve; expected uncertainty), NE (surprise; unexpected uncertainty) | Reward in `BasalGanglia` and the L5 outcome; surprise drives growth, except where uncertainty is expected (ACh-like growth gate, [23](../experiments/23-compaction.md)); novelty gates storage | Signals exist, no separate systems |
 
+## Inventory: built and still to build (after [36](../experiments/36-slot-binding-memory.md))
+
+**Built** (each with the experiment that tests it):
+
+| Brain system | What we have |
+|---|---|
+| Neocortical column | L4 input assembly, L2/3 predictive kernels (surprise-driven growth, integer reliability, fast inhibition, compaction), L5 prediction / confidence / outcome, L6 context and thalamic gating ([19](../experiments/19-l5-shared-reward.md)–[23](../experiments/23-compaction.md)) |
+| Cortical hierarchy | Higher areas with slow states, residual (predictive-coding) learning, a chain of areas with longer windows ([24](../experiments/24-cortical-hierarchy.md), [25](../experiments/25-area-chain.md)) |
+| Event boundaries | Story boundaries given or detected from contradicted facts ([26](../experiments/26-context-and-readback.md), [27](../experiments/27-boundary-detection.md)) |
+| Thalamus | Relay gating (route gates, L6 corticothalamic gate), a pulvinar-like precision-weighted mix of sources ([20](../experiments/20-l6-corticothalamic-gating.md), [24](../experiments/24-cortical-hierarchy.md)) |
+| Basal ganglia | Bit-sliced go counters with dopamine-like reward: recall, relays, working-memory gating, saccades ([15](../experiments/15-basal-ganglia-selector.md), [29](../experiments/29-saccades.md)) |
+| Prefrontal working memory | A gated slot that cues recall ([18](../experiments/18-prefrontal-working-memory.md)) |
+| Hippocampus | Episodic store, dentate gyrus expansion + CA3, big-loop recall, replay into a semantic store, rarity-weighted recall, slot ⊗ content episodes ([11](../experiments/11-episodic-memory.md)–[17](../experiments/17-consolidation.md), [36](../experiments/36-slot-binding-memory.md)) |
+| Entorhinal cortex | Temporal context (fading state, lateral EC), learned slot cells (a coarse structure code, medial EC), a setting slot that emerged ([31](../experiments/31-role-cells-and-transfer.md), [35](../experiments/35-fading-state-and-entorhinal-codes.md), [36](../experiments/36-slot-binding-memory.md)) |
+| Sleep | Downscaling, pruning, merging, generalisation from replay ([23](../experiments/23-compaction.md), [33](../experiments/33-generalisation-during-sleep.md)) |
+| Eye movements | Basal-ganglia saccades with regressions, a page index of landmarks, cortex-driven context ([29](../experiments/29-saccades.md), [30](../experiments/30-cortex-driven-saccades.md)) |
+| Actions as context | Efference-copy-like action tokens; context saved and reinstated per book ([28](../experiments/28-reading-with-actions.md)) |
+| Association / role cells | Competitive Hebbian categories ([31](../experiments/31-role-cells-and-transfer.md)) |
+| Generalisation | Synapse-level pruning, general copies beside specific kernels ([31](../experiments/31-role-cells-and-transfer.md), [32](../experiments/32-general-and-specific.md)) |
+| Rehearsal | Read-back of held facts ([26](../experiments/26-context-and-readback.md)) |
+
+**Partly built:**
+- CA1 comparator: one-hop only ([14](../experiments/14-ca1-comparator.md)).
+- Familiarity vs recollection arbitration ([36](../experiments/36-slot-binding-memory.md)).
+- Calibration and abstention: measured, not acted on.
+- Neuromodulation: dopamine-like reward and surprise; acetylcholine and noradrenaline
+  only as fixed rules.
+
+**Not built yet:**
+- **Cerebellum** as a separate system: fine-tuning of saccades and timing.
+- **Motor / speech output:** saying words, the efference copy of speech, the read-back
+  loop of the [output plan](output-and-self-supervision.md).
+- **Grid cells / metric structure codes;** path-integrated structure (TEM proper).
+- **Subiculum** (hippocampal output hub).
+- **Perirhinal cortex** (item familiarity as its own system).
+- **Hippocampal–prefrontal schema circuits** (one-exposure learning that reaches the
+  answer, and its consolidation).
+- **Several columns side by side** (breadth): other modalities and concepts.
+- **Amygdala** (salience, value); **hypothalamus** (drives).
+- **An event-driven clock** for the higher areas.
+- **Learned versions of the remaining hand-set pieces:** sentence units, decoding to
+  word identities in the example code, the 2% rarity threshold, the context store keyed
+  by action.
+
 ## Connections that exist
 
 ```

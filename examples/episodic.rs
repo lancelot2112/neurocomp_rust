@@ -848,6 +848,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the recall's strength in bands of 64 (about two rare-weighted bindings), 0..7, as the
     // memory source's own confidence in the mix
     let mut bind_strength = 0u64;
+    // BIND_FAM=1: familiarity-gated arbitration. The current sentence's bindings (word in
+    // slot) are looked up in the store's own statistics; the rarest one's episode count, in
+    // log2 bands 0..7, is the sentence's familiarity, and every source's reliability in the
+    // mix is kept per band (a name seen once is a low band, a trained name a high one)
+    let bind_fam = std::env::var("BIND_FAM").is_ok();
+    let mut bind_sentence: Vec<BitVector> = Vec::new();
     let mut bind_list: Vec<(usize, usize)> = Vec::new(); // this story's (word, slot) bindings
     let mut bind_diag = 0usize;
     let slot_offset = |c: usize| ((c + 1) * 2_654_435_761usize) % BITS;
@@ -1296,6 +1302,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     b.rotl_mut(slot_offset(c));
                     bind_story.or_mut(&b);
                     bind_list.push((ids[t], c));
+                    bind_sentence.push(b);
                 }
                 slot_prev = slot;
             }
@@ -1902,9 +1909,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 // MIX: every source votes for its words with its reliability as the weight
                 let mut mix_conf: Option<f32> = None;
+                // familiarity band of the current sentence (BIND_FAM), 7 = familiar / none
+                let fam_band: u64 = if bind && bind_fam && !bind_mem.is_empty() {
+                    let n = bind_mem.len() as f32;
+                    bind_sentence
+                        .iter()
+                        .map(|b| (bind_mem.frequency(b) * n).round() as u64)
+                        .min()
+                        .map_or(7, |c| (64 - c.leading_zeros() as u64).min(7))
+                } else {
+                    0
+                };
                 if mixing {
                     let prev = if t > 0 { ids[t - 1] } else { vocab.len() };
-                    let ctx = (prev * (vocab.len() + 1) + ids[t]) as u64 * 8;
+                    let ctx = ((prev * (vocab.len() + 1) + ids[t]) as u64 * 8 + fam_band) * 8;
                     let bucket = |c: f32| [0.5f32, 0.7, 0.8, 0.9].iter().filter(|&&e| c >= e).count() as u64;
                     let words_of = |bv: &BitVector| -> Vec<usize> {
                         (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).collect()
@@ -2251,6 +2269,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 sentence = BitVector::new(BITS, Some(0));
+                bind_sentence.clear();
                 if hier {
                     area.end_sentence(&surprising);
                     for u in upper.iter_mut() {

@@ -1178,6 +1178,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let semantic_mix = std::env::var("SEMANTIC_MIX").is_ok();
     let rollout_mix = std::env::var("ROLLOUT_MIX").is_ok();
     let mut inner: Vec<bool> = Vec::new(); // per position of the current story: an internal step
+    // ROLLOUT_LOOP=1: the closed loop. A rollout step feeds the network's own output back as
+    // its next input, with no word decoded and re-encoded: the offering source's output
+    // vector gated by the column's expectation (bitwise AND, a thalamic gate), taken if it
+    // keeps at least one word's worth of bits (24). "Definite" is likewise a bit count: the
+    // expectation holds at most 1.5 words' worth of bits. A word is still decoded from the
+    // fed-back vector, but only for the harness's bookkeeping (reports, context keys).
+    let rollout_loop = std::env::var("ROLLOUT_LOOP").is_ok();
+    let mut inner_code: Vec<Option<BitVector>> = Vec::new(); // the fed-back vector of an internal step
+    let mut bind_raw: Option<BitVector> = None; // the slot memory's unbound readout (before decoding)
+    let mut loop_stats = [0usize; 3]; // test: fed-back vectors, exactly one word's code, a blend (2+ words' worth)
     let sacc_code = |a: usize| -> BitVector {
         let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(4_000_037) ^ (a as u64 + 3000));
         let all: Vec<usize> = (0..BITS).collect();
@@ -1434,6 +1444,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         rolled_surname = None;
         page_marks = vec![false; ids.len()];
         inner = vec![false; ids.len()];
+        inner_code = vec![None; ids.len()];
         step_pending.clear();
         // the previous story's bindings become one episode (training stories only)
         if bind {
@@ -1506,7 +1517,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
             }
-            let code = &enc.codes[ids[t]];
+            // an internal step of the closed loop is heard as the vector fed back
+            let fed = inner_code[t].clone();
+            let code = fed.as_ref().unwrap_or(&enc.codes[ids[t]]);
             if let Some(p) = prev {
                 word_ctx[ids[t]].insert(p);
                 word_ctx[p].insert(vocab.len() + ids[t]);
@@ -2114,6 +2127,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     expect_prev = column.l23.peek_union(&input, BITS);
                     let next_slot = roles.winner(&slot_input(&expect_prev, slot_prev, &roles)).map(|w| w.0);
                     bind_answer = None;
+                    bind_raw = None;
                     if let (Some(c), true) = (next_slot, bind_story.count_ones() > 0) {
                         let cue = match bind_hab {
                             Some(f) if bind_mem.len() > 50 => bind_mem.novel(&bind_story, f),
@@ -2129,6 +2143,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             bind_strength = (score / 64).min(7);
                             let mut u = ep.clone();
                             u.rotr_mut(slot_offset(c));
+                            bind_raw = Some(u.clone());
                             bind_answer = if class_read {
                                 // candidates in the unbound episode, best overlap first, kept
                                 // if the cortex expects them here
@@ -2164,6 +2179,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let story: Vec<String> = bind_list.iter().map(|(w, sl)| format!("{}@{}", vocab[*w], sl)).collect();
                     eprintln!("  COMPLETEDIAG {} {:?}\n    at {}: expects {:?}; next slot {:?}; memory reads {:?}; bindings {:?}", if testing { "test" } else { "train" }, s.words, s.words[t], wl(&expect_prev), next_slot, bind_answer.map(|w| vocab[w]), story);
                 }
+                let mut fed_vec: Option<BitVector> = None;
                 let rollout_w = if rollout && rolled < 4 && (testing || complete.as_deref() == Some("rollout")) && bind && !bind_mem.is_empty() {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                     let n = bind_mem.len() as f32;
@@ -2171,7 +2187,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let expect = column.l23.peek_union(&input, BITS);
                     // a definite expectation (one word) violated starts a rollout; a started
                     // rollout continues while the page does not match the expectation
-                    let definite = (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1;
+                    let definite = if rollout_loop { expect.count_ones() <= 48 } else { (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1 };
                     let contradicted = expect.count_ones() > 0 && ov(ids[t + 1], &expect) < 24;
                     let skipped = if step_learned { contradicted } else { (definite || rolled > 0) && contradicted };
                     let from_area = || -> Option<usize> {
@@ -2215,6 +2231,33 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         })
                     } else {
                         mem_w.map(|w| (w, 0)).or(sem_w.map(|w| (w, 1))).or_else(|| from_area().map(|w| (w, 2))).or(col_w.map(|w| (w, 3)))
+                    };
+                    // the closed loop: the first source whose output, gated by the expectation,
+                    // keeps a word's worth of bits; that vector is what is fed back
+                    let offer = if rollout_loop {
+                        let gate = |v: &BitVector| -> Option<BitVector> {
+                            let mut g = v.clone();
+                            for (a, b) in g.as_words_mut().iter_mut().zip(expect.as_words()) {
+                                *a &= *b;
+                            }
+                            (g.count_ones() >= 24).then_some(g)
+                        };
+                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let sem_out = semantic_reps.and_then(|_| ids[start..=t].iter().min_by_key(|&&w| word_count[w])).and_then(|&cw| sem_store.peek(&enc.codes[cw]));
+                        let fed = [
+                            bind_raw.as_ref().filter(|_| !(testing && bind_lesion)).and_then(|v| gate(v)).map(|v| (v, 0usize)),
+                            sem_out.as_ref().and_then(|v| gate(v)).map(|v| (v, 1)),
+                            td_src.as_ref().filter(|_| rollout_area).and_then(|v| gate(v)).map(|v| (v, 2)),
+                            column.l23.peek(&input).as_ref().and_then(|v| gate(v)).map(|v| (v, 3)),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .next();
+                        let o = fed.as_ref().and_then(|(v, src)| enc.decode(v).map(|w| (w, *src)));
+                        fed_vec = fed.map(|f| f.0);
+                        o
+                    } else {
+                        offer
                     };
                     let own = offer.map(|o| o.0);
                     if std::env::var("COMPLETEDIAG").is_ok() && testing && s.words[t] == "a" && t >= 2 && NEW_NAMES.contains(&s.words[t - 2]) {
@@ -2262,6 +2305,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     s.words.insert(t + 1, vocab[w]);
                     page_marks.insert(t + 1, false);
                     inner.insert(t + 1, true);
+                    let fv = fed_vec.take().filter(|_| rollout_loop);
+                    if let (Some(v), true) = (fv.as_ref(), testing) {
+                        loop_stats[0] += 1;
+                        loop_stats[1] += (v.as_words() == enc.codes[w].as_words()) as usize;
+                        loop_stats[2] += ((0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).count() > 1) as usize;
+                    }
+                    inner_code.insert(t + 1, fv);
                     if s.answer_at > t {
                         s.answer_at += 1;
                     }
@@ -2287,6 +2337,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         s.words.insert(t + 1, vocab[w]);
                         page_marks.insert(t + 1, false);
                         inner.insert(t + 1, true);
+                        inner_code.insert(t + 1, None);
                         if s.answer_at > t {
                             s.answer_at += 1;
                         }
@@ -2977,6 +3028,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
             );
+        }
+        if rollout_loop {
+            eprintln!("  LOOP seed {seed}: at test {} fed-back vectors, {} exactly one word's code, {} a blend of several words", loop_stats[0], loop_stats[1], loop_stats[2]);
         }
         if step_learned {
             let src = ["slot memory", "semantic store", "higher area", "column"];

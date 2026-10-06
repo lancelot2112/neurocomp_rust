@@ -70,6 +70,50 @@ connections between them exist. "Not modelled" is as important as what is.
   word identities in the example code, the 2% rarity threshold, the context store keyed
   by action.
 
+## Learned vs hand-coded (after [44](../experiments/44-closed-loop.md))
+The representations are mostly learned by column-like machinery. Much of the control
+flow that connects them is still written by hand in the experiment harness
+(`examples/episodic.rs`). This section keeps that honest.
+
+**Learned** (what is known, and how far to trust it):
+
+| Function | By | Still hand-set |
+|---|---|---|
+| Next-word prediction; the expected kind (superposed continuations) | Column L2/3 predictive kernels, grown on surprise | – |
+| Slow context, top-down prediction | Higher areas (columns over a slow state) | Their input format: a bag of surprising words, window, fade |
+| What goes with an entity ("tom" → smith) | Semantic store (the same kernel machinery) | The replay protocol: which sentences, rarest word as cue, the rest as content |
+| Slot / role cells | `RoleArea`, competitive Hebbian | Their input: the column's expectation + the previous slot |
+| How far to trust each source | Thalamic mix (`SourceMix`), counters per context | The combination rule; the context keys |
+| When to look again | Basal ganglia, values from reward ([43](../experiments/43-learned-stepping.md)) | The candidates and the context features |
+| Generalisation, pruning | Sleep in the kernel class | When sleep happens |
+
+**Hand-coded:**
+- **Rollout control:** where a choice point is (the page contradicts the expectation),
+  the source order, the 4-step cap, and stopping when the page fits again.
+- **The hippocampus in the current pipeline is algorithmic.** Slot binding is by
+  rotation, recall by a rarity-weighted overlap score, readout by inverse rotation. The
+  learned dentate gyrus / CA3 of [12](../experiments/12-dentate-gyrus-ca3.md) is not used
+  there.
+- **Familiarity and novelty** are formulas: log2 bands of episode counts; "novel" for
+  replay is a word in under 1% of sentences.
+- **Consolidation scheduling:** when replay runs, what leaves a trace, how replay is
+  interleaved.
+- **Word read-out:** the harness decodes words from bit codes (overlap ≥ 24 of 32) for
+  answers, context keys and reports.
+
+**Moved from hand-coded to the network:**
+- **The rollout loop is closed** ([44](../experiments/44-closed-loop.md)). An internal
+  step feeds the source's output vector, gated by the column's expectation, back as the
+  next input. Nothing is decoded and re-encoded, and "definite" is a bit count.
+- **The decision to look again** is learned ([43](../experiments/43-learned-stepping.md)).
+
+**Next candidates:**
+- The basal ganglia reading a cortical state (the expectation plus a confidence code)
+  instead of hand-picked features, as saccades do in
+  [30](../experiments/30-cortex-driven-saccades.md).
+- Novelty from the memory's own familiarity signal, gating both replay and stepping.
+- The learned hippocampus.
+
 ## Connections that exist
 
 ```

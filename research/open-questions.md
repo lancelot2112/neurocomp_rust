@@ -95,6 +95,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     learn when to look again (56–62% with the hippocampus off, hand rule 61–67%).
     Open: training that rewards thinking, and reliabilities for inner steps credited from
     the outcome, so rollout sources can be mixed.
+  - **The closed loop** ([44](experiments/44-closed-loop.md)): internal steps are the
+    network's own output vectors, gated by its expectation, fed back. No decoding is
+    needed, and partial or blended codes work. What is still hand-coded is listed in the
+    [architecture map](concepts/architecture-map.md#learned-vs-hand-coded-after-44).
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

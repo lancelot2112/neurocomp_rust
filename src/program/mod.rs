@@ -30,3 +30,6 @@ pub use modules::{Genome, Module, NetOp, Network, Prim};
 
 pub mod index_memory;
 pub use index_memory::{IndexConfig, IndexMemory};
+
+pub mod engram;
+pub use engram::{Dedup, EngramConfig, EngramStore};

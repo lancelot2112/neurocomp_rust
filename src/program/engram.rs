@@ -1,0 +1,634 @@
+//! An engram store: an index memory over compact rows of binding ids and grid phases.
+//!
+//! Each row is one episode:
+//! - **what:** a few sorted binding ids (a word in a slot is one id), not bit fields;
+//! - **where:** one phase per grid module, the place (here, position in the stream of
+//!   stories) at which it was stored;
+//! - **strength** and **last touch** (event clock), for lazy forgetting;
+//! - **time:** append order, so "the next event of the same episode" is the next row with
+//!   the same place, and no successor pointer or context field is needed.
+//!
+//! **Two indexes.**
+//! - **What:** a posting list per binding id, giving the rows that contain it. Its
+//!   length is M·K/N on average, so sparse ids keep it short.
+//! - **Where:** a hash from the phase tuple to its rows, so exact-place lookup is O(1).
+//!
+//! **Event handlers.**
+//! - **Move** (`move_by`): add a displacement to the clock and recompute the G phases.
+//!   O(G), and touches no rows.
+//! - **Recall:** cue ids are processed rarest first. Each one walks its posting list and
+//!   adds its weight (1/n) to a counter per row, through a touched-list so the reset is
+//!   cheap. The walk stops once the leader cannot be overtaken by the remaining weight.
+//!   Rows from the current place get a fixed bonus, so location disambiguates similar
+//!   content.
+//! - **Store (a theta cycle):** the first half recalls with the event as cue. In the second
+//!   half, if a row holds exactly this content, it is strengthened and touched (no
+//!   duplicate is stored). Otherwise a new row is appended and indexed, which costs O(K).
+//!
+//! **Forgetting is lazy.** Effective strength is strength − (now − last touch) / τ,
+//! computed on access, with no global tick. The ring buffer's write head is the evictor:
+//! when it reaches a row that is still strong, the row gets a second chance (it is copied
+//! to the head and the head moves on, at most `second_chances` times per write);
+//! otherwise it is overwritten. Posting entries of overwritten rows are tombstones,
+//! dropped when their list is next written.
+//!
+//! **Replay.** At `begin_sleep`, rows are ordered by strength × the cortex's error on
+//! them, and replays pop from that order. The harness reports the error after each
+//! replay (`report_error`); unknown rows count as fully unknown. Replayed events are
+//! flagged for training the cortex and are not stored again.
+
+use std::cell::{Cell, RefCell};
+
+use rand::RngCore;
+
+use super::hippocampal_circuit::{EpisodicCircuit, Recall};
+use crate::det::HashMap;
+use crate::fixed::{div_round, ratio, recip32, Q16, ONE};
+
+/// What a theta cycle does with an event whose content a row already holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dedup {
+    /// Strengthen that row wherever it was stored (one row per distinct content).
+    Any,
+    /// Strengthen it and move it to the current place (it was last seen here).
+    Move,
+    /// Only a row at the current place counts as the same event; elsewhere, store anew.
+    Place,
+}
+
+#[derive(Clone, Debug)]
+pub struct EngramConfig {
+    /// Ring capacity (rows).
+    pub capacity: usize,
+    /// Grid modules: each module's phase is ⌊clock / scale⌋ mod 256.
+    pub scales: Vec<u32>,
+    /// Weight each cue id by 1/n (n = rows holding it).
+    pub inverse: bool,
+    /// The winner must share at least this many ids with the cue.
+    pub min_overlap: u32,
+    /// Score bonus (in units of one fully weighted id, `Q16`) for rows from the current
+    /// place.
+    pub where_bonus: Q16,
+    pub write_strength: u8,
+    pub novelty_bonus: u8,
+    pub bump: u8,
+    /// Events per unit of strength lost (τ).
+    pub tau: u32,
+    /// A row at or above this strength gets a second chance at the write head.
+    pub keep: u8,
+    pub second_chances: usize,
+    /// New ids needed to tag an event as novel.
+    pub tag_min: usize,
+    pub dedup: Dedup,
+    /// Make the current place's rows candidates even when they share no id with the cue.
+    pub seed_place: bool,
+}
+
+impl Default for EngramConfig {
+    fn default() -> Self {
+        Self {
+            capacity: 1 << 16,
+            scales: vec![1, 4, 16, 64],
+            inverse: true,
+            min_overlap: 1,
+            where_bonus: ONE,
+            write_strength: 128,
+            novelty_bonus: 127,
+            bump: 16,
+            tau: 64,
+            keep: 32,
+            second_chances: 8,
+            tag_min: 1,
+            dedup: Dedup::Move,
+            seed_place: false,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Row {
+    serial: u32,
+    what: Vec<u32>,
+    phase: Vec<u8>,
+    out: Vec<usize>,
+    time: u32,
+    strength: Cell<u8>,
+    touched: Cell<u32>,
+    /// The cortex's last reported error on this row (`Q16`; `ONE` = unknown).
+    err: Cell<Q16>,
+}
+
+pub struct EngramStore {
+    pub cfg: EngramConfig,
+    ring: Vec<Option<Row>>,
+    head: u32,
+    serial: u32,
+    clock: u32,
+    phase: Vec<u8>,
+    now: u32,
+    what: Vec<Vec<u32>>,
+    place: HashMap<u64, Vec<u32>>,
+    live: usize,
+    evicted: usize,
+    deduped: usize,
+    tags: Vec<(Vec<u32>, Vec<usize>)>,
+    novelty_sum: (u64, usize),
+    order: RefCell<Vec<u32>>,
+    cursor: Cell<usize>,
+    scratch: RefCell<(Vec<u64>, Vec<u32>, Vec<u32>, Vec<bool>)>,
+    recalls: Cell<usize>,
+    work: Cell<u64>,
+}
+
+fn place_key(phase: &[u8]) -> u64 {
+    phase.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &p| (h ^ p as u64).wrapping_mul(0x100_0000_01b3))
+}
+
+impl EngramStore {
+    pub fn new(cfg: EngramConfig) -> Self {
+        let phase = vec![0; cfg.scales.len()];
+        Self {
+            ring: vec![None; cfg.capacity.max(1)],
+            head: 0,
+            serial: 0,
+            clock: 0,
+            phase,
+            now: 0,
+            what: Vec::new(),
+            place: HashMap::default(),
+            live: 0,
+            evicted: 0,
+            deduped: 0,
+            tags: Vec::new(),
+            novelty_sum: (0, 0),
+            order: RefCell::new(Vec::new()),
+            cursor: Cell::new(0),
+            scratch: RefCell::new((Vec::new(), Vec::new(), Vec::new(), Vec::new())),
+            recalls: Cell::new(0),
+            work: Cell::new(0),
+            cfg,
+        }
+    }
+
+    /// Move: add `d` to the clock and recompute each module's phase. O(G).
+    pub fn move_by(&mut self, d: u32) {
+        self.clock = self.clock.wrapping_add(d);
+        for (p, &s) in self.phase.iter_mut().zip(&self.cfg.scales) {
+            *p = ((self.clock / s.max(1)) % 256) as u8;
+        }
+    }
+
+    fn slot(&self, serial: u32) -> usize {
+        serial as usize % self.ring.len()
+    }
+
+    /// The live row with this serial, if it is still in the ring.
+    fn row(&self, serial: u32) -> Option<&Row> {
+        self.ring[self.slot(serial)].as_ref().filter(|r| r.serial == serial && self.strength(r) > 0)
+    }
+
+    fn strength(&self, r: &Row) -> u8 {
+        let lost = (self.now - r.touched.get()) / self.cfg.tau.max(1);
+        r.strength.get().saturating_sub(lost.min(255) as u8)
+    }
+
+    fn n(&self, id: usize) -> usize {
+        self.what.get(id).map_or(0, |p| p.len())
+    }
+
+    fn weight(&self, n: usize) -> u64 {
+        if self.cfg.inverse { recip32(n.max(1) as u64) >> 16 } else { ONE as u64 }
+    }
+
+    /// The best row for `cue` at the current place: (serial, score, overlap), and the
+    /// cue's own weight.
+    fn best(&self, cue: &[usize]) -> (Option<(u32, u64, u32)>, u64) {
+        let mut ids: Vec<(usize, usize)> = cue.iter().map(|&i| (self.n(i), i)).collect();
+        ids.sort_unstable(); // rarest first
+        let own: u64 = ids.iter().map(|&(n, _)| self.weight(n)).sum();
+        let mut remaining = ids.iter().filter(|x| x.0 > 0).map(|&(n, _)| self.weight(n)).sum::<u64>();
+        let here = place_key(&self.phase);
+        let bonus = |r: &Row| if place_key(&r.phase) == here { self.cfg.where_bonus as u64 } else { 0 };
+        let mut guard = self.scratch.borrow_mut();
+        let (score, overlap, touched, local) = &mut *guard;
+        if score.len() < self.ring.len() {
+            score.resize(self.ring.len(), 0);
+            overlap.resize(self.ring.len(), 0);
+            local.resize(self.ring.len(), false);
+        }
+        let (mut first, mut second) = (0u64, 0u64);
+        let mut work = 0u64;
+        // the current place's rows are candidates whatever they share with the cue (an
+        // exact-place lookup in the where-index): they start at the place bonus
+        if self.cfg.seed_place && self.cfg.where_bonus > 0 {
+            if let Some(rows) = self.place.get(&here) {
+                for &s in rows {
+                    let Some(r) = self.row(s) else { continue };
+                    let k = self.slot(s);
+                    if score[k] == 0 {
+                        touched.push(s);
+                        score[k] = bonus(r);
+                        local[k] = true;
+                    }
+                }
+            }
+        }
+        for &(n, id) in &ids {
+            if n == 0 {
+                continue;
+            }
+            // early exit: the leader holds the threshold and nothing can overtake it
+            if first > 0 && first >= second + remaining + self.cfg.where_bonus as u64 {
+                break;
+            }
+            let w = self.weight(n);
+            remaining -= w;
+            for &s in &self.what[id] {
+                let Some(r) = self.row(s) else { continue };
+                let k = self.slot(s);
+                if score[k] == 0 {
+                    touched.push(s);
+                    score[k] = bonus(r);
+                }
+                score[k] += w;
+                overlap[k] += 1;
+                let v = score[k];
+                if v > first {
+                    if touched.len() > 1 {
+                        second = second.max(first);
+                    }
+                    first = v;
+                } else if v > second {
+                    second = v;
+                }
+            }
+            work += n as u64;
+        }
+        self.work.set(self.work.get() + work);
+        let mut best: Option<(u32, u64, u32)> = None;
+        for &s in touched.iter() {
+            let k = self.slot(s);
+            let (v, o, here) = (score[k], overlap[k], local[k]);
+            score[k] = 0;
+            overlap[k] = 0;
+            local[k] = false;
+            if o < self.cfg.min_overlap && !here {
+                continue;
+            }
+            if best.map_or(true, |(bs, bv, _)| v > bv || (v == bv && s > bs)) {
+                best = Some((s, v, o));
+            }
+        }
+        touched.clear();
+        (best, own)
+    }
+
+    fn recall_row(&self, cue: &[usize], bump: bool) -> Recall {
+        let (best, own) = self.best(cue);
+        let Some((s, v, o)) = best else { return Recall::default() };
+        let r = self.row(s).unwrap();
+        if bump {
+            r.strength.set(self.strength(r).saturating_add(self.cfg.bump));
+            r.touched.set(self.now);
+        }
+        Recall { ec: r.out.clone(), strength: o * 512, ca1_match: ratio(v.min(own), own.max(1)).min(ONE), ca3: vec![s], ca1: vec![s] }
+    }
+
+    fn emit(&self, s: u32) -> Recall {
+        match self.row(s) {
+            Some(r) => Recall { ec: r.out.clone(), strength: r.what.len() as u32 * 512, ca1_match: ONE, ca3: vec![s], ca1: vec![s] },
+            None => Recall::default(),
+        }
+    }
+
+    /// The next row of the same episode (same place, later time), if any.
+    pub fn successor(&self, s: u32) -> Option<u32> {
+        let r = self.row(s)?;
+        let rows = self.place.get(&place_key(&r.phase))?;
+        rows.iter().copied().filter_map(|t| self.row(t).map(|x| (x.time, t))).filter(|&(time, _)| time > r.time).min().map(|x| x.1)
+    }
+
+    /// Recall from `cue`, then play the episode forward: up to `max` rows.
+    pub fn recall_sequence(&self, cue: &[usize], max: usize) -> Vec<Recall> {
+        let first = self.recall_row(cue, true);
+        let Some(&s) = first.ca3.first() else { return Vec::new() };
+        let mut out = vec![first];
+        let mut next = self.successor(s);
+        while let (Some(t), true) = (next, out.len() < max) {
+            out.push(self.emit(t));
+            next = self.successor(t);
+        }
+        out
+    }
+
+    /// Append a row at the write head (evicting or giving second chances), and index it.
+    fn append(&mut self, mut row: Row) -> u32 {
+        let mut chances = 0;
+        loop {
+            let k = self.head as usize % self.ring.len();
+            let keep = match &self.ring[k] {
+                Some(old) => {
+                    let st = self.strength(old);
+                    st > 0 && st >= self.cfg.keep && chances < self.cfg.second_chances
+                }
+                None => false,
+            };
+            if keep {
+                // second chance: the strong row is copied forward to a new serial at this
+                // slot, and the head moves on
+                chances += 1;
+                let mut old = self.ring[k].take().unwrap();
+                old.serial = self.serial;
+                self.serial += 1;
+                for &id in &old.what {
+                    self.what[id as usize].push(old.serial);
+                }
+                self.place.entry(place_key(&old.phase)).or_default().push(old.serial);
+                self.ring[k] = Some(old);
+                self.head += 1;
+                continue;
+            }
+            if let Some(old) = &self.ring[k] {
+                if self.strength(old) > 0 {
+                    self.evicted += 1;
+                }
+                self.live -= 1;
+            }
+            row.serial = self.serial;
+            self.serial += 1;
+            for &id in &row.what {
+                let id = id as usize;
+                if id >= self.what.len() {
+                    self.what.resize_with(id + 1, Vec::new);
+                }
+                // drop tombstones while the list is being written
+                let ring = &self.ring;
+                let len = ring.len();
+                self.what[id].retain(|&s| ring[s as usize % len].as_ref().map_or(false, |r| r.serial == s));
+                self.what[id].push(row.serial);
+            }
+            let key = place_key(&row.phase);
+            let ring = &self.ring;
+            let len = ring.len();
+            let bucket = self.place.entry(key).or_default();
+            bucket.retain(|&s| ring[s as usize % len].as_ref().map_or(false, |r| r.serial == s));
+            bucket.push(row.serial);
+            let s = row.serial;
+            self.ring[k] = Some(row);
+            self.head += 1;
+            self.live += 1;
+            return s;
+        }
+    }
+
+    /// Live rows, rows evicted, events stored by strengthening an existing row, and
+    /// posting entries walked per recall.
+    pub fn report(&self) -> (usize, usize, usize, u64) {
+        (self.live, self.evicted, self.deduped, self.work.get() / self.recalls.get().max(1) as u64)
+    }
+}
+
+impl EpisodicCircuit for EngramStore {
+    fn recall(&self, cue: &[usize]) -> Recall {
+        self.recalls.set(self.recalls.get() + 1);
+        self.recall_row(cue, true)
+    }
+
+    fn familiarity(&self, ids: &[usize]) -> u64 {
+        if ids.is_empty() {
+            return 0;
+        }
+        div_round(ids.iter().map(|&i| self.n(i) as u64).sum(), ids.len() as u64)
+    }
+
+    fn novelty(&self, x: &[usize]) -> Q16 {
+        let r = self.recall_row(x, false);
+        if r.ca3.is_empty() { ONE } else { ONE - r.ca1_match }
+    }
+
+    fn store(&mut self, x: &[usize]) -> Q16 {
+        self.store_split(x, &[], x)
+    }
+
+    fn store_event(&mut self, content: &[usize], context: &[usize]) -> Q16 {
+        self.store_split(content, context, content)
+    }
+
+    /// A theta cycle: recall with the event, then strengthen the row that holds exactly
+    /// these ids, or append a new row. Context ids, if any, are stored with the content.
+    fn store_split(&mut self, content: &[usize], context: &[usize], out: &[usize]) -> Q16 {
+        if content.is_empty() {
+            return 0;
+        }
+        self.now += 1;
+        // what: the content ids, and any context ids the caller supplies
+        let mut what: Vec<u32> = content.iter().chain(context).map(|&i| i as u32).collect();
+        what.sort_unstable();
+        what.dedup();
+        let ids: Vec<usize> = what.iter().map(|&i| i as usize).collect();
+        let (best, own) = self.best(&ids);
+        let novelty = best.map_or(ONE, |(_, v, _)| ONE - ratio(v.min(own), own.max(1)).min(ONE));
+        self.novelty_sum.0 += novelty as u64;
+        self.novelty_sum.1 += 1;
+        if let Some((s, _, _)) = best {
+            let (same, here, old) = {
+                let r = self.row(s).unwrap();
+                let here = r.phase == self.phase;
+                let same = r.what == what && (here || self.cfg.dedup != Dedup::Place);
+                if same {
+                    r.strength.set(self.strength(r).saturating_add(self.cfg.bump));
+                    r.touched.set(self.now);
+                }
+                (same, here, place_key(&r.phase))
+            };
+            if same {
+                self.deduped += 1;
+                if !here && self.cfg.dedup == Dedup::Move {
+                    // last seen here: re-index the row under the current place
+                    let new = place_key(&self.phase);
+                    let k = self.slot(s);
+                    let (phase, now) = (self.phase.clone(), self.now);
+                    if let Some(row) = self.ring[k].as_mut() {
+                        row.phase = phase;
+                        row.time = now;
+                    }
+                    if let Some(b) = self.place.get_mut(&old) {
+                        b.retain(|&t| t != s);
+                    }
+                    self.place.entry(new).or_default().push(s);
+                }
+                return novelty;
+            }
+        }
+        let unseen: Vec<usize> = content.iter().copied().filter(|&i| self.n(i) == 0).collect();
+        let strength = (self.cfg.write_strength as u64 + ((self.cfg.novelty_bonus as u64 * novelty as u64) >> 16)).min(255) as u8;
+        let mut out = out.to_vec();
+        out.sort_unstable();
+        out.dedup();
+        let row = Row {
+            serial: 0,
+            what,
+            phase: self.phase.clone(),
+            out,
+            time: self.now,
+            strength: Cell::new(strength),
+            touched: Cell::new(self.now),
+            err: Cell::new(ONE),
+        };
+        let s = self.append(row);
+        if unseen.len() >= self.cfg.tag_min && self.tags.len() < 4096 {
+            self.tags.push((vec![s], unseen));
+        }
+        novelty
+    }
+
+    fn advance_time(&mut self) {}
+
+    /// A story ended: move one step on the grid (the next story is a new place).
+    fn end_sequence(&mut self) {
+        self.move_by(1);
+    }
+
+    fn mark_consolidated(&self, start: &[u32]) {
+        self.report_error(start, 0);
+    }
+
+    fn report_error(&self, start: &[u32], err: Q16) {
+        for &s in start {
+            if let Some(r) = self.row(s) {
+                r.err.set(err);
+            }
+        }
+    }
+
+    fn begin_sleep(&mut self) {
+        let mut rows: Vec<(u64, u32)> = self
+            .ring
+            .iter()
+            .flatten()
+            .filter(|r| self.strength(r) > 0)
+            .map(|r| (self.strength(r) as u64 * r.err.get().max(1) as u64, r.serial))
+            .collect();
+        rows.sort_unstable_by(|a, b| b.cmp(a));
+        *self.order.borrow_mut() = rows.into_iter().map(|x| x.1).collect();
+        self.cursor.set(0);
+    }
+
+    fn take_tags(&mut self) -> Vec<(Vec<u32>, Vec<usize>)> {
+        std::mem::take(&mut self.tags)
+    }
+
+    fn replay_from(&self, start: &[u32]) -> Recall {
+        start.first().map_or_else(Recall::default, |&s| self.emit(s))
+    }
+
+    /// The next row by priority (strength × cortex error) since `begin_sleep`.
+    fn replay(&self, _rng: &mut dyn RngCore) -> Recall {
+        let order = self.order.borrow();
+        if order.is_empty() {
+            return Recall::default();
+        }
+        let i = self.cursor.get();
+        self.cursor.set(i + 1);
+        self.emit(order[i % order.len()])
+    }
+
+    fn len(&self) -> usize {
+        self.live
+    }
+
+    fn stats(&self) -> (usize, usize, u64, usize) {
+        (0, self.recalls.get(), self.novelty_sum.0, self.novelty_sum.1)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Binding id of word `w` in slot `s`.
+    fn b(w: usize, s: usize) -> usize {
+        s * 4096 + w
+    }
+
+    fn event(ws: &[usize]) -> Vec<usize> {
+        ws.iter().enumerate().map(|(s, &w)| b(w, s)).collect()
+    }
+
+    #[test]
+    fn recalls_and_deduplicates() {
+        let mut m = EngramStore::new(EngramConfig::default());
+        for i in 0..500 {
+            m.store(&event(&[1, 2, 10 + i % 7]));
+        }
+        assert_eq!(m.len(), 7, "repeats strengthen their row instead of storing again");
+        m.store(&event(&[1, 50, 51]));
+        let r = m.recall(&event(&[1, 50]));
+        assert_eq!(r.ec, event(&[1, 50, 51]));
+    }
+
+    #[test]
+    fn place_disambiguates_similar_content() {
+        let mut m = EngramStore::new(EngramConfig::default());
+        m.store(&event(&[1, 2, 3])); // "it is autumn" in story 0
+        m.end_sequence();
+        m.store(&event(&[1, 2, 4])); // "it is winter" in story 1
+        m.end_sequence();
+        m.store(&event(&[1, 2, 5])); // story 2
+        let mut q = EngramStore::new(EngramConfig::default());
+        q.store(&event(&[1, 2, 3]));
+        q.end_sequence();
+        q.store(&event(&[1, 2, 4]));
+        q.end_sequence();
+        q.store(&event(&[7, 8, 9]));
+        // in story 2, "it is ..." recalls story 2's own fact
+        assert_eq!(m.recall(&event(&[1, 2])).ec, event(&[1, 2, 5]));
+        // with no fact here, the most recent other one
+        assert_eq!(q.recall(&event(&[1, 2])).ec, event(&[1, 2, 4]));
+    }
+
+    #[test]
+    fn an_episode_plays_forward() {
+        let mut m = EngramStore::new(EngramConfig::default());
+        for e in 0..5 {
+            m.store(&event(&[100 + e, 200 + e]));
+        }
+        m.end_sequence();
+        m.store(&event(&[300, 301]));
+        let seq = m.recall_sequence(&[b(101, 0)], 10);
+        assert_eq!(seq.len(), 4);
+        assert_eq!(seq[3].ec, event(&[104, 204]));
+    }
+
+    #[test]
+    fn the_write_head_evicts_weak_rows_and_keeps_strong_ones() {
+        let cfg = EngramConfig { capacity: 64, tau: 4, keep: 32, write_strength: 40, novelty_bonus: 0, bump: 64, ..EngramConfig::default() };
+        let mut m = EngramStore::new(cfg);
+        m.store(&event(&[1, 2]));
+        for i in 0..300 {
+            m.store(&event(&[1000 + i, 2000 + i]));
+            if i % 20 == 0 {
+                m.recall(&event(&[1, 2])); // rehearse
+            }
+        }
+        assert_eq!(m.recall(&event(&[1, 2])).ec, event(&[1, 2]), "rehearsed row survives many laps");
+        assert!(m.recall(&event(&[1000, 2000])).ec.is_empty(), "an old unrehearsed row is gone");
+        assert!(m.len() <= 64);
+    }
+
+    #[test]
+    fn replay_follows_strength_times_error() {
+        let mut m = EngramStore::new(EngramConfig { novelty_bonus: 0, ..EngramConfig::default() });
+        for e in 0..3 {
+            m.store(&event(&[10 + e, 20 + e]));
+        }
+        let rows: Vec<u32> = (0..3).map(|e| m.recall(&event(&[10 + e])).ca3[0]).collect();
+        m.report_error(&rows[0..1], ONE / 10); // the cortex knows row 0
+        m.report_error(&rows[1..2], ONE);
+        m.report_error(&rows[2..3], ONE / 2);
+        m.begin_sleep();
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(0);
+        let order: Vec<u32> = (0..3).map(|_| m.replay(&mut rng).ca3[0]).collect();
+        assert_eq!(order, vec![rows[1], rows[2], rows[0]]);
+    }
+}

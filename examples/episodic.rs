@@ -32,9 +32,9 @@ use neurocomp::det::HashMap;
 
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
-use neurocomp::fixed::{chance, q16, q16x, to_f32, Q16, ONE};
+use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -949,6 +949,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // winner-take-all over an inverted index with 1/n cue weights, successor pointers,
     // strength-based forgetting (INDEX_PERIOD stores per unit, 64; INDEX_PERIOD=0: none),
     // INDEX_PLAIN=1: plain overlap. Use with HIPPO_SELF=1 SPARSE_BIND=1.
+    // HIPPO=engram: the engram store (`program::EngramStore`): rows of binding ids and grid
+    // phases (the story is the place), theta-cycle deduplication, a ring buffer whose write
+    // head evicts weak rows, replay by strength × the cortex's error. ENGRAM_TAU (64),
+    // ENGRAM_CAPACITY (65536), ENGRAM_BONUS (where bonus, in ids; 0: an additive bonus
+    // even of 1/16 id outweighs content matches of common bindings, experiment 56).
+    if engram_mode() {
+        let mut cfg = EngramConfig::default();
+        cfg.tau = henv("ENGRAM_TAU", 64.0) as u32;
+        if cfg.tau == 0 {
+            cfg.tau = u32::MAX;
+        }
+        cfg.capacity = henv("ENGRAM_CAPACITY", 65536.0) as usize;
+        cfg.where_bonus = q16x(henv("ENGRAM_BONUS", 0.0) as f64);
+        cfg.seed_place = std::env::var("ENGRAM_SEED_PLACE").is_ok();
+        // ENGRAM_DEDUP=any | move (default) | place
+        cfg.dedup = match std::env::var("ENGRAM_DEDUP").as_deref() {
+            Ok("any") => Dedup::Any,
+            Ok("place") => Dedup::Place,
+            _ => Dedup::Move,
+        };
+        index_hc = Some(Box::new(EngramStore::new(cfg)) as Box<dyn EpisodicCircuit>);
+    }
     if std::env::var("HIPPO").map_or(false, |v| v == "index") {
         let mut cfg = IndexConfig::default();
         let period = henv("INDEX_PERIOD", 64.0) as u32;
@@ -1344,7 +1366,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 for &(w, sl) in bl {
                     let mut b = enc.codes[w].clone();
                     b.rotl_mut(slot_offset(sl));
-                    if (fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, &b, &enc.codes[w], sl) << 16) <= Q_03 as u64 * mem_size(&bind_hc, &bind_mem, hippo_self) as u64 {
+                    if (fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, &b, &enc.codes[w], w, sl) << 16) <= Q_03 as u64 * mem_size(&bind_hc, &bind_mem, hippo_self) as u64 {
                         state.or_mut(&enc.codes[w]);
                     }
                 }
@@ -1394,7 +1416,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let mut cue = None;
                     for _ in 0..64 {
                         let (w, c) = (rng.gen_range(0..vocab.len()), rng.gen_range(0..roles.used().max(1)));
-                        let b = sparse_binding(&enc.codes[w], c, false);
+                        let b = sparse_binding(&enc.codes[w], w, c, false);
                         if hc.familiarity(&b) > 0 {
                             cue = Some(b);
                             break;
@@ -1456,6 +1478,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // novelty-tagged events are replayed first (REPLAY_TAGGED=1), each `reps` times,
             // then the cue-free random replays
             let tags = if std::env::var("REPLAY_TAGGED").is_ok() { hc.take_tags() } else { Vec::new() };
+            hc.begin_sleep();
             let hc = &*hc;
             // the hippocampus replays on its own (cue-free, from random CA3 starts); each
             // replay is read through the slot cells: in every slot, the words bound there
@@ -1464,6 +1487,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // a tag's new inputs, read as a word: field → slot, bits → the word code they match
             let tag_word = |novel: &[usize]| -> Option<usize> {
                 let mut code = BitVector::new(BITS, Some(0));
+                if engram_mode() {
+                    // binding ids: the word is the id's low part
+                    return novel.first().map(|&i| i % 4096).filter(|&w| w < vocab.len());
+                }
                 for &b in novel {
                     code.bit_set(b % BITS);
                 }
@@ -1484,7 +1511,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if ov(w, &u) >= 28 && !items.iter().any(|x| x.0 == w) {
                             let mut b = enc.codes[w].clone();
                             b.rotl_mut(slot_offset(c));
-                            items.push((w, if sparse_bind { hc.familiarity(&sparse_binding(&enc.codes[w], c, false)) } else { hc.familiarity(&set_bits(&b)) }));
+                            items.push((w, if sparse_bind { hc.familiarity(&sparse_binding(&enc.codes[w], w, c, false)) } else { hc.familiarity(&set_bits(&b)) }));
                         }
                     }
                 }
@@ -1509,12 +1536,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 sem_store.process_predictive(cue, &mut out);
                 // consolidation: the cortex already gives this tagged event's content back
                 // from its cue, so the hippocampus may let it fade faster
-                if i < tagged.len() && std::env::var("NO_CONSOLIDATE_MARK").is_err() {
-                    let got: u32 = out.as_words().iter().zip(content.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
-                    if got as usize * 10 >= content.count_ones() * 8 {
-                        hc.mark_consolidated(&tagged[i].0);
-                        sem_hstats[3] += 1;
-                    }
+                let got: u32 = out.as_words().iter().zip(content.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
+                // the cortex's error on this event sets its replay priority (engram store)
+                hc.report_error(&r.ca3, ONE - ratio_q(got as u64, content.count_ones() as u64));
+                if i < tagged.len() && std::env::var("NO_CONSOLIDATE_MARK").is_err() && got as usize * 10 >= content.count_ones() * 8 {
+                    hc.mark_consolidated(&tagged[i].0);
+                    sem_hstats[3] += 1;
                 }
                 sem_store.feedback(cue, &content, &mut rng);
                 sem_replays += 1;
@@ -2401,8 +2428,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let r = if sparse_bind {
                                 // the sparse cue: this sentence's bindings, and the story's earlier ones as context
                                 let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
-                                let mut idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, false)).collect();
-                                idx.extend(bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, true)));
+                                let mut idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                                idx.extend(bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)));
                                 idx.sort_unstable();
                                 idx.dedup();
                                 hc.recall(&idx)
@@ -2481,7 +2508,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // the semantic store's cue: the sentence's least familiar word (on its own: by
                 // the hippocampus's counts of its bindings; else by word counts)
                 let sem_cue_w: Option<usize> = if hippo_self {
-                    bind_sentence_pairs.iter().zip(&bind_sentence).min_by_key(|((w, c), b)| fam_binding(&bind_hc, &bind_mem, true, sparse_bind, b, &enc.codes[*w], *c)).map(|((w, _), _)| *w)
+                    bind_sentence_pairs.iter().zip(&bind_sentence).min_by_key(|((w, c), b)| fam_binding(&bind_hc, &bind_mem, true, sparse_bind, b, &enc.codes[*w], *w, *c)).map(|((w, _), _)| *w)
                 } else {
                     let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                     ids[start..=t].iter().min_by_key(|&&w| word_count[w]).copied()
@@ -2489,7 +2516,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let mut fed_vec: Option<BitVector> = None;
                 let rollout_w = if rollout && rolled < 4 && (testing || complete.as_deref() == Some("rollout")) && bind && mem_size(&bind_hc, &bind_mem, hippo_self) > 0 {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-                    let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], w, c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let expect = column.l23.peek_union(&input, BITS);
                     // a definite expectation (one word) violated starts a rollout; a started
                     // rollout continues while the page does not match the expectation
@@ -2633,7 +2660,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-                    let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], w, c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                     let skipped = ov(ids[t + 1], &expect_prev) < 24;
                     let fresh = w != ids[t + 1] && !ids[start..=t].contains(&w) && s.words[t + 1] != ".";
@@ -2687,7 +2714,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     bind_sentence
                         .iter()
                         .zip(&bind_sentence_pairs)
-                        .map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], c))
+                        .map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], w, c))
                         .min()
                         .map_or(7, |c| (64 - c.leading_zeros() as u64).min(7))
                 } else {
@@ -3119,8 +3146,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                             if sparse_bind {
                                 let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
-                                let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, false)).collect();
-                                let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, true)).collect();
+                                let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                                let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)).collect();
                                 hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
                             } else {
                                 hc.store_event(&set_bits(&content), &set_bits(&context));
@@ -3635,16 +3662,31 @@ fn fam_count(hc: &Option<Box<dyn EpisodicCircuit>>, mem: &EpisodicMemory, own: b
 /// so a bit belongs to essentially one binding.
 const SPARSE_FIELDS: usize = 64;
 
-fn sparse_binding(code: &BitVector, slot: usize, context: bool) -> Vec<usize> {
+fn engram_mode() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| std::env::var("HIPPO").map_or(false, |v| v == "engram"))
+}
+
+fn sparse_binding(code: &BitVector, w: usize, slot: usize, context: bool) -> Vec<usize> {
+    // HIPPO=engram: one id per binding (slot × 4096 + word); the story context is the
+    // store's place code, not stored bindings
+    if engram_mode() {
+        // the story's earlier bindings are stored and cued too, as ids of their own
+        // (context slot fields); ENGRAM_NO_CONTEXT=1: content only (the place code alone)
+        if context && std::env::var("ENGRAM_NO_CONTEXT").is_ok() {
+            return Vec::new();
+        }
+        return vec![((slot % SPARSE_FIELDS) + if context { SPARSE_FIELDS } else { 0 }) * 4096 + w];
+    }
     let field = (slot % SPARSE_FIELDS) + if context { SPARSE_FIELDS } else { 0 };
     set_bits(code).into_iter().map(|b| field * BITS + b).collect()
 }
 
 /// Familiarity of the binding (`code` in `slot`, rotated form `b`): from the sparse binding
 /// space when SPARSE_BIND is on, else as `fam_count`.
-fn fam_binding(hc: &Option<Box<dyn EpisodicCircuit>>, mem: &EpisodicMemory, own: bool, sparse: bool, b: &BitVector, code: &BitVector, slot: usize) -> u64 {
+fn fam_binding(hc: &Option<Box<dyn EpisodicCircuit>>, mem: &EpisodicMemory, own: bool, sparse: bool, b: &BitVector, code: &BitVector, w: usize, slot: usize) -> u64 {
     match (sparse && own, hc) {
-        (true, Some(h)) => h.familiarity(&sparse_binding(code, slot, false)),
+        (true, Some(h)) => h.familiarity(&sparse_binding(code, w, slot, false)),
         _ => fam_count(hc, mem, own, b),
     }
 }

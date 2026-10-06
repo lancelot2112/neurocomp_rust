@@ -542,6 +542,10 @@ pub trait EpisodicCircuit {
     fn end_sequence(&mut self) {}
     /// The cortex now reconstructs these stored events on its own (`replay_from` codes).
     fn mark_consolidated(&self, _start: &[u32]) {}
+    /// The cortex's error (`Q16`) when these stored events were last replayed to it.
+    fn report_error(&self, _start: &[u32], _err: Q16) {}
+    /// An offline period starts: replay order may be set now.
+    fn begin_sleep(&mut self) {}
     fn take_tags(&mut self) -> Vec<(Vec<u32>, Vec<usize>)>;
     fn replay_from(&self, start: &[u32]) -> Recall;
     fn replay(&self, rng: &mut dyn rand::RngCore) -> Recall;

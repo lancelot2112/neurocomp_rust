@@ -868,6 +868,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // answers preceded by a regression at the step before
     let mut sacc_stats = [0usize; 5];
     let mut l4_mid = 0usize; // frames between current and previous in the column's L4
+    // SACCADE_CONF=1: the selector's context also holds the column's own confidence about
+    // the next word (a peek without top-down, no state change), in 4 buckets: no prediction,
+    // < 0.5, < 0.8, >= 0.8
+    let sacc_conf = std::env::var("SACCADE_CONF").is_ok();
+    // SACCADE=index: no fixed targets. The page keeps an index of where each surprising
+    // word was read (landmarks); a regression's candidates are "read on" plus each landmark
+    // word (its latest position before the current sentence), valued per context
+    let mut page_marks: Vec<bool> = Vec::new(); // per position of the current story
+    // test: answers whose regression re-read the story's first sentence (the announcement)
+    let mut sacc_hit_first = 0usize;
     let mut season_bins = [(0usize, 0usize); 6];
     // COST: wall time and words for training and test
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
@@ -996,6 +1006,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             train_words += s.words.len();
         }
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
+        page_marks = vec![false; ids.len()];
         if hier && hier_reset {
             area.clear();
             for u in upper.iter_mut() {
@@ -1076,6 +1087,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             sent_words += 1;
             if share < predicted_share {
                 surprising.or_mut(code);
+                page_marks[t] = true;
                 // a fact conflict (BOUNDARY): this rare surprising word against a different
                 // rare word of the same kind still held; checked as the word arrives, so the
                 // old context is gone before the next prediction
@@ -1110,27 +1122,65 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
             // active reading: choose a saccade before predicting the next word
             if let (true, Some(mode)) = (hier && t + 1 < ids.len(), saccade.as_deref()) {
+                let cur_start = s.words[..=t].iter().rposition(|w| *w == ".").map_or(0, |i| i + 1);
+                // the column's own confidence about the next word (peek, no top-down)
+                let bucket = if sacc_conf {
+                    let empty = BitVector::new(BITS, Some(0));
+                    let l4 = column.assemble(code, &vec![empty; l4_mid]);
+                    match column.l23.peek_scored(&l4) {
+                        None => 0,
+                        Some((_, c)) if c < 0.5 => 1,
+                        Some((_, c)) if c < 0.8 => 2,
+                        _ => 3,
+                    }
+                } else {
+                    0
+                };
+                let prev_w = if t > 0 { ids[t - 1] } else { vocab.len() };
+                let ctx = (prev_w * 131 + ids[t] * 7919 + bucket * 104_729) % BITS;
+                // landmarks (index mode): distinct surprising words before the current
+                // sentence, each at its latest position
+                let mut marks: Vec<(usize, usize)> = Vec::new(); // (word, position)
+                if mode == "index" {
+                    for j in (0..cur_start).rev() {
+                        if page_marks[j] && s.words[j] != "." && !marks.iter().any(|m| m.0 == ids[j]) {
+                            marks.push((ids[j], j));
+                        }
+                    }
+                }
                 let a = if mode == "oracle" {
                     if t + 1 == s.answer_at { 2 } else { 0 }
                 } else {
-                    let prev_w = if t > 0 { ids[t - 1] } else { vocab.len() };
-                    let ctx = (prev_w * 131 + ids[t] * 7919) % BITS;
-                    let cands: Vec<BitVector> = (0..3)
-                        .map(|a| {
-                            let mut c = sacc_code(a);
-                            c.rotl_mut(ctx);
-                            c
-                        })
-                        .collect();
+                    let cands: Vec<BitVector> = if mode == "index" {
+                        std::iter::once(sacc_code(0))
+                            .chain(marks.iter().map(|m| enc.codes[m.0].clone()))
+                            .map(|mut c| {
+                                c.rotl_mut(ctx);
+                                c
+                            })
+                            .collect()
+                    } else {
+                        (0..3)
+                            .map(|a| {
+                                let mut c = sacc_code(a);
+                                c.rotl_mut(ctx);
+                                c
+                            })
+                            .collect()
+                    };
                     let explore = if testing { None } else { Some(&mut rng) };
-                    sacc_pending = Some(0);
                     let a = sacc_bg.select(&cands, explore).unwrap_or(0);
                     sacc_pending = Some(a);
                     a
                 };
                 // the target sentence: [start, end] word indices, end at its "."
-                let cur_start = s.words[..=t].iter().rposition(|w| *w == ".").map_or(0, |i| i + 1);
+                let sentence_of = |j: usize| {
+                    let start = s.words[..j].iter().rposition(|w| *w == ".").map_or(0, |i| i + 1);
+                    let end = s.words[j..].iter().position(|w| *w == ".").map_or(s.words.len() - 1, |e| j + e);
+                    (start, end)
+                };
                 let target = match a {
+                    a if mode == "index" && a > 0 => Some(sentence_of(marks[a - 1].1)),
                     1 if cur_start > 0 => {
                         let prev_start = s.words[..cur_start - 1].iter().rposition(|w| *w == ".").map_or(0, |i| i + 1);
                         Some((prev_start, cur_start - 1))
@@ -1143,7 +1193,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if let Some((start, end)) = target {
                     if testing {
-                        sacc_stats[a - 1] += 1;
+                        sacc_stats[if mode == "index" { 1 } else { a - 1 }] += 1;
+                        sacc_hit_first += (t + 1 == s.answer_at && start == 0) as usize;
                         sacc_stats[2] += end + 1 - start;
                         sacc_stats[4] += (t + 1 == s.answer_at) as usize;
                     }
@@ -2127,12 +2178,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if saccade.is_some() && sacc_stats[3] > 0 {
             eprintln!(
-                "  SACCADE seed {seed}: at test, regressions to the previous sentence {} and to the page top {} ({:.2} per story); {:.1}% of words were re-reads; a regression just before {:.1}% of answers",
+                "  SACCADE seed {seed}: at test, regressions to the previous sentence {} and to the page top / a landmark {} ({:.2} per story); {:.1}% of words were re-reads; a regression just before {:.1}% of answers, re-reading the first sentence at {:.1}%",
                 sacc_stats[0],
                 sacc_stats[1],
                 (sacc_stats[0] + sacc_stats[1]) as f64 / TEST as f64,
                 100.0 * sacc_stats[2] as f64 / (sacc_stats[2] + sacc_stats[3]) as f64,
-                100.0 * sacc_stats[4] as f64 / TEST as f64
+                100.0 * sacc_stats[4] as f64 / TEST as f64,
+                100.0 * sacc_hit_first as f64 / TEST as f64
             );
         }
         if bound_detect {

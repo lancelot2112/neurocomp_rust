@@ -348,6 +348,12 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   time instead of holding it: the world as external memory.
 
 ## Roles and schemas ([31](experiments/31-role-cells-and-transfer.md))
+- **Patterson, K., Nestor, P. J. & Rogers, T. T. (2007).** *Where do you know what you
+  know? The representation of semantic knowledge in the human brain.* Nature Reviews
+  Neuroscience 8. The anterior temporal hub; the semantic store of
+  [42](experiments/42-semantic-store.md).
+- **Lambon Ralph, M. A., Jefferies, E., Patterson, K. & Rogers, T. T. (2017).** *The neural
+  and computational bases of semantic cognition.* Nature Reviews Neuroscience 18.
 - **Kumaran, D., Hassabis, D. & McClelland, J. L. (2016).** *What learning systems do
   intelligent agents need? Complementary learning systems theory updated.* Trends in
   Cognitive Sciences 20. Schema-consistent information integrates quickly

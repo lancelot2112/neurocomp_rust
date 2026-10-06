@@ -110,3 +110,7 @@ draw.
 - **Complementary learning systems** (McClelland, McNaughton & O'Reilly 1995): the
   hippocampus teaches the neocortex through interleaved replay. The neocortical learner
   must be able to represent the association being taught; here it cannot yet.
+
+**Update:** done in [42](42-semantic-store.md). With the semantic store fed by
+novelty-prioritised replay, the family is supplied correctly 95–100% of the time with the
+hippocampus off.

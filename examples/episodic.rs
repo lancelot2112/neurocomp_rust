@@ -942,6 +942,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // prediction (slot memory first, then the higher area, then the column), each only if
     // it is of the kind the column expects
     let rollout_area = std::env::var("ROLLOUT_AREA").is_ok();
+    // SEMANTIC=r: a cortical semantic store (the cue -> content store of experiment 17),
+    // trained only by sleep replay. Each training sentence is kept as an episode until the
+    // next sleep; at sleep the novel ones (with a word in under 1% of sentences so far) are
+    // replayed, interleaved with as many others, r rounds: the sentence's rarest word cues
+    // the codes of its other words ("tom" -> {is, a, smith}). At a rollout step it is
+    // queried with the current sentence's rarest word, after the slot memory and before
+    // the higher area and the column, and only a word of the expected kind is taken.
+    // SEMANTIC_RANDOM=n (a control): replay n random sentences per sleep instead.
+    let semantic_reps: Option<usize> = std::env::var("SEMANTIC").ok().and_then(|v| v.parse().ok());
+    let mut sem_store: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
+        max_kernels: 20_000,
+        frame_words: BITS / 64,
+        max_frames: 1,
+        sample_bits: 16,
+        match_fraction: 0.8,
+        surprise_fraction: 0.5,
+        generalize: None,
+        generalize_after: 1,
+    });
+    let mut sem_buf: Vec<Vec<usize>> = Vec::new(); // training sentences since the last sleep
+    let mut sem_replays = 0usize;
+    let mut sem_used = [0usize; 2]; // rollout steps whose word came from the store: (all, held-out stories)
     let bind_lesion = std::env::var("BIND_LESION").is_ok();
     // COMPLETE=1: pattern completion of a skipped slot. When the next word is not of the kind
     // the column expects here, the sentence is novel (familiarity band < 4) and the slot
@@ -1206,6 +1228,39 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
             }
+        }
+        // SEMANTIC: sleep replay of the sentences since the last sleep into the semantic store
+        if let (Some(reps), true) = (semantic_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
+            let rare = |w: usize| (word_count[w] as f64) < 0.01 * sentence_count as f64;
+            let novel: Vec<usize> = (0..sem_buf.len()).filter(|&i| sem_buf[i].iter().any(|&w| rare(w))).collect();
+            let others: Vec<usize> = (0..sem_buf.len()).filter(|&i| !novel.contains(&i)).collect();
+            let mut order = novel.clone();
+            order.extend(others.choose_multiple(&mut rng, novel.len()).copied());
+            // SEMANTIC_RANDOM=n (control): n sentences drawn at random, no novelty priority
+            if let Some(n) = std::env::var("SEMANTIC_RANDOM").ok().and_then(|v| v.parse::<usize>().ok()) {
+                let all: Vec<usize> = (0..sem_buf.len()).collect();
+                order = all.choose_multiple(&mut rng, n).copied().collect();
+            }
+            for _ in 0..reps {
+                order.shuffle(&mut rng);
+                for &i in &order {
+                    let sent = &sem_buf[i];
+                    let Some(&cue_w) = sent.iter().min_by_key(|&&w| word_count[w]) else { continue };
+                    let mut content = BitVector::new(BITS, Some(0));
+                    for &w in sent.iter().filter(|&&w| w != cue_w) {
+                        content.or_mut(&enc.codes[w]);
+                    }
+                    if content.count_ones() == 0 {
+                        continue;
+                    }
+                    let cue = &enc.codes[cue_w];
+                    let mut out = BitVector::new(BITS, Some(0));
+                    sem_store.process_predictive(cue, &mut out);
+                    sem_store.feedback(cue, &content, &mut rng);
+                    sem_replays += 1;
+                }
+            }
+            sem_buf.clear();
         }
         if !testing && s_i > 0 && sleep_every.map_or(false, |n| s_i % n == 0) {
             let (p, m) = column.l23.sleep();
@@ -2085,8 +2140,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let td = td_src.as_ref().filter(|_| rollout_area)?;
                         (0..vocab.len()).filter(|&i| ov(i, td) >= 24 && ov(i, &expect) >= 24).max_by_key(|&i| ov(i, td))
                     };
-                    let own = bind_answer
-                        .filter(|&w| !(testing && bind_lesion) && ov(w, &expect) >= 24)
+                    let from_sem = || -> Option<usize> {
+                        semantic_reps?;
+                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let &cue_w = ids[start..=t].iter().min_by_key(|&&w| word_count[w])?;
+                        let out = sem_store.peek(&enc.codes[cue_w])?;
+                        (0..vocab.len()).filter(|&i| ov(i, &out) >= 24 && ov(i, &expect) >= 24).max_by_key(|&i| ov(i, &out))
+                    };
+                    let mem_w = bind_answer.filter(|&w| !(testing && bind_lesion) && ov(w, &expect) >= 24);
+                    let sem_w = if mem_w.is_none() { from_sem() } else { None };
+                    if sem_w.is_some() && skipped {
+                        sem_used[0] += 1;
+                        sem_used[1] += (testing && s.held_out) as usize;
+                    }
+                    let own = mem_w
+                        .or(sem_w)
                         .or_else(from_area)
                         .or_else(|| column.l23.peek(&input).and_then(|o| enc.decode(&o)));
                     if std::env::var("COMPLETEDIAG").is_ok() && testing && s.words[t] == "a" && t >= 2 && NEW_NAMES.contains(&s.words[t - 2]) {
@@ -2569,6 +2637,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sentence = BitVector::new(BITS, Some(0));
                 bind_sentence.clear();
+                if semantic_reps.is_some() && !testing {
+                    sem_buf.push(s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect());
+                }
                 completed_sentence = false;
                 rolled = 0;
                 if hier {
@@ -2797,6 +2868,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[2] as f64 / (sacc_stats[2] + sacc_stats[3]) as f64,
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
+            );
+        }
+        if semantic_reps.is_some() {
+            eprintln!(
+                "  SEMANTIC seed {seed}: {} kernels from {} replays; rollout steps taken from the store {} ({} in held-out stories)",
+                sem_store.len(),
+                sem_replays,
+                sem_used[0],
+                sem_used[1]
             );
         }
         if complete.is_some() {

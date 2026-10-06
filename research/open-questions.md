@@ -86,6 +86,11 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     "tom → smith" into the cortex. The column and higher area only predict next words,
     and the higher area's top-down prediction at the surname step is still "is". Next: a
     semantic (associative) area that consolidation can write "tom ~ smith" into.
+  - **A semantic store** ([42](experiments/42-semantic-store.md)): 17's cue → content store,
+    fed by novelty-prioritised replay, carries the family with the hippocampus off
+    (95–100% right; held out 61–67% with answer-trace consolidation, as good as intact).
+    Random replay with the same budget misses it. Open: several facts per entity, real
+    text, and the store as a mix source.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

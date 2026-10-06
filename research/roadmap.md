@@ -133,6 +133,12 @@ and growth by need.
 **Update** ([27](experiments/27-boundary-detection.md)): the network now finds story
 boundaries itself, from contradicted facts (90–99%).
 
+**Update** ([28](experiments/28-reading-with-actions.md)): the reader's own actions
+(opening a book) mark and reinstate context, which lifts interleaved reading from chance
+to 41–54%. Next: let the network choose the action (reach for the book a question
+needs), and hold states per kind so a restored context is not crowded. 28 also audits
+what is still hand-supplied.
+
 **Growing areas by need (proposed).** Instead of fixing the number of areas, grow
 one where the top area cannot contain its surprise:
 - **A bud.** The top area keeps a candidate area above it, with a window 4× longer. The

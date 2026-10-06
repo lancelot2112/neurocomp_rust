@@ -274,11 +274,18 @@ fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
     Story { words, answer_at, held_out }
 }
 
-const BOOKS: &[&str] = &["@open_a", "@open_b", "@open_c"];
+/// Book actions: "@open_x" for each physical book. Three books are read at a time (slots);
+/// with BOOK_IDS=n a new book gets the next of n actions in turn (default 3: a new book
+/// reuses its slot's action).
+const BOOKS: &[&str] = &["@open_a", "@open_b", "@open_c", "@open_d", "@open_e", "@open_f", "@open_g", "@open_h", "@open_i", "@open_j", "@open_k", "@open_l"];
 
 /// One reading session of book `b` in `season`; `first` = the book's first session.
-fn book_session(rng: &mut StdRng, b: usize, season: usize, first: bool, held_out: bool) -> Story {
-    let mut words: Vec<&'static str> = vec![BOOKS[b]];
+fn book_ids() -> usize {
+    std::env::var("BOOK_IDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3).clamp(3, BOOKS.len())
+}
+
+fn book_session(rng: &mut StdRng, id: usize, season: usize, first: bool, held_out: bool) -> Story {
+    let mut words: Vec<&'static str> = vec![BOOKS[id]];
     if first {
         words.extend([SEASONS[season], "came", "."]);
     }
@@ -491,7 +498,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         vocab.push("came");
     }
     if task == Task::Books {
-        vocab.extend(BOOKS);
+        vocab.extend(&BOOKS[..book_ids()]);
         vocab.push("@close");
     }
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
@@ -824,6 +831,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // book and its bin [first session, back to back, after 1-2 other sessions, after 3+]
     let (mut book_season, mut book_left, mut book_last) = ([0usize; 3], [0usize; 3], [0usize; 3]);
     let (mut book_bin, mut open_book_next) = (0usize, 0usize);
+    let (mut book_id, mut next_book_id) = ([0usize, 1, 2], 3usize);
     let mut book_bins = [(0usize, 0usize); 4];
     // BOOK_CTX: what an "@open" action does to the areas' context: none (default), reset,
     // reinstate (restore the context saved at that book's last "@close", else reset), or
@@ -919,11 +927,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         let s = if task == Task::Books {
             // pick a book; a finished one is replaced by a new book with a new season
-            let b = rng.gen_range(0..BOOKS.len());
+            let b = rng.gen_range(0..3);
             let first = book_left[b] == 0;
             if first {
                 book_season[b] = rng.gen_range(0..SEASONS.len());
                 book_left[b] = rng.gen_range(3..=8);
+                // the new book's action: its slot's (3 ids), or the next of BOOK_IDS in turn
+                book_id[b] = if book_ids() == 3 { b } else { next_book_id };
+                next_book_id = (next_book_id + 1) % book_ids();
             }
             book_left[b] -= 1;
             book_bin = if first {
@@ -936,8 +947,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             };
             book_last[b] = s_i;
-            open_book_next = b;
-            book_session(&mut rng, b, book_season[b], first, testing && s_i % 2 == 1)
+            open_book_next = book_id[b];
+            book_session(&mut rng, book_id[b], book_season[b], first, testing && s_i % 2 == 1)
         } else if task == Task::Season {
             season_distance = rng.gen_range(0..season_len);
             season_story(&mut rng, season_distance, testing && s_i % 2 == 1)

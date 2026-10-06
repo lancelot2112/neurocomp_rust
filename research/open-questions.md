@@ -42,6 +42,15 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   the fact they hold (80–97%). As rehearsal it extends a single area's reach, but it hurts
   a chain that already holds the fact. Use it where an area must hold something beyond
   its window, and test it with recitation and answering.
+- **Actions as context** ([28](experiments/28-reading-with-actions.md)): reinstating
+  a book's windows when it is opened lifts interleaved reading from chance to 41–54%.
+  The ceiling comes from crowded windows (every earlier question's words) and from
+  contradiction detection over-firing within a book. Next:
+  - **Reaching for a book:** the network chooses the action that brings back the
+    context a question needs.
+  - **States held per kind,** newest kept.
+  - **The audit of hand-supplied pieces** in 28: rarity and kind thresholds, sentence
+    units, decoding to word identities, and the keyed context store.
 - **Grow areas by need** ([roadmap](roadmap.md)): a shadow bud above the top area,
   learning its residual, promoted when it predicts that residual above chance and pruned
   when not. The number of areas would then follow the task.

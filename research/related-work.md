@@ -320,6 +320,13 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
 - **Kurby, C. A. & Zacks, J. M. (2008).** *Segmentation in the perception and memory of
   events.* Trends in Cognitive Sciences 12. Boundaries where the event model fails: the
   fact-conflict detector of [27](experiments/27-boundary-detection.md).
+- **Sommer, M. A. & Wurtz, R. H. (2002).** *A pathway in primate brain for internal
+  monitoring of movements.* Science 296. Corollary discharge of saccades via the
+  mediodorsal thalamus: actions as context signals ([28](experiments/28-reading-with-actions.md)).
+- **Tulving, E. & Thomson, D. M. (1973).** *Encoding specificity and retrieval processes
+  in episodic memory.* Psychological Review 80; **Godden, D. R. & Baddeley, A. D. (1975).**
+  *Context-dependent memory in two natural environments.* British J. Psychology 66.
+  Reinstating the encoding context helps recall.
 - **Howard, M. W. & Kahana, M. J. (2002).** *A distributed representation of temporal
   context.* J. Mathematical Psychology 46. A drifting context gives recency: the model
   for a decaying state.

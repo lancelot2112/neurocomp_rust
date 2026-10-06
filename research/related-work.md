@@ -310,9 +310,6 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   train each other.
 
 ## Context, recency and order ([26](experiments/26-context-and-readback.md))
-- **Zacks, J. M. et al. (2007).** *Event perception: a mind-brain perspective.*
-  Psychological Bulletin 133. Experience is segmented into events at points of high
-  prediction error.
 - **Baldassano, C. et al. (2017).** *Discovering event structure in continuous narrative
   perception and memory.* Neuron 95. Cortical states shift at event boundaries, on
   longer timescales higher up.

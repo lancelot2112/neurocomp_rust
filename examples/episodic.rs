@@ -710,6 +710,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut upper_has_answer = vec![0usize; upper.len()];
     // HIER_RESET=1: a story boundary is a context boundary: every area forgets its window
     let hier_reset = std::env::var("HIER_RESET").is_ok();
+    // BOUNDARY=1: detect context boundaries instead of being told. A boundary is a conflict
+    // of facts: a rare surprising word arrives while an area's window holds a different rare
+    // word of the same kind. Kind is learned from the input: two words are of a kind when
+    // the words seen before and after them mostly coincide (Jaccard >= BOUNDARY_KIND, default
+    // 0.5). The boundary lies just after the older fact: each area forgets it and everything
+    // older (`HigherArea::forget_through`)
+    let bound_detect = std::env::var("BOUNDARY").is_ok();
+    let bound_kind: f64 = std::env::var("BOUNDARY_KIND").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+    // context signature per word: the words seen just before (< V) and just after (V + w)
+    let mut word_ctx: Vec<std::collections::HashSet<usize>> = vec![std::collections::HashSet::new(); vocab.len()];
+    // test sentences with a detected boundary: (story-opening, other); story-opening sentences
+    let mut bound_hits = (0usize, 0usize);
+    let mut story_openings = 0usize;
     // READBACK=top|all: self-supervised read-back. At each sentence end, an area says back
     // the most recent rare word its window holds (rare: seen in fewer than READBACK_RARE of
     // the sentences so far, default 0.02). Its target is that word, from its own input; it
@@ -718,6 +731,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let readback = std::env::var("READBACK").ok();
     let readback_rare: f64 = std::env::var("READBACK_RARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.02);
     let mut word_count = vec![0u32; vocab.len()];
+    // BOUNDDIAG: the column's surprise per sentence (sum, words, first word's), and per
+    // test sentence (is it a story's first sentence?, mean surprise, first-word surprise)
+    let (mut sent_surprise, mut sent_words, mut first_surprise) = (0f32, 0usize, 0f32);
+    let mut bound_log: Vec<(bool, f32, f32)> = Vec::new();
     let mut sentence_count = 0u32;
     // read-back at test: (attempts, spoke the target)
     let mut readback_stats = (0usize, 0usize);
@@ -882,6 +899,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             prof[4] += prof_t.elapsed().as_secs_f64();
             prof_t = std::time::Instant::now();
             let code = &enc.codes[ids[t]];
+            if let Some(p) = prev {
+                word_ctx[ids[t]].insert(p);
+                word_ctx[p].insert(vocab.len() + ids[t]);
+            }
             column.observe(code);
             sentence.or_mut(code);
             // Comparator: was this word predicted? Graded, at the word level: the share of
@@ -891,6 +912,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // L5: the probability the column gave this word (its share of the prediction
             // times the predicting kernel's reliability); a lucky guess is still a surprise
             let share = 1.0 - column.surprise(code);
+            if sent_words == 0 {
+                first_surprise = 1.0 - share;
+            }
+            sent_surprise += 1.0 - share;
+            sent_words += 1;
             if share < predicted_share {
                 surprising.or_mut(code);
                 if hier {
@@ -1586,6 +1612,39 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 gate_pending = None;
             }
 
+            if ids[t] == full_stop && hier && bound_detect {
+                // fact conflicts: this sentence's rare surprising words against the rare words
+                // each area still holds
+                let rare = |w: usize| sentence_count > 50 && (word_count[w] as f64) < readback_rare * sentence_count as f64;
+                let same_kind = |a: usize, b: usize| {
+                    let (x, y) = (&word_ctx[a], &word_ctx[b]);
+                    let inter = x.intersection(y).count();
+                    let union = x.union(y).count();
+                    union > 0 && inter as f64 >= bound_kind * union as f64
+                };
+                let new_facts: Vec<usize> = (0..vocab.len())
+                    .filter(|&w| rare(w) && enc.codes[w].as_words().iter().zip(surprising.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
+                    .collect();
+                let mut fired = false;
+                for &w in &new_facts {
+                    let conflicts = |c: &BitVector| enc.decode(c).map_or(false, |h| h != w && rare(h) && same_kind(h, w));
+                    fired |= area.forget_through(conflicts);
+                    for u in upper.iter_mut() {
+                        fired |= u.forget_through(conflicts);
+                    }
+                }
+                if testing {
+                    let opening = !s.words[..t].contains(&".");
+                    story_openings += opening as usize;
+                    if fired {
+                        if opening {
+                            bound_hits.0 += 1;
+                        } else {
+                            bound_hits.1 += 1;
+                        }
+                    }
+                }
+            }
             if ids[t] == full_stop {
                 // one-shot: the whole sentence (or its unpredicted part) is one episode.
                 // Persist: test questions are not stored, or the first anchor question
@@ -1613,6 +1672,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 surprising = BitVector::new(BITS, Some(0));
                 // word frequencies (per sentence), for read-back's "rare"
                 sentence_count += 1;
+                if testing {
+                    let first_of_story = !s.words[..t].contains(&".");
+                    bound_log.push((first_of_story, sent_surprise / sent_words.max(1) as f32, first_surprise));
+                }
+                sent_surprise = 0.0;
+                sent_words = 0;
                 for w in s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".") {
                     word_count[index[w]] += 1;
                 }
@@ -1796,6 +1861,33 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .map(|(i, (u, h))| format!("area {} (window {} sentences) {} kernels, held the answer at {:.1}%", i + 3, u.span(), u.column.l23.live(), 100.0 * *h as f64 / TEST as f64))
                 .collect();
             eprintln!("  CHAIN seed {seed}: {}", parts.join("; "));
+        }
+        if std::env::var("BOUNDDIAG").is_ok() && !bound_log.is_empty() {
+            let stats = |first: bool, f: &dyn Fn(&(bool, f32, f32)) -> f32| -> String {
+                let mut v: Vec<f32> = bound_log.iter().filter(|e| e.0 == first).map(f).collect();
+                v.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                if v.is_empty() {
+                    return "-".into();
+                }
+                let q = |p: f32| v[((v.len() - 1) as f32 * p) as usize];
+                format!("n {} p10 {:.2} median {:.2} p90 {:.2}", v.len(), q(0.1), q(0.5), q(0.9))
+            };
+            eprintln!(
+                "  BOUNDDIAG seed {seed}: sentence mean surprise: story-opening {} | other {}; first word: story-opening {} | other {}",
+                stats(true, &|e| e.1),
+                stats(false, &|e| e.1),
+                stats(true, &|e| e.2),
+                stats(false, &|e| e.2)
+            );
+        }
+        if bound_detect {
+            eprintln!(
+                "  BOUNDARY seed {seed}: at test, boundaries detected at {} of {} story openings ({:.1}%) and at {} other sentences",
+                bound_hits.0,
+                story_openings,
+                100.0 * bound_hits.0 as f64 / story_openings.max(1) as f64,
+                bound_hits.1
+            );
         }
         if readback.is_some() && readback_stats.0 > 0 {
             eprintln!(

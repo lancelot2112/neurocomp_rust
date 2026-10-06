@@ -430,6 +430,23 @@ impl HigherArea {
         self.window_words.iter().rev().flat_map(|ws| ws.iter().rev())
     }
 
+    /// A context boundary just after the newest window word matching `held`: forget the
+    /// sentence holding it and every older one, keep the newer ones. Returns whether
+    /// anything was forgotten.
+    pub fn forget_through(&mut self, held: impl Fn(&BitVector) -> bool) -> bool {
+        let Some(i) = self.window_words.iter().rposition(|ws| ws.iter().any(|w| held(w))) else { return false };
+        let drop = i + 1;
+        // the OR window has one entry per sentence with surprising content, as the word
+        // lists do; if they ever differ, forget it all rather than misalign them
+        if self.window.len() == self.window_words.len() {
+            self.window.drain(..drop);
+        } else {
+            self.window.clear();
+        }
+        self.window_words.drain(..drop);
+        true
+    }
+
     /// Context boundary (a new story): forget the window.
     pub fn clear(&mut self) {
         self.window.clear();

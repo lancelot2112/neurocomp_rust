@@ -33,7 +33,7 @@ a fading state, where recent words are strongest, give that clean context?
 | Schema test ([34](34-schema-test.md)), episodic memory, context-bound episodes | Trained names | New names, shown once | New names, shown 4 times |
 |---|---|---|---|
 | Window (34) | 55–68% | 5–16% | 8–18% |
-| Fading state | 35–42% | 14–18% | 15–24% |
+| Fading state | 31–42% | 14–18% | 15–24% |
 | No schema, fading | 5–18% | 14–17% | – |
 
 ## Findings

@@ -42,6 +42,21 @@ impl DentateGyrus {
         Self { cells, k, inputs_to_cells }
     }
 
+    /// Like `separate`, with each input bit's drive weighted by `weight(bit)` (e.g. less
+    /// for familiar inputs), so the rare part of an input chooses the granule cells.
+    pub fn separate_weighted(&self, x: &[usize], weight: impl Fn(usize) -> u32) -> Vec<u32> {
+        let mut drive = vec![0u64; self.cells];
+        for &b in x {
+            let w = weight(b) as u64;
+            if let Some(cells) = self.inputs_to_cells.get(b) {
+                for &c in cells {
+                    drive[c as usize] += w;
+                }
+            }
+        }
+        top_k(drive.into_iter(), self.k)
+    }
+
     /// The sparse code for active input bits `x`: the `k` granule cells with the
     /// most active inputs (ties broken by cell index).
     pub fn separate(&self, x: &[usize]) -> Vec<u32> {

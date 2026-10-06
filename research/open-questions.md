@@ -108,6 +108,12 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     recalls the one-shot family, matching the list memory without an explicit search.
     Open: a learned EC, replay from the circuit feeding the cortex, and episodes per
     event (seed 2's two surnames in one story).
+  - **The hippocampus on its own** ([48](experiments/48-hippocampus-on-its-own.md)): it
+    can run without the list store, and per-sentence events with a context code fix
+    seed 2 but lose seed 0. Its own replay never reaches a one-shot fact. The blocker is
+    the crowded binding space (about 12 bindings per EC bit), where per-synapse counts
+    cannot tell a new binding from old ones. Next: a sparse binding space, then tagged
+    replay.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

@@ -58,8 +58,9 @@ connections between them exist. "Not modelled" is as important as what is.
 - **Perirhinal cortex** (item familiarity as its own system).
 - **Hippocampal–prefrontal schema circuits:** one-exposure learning now reaches the
   answer, filtered by the cortex's class expectation
-  ([37](../experiments/37-schema-supports-episode.md)). Its consolidation into cortex,
-  and a schema advantage over no schema, are still to come.
+  ([37](../experiments/37-schema-supports-episode.md)). Its consolidation into cortex is
+  partial ([38](../experiments/38-consolidation-of-one-shot-episodes.md)), and a schema
+  advantage over no schema is still to come.
 - **Several columns side by side** (breadth): other modalities and concepts.
 - **Amygdala** (salience, value); **hypothalamus** (drives).
 - **An event-driven clock** for the higher areas.

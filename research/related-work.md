@@ -348,6 +348,9 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   time instead of holding it: the world as external memory.
 
 ## Roles and schemas ([31](experiments/31-role-cells-and-transfer.md))
+- **Squire, L. R. & Alvarez, P. (1995).** *Retrograde amnesia and memory consolidation: a
+  neurobiological perspective.* Current Opinion in Neurobiology 5. Systems consolidation
+  from hippocampus to neocortex ([38](experiments/38-consolidation-of-one-shot-episodes.md)).
 - **van Kesteren, M. T. R., Ruiter, D. J., Fernández, G. & Henson, R. N. (2012).** *How
   schema and novelty augment memory formation.* Trends in Neurosciences 35. Prefrontal
   schemas and hippocampal novelty together ([37](experiments/37-schema-supports-episode.md)).

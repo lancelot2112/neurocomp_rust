@@ -70,7 +70,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   ([37](experiments/37-schema-supports-episode.md)) lifts new names to 28–44% after one
   exposure, and trained names to 71–82%. Next:
   - **a test where new items follow the learned structure,** for a real schema advantage;
-  - **consolidation of one-shot episodes in sleep.**
+  - **consolidation:** replaying novel episodes' gist in sleep
+    ([38](experiments/38-consolidation-of-one-shot-episodes.md)) moves some pairs into the
+    cortex after 4 exposures (lesioned 13–31%), little after 1. Next: interleaved replay
+    feeding sleep generalisation.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

@@ -362,6 +362,13 @@ impl CorticalColumn {
 ///   from that sentence- and story-level context.
 /// - **Feedback (L6 / apical → lower column):** its prediction is the lower column's
 ///   top-down frame, which the lower column learns to use (or ignore) like any other frame.
+/// A higher area's saved context (see `HigherArea::save_context`).
+#[derive(Clone)]
+pub struct AreaContext {
+    window: std::collections::VecDeque<BitVector>,
+    window_words: std::collections::VecDeque<Vec<BitVector>>,
+}
+
 pub struct HigherArea {
     pub column: CorticalColumn,
     /// Slow state as one frame per recent sentence (newest first) instead of one frame
@@ -445,6 +452,18 @@ impl HigherArea {
         }
         self.window_words.drain(..drop);
         true
+    }
+
+    /// The area's context (its window), to be saved and later reinstated.
+    pub fn save_context(&self) -> AreaContext {
+        AreaContext { window: self.window.clone(), window_words: self.window_words.clone() }
+    }
+
+    /// Reinstate a saved context: the window becomes what it was when saved.
+    pub fn restore_context(&mut self, c: &AreaContext) {
+        self.window = c.window.clone();
+        self.window_words = c.window_words.clone();
+        self.pending_words.clear();
     }
 
     /// Context boundary (a new story): forget the window.

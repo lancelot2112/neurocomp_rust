@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, CorticothalamicGate, DentateGyrus, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -88,6 +88,13 @@ enum Task {
     /// season. Nothing between the announcement and the question reveals the season, so
     /// accuracy by D shows how far back the areas reach.
     Season,
+    /// Reading with actions (experiment 28): three books are read in interleaved sessions.
+    /// A session is "@open_x" (an action: book x is opened), the book's season announcement
+    /// if this is its first session, 0-3 filler stories, "X went to the" -> X's place in
+    /// that book's season, then "@close". A book lasts 3-8 sessions, then a new one with a
+    /// new season replaces it. Returning to a book, its season was announced sessions ago,
+    /// with other books' seasons read in between.
+    Books,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -264,6 +271,30 @@ fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
     words.extend([NAMES[n], "went", "to", "the"]);
     let answer_at = words.len();
     words.extend([PLACES[season_place(n, season)], "."]);
+    Story { words, answer_at, held_out }
+}
+
+const BOOKS: &[&str] = &["@open_a", "@open_b", "@open_c"];
+
+/// One reading session of book `b` in `season`; `first` = the book's first session.
+fn book_session(rng: &mut StdRng, b: usize, season: usize, first: bool, held_out: bool) -> Story {
+    let mut words: Vec<&'static str> = vec![BOOKS[b]];
+    if first {
+        words.extend([SEASONS[season], "came", "."]);
+    }
+    for _ in 0..rng.gen_range(0..=3) {
+        for _ in 0..rng.gen_range(1..=2) {
+            words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+        }
+    }
+    if rng.gen_bool(0.5) {
+        words.push(FILLERS.choose(rng).unwrap());
+    }
+    words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+    let n = rng.gen_range(0..NAMES.len());
+    words.extend([NAMES[n], "went", "to", "the"]);
+    let answer_at = words.len();
+    words.extend([PLACES[season_place(n, season)], ".", "@close"]);
     Story { words, answer_at, held_out }
 }
 
@@ -455,9 +486,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if task == Task::Habit {
         vocab.extend(["in", "morning", "at", "night"]);
     }
-    if task == Task::Season {
+    if task == Task::Season || task == Task::Books {
         vocab.extend(SEASONS);
         vocab.push("came");
+    }
+    if task == Task::Books {
+        vocab.extend(BOOKS);
+        vocab.push("@close");
     }
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
     let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
@@ -785,6 +820,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // accuracy by that distance in bins [0, 1, 2-3, 4-7, 8-15, 16+]: (answers, right)
     let season_len: usize = std::env::var("SEASON_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
     let mut season_distance = 0usize;
+    // Books task: each book's season, sessions left, last session read; this session's
+    // book and its bin [first session, back to back, after 1-2 other sessions, after 3+]
+    let (mut book_season, mut book_left, mut book_last) = ([0usize; 3], [0usize; 3], [0usize; 3]);
+    let (mut book_bin, mut open_book_next) = (0usize, 0usize);
+    let mut book_bins = [(0usize, 0usize); 4];
+    // BOOK_CTX: what an "@open" action does to the areas' context: none (default), reset,
+    // reinstate (restore the context saved at that book's last "@close", else reset), or
+    // learned (a basal-ganglia choice of keep / reset / reinstate per book action,
+    // rewarded by whether the session's answer comes out right)
+    let book_ctx = std::env::var("BOOK_CTX").unwrap_or_else(|_| "none".into());
+    let mut saved_ctx: HashMap<usize, Vec<AreaContext>> = HashMap::new();
+    let mut ctx_bg = BasalGanglia::new(BITS);
+    let ctx_code = |a: usize| -> BitVector {
+        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(3_000_017) ^ (a as u64 + 2000));
+        let all: Vec<usize> = (0..BITS).collect();
+        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
+    };
+    let mut ctx_pending = false; // a learned choice awaits this session's answer
+    let mut ctx_chosen = [0usize; 3]; // test: keep, reset, reinstate
+    let mut open_book: Option<usize> = None;
     let mut season_bins = [(0usize, 0usize); 6];
     // COST: wall time and words for training and test
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
@@ -862,7 +917,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 column.l23.set_trust_floor(Some(f));
             }
         }
-        let s = if task == Task::Season {
+        let s = if task == Task::Books {
+            // pick a book; a finished one is replaced by a new book with a new season
+            let b = rng.gen_range(0..BOOKS.len());
+            let first = book_left[b] == 0;
+            if first {
+                book_season[b] = rng.gen_range(0..SEASONS.len());
+                book_left[b] = rng.gen_range(3..=8);
+            }
+            book_left[b] -= 1;
+            book_bin = if first {
+                0
+            } else {
+                match s_i - book_last[b] - 1 {
+                    0 => 1,
+                    1..=2 => 2,
+                    _ => 3,
+                }
+            };
+            book_last[b] = s_i;
+            open_book_next = b;
+            book_session(&mut rng, b, book_season[b], first, testing && s_i % 2 == 1)
+        } else if task == Task::Season {
             season_distance = rng.gen_range(0..season_len);
             season_story(&mut rng, season_distance, testing && s_i % 2 == 1)
         } else if task == Task::Habit {
@@ -899,6 +975,55 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // PROF: [4] storage and everything after learning (from the previous word)
             prof[4] += prof_t.elapsed().as_secs_f64();
             prof_t = std::time::Instant::now();
+            // actions (efference copies of the reader's own actions)
+            if task == Task::Books && hier {
+                let w = s.words[t];
+                if w == "@close" {
+                    if let Some(b) = open_book.take() {
+                        let mut c = vec![area.save_context()];
+                        c.extend(upper.iter().map(|u| u.save_context()));
+                        saved_ctx.insert(b, c);
+                    }
+                } else if w.starts_with("@open") {
+                    let b = open_book_next;
+                    open_book = Some(b);
+                    let choice = match book_ctx.as_str() {
+                        "reset" => 1,
+                        "reinstate" => 2,
+                        "learned" => {
+                            let cands: Vec<BitVector> = (0..3)
+                                .map(|a| {
+                                    let mut c = ctx_code(a);
+                                    c.rotl_mut((ids[t] * 131) % BITS);
+                                    c
+                                })
+                                .collect();
+                            let explore = if testing { None } else { Some(&mut rng) };
+                            ctx_pending = true;
+                            ctx_bg.select(&cands, explore).unwrap_or(0)
+                        }
+                        _ => 0,
+                    };
+                    if testing {
+                        ctx_chosen[choice] += 1;
+                    }
+                    match (choice, saved_ctx.get(&b)) {
+                        (1, _) | (2, None) => {
+                            area.clear();
+                            for u in upper.iter_mut() {
+                                u.clear();
+                            }
+                        }
+                        (2, Some(c)) => {
+                            area.restore_context(&c[0]);
+                            for (u, c) in upper.iter_mut().zip(&c[1..]) {
+                                u.restore_context(c);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             let code = &enc.codes[ids[t]];
             if let Some(p) = prev {
                 word_ctx[ids[t]].insert(p);
@@ -1353,6 +1478,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         vocab[next]
                     );
                 }
+                // Books, learned context action: reward the choice made at "@open" by this
+                // session's answer (training only)
+                if task == Task::Books && ctx_pending && t + 1 == s.answer_at {
+                    ctx_pending = false;
+                    if !testing {
+                        let right = enc.decode(&out) == Some(next);
+                        ctx_bg.reward(right as u32 as f32, &mut rng);
+                    }
+                }
                 // MIX: every source votes for its words with its reliability as the weight
                 let mut mix_conf: Option<f32> = None;
                 if mixing {
@@ -1493,6 +1627,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
+                    if task == Task::Books {
+                        book_bins[book_bin].0 += 1;
+                        book_bins[book_bin].1 += right as usize;
+                    }
                     if task == Task::Season {
                         let b = match season_distance {
                             0 => 0,
@@ -1897,6 +2035,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 readback_stats.0
             );
         }
+        if task == Task::Books {
+            let names = ["first session", "back to back", "after 1-2 others", "after 3+ others"];
+            let parts: Vec<String> = book_bins
+                .iter()
+                .zip(names)
+                .map(|(b, n)| if b.0 > 0 { format!("{n}: {:.0}% of {}", 100.0 * b.1 as f64 / b.0 as f64, b.0) } else { format!("{n}: -") })
+                .collect();
+            eprintln!("  BOOKS seed {seed}: accuracy by session: {}; at test \"@open\" chose keep {} / reset {} / reinstate {}", parts.join(", "), ctx_chosen[0], ctx_chosen[1], ctx_chosen[2]);
+        }
         if task == Task::Season {
             let names = ["0", "1", "2-3", "4-7", "8-15", "16+"];
             let parts: Vec<String> = season_bins
@@ -2023,6 +2170,7 @@ fn main() {
         Ok("elim") => vec![Task::Elim],
         Ok("habit") => vec![Task::Habit],
         Ok("season") => vec![Task::Season],
+        Ok("books") => vec![Task::Books],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
     println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
@@ -2030,7 +2178,7 @@ fn main() {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
     for task in tasks {
-        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give | Task::Elim | Task::Habit | Task::Season) { &[0] } else { &[2, 3] };
+        let fact_settings: &[usize] = if matches!(task, Task::TwoHop | Task::Persist | Task::Topic | Task::Give | Task::Elim | Task::Habit | Task::Season | Task::Books) { &[0] } else { &[2, 3] };
         for &max_facts in fact_settings {
             println!();
             if task == Task::Habit {

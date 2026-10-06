@@ -54,10 +54,12 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   only by as-reliable kernels, passes all three tests (transfer, name rule, habit), at
   42,000 kernels. Generalising from replay offline
   ([33](experiments/33-generalisation-during-sleep.md)) passes all three at the default
-  size and speed. Next:
-  - one-exposure learning of new specifics on top of the general rules;
-  - replay from the hippocampal store;
-  - sleep for the column.
+  size and speed. The schema test ([34](experiments/34-schema-test.md)) fails: new
+  name–place pairs are not learned from 1–4 exposures, with or without a schema or
+  episodic memory. Next:
+  - **a clean context code** (the current setting, by recency or role), so episodes bind
+    to (person, setting);
+  - **then a learned copy-from-memory procedure** that carries over to new names.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

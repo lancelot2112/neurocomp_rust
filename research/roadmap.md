@@ -128,6 +128,12 @@ formed offline from replay and tested on it. They give transfer to new names, no
 name-dependent rules, and better habit, at the default size and speed. Next: the
 one-exposure schema test.
 
+**Update** ([34](experiments/34-schema-test.md)): the schema test fails. New pairs are
+not learned in 1–4 exposures.
+- One-shot cortical kernels are keyed on incidental filler.
+- Recall is not specific to the context, because the context state is a bag of filler.
+- The missing piece is a clean context code: recency or the role of "the setting".
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

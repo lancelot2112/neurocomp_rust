@@ -260,6 +260,18 @@ fn season_place(n: usize, s: usize) -> usize {
     (2 * n + [0, 1, 3, 4][s] + 1) % PLACES.len()
 }
 
+/// Schema test (SCHEMA_K): the new names' own places, one per season. The mapping has the
+/// opposite parity to every trained name's, so it cannot be copied from any of them.
+fn new_place(i: usize, s: usize) -> usize {
+    (2 * i + [0, 1, 3, 4][s] + 4) % PLACES.len()
+}
+
+/// SEASON_RULE=random: places are random in every story (no structure to learn; the
+/// no-schema control of the schema test).
+fn random_places() -> bool {
+    std::env::var("SEASON_RULE").map_or(false, |v| v == "random")
+}
+
 /// NEW_NAMES=1: held-out test stories use names never seen in training.
 const NEW_NAMES: &[&str] = &["tom", "lucy", "sam"];
 fn new_names() -> bool {
@@ -273,7 +285,12 @@ fn new_wording() -> bool {
 }
 
 fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
-    let season = rng.gen_range(0..SEASONS.len());
+    season_story_with(rng, distance, held_out, None)
+}
+
+/// `forced`: (new-name index, season) for a schema-test story about a new name.
+fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: Option<(usize, usize)>) -> Story {
+    let season = forced.map_or_else(|| rng.gen_range(0..SEASONS.len()), |f| f.1);
     let mut words: Vec<&'static str> = vec![SEASONS[season], "came", "."];
     for _ in 0..distance {
         for _ in 0..rng.gen_range(1..=2) {
@@ -285,14 +302,26 @@ fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
     }
     words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
     let n = rng.gen_range(0..NAMES.len());
-    let name = if held_out && new_names() { NEW_NAMES[n % NEW_NAMES.len()] } else { NAMES[n] };
+    // schema test: a forced new-name story, or a held-out test question about a new name
+    let schema = std::env::var("SCHEMA_K").is_ok();
+    let new_i = forced.map(|f| f.0).or_else(|| (schema && held_out).then(|| rng.gen_range(0..NEW_NAMES.len())));
+    let name = match new_i {
+        Some(i) => NEW_NAMES[i],
+        None if held_out && new_names() => NEW_NAMES[n % NEW_NAMES.len()],
+        None => NAMES[n],
+    };
     if held_out && new_wording() {
         words.extend([name, "walked", "into", "the"]);
     } else {
         words.extend([name, "went", "to", "the"]);
     }
     let answer_at = words.len();
-    words.extend([PLACES[season_place(n, season)], "."]);
+    let place = match new_i {
+        Some(i) => new_place(i, season),
+        None if random_places() => rng.gen_range(0..PLACES.len()),
+        None => season_place(n, season),
+    };
+    words.extend([PLACES[place], "."]);
     Story { words, answer_at, held_out }
 }
 
@@ -522,7 +551,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if task == Task::Season && new_wording() {
         vocab.extend(["walked", "into"]);
     }
-    if task == Task::Season && new_names() {
+    if task == Task::Season && (new_names() || std::env::var("SCHEMA_K").is_ok()) {
         vocab.extend(NEW_NAMES);
     }
     if task == Task::Books {
@@ -878,6 +907,29 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // accuracy by that distance in bins [0, 1, 2-3, 4-7, 8-15, 16+]: (answers, right)
     let season_len: usize = std::env::var("SEASON_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
     let mut season_distance = 0usize;
+    // SCHEMA_K=k: each (new name, season) pair appears in exactly k training stories, at
+    // random positions among the last SCHEMA_PHASE (default 600) training stories
+    let schema_k: Option<usize> = std::env::var("SCHEMA_K").ok().and_then(|v| v.parse().ok());
+    let schema_at: HashMap<usize, (usize, usize)> = {
+        let mut m = HashMap::new();
+        if let Some(k) = schema_k {
+            let phase: usize = std::env::var("SCHEMA_PHASE").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
+            let mut srng = StdRng::seed_from_u64(seed.wrapping_add(991));
+            let mut slots: Vec<usize> = (TRAIN - phase..TRAIN).collect();
+            slots.shuffle(&mut srng);
+            let mut it = slots.into_iter();
+            for i in 0..NEW_NAMES.len() {
+                for sn in 0..SEASONS.len() {
+                    for _ in 0..k {
+                        if let Some(p) = it.next() {
+                            m.insert(p, (i, sn));
+                        }
+                    }
+                }
+            }
+        }
+        m
+    };
     // Books task: each book's season, sessions left, last session read; this session's
     // book and its bin [first session, back to back, after 1-2 other sessions, after 3+]
     let (mut book_season, mut book_left, mut book_last) = ([0usize; 3], [0usize; 3], [0usize; 3]);
@@ -1050,7 +1102,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             book_session(&mut rng, book_id[b], book_season[b], first, testing && s_i % 2 == 1)
         } else if task == Task::Season {
             season_distance = rng.gen_range(0..season_len);
-            season_story(&mut rng, season_distance, testing && s_i % 2 == 1)
+            season_story_with(&mut rng, season_distance, testing && s_i % 2 == 1, schema_at.get(&s_i).copied())
         } else if task == Task::Habit {
             habit_story(&mut rng, testing && s_i % 2 == 1)
         } else if task == Task::Elim {

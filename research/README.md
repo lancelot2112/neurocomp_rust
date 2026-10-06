@@ -39,6 +39,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Compaction: event-based fast path, uncertainty-gated growth, sleep (downscale, prune, merge by replay) | **5–14× fewer kernels**, accuracy kept on every task; answering 5–62 µs/word (from 160–3,600) with surprise-gated learning, event-based recall, sparse storage and canonical kernels | transformer 16–100 µs/word, but 25–77% on held-out binding where we get 72–100% | [23](experiments/23-compaction.md), [comparison](concepts/brain-transformer-comparison.md) |
 | – | A cortical hierarchy: a higher area (sentence + slow state of past surprises) learns the column's errors and feeds back a top-down frame | **81 / 82 / 80%** on a task needing story-level context | column alone 0%, episodic memory 49–52% | [24](experiments/24-cortical-hierarchy.md) |
 | – | A chain of areas (windows of 4, 16, 64 sentences), each voting in a precision-weighted mix: how far back a fact can be used | each area extends the reach (4–7 stories back: 5 → 18 → 23%), but accuracy stays low | as frames into the area below: worse (0%) | [25](experiments/25-area-chain.md) |
+| – | A fading state (drifting temporal context, as in lateral entorhinal cortex) for the higher areas | small gains (season 12–28% without boundaries; schema test new names 14–24%) | recency is not relevance: the code needed is structural (medial-EC / TEM) | [35](experiments/35-fading-state-and-entorhinal-codes.md) |
 | – | The schema test (after Tse et al. 2007): new name–place pairs seen 1, 2 or 4 times, with and without a learned schema, with and without (context-bound) episodic memory | **not learned: new names 5–18%**, no better than never seen | one-shot kernels are keyed on incidental filler; recall is not context-specific | [34](experiments/34-schema-test.md) |
 | – | Generalisation during sleep: general rules formed from replay and tested on it before they are kept; specifics kept | **new names 63–78% = known; name rule no loss; habit 81–85%, at the default size and speed** | sleep's merge on top costs 1–12 points | [33](experiments/33-generalisation-during-sleep.md) |
 | – | General and specific kernels side by side: generalisation spawns a general copy, the specific kernel stays | spawning after 3 confirmations, covered only by as-reliable kernels: **new names = known names (61–81%), name rule 69–73% (no loss), habit 82–85%** | 42,000 kernels (8× slower); sleep compacts 20× but costs 5–15 points | [32](experiments/32-general-and-specific.md) |
@@ -111,6 +112,7 @@ Experiments (chronological)
 32. [General and specific kernels side by side](experiments/32-general-and-specific.md)
 33. [Generalisation during sleep: general rules formed offline from replay](experiments/33-generalisation-during-sleep.md)
 34. [The schema test: can a new fact be learned in one exposure? (not yet)](experiments/34-schema-test.md)
+35. [A fading state, and what the entorhinal cortex would add](experiments/35-fading-state-and-entorhinal-codes.md)
 
 Concepts
 - [Brain, this network, and a transformer: function vs speed and memory](concepts/brain-transformer-comparison.md)

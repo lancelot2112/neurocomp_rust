@@ -57,8 +57,9 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   size and speed. The schema test ([34](experiments/34-schema-test.md)) fails: new
   name–place pairs are not learned from 1–4 exposures, with or without a schema or
   episodic memory. Next:
-  - **a clean context code** (the current setting, by recency or role), so episodes bind
-    to (person, setting);
+  - **a clean context code.** Recency (a fading state, [35](experiments/35-fading-state-and-entorhinal-codes.md))
+    is not enough. It must be structural: a learned slot code (medial EC / TEM) with
+    episodes bound as slot ⊗ content and recalled by slot;
   - **then a learned copy-from-memory procedure** that carries over to new names.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half

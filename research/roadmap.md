@@ -134,6 +134,11 @@ not learned in 1–4 exposures.
 - Recall is not specific to the context, because the context state is a bag of filler.
 - The missing piece is a clean context code: recency or the role of "the setting".
 
+**Update** ([35](experiments/35-fading-state-and-entorhinal-codes.md)): a fading state
+(temporal context, as in lateral EC) gives only small gains: recency is not relevance.
+The code needed is structural, as in medial EC and the Tolman-Eichenbaum Machine: learned
+slot codes bound to content in the hippocampus, recalled by slot.
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

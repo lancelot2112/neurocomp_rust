@@ -361,6 +361,15 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   complementary learning systems in the hippocampus and neocortex.* Psychological Review
   102. General structure is learned slowly, specifics quickly.
 
+## Entorhinal codes ([35](experiments/35-fading-state-and-entorhinal-codes.md))
+- **Tsao, A. et al. (2018).** *Integrating time from experience in the lateral entorhinal
+  cortex.* Nature 561. A drifting population code for time: the fading state.
+- **Constantinescu, A. O., O'Reilly, J. X. & Behrens, T. E. J. (2016).** *Organizing
+  conceptual knowledge in humans with a gridlike code.* Science 352. Grid-like codes for
+  abstract spaces.
+- **Behrens, T. E. J. et al. (2018).** *What is a cognitive map? Organizing knowledge for
+  flexible behavior.* Neuron 100. Structural knowledge factored from content.
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

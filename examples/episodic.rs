@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -250,9 +250,20 @@ fn habit_story(rng: &mut StdRng, held_out: bool) -> Story {
 
 const SEASONS: &[&str] = &["spring", "summer", "autumn", "winter"];
 
-/// Season task: `n`'s place in season `s` (distinct per season for every name).
+/// Season task: `n`'s place in season `s` (distinct per season for every name). With
+/// SEASON_RULE=season the place depends on the season only (everyone goes to the same
+/// place), a rule over the person's role rather than their identity.
 fn season_place(n: usize, s: usize) -> usize {
+    if std::env::var("SEASON_RULE").map_or(false, |v| v == "season") {
+        return [0, 2, 3, 5][s];
+    }
     (2 * n + [0, 1, 3, 4][s] + 1) % PLACES.len()
+}
+
+/// NEW_NAMES=1: held-out test stories use names never seen in training.
+const NEW_NAMES: &[&str] = &["tom", "lucy", "sam"];
+fn new_names() -> bool {
+    std::env::var("NEW_NAMES").is_ok()
 }
 
 /// SEASON_NEW_WORDING=1: held-out test questions read "X walked into the" (never seen in
@@ -274,10 +285,11 @@ fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
     }
     words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
     let n = rng.gen_range(0..NAMES.len());
+    let name = if held_out && new_names() { NEW_NAMES[n % NEW_NAMES.len()] } else { NAMES[n] };
     if held_out && new_wording() {
-        words.extend([NAMES[n], "walked", "into", "the"]);
+        words.extend([name, "walked", "into", "the"]);
     } else {
-        words.extend([NAMES[n], "went", "to", "the"]);
+        words.extend([name, "went", "to", "the"]);
     }
     let answer_at = words.len();
     words.extend([PLACES[season_place(n, season)], "."]);
@@ -510,6 +522,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if task == Task::Season && new_wording() {
         vocab.extend(["walked", "into"]);
     }
+    if task == Task::Season && new_names() {
+        vocab.extend(NEW_NAMES);
+    }
     if task == Task::Books {
         vocab.extend(&BOOKS[..book_ids()]);
         vocab.push("@close");
@@ -724,11 +739,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // HIER_CHAIN=mix: the upper areas do not feed the area below; each votes in the
     // precision-weighted mix (MIX) as one more source, weighted by its own reliability
     let chain_mix = std::env::var("HIER_CHAIN").map_or(false, |v| v == "mix");
-    let make_area = |span: usize, with_above: bool| {
+    // ROLE=cells|raw: a leading frame for area 2, [role | slow state | sentence]: the role
+    // cells' code for the column's expectation of the next slot (cells), or that expectation
+    // itself (raw), both learned
+    let role_mode = std::env::var("ROLE").ok();
+    let make_area = |span: usize, with_above: bool, lead: bool| {
         let mut c: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
             max_kernels: 100_000,
             frame_words: BITS / 64,
-            max_frames: if std::env::var("HIER_SEPARATE").is_ok() { 1 + span } else { 2 } + with_above as usize,
+            max_frames: if std::env::var("HIER_SEPARATE").is_ok() { 1 + span } else { 2 } + with_above as usize + lead as usize,
             sample_bits: 16,
             match_fraction: 0.8,
             surprise_fraction: 0.5,
@@ -756,8 +775,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         a.focus = std::env::var("HIER_FOCUS").is_ok();
         a
     };
-    let mut area = make_area(hier_span, hier_levels > 1 && !chain_mix);
-    let mut upper: Vec<HigherArea> = (1..hier_levels).map(|j| make_area(hier_span.pow(j as u32 + 1), j + 1 < hier_levels && !chain_mix)).collect();
+    let mut area = make_area(hier_span, hier_levels > 1 && !chain_mix && role_mode.is_none(), role_mode.is_some());
+    let mut upper: Vec<HigherArea> = (1..hier_levels).map(|j| make_area(hier_span.pow(j as u32 + 1), j + 1 < hier_levels && !chain_mix, false)).collect();
+    let mut role_rng = StdRng::seed_from_u64(seed.wrapping_add(77));
+    let mut roles = RoleArea::new(BITS, 64, &mut role_rng);
+    // test: per role cell, how often each word filled the slot it fired for (description only)
+    let mut role_words: HashMap<usize, HashMap<usize, u32>> = HashMap::new();
+    let mut role_now: Option<usize> = None;
     // this step's prediction of each upper area (for the mix)
     let mut upper_pred: Vec<Option<BitVector>> = vec![None; upper.len()];
     let mut upper_in: Vec<Option<BitVector>> = vec![None; upper.len()];
@@ -1568,7 +1592,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         above = Some(p);
                         upper_in[i] = Some(hin_u);
                     }
-                    let hin = area.input_with(&sentence, &surprising, if chain_mix { None } else { above.as_ref() });
+                    let hin = if let Some(mode) = role_mode.as_deref() {
+                        // the column's expectation for the next slot (peek: no top-down, no state)
+                        let empty = BitVector::new(BITS, Some(0));
+                        let expect = column.l23.peek_union(&column.assemble(code, &vec![empty.clone(); l4_mid]), BITS);
+                        let lead = if mode == "raw" {
+                            expect
+                        } else {
+                            role_now = roles.observe(&expect, !testing, &mut role_rng);
+                            role_now.map_or(empty, |c| roles.code(c).clone())
+                        };
+                        area.input_lead(&lead, &sentence, &surprising)
+                    } else {
+                        area.input_with(&sentence, &surprising, if chain_mix { None } else { above.as_ref() })
+                    };
                     let td = area.predict(&hin);
                     if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
                         let names = |bv: &BitVector| -> Vec<&str> {
@@ -1733,6 +1770,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 mix.record(*src, *key, w == next);
                             }
                         }
+                    }
+                }
+                if testing {
+                    if let Some(c) = role_now.take() {
+                        *role_words.entry(c).or_default().entry(next).or_default() += 1;
                     }
                 }
                 // saccade reward: the prediction right, minus the cost of a regression
@@ -2231,6 +2273,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
             );
+        }
+        if role_mode.as_deref() == Some("cells") {
+            let mut cells: Vec<(&usize, u32)> = role_words.iter().map(|(c, m)| (c, m.values().sum())).collect();
+            cells.sort_by(|a, b| b.1.cmp(&a.1));
+            let parts: Vec<String> = cells
+                .iter()
+                .take(8)
+                .map(|(c, n)| {
+                    let mut ws: Vec<(&usize, &u32)> = role_words[c].iter().collect();
+                    ws.sort_by(|a, b| b.1.cmp(a.1));
+                    let top: Vec<String> = ws.iter().take(5).map(|(w, k)| format!("{} {}", vocab[**w], k)).collect();
+                    format!("cell {c} ({n}): {}", top.join(", "))
+                })
+                .collect();
+            eprintln!("  ROLES seed {seed}: {} cells recruited; what filled each cell's slot at test: {}", roles.used(), parts.join(" | "));
         }
         if saccade.is_some() && new_wording() {
             let f = |k: usize| {

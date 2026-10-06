@@ -362,6 +362,106 @@ impl CorticalColumn {
 ///   from that sentence- and story-level context.
 /// - **Feedback (L6 / apical → lower column):** its prediction is the lower column's
 ///   top-down frame, which the lower column learns to use (or ignore) like any other frame.
+/// Role cells: an association area that learns, by competitive Hebbian plasticity, stable
+/// codes for recurring kinds of input. Fed with the column's expectation for the next slot
+/// (what its matching kernels predict, superposed), its cells come to stand for kinds of
+/// slot ("a place goes here", "a person goes here") without anyone defining them.
+///
+/// - Each cell has a prototype (a bit pattern) and a fixed random output code.
+/// - The cell whose prototype best matches the input (cosine of the bit sets) wins
+///   (lateral inhibition, one winner); its output code is the area's output.
+/// - Learning: the winner's prototype moves toward the input. Each input synapse it lacks
+///   is gained with probability `rate`, each one the input lacks is lost with probability
+///   `rate` / 4 (stochastic binary synapses), so a prototype settles on the bits that are
+///   frequent in its kind of input.
+/// - If no cell matches at least `vigilance`, an unused cell is recruited with the input
+///   as its prototype (adaptive resonance: new categories only for new kinds of input).
+pub struct RoleArea {
+    protos: Vec<BitVector>,
+    codes: Vec<BitVector>,
+    used: usize,
+    bits: usize,
+    pub vigilance: f32,
+    pub rate: f64,
+}
+
+impl RoleArea {
+    pub fn new<R: rand::Rng>(bits: usize, cells: usize, rng: &mut R) -> Self {
+        let all: Vec<usize> = (0..bits).collect();
+        let codes = (0..cells)
+            .map(|_| BitVector::from_bits(&rand::seq::SliceRandom::choose_multiple(all.as_slice(), rng, 32).copied().collect::<Vec<_>>(), bits))
+            .collect();
+        Self { protos: vec![BitVector::new(bits, Some(0)); cells], codes, used: 0, bits, vigilance: 0.5, rate: 0.1 }
+    }
+
+    fn similarity(a: &BitVector, b: &BitVector) -> f32 {
+        let (mut inter, mut na, mut nb) = (0u32, 0u32, 0u32);
+        for (x, y) in a.as_words().iter().zip(b.as_words()) {
+            inter += (x & y).count_ones();
+            na += x.count_ones();
+            nb += y.count_ones();
+        }
+        if na == 0 || nb == 0 { 0.0 } else { inter as f32 / ((na as f32) * (nb as f32)).sqrt() }
+    }
+
+    /// The winning cell for `x` (None if `x` is empty or no cell is in use).
+    pub fn winner(&self, x: &BitVector) -> Option<(usize, f32)> {
+        if x.count_ones() == 0 {
+            return None;
+        }
+        (0..self.used).map(|c| (c, Self::similarity(x, &self.protos[c]))).max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+    }
+
+    /// Present `x`: returns the active cell (if any); with `learn`, the winner moves toward
+    /// `x`, or a new cell is recruited when nothing matches well enough.
+    pub fn observe<R: rand::Rng>(&mut self, x: &BitVector, learn: bool, rng: &mut R) -> Option<usize> {
+        if x.count_ones() == 0 {
+            return None;
+        }
+        let best = self.winner(x);
+        if learn {
+            match best {
+                Some((c, sim)) if sim >= self.vigilance || self.used == self.protos.len() => {
+                    let p = &mut self.protos[c];
+                    for (pw, &xw) in p.as_words_mut().iter_mut().zip(x.as_words()) {
+                        let mut diff = *pw ^ xw;
+                        while diff != 0 {
+                            let b = diff.trailing_zeros();
+                            diff &= diff - 1;
+                            let gain = xw >> b & 1 == 1;
+                            if rng.gen_bool(if gain { self.rate } else { self.rate / 4.0 }) {
+                                *pw ^= 1u64 << b;
+                            }
+                        }
+                    }
+                    return Some(c);
+                }
+                _ => {
+                    let c = self.used;
+                    self.protos[c] = x.clone();
+                    self.used += 1;
+                    return Some(c);
+                }
+            }
+        }
+        best.map(|b| b.0)
+    }
+
+    /// Output code of `cell`.
+    pub fn code(&self, cell: usize) -> &BitVector {
+        &self.codes[cell]
+    }
+
+    /// Cells recruited so far.
+    pub fn used(&self) -> usize {
+        self.used
+    }
+
+    pub fn bits(&self) -> usize {
+        self.bits
+    }
+}
+
 /// A higher area's saved context (see `HigherArea::save_context`).
 #[derive(Clone)]
 pub struct AreaContext {
@@ -473,6 +573,16 @@ impl HigherArea {
         self.pending_words.clear();
     }
 
+    /// The input with a leading frame (e.g. role cells): `[lead | slow state | sentence bag]`.
+    /// Growth deepens frame by frame, so kernels can key on (lead, state) before they need
+    /// the sentence's words.
+    pub fn input_lead(&self, lead: &BitVector, sentence: &BitVector, surprising: &BitVector) -> BitVector {
+        let mut words = lead.as_words().to_vec();
+        words.extend_from_slice(self.state(surprising).as_words());
+        words.extend_from_slice(sentence.as_words());
+        BitVector::from_words(words)
+    }
+
     /// The area's window, in sentences.
     pub fn span(&self) -> usize {
         self.span
@@ -536,6 +646,33 @@ impl HigherArea {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn role_cells_learn_two_kinds_of_input_unsupervised() {
+        use rand::{Rng, SeedableRng};
+        let mut rng = rand::rngs::StdRng::seed_from_u64(1);
+        let bits = 256;
+        let mut roles = RoleArea::new(bits, 8, &mut rng);
+        // two kinds: bits 0..40 or 100..140, each presentation a random 30 of its 40
+        let sample = |base: usize, rng: &mut rand::rngs::StdRng| {
+            let mut v: Vec<usize> = (base..base + 40).collect();
+            while v.len() > 30 {
+                let i = rng.gen_range(0..v.len());
+                v.swap_remove(i);
+            }
+            BitVector::from_bits(&v, bits)
+        };
+        for i in 0..400 {
+            let x = sample(if i % 2 == 0 { 0 } else { 100 }, &mut rng);
+            roles.observe(&x, true, &mut rng);
+        }
+        let a: Vec<usize> = (0..20).filter_map(|_| roles.observe(&sample(0, &mut rng), false, &mut rng)).collect();
+        let b: Vec<usize> = (0..20).filter_map(|_| roles.observe(&sample(100, &mut rng), false, &mut rng)).collect();
+        // each kind maps to one cell, and the two kinds to different cells
+        assert!(a.iter().all(|&c| c == a[0]) && b.iter().all(|&c| c == b[0]));
+        assert_ne!(a[0], b[0]);
+        assert!(roles.used() <= 4);
+    }
+
     use super::*;
     use crate::kernel::GrowthConfig;
 

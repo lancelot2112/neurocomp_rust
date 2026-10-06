@@ -91,10 +91,6 @@ pub struct HippocampusConfig {
     /// Hashed projections (DG, EC III → CA1) for a large, sparse input space: each active
     /// input bit drives `fan_out` cells.
     pub hashed_fan_out: Option<usize>,
-    /// The perforant path weighs each cue input by an exact 1/n (n = events that wrote
-    /// it; from a reciprocal table) instead of shifting each counter by ⌊log2 n⌋, which
-    /// rounds single writes to zero once inputs are common.
-    pub inverse: bool,
     /// Homeostatic centering of the CA3 drive from the cue: each CA3 cell keeps the
     /// fraction of events it was written in (a running mean over about two half-lives)
     /// and has its share of the cue's total drive subtracted, total × rate / Σ rates,
@@ -126,7 +122,6 @@ impl HippocampusConfig {
             scale_all: false,
             out_bits: 0,
             hashed_fan_out: None,
-            inverse: false,
             center: false,
             seed,
         }
@@ -334,11 +329,8 @@ impl Hippocampus {
             return Recall::default();
         }
         let writes = &self.perforant_writes;
-        let mut from_cue: Vec<u64> = if self.cfg.inverse {
-            self.perforant.drive_weighted(cue, self.epoch(), |i| recip32(writes[i].max(1) as u64) >> 16)
-        } else {
-            self.perforant.drive_scaled(cue, self.epoch(), |i| 32 - writes[i].max(1).leading_zeros() - 1).into_iter().map(|v| (v as u64) << 16).collect()
-        };
+        let mut from_cue: Vec<u64> =
+            self.perforant.drive_scaled(cue, self.epoch(), |i| 32 - writes[i].max(1).leading_zeros() - 1).into_iter().map(|v| (v as u64) << 16).collect();
         if self.cfg.center {
             let total: u64 = from_cue.iter().sum();
             let rates: u64 = self.ca3_rate.iter().sum::<u64>() >> 16; // Σ rates, in Q16
@@ -680,13 +672,13 @@ mod tests {
         assert!(gated >= 12, "with novelty-gated encoding the rare episode's family should be recalled ({gated} of 16 bits)");
     }
 
-    /// The one-shot test with exact 1/n weighting and homeostatic centering.
+    /// The one-shot test with homeostatic centering.
     #[test]
-    fn one_shot_recall_with_inverse_weights_and_centering() {
-        for (inverse, center) in [(true, false), (false, true), (true, true)] {
+    fn one_shot_recall_with_centering() {
+        for center in [true] {
             let mut cfg = HippocampusConfig::new(BITS, 5);
             (cfg.dg_cells, cfg.ca3_cells, cfg.ca1_cells, cfg.dg_fan_in, cfg.ca1_fan_in) = (4096, 2048, 2048, 100, 100);
-            (cfg.inverse, cfg.center) = (inverse, center);
+            cfg.center = center;
             let mut h = Hippocampus::new(cfg);
             let mut rng = StdRng::seed_from_u64(9);
             for i in 0..351 {
@@ -699,7 +691,7 @@ mod tests {
                 h.store(&episode(&ws));
             }
             let r = h.recall(&episode(&[0, 1, 50]));
-            assert!(overlap(&r.ec, &word(51)) >= 12, "inverse {inverse}, center {center}: {} of 16 family bits", overlap(&r.ec, &word(51)));
+            assert!(overlap(&r.ec, &word(51)) >= 12, "center {center}: {} of 16 family bits", overlap(&r.ec, &word(51)));
         }
     }
 

@@ -102,11 +102,9 @@ What the columns mean:
   genome without new machinery.
 
 ## Next
-1. **The hippocampus genome with 1/n + homeostatic centering** on the experiment 49 task.
-2. **A phase-bound binding space:** EC input as words at slot phases, CA3 and CA1 as
-   `PhaseAssociate` populations, compared against the sparse binding space.
-3. **A phase clean-up stage,** if phases are to carry roles: fewer phases, or settling
-   on the phase as CA3 does on cells.
+Both follow-ups were tried in the hippocampus on the experiment 49 task and did not pay:
+the phase-bound circuit was worse and 3.5× slower, and 1/n broke a seed. See
+[54](54-phase-hippocampus-backed-out.md).
 
 ## Biology
 - **Phase coding:** hippocampal place cells fire at systematically shifting phases of

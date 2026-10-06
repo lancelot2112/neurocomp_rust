@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{EpisodicCircuit, Hippocampus, HippocampusConfig, PhaseHippocampus, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{EpisodicCircuit, Hippocampus, HippocampusConfig, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -944,20 +944,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // CA1 → subiculum → EC V readout, novelty-gated encoding, cached (event-based) recall.
     // HIPPO_GAIN (novelty gain, 3), HIPPO_CA2 (CA2 → CA1 weight in quarters, 0 = off),
     // HIPPO_DECAY (per-store decay, 0.999), HIPPO_CELLS (CA3 and CA1 cells; DG twice that).
-    // HIPPO=phase: the phase-coded circuit (`program::PhaseHippocampus`): phasor weights,
-    // with the binding space phase-bound (a word in slot s = its bits at slot s's phase;
-    // PHASE_FIELDS phases, default 64, implies the sparse binding layout) and CA3 / CA1
-    // phases of HIPPO_PHASES (16). Use with HIPPO_SELF=1 SPARSE_BIND=1.
-    let phase_hippo = std::env::var("HIPPO").map_or(false, |v| v == "phase");
-    let mut bind_hc = (std::env::var("HIPPO").map_or(false, |v| v == "full" || v == "phase")).then(|| {
+    let mut bind_hc = (std::env::var("HIPPO").map_or(false, |v| v == "full")).then(|| {
         let mut cfg = HippocampusConfig::new(BITS, seed + 300);
         cfg.novelty_gain = q16x(henv("HIPPO_GAIN", 3.0) as f64);
         cfg.ca2_weight = henv("HIPPO_CA2", 0.0) as u32;
         cfg.decay = henv("HIPPO_DECAY", 0.999);
         cfg.scale_all = std::env::var("HIPPO_SCALE_ALL").is_ok();
-        // HIPPO_INVERSE=1: exact 1/n weighting on the perforant path; HIPPO_CENTER=1:
-        // homeostatic centering of CA3's cue drive (experiments 53-54)
-        cfg.inverse = std::env::var("HIPPO_INVERSE").is_ok();
+        // HIPPO_CENTER=1: homeostatic centering of CA3's cue drive (experiment 54)
         cfg.center = std::env::var("HIPPO_CENTER").is_ok();
         // SPARSE_BIND=1 (with HIPPO_SELF): the input is the sparse binding space (64 content
         // and 64 context fields of BITS bits), the output stays the compact rotated code;
@@ -969,15 +962,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if let Ok(v) = std::env::var("HIPPO_CELLS").map(|v| v.parse::<usize>().unwrap_or(4096)) {
             (cfg.ca3_cells, cfg.ca1_cells, cfg.dg_cells) = (v, v, 2 * v);
-        }
-        if phase_hippo {
-            let k = phase_fields().unwrap_or(64);
-            cfg.ec_bits = k * BITS;
-            cfg.out_bits = BITS;
-            cfg.hashed_fan_out = Some(henv("HIPPO_FANOUT", 300.0) as usize);
-            let mut h = PhaseHippocampus::new(cfg, k, henv("HIPPO_PHASES", 16.0) as usize);
-            h.inverse = std::env::var("HIPPO_NO_INVERSE").is_err();
-            return Box::new(h) as Box<dyn EpisodicCircuit>;
         }
         Box::new(Hippocampus::new(cfg)) as Box<dyn EpisodicCircuit>
     });
@@ -3622,30 +3606,8 @@ fn fam_count(hc: &Option<Box<dyn EpisodicCircuit>>, mem: &EpisodicMemory, own: b
 /// so a bit belongs to essentially one binding.
 const SPARSE_FIELDS: usize = 64;
 
-/// PHASE_FIELDS=k (or HIPPO=phase, default 64): the phase-bound binding space. A binding
-/// (word in slot) is the word's bits at the slot's phase, one of k, drawn by a fixed hash
-/// of (slot, content or context): k fields of BITS, shared by all slots, instead of a
-/// field per slot.
-fn phase_fields() -> Option<usize> {
-    static K: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
-    *K.get_or_init(|| {
-        std::env::var("PHASE_FIELDS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .or_else(|| std::env::var("HIPPO").ok().filter(|v| v == "phase").map(|_| 64))
-    })
-}
-
 fn sparse_binding(code: &BitVector, slot: usize, context: bool) -> Vec<usize> {
-    let field = match phase_fields() {
-        Some(k) => {
-            let mut x = (slot as u64) * 2 + context as u64 + 0x9E37_79B9_7F4A_7C15;
-            x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-            x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-            ((x ^ (x >> 31)) % k as u64) as usize
-        }
-        None => (slot % SPARSE_FIELDS) + if context { SPARSE_FIELDS } else { 0 },
-    };
+    let field = (slot % SPARSE_FIELDS) + if context { SPARSE_FIELDS } else { 0 };
     set_bits(code).into_iter().map(|b| field * BITS + b).collect()
 }
 

@@ -155,6 +155,14 @@ lower (random input phases: 93% at 4,000 random events, 33% at 2,000 language-li
 - **At 4,000+ language-like events** many rare words occur in more than one event, so
   part of the task is ambiguous.
 
+**In the full system it did not hold up**
+([54](../experiments/54-phase-hippocampus-backed-out.md)). A hippocampus built from phasor
+populations, with words at slot phases, did no better than the counts circuit on the
+experiment 49 task (67 / 42% vs 64 / 59% held out) and ran 3.5× slower, so it was backed
+out. Exact 1/n on the circuit's perforant path also failed there; centering was neutral.
+The isolated gains came from full-cue recall of stored targets, and the circuit's partial
+cues, novelty, tags and replay did not share them.
+
 **Binding by phase.** The binary system already uses two kinds of phase:
 - **XOR binding** is the two-phase case (0 or π; Kanerva's binary spatter codes).
 - **Cyclic rotation**, the slot binding in this codebase, is binding by a discrete phase

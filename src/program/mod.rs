@@ -28,5 +28,3 @@ pub use prefrontal::*;
 pub mod modules;
 pub use modules::{Genome, Module, NetOp, Network, Prim};
 
-pub mod phase_circuit;
-pub use phase_circuit::PhaseHippocampus;

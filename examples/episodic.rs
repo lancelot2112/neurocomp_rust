@@ -770,8 +770,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // on habit). No uncertainty gate on its growth: the gate stops growth when no input
         // frame carries the target, but the higher area's target (the column's residual) is
         // never in its input, by design
+        // HIER_SLEEP_GEN=n: generalisation during the higher area's sleep (inputs absent in n
+        // confirmed near misses over the replay; candidates tested on the replay)
+        c.set_sleep_generalize(std::env::var("HIER_SLEEP_GEN").ok().and_then(|v| v.parse().ok()));
         if std::env::var("HIER_SLEEP").is_ok() {
-            c.set_replay(std::env::var("REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
+            c.set_replay(std::env::var("HIER_REPLAY_LEN").or_else(|_| std::env::var("REPLAY_LEN")).ok().and_then(|v| v.parse().ok()).unwrap_or(512));
         }
         let mut a = HigherArea::new(BITS, c, span);
         // HIER_SEPARATE=1: one slow-state frame per recent sentence (worse: deep kernels at
@@ -2342,6 +2345,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .map(|(b, n)| if b.0 > 0 { format!("{n}: {:.0}% of {}", 100.0 * b.1 as f64 / b.0 as f64, b.0) } else { format!("{n}: -") })
                 .collect();
             eprintln!("  SEASON seed {seed}: accuracy by filler stories since the season was announced: {}", parts.join(", "));
+        }
+        if hier && area.column.l23.slept_general() != (0, 0) {
+            let (m, rj) = area.column.l23.slept_general();
+            eprintln!("  SLEEPGEN seed {seed}: the higher area formed {m} general rules during sleep; {rj} candidates failed the replay test");
         }
         if hier && area.column.l23.spawned() > 0 {
             eprintln!("  SPAWN seed {seed}: the higher area spawned {} general kernels ({} copies skipped as already covered)", area.column.l23.spawned(), area.column.l23.spawn_subsumed());

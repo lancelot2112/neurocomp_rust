@@ -162,6 +162,13 @@ struct PredictiveState {
     spawn_after: u8,
     /// Copies not spawned because a more general kernel already covered them.
     spawn_subsumed: usize,
+    /// Generalisation during sleep (see `set_sleep_generalize`): Some(n) = an input is
+    /// dropped when absent in n confirmed near misses over the replay.
+    sleep_generalize: Option<u8>,
+    /// Replay with targets, for sleep generalisation: (input bits, target bits).
+    replay_pairs: std::collections::VecDeque<(Vec<u32>, Vec<u32>)>,
+    /// General kernels formed during sleep, and candidates rejected by the replay test.
+    slept_general: (usize, usize),
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -437,6 +444,9 @@ impl KernelClass<SimpleKernel> {
             spawned: 0,
             spawn_after: 1,
             spawn_subsumed: 0,
+            sleep_generalize: None,
+            replay_pairs: std::collections::VecDeque::new(),
+            slept_general: (0, 0),
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -857,6 +867,155 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Generalisation during sleep: with `Some(n)`, every sleep first replays the last
+    /// `replay_len` (input, target) pairs against each kernel. Inputs absent in at least n of
+    /// a kernel's confirmed near misses (the target was its output, some inputs missing) are
+    /// dropped to form a candidate general rule. The candidate is tested on the whole replay
+    /// and installed only if it matches more replayed inputs than its source and is at least
+    /// as reliable on them. Sleep's merge can then absorb specific kernels into it. Needs
+    /// `set_replay`.
+    pub fn set_sleep_generalize(&mut self, n: Option<u8>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.sleep_generalize = n.map(|n| n.max(1));
+        }
+    }
+
+    /// (General kernels formed during sleep, candidates the replay test rejected.)
+    pub fn slept_general(&self) -> (usize, usize) {
+        self.predictive.as_ref().map_or((0, 0), |st| st.slept_general)
+    }
+
+    /// Form general rules offline from the replay (see `set_sleep_generalize`).
+    fn generalize_offline(&mut self) {
+        let Some(st) = self.predictive.as_ref() else { return };
+        let Some(n) = st.sleep_generalize else { return };
+        if st.replay_pairs.is_empty() {
+            return;
+        }
+        let cfg = st.cfg;
+        let frac = cfg.generalize.unwrap_or(0.5);
+        let frame_bits = cfg.frame_words * 64;
+        let in_len = st.index.len().max(1);
+        let out_len = self.active_kernels.iter().map(|k| k.output_len as usize).max().unwrap_or(1).max(1);
+        let pairs: Vec<(BitVector, BitVector)> = st
+            .replay_pairs
+            .iter()
+            .map(|(i, t)| {
+                let mut iv = BitVector::new(in_len, Some(0));
+                for &b in i {
+                    if (b as usize) < in_len {
+                        iv.bit_set(b as usize);
+                    }
+                }
+                let mut tv = BitVector::new(out_len, Some(0));
+                for &b in t {
+                    if (b as usize) < out_len {
+                        tv.bit_set(b as usize);
+                    }
+                }
+                (iv, tv)
+            })
+            .collect();
+        // per kernel: confirmed near misses, and how often each input was absent in them
+        let mut absent: std::collections::HashMap<usize, (u32, std::collections::HashMap<u32, u32>)> = std::collections::HashMap::new();
+        let mut counts = vec![0u32; self.active_kernels.len()];
+        for (iv, tv) in &pairs {
+            let mut touched: Vec<usize> = Vec::new();
+            for wi in 0..iv.as_words().len() {
+                let mut w = iv.as_words()[wi];
+                while w != 0 {
+                    let b = wi * 64 + w.trailing_zeros() as usize;
+                    w &= w - 1;
+                    if let Some(ks) = st.index.get(b) {
+                        for &k in ks {
+                            let k = k as usize;
+                            if counts[k] == 0 {
+                                touched.push(k);
+                            }
+                            counts[k] += 1;
+                        }
+                    }
+                }
+            }
+            for k in touched {
+                let c = counts[k] as usize;
+                counts[k] = 0;
+                let kern = &self.active_kernels[k];
+                if c < kern.threshold && c as f32 >= frac * kern.input_set.len() as f32 && predicts(kern, tv) {
+                    let e = absent.entry(k).or_default();
+                    e.0 += 1;
+                    for &b in &kern.input_set {
+                        if !iv.bit_get(b as usize) {
+                            *e.1.entry(b).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+        // replay score of a rule: (matched, right)
+        let score = |inputs: &[u32], threshold: usize, output: &SimpleKernel| -> (u32, u32) {
+            let mut m = (0, 0);
+            for (iv, tv) in &pairs {
+                if inputs.iter().filter(|&&b| iv.bit_get(b as usize)).count() >= threshold {
+                    m.0 += 1;
+                    m.1 += predicts(output, tv) as u32;
+                }
+            }
+            m
+        };
+        let min_bits = cfg.sample_bits.max(2);
+        let mut installs: Vec<SimpleKernel> = Vec::new();
+        let mut rejected = 0usize;
+        for (k, (confirmed, bits)) in absent {
+            if confirmed < n as u32 {
+                continue;
+            }
+            let src = &self.active_kernels[k];
+            let kept: Vec<u32> = src.input_set.iter().copied().filter(|b| bits.get(b).map_or(true, |&c| c < n as u32)).collect();
+            if kept.len() == src.input_set.len() || kept.len() < min_bits {
+                continue;
+            }
+            if let Some(canon) = st.canon.as_ref() {
+                if canon.contains_key(&connection_key(&kept, &src.output_set)) {
+                    continue;
+                }
+            }
+            let mut per_frame: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            for &b in &kept {
+                *per_frame.entry(b as usize / frame_bits).or_default() += 1;
+            }
+            let smallest = per_frame.values().copied().min().unwrap_or(cfg.sample_bits).min(cfg.sample_bits);
+            let tolerance = (smallest as f32 * (1.0 - cfg.match_fraction)).floor() as usize;
+            let threshold = kept.len().saturating_sub(tolerance).max(1);
+            // the replay test: more general in fact, and at least as reliable
+            let (gm, gr) = score(&kept, threshold, src);
+            let (sm, sr) = score(&src.input_set, src.threshold, src);
+            let as_reliable = (gr as u64 + 1) * (sm as u64 + 2) >= (sr as u64 + 1) * (gm as u64 + 2);
+            if gm <= sm || !as_reliable {
+                rejected += 1;
+                continue;
+            }
+            let reach = kept.iter().map(|&b| b as usize / frame_bits + 1).max().unwrap_or(1);
+            let mut g = SimpleKernel::sparse(kept, src.output_set.clone(), src.output_len as usize, threshold, KernelOp::Or);
+            g.context_frames = reach;
+            // its replay record, scaled into the 8-bit counters
+            let scale = ((gm as f32) / 64.0).max(1.0);
+            g.stats.hits = ((gr as f32 / scale).round() as u32).min(255) as u8;
+            g.stats.misses = (((gm - gr) as f32 / scale).round() as u32).min(255) as u8;
+            g.stats.last_useful = self.tick;
+            installs.push(g);
+        }
+        let (iv, tv) = pairs[0].clone();
+        let made = installs.len();
+        for g in installs {
+            self.install(g, &iv, &tv);
+        }
+        if let Some(st) = self.predictive.as_mut() {
+            st.slept_general.0 += made;
+            st.slept_general.1 += rejected;
+        }
+    }
+
     /// Copies not spawned because a kernel with the same output reading a subset of the kept
     /// inputs already existed.
     pub fn spawn_subsumed(&self) -> usize {
@@ -1078,6 +1237,8 @@ impl KernelClass<SimpleKernel> {
     /// Removed kernels' slots go to a free list that growth reuses; the inverted index is
     /// rebuilt once.
     pub fn sleep(&mut self) -> (usize, usize) {
+        // 0. generalise from the replay (if on), before downscaling and merging
+        self.generalize_offline();
         let Some(st) = self.predictive.as_mut() else { return (0, 0) };
         st.version += 1;
         st.matches_stale = false;
@@ -1313,6 +1474,26 @@ impl KernelClass<SimpleKernel> {
         if target_bits == 0 {
             return;
         }
+        if st.sleep_generalize.is_some() && st.replay_len > 0 {
+            let bits = |v: &BitVector| -> Vec<u32> {
+                let mut out = Vec::new();
+                for (wi, &w) in v.as_words().iter().enumerate() {
+                    let mut w = w;
+                    while w != 0 {
+                        out.push((wi * 64 + w.trailing_zeros() as usize) as u32);
+                        w &= w - 1;
+                    }
+                }
+                out
+            };
+            let pair = (bits(input), bits(target));
+            let st = self.predictive.as_mut().expect("predictive");
+            if st.replay_pairs.len() >= st.replay_len {
+                st.replay_pairs.pop_front();
+            }
+            st.replay_pairs.push_back(pair);
+        }
+        let Some(st) = self.predictive.as_ref() else { return };
 
         let winner = st.last_winner;
         // Surprise-gated learning: an expected input (the winner predicted it) carries no
@@ -2118,6 +2299,42 @@ mod tests {
         assert_eq!(run(false, false, &role_t).1, 0);
         // name rule: spawning keeps every known name right
         assert_eq!(run(true, true, &name_t).0, 6);
+    }
+
+    #[test]
+    fn sleep_forms_general_rules_from_replay() {
+        // as above: frame 0 a name (the fourth never trained), frame 1 a cue; no waking
+        // generalisation, only sleep's
+        let name = |i: usize| 0xFFu64 << (8 * i);
+        let cue = |c: usize| 0xFFu64 << (8 * (4 + c));
+        let cfg = GrowthConfig { frame_words: 1, max_frames: 2, sample_bits: 8, generalize: None, ..GrowthConfig::default() };
+        let role_t = |_n: usize, c: usize| BitVector::from_words(vec![0xFFu64 << (8 * c)]);
+        let name_t = |n: usize, c: usize| BitVector::from_words(vec![0xFFu64 << (8 * ((n * 2 + c) % 8))]);
+        let run = |rule: &dyn Fn(usize, usize) -> BitVector, sleep_gen: bool| -> (usize, usize, (usize, usize)) {
+            let mut kc = KernelClass::predictive(cfg);
+            kc.set_replay(256);
+            kc.set_sleep_generalize(sleep_gen.then_some(2));
+            for i in 0..120 {
+                let (n, c) = (i % 3, (i / 3) % 2);
+                step(&mut kc, &frames(&[name(n), cue(c)]), &rule(n, c));
+            }
+            kc.sleep();
+            let probe = |kc: &mut KernelClass<SimpleKernel>, n: usize, c: usize| {
+                let mut out = BitVector::new(64, Some(0));
+                kc.process(&frames(&[name(n), cue(c)]), &mut out, 0, 0);
+                (out.as_words()[0] == rule(n, c).as_words()[0]) as usize
+            };
+            let known = (0..3).flat_map(|n| (0..2).map(move |c| (n, c))).map(|(n, c)| probe(&mut kc, n, c)).sum();
+            let unseen = (0..2).map(|c| probe(&mut kc, 3, c)).sum();
+            (known, unseen, kc.slept_general())
+        };
+        // role rule: sleep forms the cue-only rules, and the unseen name is answered
+        let (known, unseen, (made, _)) = run(&role_t, true);
+        assert_eq!((known, unseen), (6, 2));
+        assert!(made > 0);
+        assert_eq!(run(&role_t, false).1, 0);
+        // name rule: candidates fail the replay test or lose to the specifics; known pairs stay
+        assert_eq!(run(&name_t, true).0, 6);
     }
 
     #[test]

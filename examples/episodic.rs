@@ -828,6 +828,32 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // test: per role cell, how often each word filled the slot it fired for (description only)
     let mut role_words: HashMap<usize, HashMap<usize, u32>> = HashMap::new();
     let mut role_now: Option<usize> = None;
+    // BIND=1: slot ⊗ content episodes (after the Tolman-Eichenbaum Machine).
+    // - Slots: role cells fed with the column's expectation for the next slot and the
+    //   previous slot's code (so slots follow the sequence of a story's structure).
+    // - Binding: each surprising word is stored rotated by its slot's offset; a story's
+    //   episode is the union of its bindings (training stories only).
+    // - Recall: the story's bindings so far cue the store; the recalled episode, unbound
+    //   with the slot the column expects next, answers "what filled this slot in the
+    //   matching episode?". The answer is a source in the mix (MIX), source 6.
+    let bind = std::env::var("BIND").is_ok();
+    let mut bind_mem = EpisodicMemory::new(BITS, 5000);
+    let mut bind_story = BitVector::new(BITS, Some(0));
+    let mut expect_prev = BitVector::new(BITS, Some(0));
+    let mut slot_prev: Option<usize> = None;
+    let mut bind_answer: Option<usize> = None;
+    let slot_offset = |c: usize| ((c + 1) * 2_654_435_761usize) % BITS;
+    let slot_input = |expect: &BitVector, prev: Option<usize>, roles: &RoleArea| {
+        let mut x = expect.clone();
+        if let Some(p) = prev {
+            let mut c = roles.code(p).clone();
+            c.rotl_mut(BITS / 2);
+            x.or_mut(&c);
+        }
+        x
+    };
+    // test answers with a binding answer: (answers, binding answer right)
+    let mut bind_stats = (0usize, 0usize);
     // this step's prediction of each upper area (for the mix)
     let mut upper_pred: Vec<Option<BitVector>> = vec![None; upper.len()];
     let mut upper_in: Vec<Option<BitVector>> = vec![None; upper.len()];
@@ -1131,6 +1157,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         page_marks = vec![false; ids.len()];
+        // the previous story's bindings become one episode (training stories only)
+        if bind {
+            if bind_story.count_ones() > 0 && s_i > 0 && s_i - 1 < TRAIN {
+                bind_mem.store(&bind_story);
+            }
+            bind_story = BitVector::new(BITS, Some(0));
+        }
         if hier && hier_reset {
             area.clear();
             for u in upper.iter_mut() {
@@ -1243,6 +1276,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if t + 1 == ids.len() {
                     eprintln!();
                 }
+            }
+            // slot of this word, and its binding if it was surprising
+            if bind {
+                let x = slot_input(&expect_prev, slot_prev, &roles);
+                let slot = roles.observe(&x, !testing, &mut role_rng);
+                if let (Some(c), true) = (slot, share < predicted_share) {
+                    let mut b = code.clone();
+                    b.rotl_mut(slot_offset(c));
+                    bind_story.or_mut(&b);
+                }
+                slot_prev = slot;
             }
             // active reading: choose a saccade before predicting the next word
             if let (true, Some(mode)) = (hier && t + 1 < ids.len(), saccade.as_deref()) {
@@ -1780,6 +1824,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 prof_t = std::time::Instant::now();
                 let input = BitVector::from_words(words);
                 l4_mid = (input.as_words().len() / (BITS / 64)).saturating_sub(2);
+                if bind {
+                    // the column's expectation for the next slot, and that slot's cell
+                    expect_prev = column.l23.peek_union(&input, BITS);
+                    let next_slot = roles.winner(&slot_input(&expect_prev, slot_prev, &roles)).map(|w| w.0);
+                    bind_answer = None;
+                    if let (Some(c), true) = (next_slot, bind_story.count_ones() > 0) {
+                        if let Some(ep) = bind_mem.recall(&bind_story, 64) {
+                            let mut u = ep.clone();
+                            u.rotr_mut(slot_offset(c));
+                            bind_answer = enc.decode(&u);
+                        }
+                    }
+                }
 
                 let mut out = BitVector::new(BITS, Some(0));
                 out.or_mut(column.predict(&input));
@@ -1832,6 +1889,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             proposals.push((2, ctx + bucket(area.column.confidence()), tw));
                         }
                     }
+                    // slot ⊗ content memory (BIND)
+                    if let Some(w) = bind_answer {
+                        proposals.push((6, ctx, vec![w]));
+                    }
                     // the upper areas of the chain, one source each
                     for (i, p) in upper_pred.iter().enumerate() {
                         if let Some(p) = p {
@@ -1862,6 +1923,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 mix.record(*src, *key, w == next);
                             }
                         }
+                    }
+                }
+                if testing && bind && t + 1 == s.answer_at {
+                    if let Some(w) = bind_answer {
+                        bind_stats.0 += 1;
+                        bind_stats.1 += (w == next) as usize;
                     }
                 }
                 if testing {
@@ -2370,6 +2437,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[2] as f64 / (sacc_stats[2] + sacc_stats[3]) as f64,
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
+            );
+        }
+        if bind {
+            eprintln!(
+                "  BIND seed {seed}: {} slot cells, {} episodes; at test the slot memory answered {} of {} answers ({:.1}% of those right)",
+                roles.used(),
+                bind_mem.len(),
+                bind_stats.0,
+                TEST,
+                100.0 * bind_stats.1 as f64 / bind_stats.0.max(1) as f64
             );
         }
         if role_mode.as_deref() == Some("cells") {

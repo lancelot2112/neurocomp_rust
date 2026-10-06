@@ -866,6 +866,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // higher area vote their whole class of continuations instead of one guessed word
     let class_read = std::env::var("CLASS_READ").is_ok();
     let class_vote = std::env::var("CLASS_VOTE").is_ok();
+    // CONSOLIDATE=r: systems consolidation. Each training story leaves a trace at its answer
+    // (the question sentence, the story's slot bindings, the answer, its familiarity band).
+    // At every sleep, and once more before the test, the novel traces (band < 4) are
+    // replayed r times to the higher area, which learns from them with its normal rule. The
+    // replayed slow state is the episode's gist: only its uncommon bindings (in at most 30%
+    // of stored episodes) are reinstated, not the filler of that moment.
+    // BIND_LESION=1: the slot memory is switched off at test (only the cortex can answer)
+    let consolidate: Option<usize> = std::env::var("CONSOLIDATE").ok().and_then(|v| v.parse().ok());
+    let bind_lesion = std::env::var("BIND_LESION").is_ok();
+    // (question sentence bag, the story's (word, slot) bindings, answer word, familiarity band)
+    let mut traces: Vec<(BitVector, Vec<(usize, usize)>, usize, u64)> = Vec::new();
+    let mut replayed = 0usize;
     let mut bind_list: Vec<(usize, usize)> = Vec::new(); // this story's (word, slot) bindings
     let mut bind_diag = 0usize;
     let slot_offset = |c: usize| ((c + 1) * 2_654_435_761usize) % BITS;
@@ -1056,6 +1068,29 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
+        // consolidation replay: at every sleep, and the night before the test
+        if let (Some(reps), true) = (consolidate, hier && bind && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
+            let n_ep = bind_mem.len() as f32;
+            for (sent, bl, ans, band) in traces.iter().filter(|tr| tr.3 < 4) {
+                let _ = band;
+                // the gist: words of the story's uncommon bindings
+                let mut state = BitVector::new(BITS, Some(0));
+                for &(w, sl) in bl {
+                    let mut b = enc.codes[w].clone();
+                    b.rotl_mut(slot_offset(sl));
+                    if bind_mem.frequency(&b) * n_ep <= 0.3 * n_ep {
+                        state.or_mut(&enc.codes[w]);
+                    }
+                }
+                let mut words = sent.as_words().to_vec();
+                words.extend_from_slice(state.as_words());
+                let x = BitVector::from_words(words);
+                for _ in 0..reps {
+                    area.learn(&x, &enc.codes[*ans], &mut rng);
+                    replayed += 1;
+                }
+            }
+        }
         if !testing && s_i > 0 && sleep_every.map_or(false, |n| s_i % n == 0) {
             let (p, m) = column.l23.sleep();
             if hier && std::env::var("HIER_DREAM").is_ok() {
@@ -1854,7 +1889,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 prof_t = std::time::Instant::now();
                 let input = BitVector::from_words(words);
                 l4_mid = (input.as_words().len() / (BITS / 64)).saturating_sub(2);
-                if bind {
+                if bind && !(testing && bind_lesion) {
                     // the column's expectation for the next slot, and that slot's cell
                     expect_prev = column.l23.peek_union(&input, BITS);
                     let next_slot = roles.winner(&slot_input(&expect_prev, slot_prev, &roles)).map(|w| w.0);
@@ -2022,6 +2057,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Some(c) = role_now.take() {
                         *role_words.entry(c).or_default().entry(next).or_default() += 1;
                     }
+                }
+                if bind && consolidate.is_some() && !testing && t + 1 == s.answer_at {
+                    traces.push((sentence.clone(), bind_list.clone(), next, fam_band));
                 }
                 // saccade reward: the prediction right, minus the cost of a regression
                 if let Some(a) = sacc_pending.take() {
@@ -2531,6 +2569,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
             );
+        }
+        if consolidate.is_some() {
+            eprintln!("  CONSOLIDATE seed {seed}: {} replays of novel episodes to the higher area", replayed);
         }
         if mixing && held_halves[0].1 > 0 {
             eprintln!(

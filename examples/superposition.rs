@@ -13,6 +13,7 @@
 //! cargo run --release --example superposition
 
 use neurocomp::bitvec::BitVector;
+use neurocomp::program::{EpisodicCircuit, IndexConfig, IndexMemory};
 use neurocomp::program::modules::{phase_cells, phase_code, Associate, Center, Ctx, Module, PhaseAssociate, Readout, Scale};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -44,6 +45,8 @@ enum Variant {
     Counts(Scale, Center),
     /// Phase-coded weights: 1/n row weights, the input phases, score on cells only.
     Phase(bool, InPhase, bool),
+    /// One row per event, winner-take-all (`IndexMemory`); 1/n cue weights or plain overlap.
+    Index(bool),
 }
 
 struct Event {
@@ -114,6 +117,21 @@ fn run(n: usize, language: bool, v: Variant) -> usize {
                 }
             }
         }
+        Variant::Index(inverse) => {
+            let mut m = IndexMemory::new(IndexConfig { inverse, cap: usize::MAX, min_overlap: 1, period: u32::MAX, ..IndexConfig::default() });
+            for e in &data {
+                let cells: Vec<usize> = e.post.iter().map(|p| p.0).collect();
+                let keys: Vec<usize> = (0..BITS).filter(|&b| e.pre.bit_get(b)).collect();
+                m.store_split(&keys, &[], &cells);
+            }
+            for e in &data {
+                let keys: Vec<usize> = (0..BITS).filter(|&b| e.pre.bit_get(b)).collect();
+                let got = m.recall(&keys).ec;
+                if e.post.iter().filter(|p| got.contains(&p.0)).count() * 10 >= K * 8 {
+                    right += 1;
+                }
+            }
+        }
         Variant::Phase(inverse, input, cells_only) => {
             let mut a = PhaseAssociate::new(CELLS, K, PHASES, if input == InPhase::None { 1 } else { PHASES }, inverse);
             let mut prng = StdRng::seed_from_u64(5);
@@ -145,22 +163,18 @@ fn main() {
     let variants = [
         ("counts", Variant::Counts(Scale::None, Center::Off)),
         ("1/n", Variant::Counts(Scale::Inverse, Center::Off)),
-        ("centered (exact)", Variant::Counts(Scale::None, Center::Exact)),
         ("centered (homeostatic)", Variant::Counts(Scale::None, Center::Homeostatic(16))),
-        ("1/n + centered (exact)", Variant::Counts(Scale::Inverse, Center::Exact)),
         ("1/n + centered (homeostatic)", Variant::Counts(Scale::Inverse, Center::Homeostatic(16))),
-        ("phase out", Variant::Phase(false, InPhase::None, false)),
-        ("phase out, cells", Variant::Phase(false, InPhase::None, true)),
-        ("phase in (random) + out", Variant::Phase(false, InPhase::Random, false)),
+        ("index (overlap)", Variant::Index(false)),
+        ("index (1/n)", Variant::Index(true)),
         ("phase in (random) + out, cells", Variant::Phase(false, InPhase::Random, true)),
-        ("phase in (slot) + out, cells", Variant::Phase(false, InPhase::Slot, true)),
         ("phase in (slot) + out + 1/n, cells", Variant::Phase(true, InPhase::Slot, true)),
     ];
     let names: Vec<&str> = variants.iter().map(|v| v.0).collect();
     println!("| codes | events | {} |", names.join(" | "));
     println!("|---|---|{}", "---|".repeat(names.len()));
     for language in [false, true] {
-        for n in [500, 1000, 2000, 4000, 8000] {
+        for n in [1000, 2000, 4000, 8000, 16000] {
             let row: Vec<String> = variants.iter().map(|&(_, v)| format!("{}%", run(n, language, v) * 100 / n)).collect();
             println!("| {} | {} | {} |", if language { "language-like" } else { "random" }, n, row.join(" | "));
         }

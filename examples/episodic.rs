@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{EpisodicCircuit, Hippocampus, HippocampusConfig, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -944,6 +944,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // CA1 → subiculum → EC V readout, novelty-gated encoding, cached (event-based) recall.
     // HIPPO_GAIN (novelty gain, 3), HIPPO_CA2 (CA2 → CA1 weight in quarters, 0 = off),
     // HIPPO_DECAY (per-store decay, 0.999), HIPPO_CELLS (CA3 and CA1 cells; DG twice that).
+    let mut index_hc: Option<Box<dyn EpisodicCircuit>> = None;
+    // HIPPO=index: the index memory (`program::IndexMemory`): one row per event, recall by
+    // winner-take-all over an inverted index with 1/n cue weights, successor pointers,
+    // strength-based forgetting (INDEX_PERIOD stores per unit, 64; INDEX_PERIOD=0: none),
+    // INDEX_PLAIN=1: plain overlap. Use with HIPPO_SELF=1 SPARSE_BIND=1.
+    if std::env::var("HIPPO").map_or(false, |v| v == "index") {
+        let mut cfg = IndexConfig::default();
+        let period = henv("INDEX_PERIOD", 64.0) as u32;
+        cfg.period = if period == 0 { u32::MAX } else { period };
+        cfg.inverse = std::env::var("INDEX_PLAIN").is_err();
+        cfg.cap = henv("INDEX_CAP", 4096.0) as usize;
+        cfg.min_overlap = henv("INDEX_MIN", 16.0) as u32;
+        index_hc = Some(Box::new(IndexMemory::new(cfg)) as Box<dyn EpisodicCircuit>);
+    }
     let mut bind_hc = (std::env::var("HIPPO").map_or(false, |v| v == "full")).then(|| {
         let mut cfg = HippocampusConfig::new(BITS, seed + 300);
         cfg.novelty_gain = q16x(henv("HIPPO_GAIN", 3.0) as f64);
@@ -965,6 +979,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         Box::new(Hippocampus::new(cfg)) as Box<dyn EpisodicCircuit>
     });
+    if index_hc.is_some() {
+        bind_hc = index_hc.take();
+    }
     // HIPPO_SELF=1 (with HIPPO=full): the hippocampus on its own. Its own familiarity counts
     // replace the list store's statistics; it stores events (one per sentence, with the
     // story's earlier bindings as a context code) instead of whole stories; and with
@@ -978,7 +995,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let ctx_offset = BITS / 2 + 12_345 % (BITS / 2);
     let mut bind_prev = BitVector::new(BITS, Some(0)); // the story's bindings before this sentence
     let sem_hreplays: usize = std::env::var("SEMANTIC_HREPLAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
-    let mut sem_hstats = [0usize; 3]; // replays, decoded with content, cued by a new name
+    let mut sem_hstats = [0usize; 4]; // replays, decoded with content, cued by a new name, marked consolidated
     // REPLAY_GEN=1 (with HIPPO_SELF, SPARSE_BIND, a higher area with HIER_SLEEP_GEN): at each
     // sleep the hippocampus replays freely (from random CA3 cells, settling into attractors:
     // prototypes of overlapping events). Each replay is decoded into its content words (by
@@ -1490,6 +1507,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let cue = &enc.codes[cue_w];
                 let mut out = BitVector::new(BITS, Some(0));
                 sem_store.process_predictive(cue, &mut out);
+                // consolidation: the cortex already gives this tagged event's content back
+                // from its cue, so the hippocampus may let it fade faster
+                if i < tagged.len() && std::env::var("NO_CONSOLIDATE_MARK").is_err() {
+                    let got: u32 = out.as_words().iter().zip(content.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
+                    if got as usize * 10 >= content.count_ones() * 8 {
+                        hc.mark_consolidated(&tagged[i].0);
+                        sem_hstats[3] += 1;
+                    }
+                }
                 sem_store.feedback(cue, &content, &mut rng);
                 sem_replays += 1;
             }
@@ -1681,6 +1707,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             bind_story = BitVector::new(BITS, Some(0));
             bind_prev = BitVector::new(BITS, Some(0));
             bind_list.clear();
+            if let Some(hc) = &mut bind_hc {
+                hc.end_sequence();
+            }
         }
         if hier && hier_reset {
             area.clear();
@@ -3343,8 +3372,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if hippo_self {
             eprintln!(
-                "  HIPPO_SELF seed {seed}: {} cue-free replays, {} decoded with content, {} of those cued by a new name",
-                sem_hstats[0], sem_hstats[1], sem_hstats[2]
+                "  HIPPO_SELF seed {seed}: {} cue-free replays, {} decoded with content, {} of those cued by a new name, {} tagged events marked consolidated",
+                sem_hstats[0], sem_hstats[1], sem_hstats[2], sem_hstats[3]
             );
         }
         if let Some(hc) = &bind_hc {

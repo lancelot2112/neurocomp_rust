@@ -538,6 +538,10 @@ pub trait EpisodicCircuit {
     fn store_event(&mut self, content: &[usize], context: &[usize]) -> Q16;
     fn store_split(&mut self, content: &[usize], context: &[usize], out: &[usize]) -> Q16;
     fn advance_time(&mut self);
+    /// A sequence (story) ended: the next stored event does not follow the last one.
+    fn end_sequence(&mut self) {}
+    /// The cortex now reconstructs these stored events on its own (`replay_from` codes).
+    fn mark_consolidated(&self, _start: &[u32]) {}
     fn take_tags(&mut self) -> Vec<(Vec<u32>, Vec<usize>)>;
     fn replay_from(&self, start: &[u32]) -> Recall;
     fn replay(&self, rng: &mut dyn rand::RngCore) -> Recall;

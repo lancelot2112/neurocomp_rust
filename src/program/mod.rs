@@ -28,3 +28,5 @@ pub use prefrontal::*;
 pub mod modules;
 pub use modules::{Genome, Module, NetOp, Network, Prim};
 
+pub mod index_memory;
+pub use index_memory::{IndexConfig, IndexMemory};

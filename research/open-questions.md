@@ -42,10 +42,15 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   the fact they hold (80–97%). As rehearsal it extends a single area's reach, but it hurts
   a chain that already holds the fact. Use it where an area must hold something beyond
   its window, and test it with recitation and answering.
-- **Literal knowledge** ([30](experiments/30-cortex-driven-saccades.md)): with an unseen
-  question wording, answers fall to 0%, even with a perfect look-back. The saccade policy
-  can be driven by the column's state, but it transfers only partly. Next: role-level
-  codes (induced classes as part of each word's code), measured by this transfer test.
+- **Literal knowledge** ([30](experiments/30-cortex-driven-saccades.md),
+  [31](experiments/31-role-cells-and-transfer.md)): an unseen wording gives 0%.
+  - **New names in a role-level rule transfer fully** through learned generalisation
+    (pruning unused inputs).
+  - **But that pruning breaks rules where identity matters.**
+  - **Role cells emerge** but do not help as an extra frame.
+
+  Next: generalise by spawning a general copy and keeping the specific kernel, with
+  reliability arbitrating (a schema with exceptions).
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

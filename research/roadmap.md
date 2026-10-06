@@ -111,6 +111,12 @@ rule, at 90% or more.
   only partly.
 - This is the baseline the schema work has to move.
 
+**Update** ([31](experiments/31-role-cells-and-transfer.md)):
+- Role categories emerge from competitive Hebbian learning on the column's expectations.
+- Learned generalisation (pruning inputs that did not matter) gives full transfer to new
+  names when the rule is role-level, but breaks rules where identity matters.
+- Next: keep general and specific kernels side by side, arbitrated by reliability.
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

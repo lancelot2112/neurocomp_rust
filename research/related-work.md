@@ -347,6 +347,15 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   natural tasks.* J. Cognitive Neuroscience 7. Re-fixating to fetch information just in
   time instead of holding it: the world as external memory.
 
+## Roles and schemas ([31](experiments/31-role-cells-and-transfer.md))
+- **Carpenter, G. A. & Grossberg, S. (1987).** *A massively parallel architecture for a
+  self-organizing neural pattern recognition machine.* Computer Vision, Graphics, and
+  Image Processing 37 (ART). New categories are recruited only when no existing one
+  matches well enough: the vigilance of `RoleArea`.
+- **McClelland, J. L., McNaughton, B. L. & O'Reilly, R. C. (1995).** *Why there are
+  complementary learning systems in the hippocampus and neocortex.* Psychological Review
+  102. General structure is learned slowly, specifics quickly.
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

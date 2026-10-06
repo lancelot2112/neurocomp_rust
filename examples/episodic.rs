@@ -274,6 +274,14 @@ fn family_place(f: usize, s: usize) -> usize {
 fn family_of(name_i: usize, new: bool) -> usize {
     if new { [0, 1, 0][name_i % 3] } else { name_i / 3 }
 }
+/// FAMILY_STATED=1 (with FAMILY): a new member's family is stated, not named in the
+/// question. Some training stories carry a statement "X is a <surname> ." (a trained name,
+/// with probability 1/4); with SCHEMA_K=k, each new name is stated in k training stories
+/// ("tom is a smith ."), and test questions about new names omit the surname ("tom went
+/// to the"). Answering needs the family completed from memory, then the family rule.
+fn family_stated() -> bool {
+    std::env::var("FAMILY_STATED").is_ok()
+}
 
 /// Schema test (SCHEMA_K): the new names' own places, one per season. The mapping has the
 /// opposite parity to every trained name's, so it cannot be copied from any of them.
@@ -300,11 +308,12 @@ fn new_wording() -> bool {
 }
 
 fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
-    season_story_with(rng, distance, held_out, None)
+    season_story_with(rng, distance, held_out, None, None)
 }
 
 /// `forced`: (new-name index, season) for a schema-test story about a new name.
-fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: Option<(usize, usize)>) -> Story {
+/// `stated`: a new name whose family this story states (FAMILY_STATED).
+fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: Option<(usize, usize)>, stated: Option<usize>) -> Story {
     let season = forced.map_or_else(|| rng.gen_range(0..SEASONS.len()), |f| f.1);
     let mut words: Vec<&'static str> = vec![SEASONS[season], "came", "."];
     for _ in 0..distance {
@@ -316,6 +325,19 @@ fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: 
         words.push(FILLERS.choose(rng).unwrap());
     }
     words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+    if family() && family_stated() {
+        let stmt = match stated {
+            Some(i) => Some((NEW_NAMES[i], family_of(i, true))),
+            None if rng.gen_bool(0.25) => {
+                let m = rng.gen_range(0..NAMES.len());
+                Some((NAMES[m], family_of(m, false)))
+            }
+            None => None,
+        };
+        if let Some((who, f)) = stmt {
+            words.extend([who, "is", "a", SURNAMES[f], "."]);
+        }
+    }
     let n = rng.gen_range(0..NAMES.len());
     // schema test: a forced new-name story, or a held-out test question about a new name
     let schema = std::env::var("SCHEMA_K").is_ok();
@@ -331,6 +353,8 @@ fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: 
     });
     if held_out && new_wording() {
         words.extend([name, "walked", "into", "the"]);
+    } else if let (Some(_), true, true) = (new_i, family_stated(), forced.is_none()) {
+        words.extend([name, "went", "to", "the"]);
     } else if let Some(f) = fam {
         words.extend([name, SURNAMES[f], "went", "to", "the"]);
     } else {
@@ -579,6 +603,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     if task == Task::Season && family() {
         vocab.extend(SURNAMES);
+        if family_stated() {
+            vocab.push("a");
+        }
     }
     if task == Task::Books {
         vocab.extend(&BOOKS[..book_ids()]);
@@ -904,6 +931,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // also feeds sleep generalisation (needs HIER_DREAM / HIER_SLEEP_GEN)
     let consolidate_interleave = std::env::var("CONSOLIDATE_INTERLEAVE").is_ok();
     let bind_lesion = std::env::var("BIND_LESION").is_ok();
+    // COMPLETE=1: pattern completion of a skipped slot. When the next word is not of the kind
+    // the column expects here, the sentence is novel (familiarity band < 4) and the slot
+    // memory has a filler for the expected slot, that filler is inserted as an internal step
+    // (heard from memory, not read from the page), at most once per sentence. With
+    // COMPLETE=test only at test.
+    let complete = std::env::var("COMPLETE").ok();
+    let mut completed_sentence = false;
+    let mut complete_stats = [0usize; 3]; // completions: training, test (trained names), test (held out)
+    let mut complete_words: HashMap<String, usize> = HashMap::new(); // test, held out: "name -> word"
     // (question sentence bag, the story's (word, slot) bindings, answer word, familiarity band)
     let mut traces: Vec<(BitVector, Vec<(usize, usize)>, usize, u64)> = Vec::new();
     let mut replayed = 0usize;
@@ -1016,7 +1052,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             slots.shuffle(&mut srng);
             let mut it = slots.into_iter();
             for i in 0..NEW_NAMES.len() {
-                for sn in 0..SEASONS.len() {
+                // FAMILY_STATED: k statements per new name (the season is unused)
+                let seasons = if family_stated() { 1 } else { SEASONS.len() };
+                for sn in 0..seasons {
                     for _ in 0..k {
                         if let Some(p) = it.next() {
                             m.insert(p, (i, sn));
@@ -1220,7 +1258,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             }
         }
-        let s = if task == Task::Books {
+        let mut s = if task == Task::Books {
             // pick a book; a finished one is replaced by a new book with a new season
             let b = rng.gen_range(0..3);
             let first = book_left[b] == 0;
@@ -1246,7 +1284,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             book_session(&mut rng, book_id[b], book_season[b], first, testing && s_i % 2 == 1)
         } else if task == Task::Season {
             season_distance = rng.gen_range(0..season_len);
-            season_story_with(&mut rng, season_distance, testing && s_i % 2 == 1, schema_at.get(&s_i).copied())
+            let at = schema_at.get(&s_i).copied();
+            if family_stated() {
+                season_story_with(&mut rng, season_distance, testing && s_i % 2 == 1, None, at.map(|a| a.0))
+            } else {
+                season_story_with(&mut rng, season_distance, testing && s_i % 2 == 1, at, None)
+            }
         } else if task == Task::Habit {
             habit_story(&mut rng, testing && s_i % 2 == 1)
         } else if task == Task::Elim {
@@ -1270,7 +1313,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         } else {
             train_words += s.words.len();
         }
-        let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
+        let mut ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
+        completed_sentence = false;
         page_marks = vec![false; ids.len()];
         // the previous story's bindings become one episode (training stories only)
         if bind {
@@ -1286,7 +1330,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 u.clear();
             }
         }
-        for t in 0..ids.len() {
+        let mut t_next = 0;
+        while t_next < ids.len() {
+            // (a while loop: completion can insert an internal word into the stream)
+            let t = t_next;
+            t_next += 1;
             // PROF: [4] storage and everything after learning (from the previous word)
             prof[4] += prof_t.elapsed().as_secs_f64();
             prof_t = std::time::Instant::now();
@@ -1990,6 +2038,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
 
+                if let (Some(mode), Some(w), false, false) = (complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
+                    let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+                    let n = bind_mem.len() as f32;
+                    let band = bind_sentence.iter().map(|b| (bind_mem.frequency(b) * n).round() as u64).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                    let skipped = ov(ids[t + 1], &expect_prev) < 24;
+                    let fresh = w != ids[t + 1] && !ids[start..=t].contains(&w) && s.words[t + 1] != ".";
+                    if skipped && fresh && band < 4 && (testing || mode != "test") {
+                        let k = if !testing { 0 } else if s.held_out { 2 } else { 1 };
+                        complete_stats[k] += 1;
+                        if k == 2 {
+                            *complete_words.entry(format!("{} -> {}", s.words[t], vocab[w])).or_default() += 1;
+                        }
+                        ids.insert(t + 1, w);
+                        s.words.insert(t + 1, vocab[w]);
+                        page_marks.insert(t + 1, false);
+                        if s.answer_at > t {
+                            s.answer_at += 1;
+                        }
+                        completed_sentence = true;
+                    }
+                }
                 let mut out = BitVector::new(BITS, Some(0));
                 out.or_mut(column.predict(&input));
                 // PROF: [1] L2/3 prediction
@@ -2395,6 +2465,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sentence = BitVector::new(BITS, Some(0));
                 bind_sentence.clear();
+                completed_sentence = false;
                 if hier {
                     area.end_sentence(&surprising);
                     for u in upper.iter_mut() {
@@ -2621,6 +2692,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[2] as f64 / (sacc_stats[2] + sacc_stats[3]) as f64,
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
+            );
+        }
+        if complete.is_some() {
+            let mut cw: Vec<_> = complete_words.iter().collect();
+            cw.sort_by(|a, b| b.1.cmp(a.1));
+            eprintln!(
+                "  COMPLETE seed {seed}: completions in training {}, at test {} (trained names) and {} (held out); held out: {:?}",
+                complete_stats[0],
+                complete_stats[1],
+                complete_stats[2],
+                cw.iter().take(8).collect::<Vec<_>>()
             );
         }
         if consolidate.is_some() {

@@ -1367,7 +1367,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     column.observe(code);
                 }
             }
-            let cue_source = if predictive_novelty { &surprising } else { &sentence };
+            // MEM_CONTEXT=1: episodes are bound to their context. The higher area's slow state
+            // (what the story has established, e.g. the season) joins every stored episode and
+            // every recall cue
+            let mem_context = hier && std::env::var("MEM_CONTEXT").is_ok();
+            let cue_with_context = mem_context.then(|| {
+                let mut c = if predictive_novelty { surprising.clone() } else { sentence.clone() };
+                c.or_mut(&area.state(&surprising));
+                c
+            });
+            let cue_source = match cue_with_context.as_ref() {
+                Some(c) => c,
+                None if predictive_novelty => &surprising,
+                None => &sentence,
+            };
             if let Policy::Pfc { learned } = policy {
                 let load = if learned {
                     let explore = if testing { None } else { Some(&mut rng) };
@@ -2110,7 +2123,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // would leak its own answer to every later one.
                 let question = sentence.as_words().iter().zip(enc.codes[index["where"]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
                 if !(task == Task::Persist && testing && question) {
-                    memory.store(if predictive_novelty { &surprising } else { &sentence });
+                    if hier && std::env::var("MEM_CONTEXT").is_ok() {
+                        let mut e = if predictive_novelty { surprising.clone() } else { sentence.clone() };
+                        e.or_mut(&area.state(&surprising));
+                        memory.store(&e);
+                    } else {
+                        memory.store(if predictive_novelty { &surprising } else { &sentence });
+                    }
                 }
                 if let (Some(dg), Some(ca3)) = (&dg, &mut ca3) {
                     // Encode the novel part: content shared by most episodes ("went to the")

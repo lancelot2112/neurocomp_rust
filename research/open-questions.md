@@ -103,6 +103,11 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
     superposing the evidence sources within the expectation replaces the source order.
     The learned DG + CA3 does not recall a one-shot episode against common ones (no
     novelty-gated encoding), and CA1, CA2, the subiculum and EC layers are not in the loop.
+  - **The full hippocampal circuit** ([46](experiments/46-full-hippocampus.md)): with
+    CA1's novelty gating encoding and presynaptic scaling on the perforant path, it
+    recalls the one-shot family, matching the list memory without an explicit search.
+    Open: a learned EC, replay from the circuit feeding the cortex, and episodes per
+    event (seed 2's two surnames in one story).
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

@@ -33,7 +33,7 @@ use neurocomp::det::HashMap;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Hippocampus, HippocampusConfig, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -923,6 +923,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let (hcells, hk) = (henv("HIPPO_CELLS", 8192.0) as usize, henv("HIPPO_K", 32.0) as usize);
     let hippo_hab = henv("HIPPO_HAB", 0.3);
     let bind_dg = hippo_ca3.then(|| DentateGyrus::new(BITS, hcells, 300, hk, seed + 200));
+    // HIPPO=full: the full circuit (`program::Hippocampus`): EC II → DG → CA3 by mossy
+    // fibres at storage, EC II → CA3 (presynaptically scaled) at recall, CA3 recurrent
+    // settling, CA3 → CA1 (Schaffer) and EC III → CA1 (comparator), CA2 temporal context,
+    // CA1 → subiculum → EC V readout, novelty-gated encoding, cached (event-based) recall.
+    // HIPPO_GAIN (novelty gain, 3), HIPPO_CA2 (CA2 → CA1 weight in quarters, 0 = off).
+    let mut bind_hc = (std::env::var("HIPPO").map_or(false, |v| v == "full")).then(|| {
+        let mut cfg = HippocampusConfig::new(BITS, seed + 300);
+        cfg.novelty_gain = henv("HIPPO_GAIN", 3.0);
+        cfg.ca2_weight = henv("HIPPO_CA2", 0.0) as u32;
+        Hippocampus::new(cfg)
+    });
     let mut bind_ca3 = hippo_ca3.then(|| Ca3Memory::new(BITS, hcells, hk, henv("HIPPO_DECAY", 0.999), henv("HIPPO_SETTLE", 2.0) as usize));
     let mut bind_story = BitVector::new(BITS, Some(0));
     let mut expect_prev = BitVector::new(BITS, Some(0));
@@ -1478,6 +1489,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if let (Some(dg), Some(ca3)) = (&bind_dg, &mut bind_ca3) {
                     let x = set_bits(&bind_story);
                     ca3.store(&x, &dg.separate(&x));
+                }
+                if let Some(hc) = &mut bind_hc {
+                    hc.store(&set_bits(&bind_story));
+                    hc.advance_time();
                 }
             }
             bind_story = BitVector::new(BITS, Some(0));
@@ -2163,7 +2178,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             _ => bind_story.clone(),
                         };
                         // BIND_RARE=1: rarity-weighted recall
-                        let found = if let Some(ca3) = &bind_ca3 {
+                        let found = if let Some(hc) = &bind_hc {
+                            // the full circuit: the story's bindings so far are the cue
+                            let r = hc.recall(&set_bits(&cue));
+                            (!r.ec.is_empty()).then(|| (64 * (32 - r.strength.leading_zeros() as u64).saturating_sub(5), BitVector::from_bits(&r.ec, BITS)))
+                        } else if let Some(ca3) = &bind_ca3 {
                             // the learned hippocampus: pattern completion from the (habituated) cue
                             let cue = if hippo_hab > 0.0 && bind_mem.len() > 50 { bind_mem.novel(&bind_story, hippo_hab) } else { bind_story.clone() };
                             let (bits, strength) = ca3.recall(&set_bits(&cue), BITS);
@@ -3068,6 +3087,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[2] as f64 / (sacc_stats[2] + sacc_stats[3]) as f64,
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
+            );
+        }
+        if let Some(hc) = &bind_hc {
+            let (hits, all) = hc.cache_hits.get();
+            eprintln!(
+                "  HIPPO seed {seed}: {} episodes stored, mean novelty {:.2}; recalls {} ({:.0}% answered from the cache, no change in the cue)",
+                hc.len(),
+                hc.novelty_sum.0 / hc.novelty_sum.1.max(1) as f64,
+                all,
+                100.0 * hits as f64 / all.max(1) as f64
             );
         }
         if rollout_loop {

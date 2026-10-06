@@ -14,8 +14,9 @@ connections between them exist. "Not modelled" is as important as what is.
 | **Entorhinal cortex** | Input/output of the hippocampus; lateral = content, medial = grid/structure | Sparse word codes as the EC pattern; habituation (`novel`) and the rarity cue (`rarest`) | Content, plus a drifting temporal context (the fading state, as in lateral EC: [35](../experiments/35-fading-state-and-entorhinal-codes.md)); **no grid / structure code yet**: the next step for schemas |
 | **Dentate gyrus** | Sparse expansion, pattern separation | `DentateGyrus` (random projection + k-WTA) | Built ([12](../experiments/12-dentate-gyrus-ca3.md)) |
 | **CA3** | Autoassociative recurrent store | `EpisodicMemory` (list) and `Ca3Memory` (Hebbian, bit-sliced / delay-line / shift-register weights; `Ca3FloatMemory` for comparison) | Built |
-| **CA1** | Compares recall with current input (novelty) | `NOVELTY=prediction` comparator in the episodic example ([14](../experiments/14-ca1-comparator.md)) | Partial (works one-hop, hurts two-hop) |
-| **Subiculum** | Hippocampal output hub, to thalamus / PFC | — | Not modelled |
+| **CA1** | Compares recall with current input (novelty) | In `Hippocampus` ([46](../experiments/46-full-hippocampus.md)): CA3 → CA1 (Schaffer, learned) and EC III → CA1 (fixed); the comparator's mismatch gates encoding strength. Earlier: `NOVELTY=prediction` in the episodic example ([14](../experiments/14-ca1-comparator.md)) | Built ([46](../experiments/46-full-hippocampus.md)); the older harness comparator is partial |
+| **CA2** | Small; time and social memory | A drifting time code with a learned CA2 → CA1 pathway in `Hippocampus` ([46](../experiments/46-full-hippocampus.md)); off by default (recency bias hurt here) | Built |
+| **Subiculum** | Hippocampal output hub, to thalamus / PFC | CA1 → subiculum → EC V readout in `Hippocampus` ([46](../experiments/46-full-hippocampus.md)); no projection to thalamus / PFC | Partial (readout only) |
 | **Big loop** (EC→HC→EC) | Recalled content re-enters as the next cue | `recall_chain`, `recall_branches` ([13](../experiments/13-big-loop.md)) | Built |
 | **Red nucleus** | Cerebellum → red nucleus → spinal cord (and → inferior olive) | — | Not modelled: **no motor or action output** at all |
 | **Prefrontal / working memory** | Holds items; BG gates updates (PBWM); directs retrieval (via nucleus reuniens) | `WorkingMemory` slot + `PfcGate` (basal-ganglia load / keep, credit to the load whose content is held); the slot's content cues hippocampal recall ([18](../experiments/18-prefrontal-working-memory.md)). A question's cue also tags or replays episodes into cortex ([17](../experiments/17-consolidation.md#prioritised-replay-questions-decide-what-is-consolidated)) | Built: one slot, gate keyed on the word alone (no context yet) |
@@ -55,7 +56,7 @@ connections between them exist. "Not modelled" is as important as what is.
 - **Motor / speech output:** saying words, the efference copy of speech, the read-back
   loop of the [output plan](output-and-self-supervision.md).
 - **Grid cells / metric structure codes;** path-integrated structure (TEM proper).
-- **Subiculum** (hippocampal output hub).
+- **Subiculum's projections** to thalamus and prefrontal cortex; a learned entorhinal layer (II / III / V).
 - **Perirhinal cortex** (item familiarity as its own system).
 - **Hippocampal–prefrontal schema circuits:** one-exposure learning now reaches the
   answer, filtered by the cortex's class expectation
@@ -90,9 +91,10 @@ flow that connects them is still written by hand in the experiment harness
 **Hand-coded:**
 - **Rollout control:** where a choice point is (the page contradicts the expectation),
   the source order, the 4-step cap, and stopping when the page fits again.
-- **The hippocampus in the current pipeline is algorithmic by default.** `HIPPO=ca3`
-  swaps in the learned DG + CA3 ([45](../experiments/45-superposed-thought-and-ca3.md)),
-  which does not yet recall a one-shot episode against common ones. Slot binding is by
+- **The hippocampus in the current pipeline is algorithmic by default.** `HIPPO=full`
+  swaps in the full learned circuit ([46](../experiments/46-full-hippocampus.md)). It
+  recalls one-shot episodes by novelty-gated encoding and presynaptic scaling, and is as
+  good as the list memory on average. EC is still word codes, not a learned layer. Slot binding is by
   rotation, recall by a rarity-weighted overlap score, readout by inverse rotation. The
   learned dentate gyrus / CA3 of [12](../experiments/12-dentate-gyrus-ca3.md) is not used
   there.

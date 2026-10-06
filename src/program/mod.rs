@@ -16,6 +16,9 @@ pub use memory::*;
 pub mod hippocampus;
 pub use hippocampus::*;
 
+pub mod hippocampal_circuit;
+pub use hippocampal_circuit::{Hippocampus, HippocampusConfig, Recall};
+
 pub mod basal_ganglia;
 pub use basal_ganglia::*;
 

@@ -62,18 +62,18 @@ impl DentateGyrus {
 /// shift (halving) every `half_life` stores, applied lazily: each row remembers the
 /// epoch it was last normalized, and reads skip the planes that would have been shifted
 /// out (floor(v / 2^s) = Σ_{p ≥ s} bit_p · 2^(p − s)).
-struct Pathway {
+pub(crate) struct Pathway {
     rows: Vec<Option<(SlicedCounter, u32)>>,
     targets: usize,
 }
 
 impl Pathway {
-    fn new(sources: usize, targets: usize) -> Self {
+    pub(crate) fn new(sources: usize, targets: usize) -> Self {
         Self { rows: (0..sources).map(|_| None).collect(), targets }
     }
 
     /// Add `amount` to row `i`'s counters under `mask` (after bringing the row up to `epoch`).
-    fn strengthen(&mut self, i: usize, mask: &BitVector, amount: u32, planes: usize, epoch: u32) {
+    pub(crate) fn strengthen(&mut self, i: usize, mask: &BitVector, amount: u32, planes: usize, epoch: u32) {
         let targets = self.targets;
         let (row, at) = self.rows[i].get_or_insert_with(|| (SlicedCounter::new(targets, planes, 0), epoch));
         row.shift_down((epoch - *at) as usize);
@@ -86,11 +86,17 @@ impl Pathway {
     }
 
     /// Summed (decayed) weights from the active `sources` onto every target.
-    fn drive(&self, sources: &[usize], epoch: u32) -> Vec<u32> {
+    pub(crate) fn drive(&self, sources: &[usize], epoch: u32) -> Vec<u32> {
+        self.drive_scaled(sources, epoch, |_| 0)
+    }
+
+    /// Like `drive`, with each source row's weights further divided by 2^`extra(i)`
+    /// (presynaptic scaling: a much-used input counts less per target).
+    pub(crate) fn drive_scaled(&self, sources: &[usize], epoch: u32, extra: impl Fn(usize) -> u32) -> Vec<u32> {
         let mut out = vec![0u32; self.targets];
         for &i in sources {
             let Some(Some((row, at))) = self.rows.get(i) else { continue };
-            let shift = (epoch - at) as usize;
+            let shift = (epoch - at) as usize + extra(i) as usize;
             for p in shift..row.planes() {
                 let w = 1u32 << (p - shift);
                 for (wi, &word) in row.plane(p).as_words().iter().enumerate() {
@@ -461,7 +467,7 @@ impl Autoassociative for Ca3FloatMemory {
 }
 
 /// Indices of the `k` largest positive values (ties by index).
-fn top_k(values: impl Iterator<Item = f32>, k: usize) -> Vec<u32> {
+pub(crate) fn top_k(values: impl Iterator<Item = f32>, k: usize) -> Vec<u32> {
     let mut v: Vec<(f32, u32)> = values.enumerate().filter(|(_, x)| *x > 0.0).map(|(i, x)| (x, i as u32)).collect();
     v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap().then(a.1.cmp(&b.1)));
     let mut out: Vec<u32> = v.into_iter().take(k).map(|(_, i)| i).collect();

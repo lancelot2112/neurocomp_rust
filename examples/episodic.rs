@@ -887,6 +887,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if std::env::var("HIER_SLEEP").is_ok() {
             c.set_replay(std::env::var("HIER_REPLAY_LEN").or_else(|_| std::env::var("REPLAY_LEN")).ok().and_then(|v| v.parse().ok()).unwrap_or(512));
         }
+        // REPLAY_GEN=1: sleep generalisation reads only the hippocampus's free-settling
+        // replay (see below), not a buffer of the area's own waking experience
+        if std::env::var("REPLAY_GEN").is_ok() {
+            c.set_record_waking(false);
+        }
         let mut a = HigherArea::new(BITS, c, span);
         // HIER_FADE=f: a fading state instead of the window, half-life f × the area's span
         // (in sentences)
@@ -972,6 +977,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut bind_prev = BitVector::new(BITS, Some(0)); // the story's bindings before this sentence
     let sem_hreplays: usize = std::env::var("SEMANTIC_HREPLAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
     let mut sem_hstats = [0usize; 3]; // replays, decoded with content, cued by a new name
+    // REPLAY_GEN=1 (with HIPPO_SELF, SPARSE_BIND, a higher area with HIER_SLEEP_GEN): at each
+    // sleep the hippocampus replays freely (from random CA3 cells, settling into attractors:
+    // prototypes of overlapping events). Each replay is decoded into its content words (by
+    // slot) and context words; every content word becomes a target predicted from
+    // [the event's other words | its context], and these pairs are what the higher area's
+    // sleep generalisation reads. GEN_REPLAYS (512) per sleep. Events then keep their
+    // context in the output (EC V) so a replay brings it back.
+    let replay_gen = std::env::var("REPLAY_GEN").is_ok();
+    let gen_replays: usize = std::env::var("GEN_REPLAYS").ok().and_then(|v| v.parse().ok()).unwrap_or(512);
+    let mut gen_stats = [0usize; 3]; // replays, decoded, (input, target) pairs given
     let mut bind_ca3 = hippo_ca3.then(|| Ca3Memory::new(BITS, hcells, hk, henv("HIPPO_DECAY", 0.999), henv("HIPPO_SETTLE", 2.0) as usize));
     let mut bind_story = BitVector::new(BITS, Some(0));
     let mut expect_prev = BitVector::new(BITS, Some(0));
@@ -1348,6 +1363,76 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         // SEMANTIC: sleep replay of the sentences since the last sleep into the semantic store
+        // REPLAY_GEN: the hippocampus's free-settling replay feeds sleep generalisation
+        if let (true, Some(hc)) = (replay_gen && hippo_self && hier && !testing && s_i > 0 && sleep_every.map_or(false, |n| s_i % n == 0), bind_hc.as_ref()) {
+            let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+            let cued = std::env::var("REPLAY_GEN").map_or(false, |v| v == "cued");
+            for _ in 0..gen_replays {
+                // REPLAY_GEN=cued: a random familiar binding (a word in a slot that some event
+                // stored) cues recall, which anchors the settling: a specific event, not a
+                // prototype (as cortical slow oscillations cue hippocampal replay)
+                let r = if cued {
+                    let mut cue = None;
+                    for _ in 0..64 {
+                        let (w, c) = (rng.gen_range(0..vocab.len()), rng.gen_range(0..roles.used().max(1)));
+                        let b = sparse_binding(&enc.codes[w], c, false);
+                        if hc.familiarity(&b) > 0 {
+                            cue = Some(b);
+                            break;
+                        }
+                    }
+                    match cue {
+                        Some(b) => hc.recall(&b),
+                        None => continue,
+                    }
+                } else {
+                    hc.replay(&mut rng)
+                };
+                gen_stats[0] += 1;
+                if r.ec.is_empty() {
+                    continue;
+                }
+                let ep = BitVector::from_bits(&r.ec, BITS);
+                let (mut content, mut context): (Vec<usize>, Vec<usize>) = (Vec::new(), Vec::new());
+                for c in 0..roles.used() {
+                    let mut u = ep.clone();
+                    u.rotr_mut(slot_offset(c));
+                    let mut v = ep.clone();
+                    v.rotr_mut(ctx_offset);
+                    v.rotr_mut(slot_offset(c));
+                    for w in 0..vocab.len() {
+                        if ov(w, &u) >= 28 && !content.contains(&w) {
+                            content.push(w);
+                        }
+                        if ov(w, &v) >= 28 && !context.contains(&w) {
+                            context.push(w);
+                        }
+                    }
+                }
+                if std::env::var("GENDIAG").is_ok() && gen_stats[0] % 200 == 1 && s_i == TRAIN - sleep_every.unwrap_or(500) {
+                    let names = |v: &[usize]| v.iter().map(|&w| vocab[w]).collect::<Vec<_>>();
+                    eprintln!("  GENDIAG replay {}: content {:?} | context {:?}", gen_stats[0], names(&content), names(&context));
+                }
+                if content.len() < 2 {
+                    continue;
+                }
+                gen_stats[1] += 1;
+                let mut state = BitVector::new(BITS, Some(0));
+                for &w in &context {
+                    state.or_mut(&enc.codes[w]);
+                }
+                for &target in &content {
+                    let mut bag = BitVector::new(BITS, Some(0));
+                    for &w in content.iter().filter(|&&w| w != target) {
+                        bag.or_mut(&enc.codes[w]);
+                    }
+                    let mut words = bag.as_words().to_vec();
+                    words.extend_from_slice(state.as_words());
+                    area.column.l23.add_replay(&BitVector::from_words(words), &enc.codes[target]);
+                    gen_stats[2] += 1;
+                }
+            }
+        }
         if let (Some(reps), true, Some(hc)) = (semantic_reps, hippo_self && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
             // novelty-tagged events are replayed first (REPLAY_TAGGED=1), each `reps` times,
             // then the cue-free random replays
@@ -3005,7 +3090,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
                                 let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, false)).collect();
                                 let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], c, true)).collect();
-                                hc.store_split(&content_idx, &context_idx, &set_bits(&content));
+                                hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
                             } else {
                                 hc.store_event(&set_bits(&content), &set_bits(&context));
                             }
@@ -3250,6 +3335,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
             );
+        }
+        if replay_gen {
+            eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
         }
         if hippo_self {
             eprintln!(

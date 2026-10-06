@@ -212,6 +212,9 @@ struct PredictiveState {
     /// to exactly the same inputs. Capacity `replay_len` (0 = off).
     replay: std::collections::VecDeque<Vec<u32>>,
     replay_len: usize,
+    /// Record waking (input, target) pairs into the replay (default). Off when the replay
+    /// comes only from outside, e.g. hippocampal replay (`add_replay`).
+    record_waking: bool,
 }
 
 /// Per-frame memo of match counts, after Hashlife's memoised sub-nodes: the input is a
@@ -462,6 +465,7 @@ impl KernelClass<SimpleKernel> {
             free: Vec::new(),
             replay: std::collections::VecDeque::new(),
             replay_len: 0,
+            record_waking: true,
             surprise_gate: false,
             expected_steps: 0,
             memo: None,
@@ -1277,6 +1281,14 @@ impl KernelClass<SimpleKernel> {
     }
 
     /// Keep the last `n` inputs for sleep replay (0 = off).
+    /// Whether waking experience is recorded into the replay (default true). With false,
+    /// sleep generalisation reads only pairs given by `add_replay`.
+    pub fn set_record_waking(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.record_waking = on;
+        }
+    }
+
     pub fn set_replay(&mut self, n: usize) {
         if let Some(st) = self.predictive.as_mut() {
             st.replay_len = n;
@@ -1538,7 +1550,7 @@ impl KernelClass<SimpleKernel> {
         if target_bits == 0 {
             return;
         }
-        if st.sleep_generalize.is_some() && st.replay_len > 0 {
+        if st.sleep_generalize.is_some() && st.replay_len > 0 && st.record_waking {
             let bits = |v: &BitVector| -> Vec<u32> {
                 let mut out = Vec::new();
                 for (wi, &w) in v.as_words().iter().enumerate() {

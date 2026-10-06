@@ -1631,15 +1631,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // the target: the most recent rare word in the window
                             let target = a.recent_words().filter_map(|c| words_of(c)).find(|&w| rare(w));
                             let Some(target) = target else { continue };
-                            // the probe: the area's state alone (no current sentence); an area
-                            // reading from above gets an empty frame there
-                            let probe = if a.column.l23.kernels().is_empty() { None } else { Some(()) };
+                            // the probe: the cue "." in the sentence frame (end of sentence: say
+                            // back) and the area's state; an area reading from above gets an
+                            // empty frame there
+                            let cue = &enc.codes[full_stop];
                             let x = if (k == n && n > 0 && !chain_mix) || (k + 1 < n && !chain_mix) {
-                                a.input_with(&empty, &empty, Some(&empty))
+                                a.input_with(cue, &empty, Some(&empty))
                             } else {
-                                a.input_with(&empty, &empty, None)
+                                a.input_with(cue, &empty, None)
                             };
-                            let said = probe.and_then(|_| words_of(&a.predict(&x)));
+                            let said = words_of(&a.predict(&x));
                             if testing {
                                 readback_stats.0 += 1;
                                 readback_stats.1 += (said == Some(target)) as usize;

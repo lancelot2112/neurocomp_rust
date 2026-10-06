@@ -27,13 +27,19 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   the column's copy kernels already mix most of what it could, and the sources are not
   independent (the column copies them), which makes the mixed confidence overconfident.
   Next: vote only with frames the winner did not read.
-- **The chain of areas** ([25](experiments/25-area-chain.md)): each added area extends
-  the reach, but only as a source in the mix (as frames into the area below it hurt), and
-  accuracy stays low (9–38%). Three fixes:
-  - recency in the windows (a bag cannot say which season came last);
-  - more teaching signal for the upper areas, from self-supervised read-back
-    ([output and self-supervision](concepts/output-and-self-supervision.md));
-  - an event-driven clock (cost now 6× for three higher areas).
+- **The chain of areas** ([25](experiments/25-area-chain.md), [26](experiments/26-context-and-readback.md)):
+  with a context boundary at each story, three higher areas reach 86–98% on the season
+  task, each area extending the reach as its window predicts. Open:
+  - **Detect boundaries** instead of being told (a sustained surprise jump, or a learned
+    "new story" signal).
+  - **Recency within a story:** a decaying state (each bit survives a sentence with
+    probability p).
+  - **Order:** position-bound codes.
+  - **An event-driven clock:** cost is 2–2.5× with three higher areas.
+- **Read-back** ([26](experiments/26-context-and-readback.md)): areas learn to say back
+  the fact they hold (80–97%). As rehearsal it extends a single area's reach, but it hurts
+  a chain that already holds the fact. Use it where an area must hold something beyond
+  its window, and test it with recitation and answering.
 - **Grow areas by need** ([roadmap](roadmap.md)): a shadow bud above the top area,
   learning its residual, promoted when it predicts that residual above chance and pruned
   when not. The number of areas would then follow the task.

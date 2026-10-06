@@ -309,6 +309,21 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   algorithm for unsupervised neural networks.* Science 268. Recognition and generation
   train each other.
 
+## Context, recency and order ([26](experiments/26-context-and-readback.md))
+- **Zacks, J. M. et al. (2007).** *Event perception: a mind-brain perspective.*
+  Psychological Bulletin 133. Experience is segmented into events at points of high
+  prediction error.
+- **Baldassano, C. et al. (2017).** *Discovering event structure in continuous narrative
+  perception and memory.* Neuron 95. Cortical states shift at event boundaries, on
+  longer timescales higher up.
+- **DuBrow, S. & Davachi, L. (2013).** *The influence of context boundaries on memory for
+  the sequential order of events.* J. Exp. Psychology: General 142; **Ben-Yakov, A. &
+  Henson, R. (2018).** *The hippocampal film editor.* J. Neuroscience 38. Boundaries
+  separate memories; the hippocampus responds at them.
+- **Howard, M. W. & Kahana, M. J. (2002).** *A distributed representation of temporal
+  context.* J. Mathematical Psychology 46. A drifting context gives recency: the model
+  for a decaying state.
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

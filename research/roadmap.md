@@ -125,6 +125,11 @@ but only as a source in the mix, and accuracy stays low (9–38%).
   ([plan](concepts/output-and-self-supervision.md)). It comes before the event-driven
   clock.
 
+**Update** ([26](experiments/26-context-and-readback.md)): with a context boundary at
+each story, three higher areas reach 86–98% and hold a fact 16+ stories back. Context,
+not depth, was the missing piece. Next: detect boundaries, a decaying state for recency,
+and growth by need.
+
 **Growing areas by need (proposed).** Instead of fixing the number of areas, grow
 one where the top area cannot contain its surprise:
 - **A bud.** The top area keeps a candidate area above it, with a window 4× longer. The

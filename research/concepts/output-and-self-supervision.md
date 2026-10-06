@@ -81,6 +81,15 @@ it reproduces, for every area that took part in producing it:
   version, and the network already has sleep for consolidation
   ([23](../experiments/23-compaction.md)).
 
+## Status
+Read-back is built in its rehearsal form ([26](../experiments/26-context-and-readback.md)).
+- **Skill:** areas learn, self-supervised, to say back the most recent rare word they
+  hold (80–97% at test), and what they say is heard again.
+- **Effect:** it extends a single area's reach (3–11% → 27–33%), but it does not help a
+  chain that already holds the fact once stories are separated by a context boundary.
+- **Still to build:** the `self` frame (efference copy), answering by speaking, and
+  recitation.
+
 ## The experiments, in order
 1. **26 · Answering by speaking, with abstention.** The question stories end without the
    answer. The network speaks a word or "unknown". Score accuracy, coverage and

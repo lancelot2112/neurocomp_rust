@@ -9,7 +9,7 @@
 //! recall as one more channel, is `Policy::ThalamicGate` / `LearnedGate` in the
 //! episodic example.
 
-use std::collections::HashMap;
+use crate::det::HashMap;
 
 use rand::seq::SliceRandom;
 use rand::SeedableRng;
@@ -44,7 +44,7 @@ pub struct RouteGate {
 
 impl RouteGate {
     pub fn new(threshold: f64, min_tries: f64, winners: usize, condition_on_value: bool) -> Self {
-        Self { threshold, min_tries, winners, condition_on_value, stats: HashMap::new() }
+        Self { threshold, min_tries, winners, condition_on_value, stats: HashMap::default() }
     }
 
     fn key(&self, r: RelayChannel, ctx: &BitVector, value: &BitVector) -> (RelayChannel, u64, u64) {
@@ -143,7 +143,7 @@ impl KernelGate {
             generalize: None,
             generalize_after: 1,
         });
-        Self { threshold, winners, bits, class, route_codes: HashMap::new(), right, wrong, rng }
+        Self { threshold, winners, bits, class, route_codes: HashMap::default(), right, wrong, rng }
     }
 
     fn input(&mut self, r: RelayChannel, ctx: &BitVector, value: &BitVector) -> BitVector {
@@ -349,7 +349,7 @@ impl Default for SourceMix {
 impl SourceMix {
     pub fn new() -> Self {
         let log2 = (0..=512usize).map(|i| if i == 0 { 0 } else { ((i as f64).log2() * 16.0).round() as u16 }).collect();
-        Self { stats: HashMap::new(), log2 }
+        Self { stats: HashMap::default(), log2 }
     }
 
     /// Weight (1/16 bits) of a vote by `source` under `key`.

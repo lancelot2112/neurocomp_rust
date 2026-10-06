@@ -119,11 +119,11 @@ struct PredictiveState {
     last_target_prob: f32,    // see `target_probability`
     last_near: Vec<usize>,    // kernels that nearly matched on the last step (see `generalize`)
     growth_mask: Option<BitVector>, // if set, new kernels may only sample these input bits
-    silent_counts: std::collections::HashMap<usize, std::collections::HashMap<usize, u8>>, // kernel -> bit -> confirmations it was irrelevant
+    silent_counts: crate::det::HashMap<usize, crate::det::HashMap<usize, u8>>, // kernel -> bit -> confirmations it was irrelevant
     /// Sticky synapses (credit tags): kernel -> input bits that earned credit; pruning
     /// them takes `sticky_factor` times as many silent confirmations. 0 = off.
     sticky_factor: u8,
-    sticky_tags: std::collections::HashMap<usize, std::collections::HashSet<usize>>,
+    sticky_tags: crate::det::HashMap<usize, crate::det::HashSet<usize>>,
     /// Caller-provided credit: input bits that are always sticky.
     sticky_mask: Option<BitVector>,
     /// Credit-guided growth (see `grow`).
@@ -150,7 +150,7 @@ struct PredictiveState {
     /// Per-frame memo of match counts (see `set_frame_memo`).
     frame_memo: Option<FrameMemo>,
     /// Canonical kernels (see `set_canonical`): connection-set hash -> kernel.
-    canon: Option<std::collections::HashMap<u64, u32>>,
+    canon: Option<crate::det::HashMap<u64, u32>>,
     /// Growth events that found an identical kernel already present.
     canon_reused: usize,
     /// Near-miss generalisation spawns a general copy instead of pruning in place
@@ -170,7 +170,7 @@ struct PredictiveState {
     /// General kernels formed during sleep, and candidates rejected by the replay test.
     slept_general: (usize, usize),
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
-    memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
+    memo: Option<crate::det::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
     version: u64,
     /// The last step's matches were not computed (memo hit); `feedback` recounts them.
@@ -196,7 +196,7 @@ struct PredictiveState {
 /// connections (growth, pruning, removal) is logged, and a stale entry is patched by
 /// recounting only the changed kernels against its stored bits.
 struct FrameMemo {
-    entries: std::collections::HashMap<(u32, u64), FrameEntry>,
+    entries: crate::det::HashMap<(u32, u64), FrameEntry>,
     /// (change number, kernel) for recent connection changes, oldest first.
     log: std::collections::VecDeque<(u64, u32)>,
     /// Connection changes so far.
@@ -221,7 +221,7 @@ const FRAME_ENTRIES: usize = 200_000; // clear the memo beyond this
 
 impl FrameMemo {
     fn new() -> Self {
-        Self { entries: std::collections::HashMap::new(), log: std::collections::VecDeque::new(), changes: 0, lookups: 0, hits: 0, patched: 0 }
+        Self { entries: crate::det::HashMap::default(), log: std::collections::VecDeque::new(), changes: 0, lookups: 0, hits: 0, patched: 0 }
     }
 
     fn note(&mut self, k: usize) {
@@ -418,9 +418,9 @@ impl KernelClass<SimpleKernel> {
             last_target_prob: 0.0,
             last_near: Vec::new(),
             growth_mask: None,
-            silent_counts: std::collections::HashMap::new(),
+            silent_counts: crate::det::HashMap::default(),
             sticky_factor: 0,
-            sticky_tags: std::collections::HashMap::new(),
+            sticky_tags: crate::det::HashMap::default(),
             sticky_mask: None,
             sticky_blame: false,
             copy_growth: false,
@@ -610,7 +610,7 @@ impl KernelClass<SimpleKernel> {
     /// Like `peek`, also returning the winning kernel's smoothed hit rate.
     pub fn peek_scored(&self, input: &BitVector) -> Option<(BitVector, f32)> {
         let st = self.predictive.as_ref()?;
-        let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
         for b in set_bits(input) {
             if let Some(ks) = st.index.get(b) {
                 for &k in ks {
@@ -636,7 +636,7 @@ impl KernelClass<SimpleKernel> {
     pub fn peek_union(&self, input: &BitVector, bits: usize) -> BitVector {
         let mut out = BitVector::new(bits, Some(0));
         let Some(st) = self.predictive.as_ref() else { return out };
-        let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
         for b in set_bits(input) {
             if let Some(ks) = st.index.get(b) {
                 for &k in ks {
@@ -823,7 +823,7 @@ impl KernelClass<SimpleKernel> {
     /// those without the memo.
     pub fn set_memo(&mut self, on: bool) {
         if let Some(st) = self.predictive.as_mut() {
-            st.memo = if on { Some(std::collections::HashMap::new()) } else { None };
+            st.memo = if on { Some(crate::det::HashMap::default()) } else { None };
         }
     }
 
@@ -838,7 +838,7 @@ impl KernelClass<SimpleKernel> {
     /// kernel from being grown twice.
     pub fn set_canonical(&mut self, on: bool) {
         if let Some(st) = self.predictive.as_mut() {
-            st.canon = if on { Some(std::collections::HashMap::new()) } else { None };
+            st.canon = if on { Some(crate::det::HashMap::default()) } else { None };
         }
     }
 
@@ -947,7 +947,7 @@ impl KernelClass<SimpleKernel> {
             })
             .collect();
         // per kernel: confirmed near misses, and how often each input was absent in them
-        let mut absent: std::collections::HashMap<usize, (u32, std::collections::HashMap<u32, u32>)> = std::collections::HashMap::new();
+        let mut absent: crate::det::HashMap<usize, (u32, crate::det::HashMap<u32, u32>)> = crate::det::HashMap::default();
         let mut counts = vec![0u32; self.active_kernels.len()];
         for (iv, tv) in &pairs {
             let mut touched: Vec<usize> = Vec::new();
@@ -1010,7 +1010,7 @@ impl KernelClass<SimpleKernel> {
                     continue;
                 }
             }
-            let mut per_frame: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            let mut per_frame: crate::det::HashMap<usize, usize> = crate::det::HashMap::default();
             for &b in &kept {
                 *per_frame.entry(b as usize / frame_bits).or_default() += 1;
             }
@@ -1160,7 +1160,7 @@ impl KernelClass<SimpleKernel> {
                 }
             }
             if rebuild {
-                let mut tally: std::collections::HashMap<u32, u16> = std::collections::HashMap::new();
+                let mut tally: crate::det::HashMap<u32, u16> = crate::det::HashMap::default();
                 for &b in &bits {
                     if let Some(ks) = st.index.get(b as usize) {
                         for &k in ks {
@@ -1298,7 +1298,7 @@ impl KernelClass<SimpleKernel> {
         // at-least-as-reliable kernel's inputs is redundant. Candidates are found through
         // the general kernel's lowest input bit, which the specific kernel must contain.
         let mut merged = 0;
-        let mut by_output: std::collections::HashMap<&[u32], Vec<usize>> = std::collections::HashMap::new();
+        let mut by_output: crate::det::HashMap<&[u32], Vec<usize>> = crate::det::HashMap::default();
         for &k in &live {
             if !remove[k] {
                 by_output.entry(self.active_kernels[k].output_set.as_slice()).or_default().push(k);
@@ -1309,7 +1309,7 @@ impl KernelClass<SimpleKernel> {
             if group.len() < 2 {
                 continue;
             }
-            let mut by_first: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
+            let mut by_first: crate::det::HashMap<u32, Vec<usize>> = crate::det::HashMap::default();
             for &k in group {
                 by_first.entry(self.active_kernels[k].input_set[0]).or_default().push(k);
             }
@@ -1367,7 +1367,7 @@ impl KernelClass<SimpleKernel> {
                 }
                 touched.clear();
             }
-            let mut best: std::collections::HashMap<(&[u32], u64, u32), usize> = std::collections::HashMap::new();
+            let mut best: crate::det::HashMap<(&[u32], u64, u32), usize> = crate::det::HashMap::default();
             for &k in &live {
                 if remove[k] || fired[k] == 0 {
                     continue;
@@ -1653,7 +1653,7 @@ impl KernelClass<SimpleKernel> {
             // kernel the copy comes from (as sleep's merge requires); found through its
             // lowest input bit, which must be one of the kept bits
             let subsumed = self.predictive.as_ref().map_or(false, |st| {
-                let free: std::collections::HashSet<usize> = st.free.iter().copied().collect();
+                let free: crate::det::HashSet<usize> = st.free.iter().copied().collect();
                 kept.iter().any(|&b| {
                     st.index.get(b as usize).map_or(false, |ks| {
                         ks.iter().any(|&k| {
@@ -1674,7 +1674,7 @@ impl KernelClass<SimpleKernel> {
                 }
                 continue;
             }
-            let mut per_frame: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            let mut per_frame: crate::det::HashMap<usize, usize> = crate::det::HashMap::default();
             for &b in &kept {
                 *per_frame.entry(b as usize / frame_bits).or_default() += 1;
             }
@@ -1786,7 +1786,7 @@ impl KernelClass<SimpleKernel> {
             // frame pruned to a few bits must still be (almost) fully present: otherwise
             // the kernel could fire with that frame absent and turn into a guesser.
             let frame_bits = cfg.frame_words * 64;
-            let mut per_frame: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+            let mut per_frame: crate::det::HashMap<usize, usize> = crate::det::HashMap::default();
             for &b in &old {
                 if !drop.contains(&b) {
                     *per_frame.entry(b / frame_bits).or_default() += 1;

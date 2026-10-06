@@ -313,7 +313,7 @@ impl Ca3Memory {
 }
 
 /// Weight with lazy exponential decay: (value at `t`, `t`).
-type Synapses = std::collections::HashMap<u32, (f32, u32)>;
+type Synapses = crate::det::HashMap<u32, (f32, u32)>;
 
 /// The original float version of `Ca3Memory` (f32 weights, exact exponential decay),
 /// kept for comparison.
@@ -339,9 +339,9 @@ impl Ca3FloatMemory {
             prune_below: 0.02,
             settle_steps,
             readout_fraction: 0.5,
-            ec_to_ca3: vec![std::collections::HashMap::new(); ec_bits],
-            ca3_to_ca3: vec![std::collections::HashMap::new(); ca3_cells],
-            ca3_to_ec: vec![std::collections::HashMap::new(); ca3_cells],
+            ec_to_ca3: vec![crate::det::HashMap::default(); ec_bits],
+            ca3_to_ca3: vec![crate::det::HashMap::default(); ca3_cells],
+            ca3_to_ec: vec![crate::det::HashMap::default(); ca3_cells],
             now: 0,
         }
     }

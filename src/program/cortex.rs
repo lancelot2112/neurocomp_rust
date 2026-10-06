@@ -30,7 +30,7 @@
 //! - **L6** (`l6`): context held over time, the previous-input frame, and the match rules
 //!   over it that the thalamus gates.
 
-use std::collections::HashMap;
+use crate::det::HashMap;
 
 use crate::bitvec::BitVector;
 use crate::kernel::{KernelClass, SimpleKernel};

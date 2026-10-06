@@ -28,7 +28,7 @@
 
 mod common;
 
-use std::collections::HashMap;
+use neurocomp::det::HashMap;
 
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
@@ -661,7 +661,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut last_recall_id: Option<usize> = None; // hippocampal episode recalled this step
     let mut last_recall_cue: Option<BitVector> = None; // the cue that recalled it
     // tagged replay: the question's cue, stored with the tag, keys the sleep replay
-    let mut tag_cues: HashMap<usize, BitVector> = HashMap::new();
+    let mut tag_cues: HashMap<usize, BitVector> = HashMap::default();
     // Pfc: one-slot working memory and its basal-ganglia gate
     let mut wm = WorkingMemory::new(BITS, 1);
     // REWARD=l5: every basal-ganglia selector learns from the column's L5 outcome (did the
@@ -676,9 +676,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut l5_sum = [0f64; 2]; // training: summed L5 reward, count
     let pfc_trace: usize = std::env::var("PFC_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(24);
     let mut pfc_gate = PfcGate::new(BITS, pfc_trace, 0.9, seed + 11);
-    let mut pfc_loads = HashMap::<&str, (usize, usize)>::new(); // word -> (loads, decisions) at test
+    let mut pfc_loads = HashMap::<&str, (usize, usize)>::default(); // word -> (loads, decisions) at test
     let (mut pfc_rewards, mut pfc_questions) = (0usize, 0usize); // training
-    let names_set: std::collections::HashSet<usize> = NAMES.iter().map(|n| index[n]).collect();
+    let names_set: neurocomp::det::HashSet<usize> = NAMES.iter().map(|n| index[n]).collect();
     let mut tagged_or_replayed = 0usize;
     let mut from_cortex = 0usize; // test answers where the memory frame came from the cortex
     let (dg, mut ca3) = match policy {
@@ -742,7 +742,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // [question kind][channel]: kind 1 = "what did X give ?", else 0
     let mut l6_open_at_answer = vec![vec![0usize; routes.len() + 1]; 2];
     let mut l6_answers = [0usize; 2];
-    let mut gate_chosen_at_answer: HashMap<String, usize> = HashMap::new();
+    let mut gate_chosen_at_answer: HashMap<String, usize> = HashMap::default();
     // LearnedGate: route discovery and the current pool
     let mut route_scores = RouteScores::default();
     let mut gate_routes: Vec<RelayChannel> = if policy == Policy::ThalamicGate { routes.clone() } else { Vec::new() };
@@ -884,7 +884,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut role_rng = StdRng::seed_from_u64(seed.wrapping_add(77));
     let mut roles = RoleArea::new(BITS, 64, &mut role_rng);
     // test: per role cell, how often each word filled the slot it fired for (description only)
-    let mut role_words: HashMap<usize, HashMap<usize, u32>> = HashMap::new();
+    let mut role_words: HashMap<usize, HashMap<usize, u32>> = HashMap::default();
     let mut role_now: Option<usize> = None;
     // BIND=1: slot ⊗ content episodes (after the Tolman-Eichenbaum Machine).
     // - Slots: role cells fed with the column's expectation for the next slot and the
@@ -952,7 +952,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut rolled_surname: Option<bool> = None;
     let mut by_surname = [(0usize, 0usize); 3];
     let mut complete_stats = [0usize; 3]; // completions: training, test (trained names), test (held out)
-    let mut complete_words: HashMap<String, usize> = HashMap::new(); // test, held out: "name -> word"
+    let mut complete_words: HashMap<String, usize> = HashMap::default(); // test, held out: "name -> word"
     // (question sentence bag, the story's (word, slot) bindings, answer word, familiarity band)
     let mut traces: Vec<(BitVector, Vec<(usize, usize)>, usize, u64)> = Vec::new();
     let mut replayed = 0usize;
@@ -987,7 +987,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let bound_detect = std::env::var("BOUNDARY").is_ok();
     let bound_kind: f64 = std::env::var("BOUNDARY_KIND").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
     // context signature per word: the words seen just before (< V) and just after (V + w)
-    let mut word_ctx: Vec<std::collections::HashSet<usize>> = vec![std::collections::HashSet::new(); vocab.len()];
+    let mut word_ctx: Vec<neurocomp::det::HashSet<usize>> = vec![neurocomp::det::HashSet::default(); vocab.len()];
     // test sentences with a detected boundary: (story-opening, other); story-opening sentences
     let mut bound_hits = (0usize, 0usize);
     let mut story_openings = 0usize;
@@ -1057,7 +1057,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // random positions among the last SCHEMA_PHASE (default 600) training stories
     let schema_k: Option<usize> = std::env::var("SCHEMA_K").ok().and_then(|v| v.parse().ok());
     let schema_at: HashMap<usize, (usize, usize)> = {
-        let mut m = HashMap::new();
+        let mut m = HashMap::default();
         if let Some(k) = schema_k {
             let phase: usize = std::env::var("SCHEMA_PHASE").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
             let mut srng = StdRng::seed_from_u64(seed.wrapping_add(991));
@@ -1089,7 +1089,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // learned (a basal-ganglia choice of keep / reset / reinstate per book action,
     // rewarded by whether the session's answer comes out right)
     let book_ctx = std::env::var("BOOK_CTX").unwrap_or_else(|_| "none".into());
-    let mut saved_ctx: HashMap<usize, Vec<AreaContext>> = HashMap::new();
+    let mut saved_ctx: HashMap<usize, Vec<AreaContext>> = HashMap::default();
     let mut ctx_bg = BasalGanglia::new(BITS);
     let ctx_code = |a: usize| -> BitVector {
         let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(3_000_017) ^ (a as u64 + 2000));

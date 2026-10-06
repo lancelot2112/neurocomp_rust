@@ -60,81 +60,108 @@ not harmless:
 
 ## The minimal fixes
 Two integer operations address these two failures. Each costs about one multiply per
-active row or cell.
+active row or cell, and neither needs a division per step
+([53](../experiments/53-phase-codes-and-centering.md)).
 
 1. **Divide an input's vote by its use (1/n).** Row i, written by n_i events, has its
-   drive multiplied by 1/n_i (in `Q16`). A common input's vote is spread over every event
-   that used it, so its coherent noise shrinks to about one event's worth. This is inverse
+   drive multiplied by 1/n_i. A common input's vote is spread over every event that used
+   it, so its coherent noise shrinks to about one event's worth. This is inverse
    document frequency, and in the brain presynaptic scaling or heterosynaptic depression.
+   - **Without dividing:** 1/n comes from a reciprocal table (`fixed::recip32`). Below
+     4,096 it is a table entry; above that, the entry for n's top 12 bits, shifted.
+     The relative error is under 1/2,048.
    - The hippocampus used ⌊log2 n⌋ right shifts on each counter. That rounds single
      writes to zero once n is large, and recall then collapses on random codes.
      Multiplying the row's sum by 1/n avoids the rounding.
 2. **Subtract the expected count (centering).** From each cell's drive, subtract what
    it would get if the stored events were unrelated to the cue:
-   (Σ_{i∈q} weighted n_i) · u_j / E × the mean write amount.
+   (Σ_{i∈q} weighted n_i) × r_j × the write amount, where r_j is cell j's write rate.
    - What remains is crosstalk with mean zero, whose size grows like √E rather than E,
      and much-used cells no longer win by bulk.
    - This is the covariance rule of Hopfield networks (weights from deviations from mean
      activity), done at read time from counts the population already keeps.
+   - **Without dividing (`Center::Homeostatic`):** each cell keeps its write rate as a
+     running mean, r_j += (written − r_j) × 1/min(writes, 2^s), with 1/n from the
+     table. That is a threshold that rises with the cell's own use: a homeostatic,
+     BCM-like sliding threshold. It needs 32 fractional bits, because a cell's rate is
+     about 1/64 and each step's change is far below one `Q16` unit (with 16 bits,
+     flooring biased it low and lost recall).
+   - Measured, it recalls exactly as well as exact division at every load.
 
 Together they turn the co-occurrence histogram into "how much more often than chance"
-input i and cell j occur together: count_ij compared with n_i·u_j/E. That is the quantity
+input i and cell j occur together: count_ij compared with n_i·r_j. That is the quantity
 behind pointwise mutual information (as in word embeddings) and behind homeostatic
 synaptic scaling.
 
-### Measured (`examples/superposition.rs`; 2,048 inputs, 2,048 cells, k = 32; right = ≥ 80% of the target)
+## Phases: integer complex weights (`PhaseAssociate`)
+**Phase codes give zero-mean crosstalk with nothing subtracted.** Each active cell
+carries a phase p in 0..K. In bits that is a block code: cell j at phase p sets bit
+j·K + p.
+- **Weights** are integer complex numbers: (cos, sin) from a table scaled by 2^14.
+- **Write:** w_ij += e^{i(θ_j − φ_i)}, for input i at phase φ_i and target cell j at
+  phase θ_j.
+- **Read:** h_j = Σ_{i∈q} w_ij · e^{iφ_i}. The k cells with the largest |h_j|² fire, each
+  at the table phase nearest to arg h_j.
 
-| codes | events | counts | shift-scaled | 1/n-scaled | centered | shift + centered | **1/n + centered** |
+**Why it cancels:**
+- **The stored event:** its terms all arrive at phase θ_j and add up, so |signal| = the
+  cue size.
+- **Other events:** their terms arrive at unrelated phases and largely cancel. Their sum
+  grows like √n, not n.
+- **The link to centering:** the complex sum is each cell's phase histogram projected
+  onto its first harmonic, and that projection has no constant term. So the phase code
+  does the centering itself.
+
+**The condition, measured in [53](../experiments/53-phase-codes-and-centering.md): the
+input must carry phase too.**
+- **Phases only on the output:** the cue's overlap with another stored input is still a
+  positive count, and that overlap is the coherent part of the crosstalk. Recall is then
+  no better than plain counts.
+- **Phases on the input as well:** the overlap itself becomes a sum of random phases and
+  cancels.
+
+### Measured (`examples/superposition.rs`; 2,048 inputs, 2,048 cells, k = 32, 16 phases; right = ≥ 80% of the target cells)
+
+| codes | events | counts | 1/n | centered | **1/n + centered** (homeostatic) | phase in (random) + out | phase in (by slot) + out + 1/n |
 |---|---|---|---|---|---|---|---|
-| random | 2,000 | 100% | 90% | 100% | 100% | 100% | **100%** |
-| random | 4,000 | 73% | 0% | 77% | 100% | 0% | **100%** |
-| language-like | 250 | 16% | 99% | 99% | 22% | 98% | **99%** |
-| language-like | 1,000 | 0% | 81% | 86% | 0% | 84% | **89%** |
-| language-like | 2,000 | 2% | 33% | 43% | 0% | 29% | **56%** |
-| language-like | 4,000 | 2% | 12% | 13% | 0% | 0% | **14%** |
+| random | 4,000 | 83% | 86% | 100% | **100%** | 100% | 100% |
+| random | 8,000 | 0% | 0% | 93% | 94% | **100%** | 33% |
+| language-like | 1,000 | 0% | 83% | 0% | 86% | **98%** | 93% |
+| language-like | 2,000 | 1% | 42% | 0% | 57% | 79% | **82%** |
+| language-like | 4,000 | 1% | 12% | 0% | 13% | 43% | **50%** |
 
 "Language-like" events are two common words, drawn from a skewed list of 50, plus one rare
-word from 5,000.
-- **Centering** is what random codes need (it fixes the cell-use bias).
-- **1/n** is what language-like codes need (it fixes the coherent noise of common
-  words).
-- **Both together** is best, or tied best, in every row.
-- **At 4,000 language-like events** many rare words occur in more than one event, so
-  part of the task is ambiguous. Common rows also saturate the 7-bit counters.
+word from 5,000. The phase columns score cells; scored on cells *and* phases they are
+lower (random input phases: 93% at 4,000 random events, 33% at 2,000 language-like ones).
 
-## Phases and complex numbers
-**Phase codes give zero-mean crosstalk for free.** In holographic reduced representations
-(Plate 1995) and their Fourier form (FHRR), each item is a vector of unit complex numbers
-(phases):
-- binding is phase addition;
-- superposition is the complex sum;
-- clean-up is the nearest stored item.
+- **Counts:**
+  - **Centering** is what random codes need (it fixes the cell-use bias).
+  - **1/n** is what language-like codes need (it fixes the coherent noise of common
+    words).
+  - **Both together**, done without division, is the best count-based variant.
+- **Phases:**
+  - **Random input phases** (each event's input bits a fresh random phase) are an upper
+    bound: they need the cue to carry the stored phases. With them, recall holds 100% at
+    8,000 random events where centered counts hold 93%, and 43% vs 13% at 4,000
+    language-like events.
+  - **Phases from the slot** are the realistic case, and the brain's analogue would be
+    a word's phase set by its role: the same word in the same slot gets the same phase,
+    so shared words still overlap coherently, but less often.
+    - With 1/n, this beats every count variant on language-like codes: 82% vs 57% at
+      2,000 events, 50% vs 13% at 4,000.
+    - It does nothing for random codes (33% at 8,000), which have no slots to separate.
+- **The cost:** recovering the exact phase is harder than recovering the cell. Sixteen
+  phases are 22.5° bins, and noise pushes many cells into a neighbour.
+- **At 4,000+ language-like events** many rare words occur in more than one event, so
+  part of the task is ambiguous.
 
-Unrelated items have random phases, so their crosstalk terms point in random directions
-and cancel on average: mean zero, size √E. Centering gets the same property for counts.
-
-**The binary system already uses two kinds of phase:**
+**Binding by phase.** The binary system already uses two kinds of phase:
 - **XOR binding** is the two-phase case (0 or π; Kanerva's binary spatter codes).
 - **Cyclic rotation**, the slot binding in this codebase, is binding by a discrete phase
   shift of the whole vector.
 
-**The integer version of "dropping into phase space"** is a phase code over integers
-mod K (as in sparse block codes and modular composite representations; Snaider & Franklin
-2014; Frady, Kleyko & Sommer 2021):
-- each active cell carries a phase in 0..K;
-- binding adds phases mod K;
-- superposition is a histogram of (cell, phase) votes;
-- clean-up takes the winning phase per cell.
-
-It stays integer-only. Votes with a different phase do not add to the winning one, which
-is the cancellation. This is not built. It would be a variant of `Associate` whose
-counters are indexed by phase.
-
-**Where that leaves the choice:**
-- **Centering plus 1/n** is the minimal step, and it is measured here to recover most of
-  the benefit for counts.
-- **Phase codes** are the step after that. They are worth it if binding many roles in
-  one pattern (several slots superposed) becomes the limit.
+With phase codes, binding is adding a role's phase to every active cell, mod K. That is
+what the slot phases above do, and it is the first use where phase pays.
 
 ## References
 - Willshaw, Buneman & Longuet-Higgins 1969 (binary associative memory); Hopfield 1982
@@ -145,3 +172,6 @@ counters are indexed by phase.
   2021 (variable binding for sparse distributed representations).
 - Turrigiano 2008 (homeostatic synaptic scaling); Church & Hanks 1990 (pointwise mutual
   information).
+- Noest 1988 (phasor neural networks); Frady & Sommer 2019 (threshold phasor
+  associative memory, spikes at phases of a rhythm); Bienenstock, Cooper & Munro 1982
+  (the sliding threshold).

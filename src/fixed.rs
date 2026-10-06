@@ -123,6 +123,38 @@ pub fn log2_floor(n: u64) -> u32 {
     63 - n.max(1).leading_zeros()
 }
 
+/// Reciprocals 2^32/n for n < 4,096, built once (the only divisions).
+fn recip_table() -> &'static [u64] {
+    static T: std::sync::OnceLock<Vec<u64>> = std::sync::OnceLock::new();
+    T.get_or_init(|| (0..4096u64).map(|n| if n == 0 { 1 << 32 } else { ((1u64 << 32) + n / 2) / n }).collect())
+}
+
+/// 1/n in 32 fractional bits with no division per call: a table below 4,096, and above
+/// that the table entry of n's top 12 bits, shifted (relative error < 1/2,048). 1/0 = 1.
+pub fn recip32(n: u64) -> u64 {
+    let t = recip_table();
+    if n < 4096 {
+        return t[n as usize];
+    }
+    let s = log2_floor(n) - 11;
+    t[(n >> s) as usize] >> s
+}
+
+/// 1/n in `Q16` (rounded), with no division per call (see `recip32`).
+pub fn recip(n: u64) -> Q16 {
+    ((recip32(n) + (1 << 15)) >> 16) as Q16
+}
+
+/// `(cos, sin)` of the `k` phases 2πp/k, scaled by 2^14, built once per `k`.
+pub fn phasors(k: usize) -> Vec<(i32, i32)> {
+    (0..k)
+        .map(|p| {
+            let a = std::f64::consts::TAU * p as f64 / k as f64; // float: config (table)
+            ((a.cos() * 16384.0).round() as i32, (a.sin() * 16384.0).round() as i32) // float: config (table)
+        })
+        .collect()
+}
+
 /// Integer square root (⌊√n⌋).
 pub fn isqrt(n: u64) -> u64 {
     if n < 2 {
@@ -168,6 +200,16 @@ mod tests {
     /// The library computes with bits and integers: no float may appear in `src/`
     /// outside test code, the float reference store (`Ca3FloatMemory`), and lines marked
     /// `// float:` (a configuration conversion or a report-only readout).
+    #[test]
+    fn reciprocals_need_no_division() {
+        for n in (1..5000u64).chain((5000..2_000_000).step_by(997)) {
+            let exact = (1u128 << 32) as f64 / n as f64; // float: test
+            let got = recip32(n) as f64; // float: test
+            assert!((got - exact).abs() <= exact / 2048.0 + 1.0, "1/{n}: {got} vs {exact}");
+        }
+        assert_eq!(recip(4), ONE / 4);
+    }
+
     #[test]
     fn no_floats_in_per_step_code() {
         let mut bad = Vec::new();

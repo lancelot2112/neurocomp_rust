@@ -37,8 +37,8 @@ use rand::RngCore;
 use crate::bitvec::BitVector;
 use crate::kernel::class::KernelOp;
 use crate::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use crate::fixed::{div_round, ratio, Q16, ONE};
-use crate::program::hippocampus::{top_k, write_amounts, DentateGyrus, Pathway};
+use crate::fixed::{div_round, phasors, ratio, recip, recip32, Q16, ONE};
+use crate::program::hippocampus::{mix64, top_k, write_amounts, DentateGyrus, Pathway};
 
 /// What a module needs from outside for a tick: randomness for learning, and whether
 /// slow learning is on (it is off at test, when only fast inhibition runs).
@@ -414,10 +414,24 @@ pub enum Scale {
     /// Each synapse's counter is shifted right by ⌊log2 n⌋ before summing (as in
     /// `Hippocampus`; single writes round to zero once n is large).
     Shift,
-    /// The row's summed drive is multiplied by 1/n in `Q16` (no rounding per synapse):
-    /// an input's vote is divided among the events that wrote it, like inverse document
-    /// frequency.
+    /// The row's summed drive is multiplied by 1/n in `Q16` (no rounding per synapse;
+    /// 1/n from a reciprocal table, no division): an input's vote is divided among the
+    /// events that wrote it, like inverse document frequency.
     Inverse,
+}
+
+/// How an `Associate` population removes chance drive before its readout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Center {
+    Off,
+    /// Subtract (cue rows' weighted writes) × (the cell's writes / all writes) × the
+    /// write amount: exact, one division per cell.
+    Exact,
+    /// The same with the cell's write rate kept as a running mean (a moving average
+    /// over the last 2^s writes once there are more), updated at each write with 1/n from
+    /// the reciprocal table: a homeostatic threshold that rises with the cell's use. No
+    /// division.
+    Homeostatic(u8),
 }
 
 /// One learned input pathway of an `Associate` population.
@@ -428,12 +442,14 @@ struct Path {
     /// Writes per target cell, and writes in all (for centering).
     used: Vec<u32>,
     total: u32,
+    /// Each cell's running write rate (32 fractional bits, for `Center::Homeostatic`).
+    rate: Vec<u64>,
     scale: Scale,
 }
 
 impl Path {
     fn new(cells: usize, scale: Scale) -> Self {
-        Self { w: Pathway::new(0, cells), writes: Vec::new(), used: vec![0; cells], total: 0, scale }
+        Self { w: Pathway::new(0, cells), writes: Vec::new(), used: vec![0; cells], total: 0, rate: vec![0; cells], scale }
     }
 
     fn n(&self, i: usize) -> u32 {
@@ -448,9 +464,9 @@ impl Path {
             Scale::Inverse => {
                 let mut out = vec![0u64; self.w_targets()];
                 for &i in sources {
-                    let per = ONE as u64 / self.n(i).max(1) as u64;
+                    let per = recip32(self.n(i).max(1) as u64);
                     for (o, v) in out.iter_mut().zip(self.w.drive(&[i], epoch)) {
-                        *o += v as u64 * per;
+                        *o += (v as u64 * per) >> 16;
                     }
                 }
                 out
@@ -467,7 +483,7 @@ impl Path {
         match self.scale {
             Scale::None => ONE as u64,
             Scale::Shift => (ONE as u64) >> log2_floor(n),
-            Scale::Inverse => ONE as u64 / n.max(1) as u64,
+            Scale::Inverse => recip32(n.max(1) as u64) >> 16,
         }
     }
 
@@ -490,6 +506,17 @@ impl Path {
             for j in active(mask) {
                 self.used[j] = self.used[j].saturating_add(1);
             }
+        }
+    }
+
+    /// Update the running write rates after a write to `mask`: rate += (written − rate)
+    /// / min(writes, 2^max_s), with 1/n from the reciprocal table (no division). Below
+    /// 2^max_s writes this is the exact running mean; after that a moving average.
+    fn track_rate(&mut self, mask: &BitVector, max_s: u8) {
+        let step = recip32((self.total as u64).min(1u64 << max_s)) as i128;
+        for (j, r) in self.rate.iter_mut().enumerate() {
+            let x: i128 = if mask.bit_get(j) { 1 << 32 } else { 0 };
+            *r = (*r as i128 + (((x - *r as i128) * step) >> 32)).clamp(0, 1 << 32) as u64;
         }
     }
 
@@ -548,8 +575,8 @@ pub struct Associate {
     stores: u32,
     gain: Q16,
     gain_k: usize,
-    /// Subtract each cell's chance drive before the readout (see `set_center`).
-    center: bool,
+    /// How chance drive is removed before the readout (see `set_center`).
+    center: Center,
     out: BitVector,
 }
 
@@ -559,8 +586,8 @@ impl Associate {
     /// all writes) × the mean write amount. Count-based crosstalk is all positive and
     /// grows with a cell's use, so much-written cells win recall by bulk; centered,
     /// crosstalk has mean zero. Approximate under decay (uses undecayed counts).
-    pub fn set_center(&mut self, on: bool) {
-        self.center = on;
+    pub fn set_center(&mut self, c: Center) {
+        self.center = c;
     }
 
     pub fn new(cells: usize, pathways: &[Scale], settle: usize, readout: Readout, half_life: u32, gain: Q16, gain_k: usize) -> Self {
@@ -577,7 +604,7 @@ impl Associate {
             stores: 0,
             gain,
             gain_k: gain_k.max(1),
-            center: false,
+            center: Center::Off,
             out: zeros(cells),
         }
     }
@@ -634,6 +661,11 @@ impl Module for Associate {
             }
             for (p, pre) in self.paths.iter_mut().zip(&pres) {
                 p.write(pre, &mask, amount, self.planes, epoch, false);
+                if let Center::Homeostatic(s) = self.center {
+                    if !pre.is_empty() {
+                        p.track_rate(&mask, s);
+                    }
+                }
             }
             if let Some(r) = &mut self.recurrent {
                 r.write(&t, &mask, amount, self.planes, epoch, true);
@@ -646,12 +678,15 @@ impl Module for Associate {
         let mut drive = vec![0u64; self.cells];
         for (p, pre) in self.paths.iter().zip(&pres) {
             let d_p = p.drive(pre, epoch);
-            if self.center {
+            if self.center != Center::Off {
                 // mean write amount: the base amount at gain 0 (16..31 within a halving period)
                 let (rows, total) = p.chance(pre);
                 let amount = self.amounts[(self.stores % self.half_life) as usize] as u64;
                 for (j, (d, v)) in drive.iter_mut().zip(d_p).enumerate() {
-                    let expect = div_round(rows * p.used[j] as u64 * amount, total);
+                    let expect = match self.center {
+                        Center::Homeostatic(_) => ((rows as u128 * p.rate[j] as u128 * amount as u128) >> 32) as u64,
+                        _ => div_round(rows * p.used[j] as u64 * amount, total),
+                    };
                     *d += v.saturating_sub(expect);
                 }
             } else {
@@ -680,6 +715,227 @@ impl Module for Associate {
     }
     fn reset(&mut self) {
         self.out = zeros(self.cells);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Phase codes
+
+/// A phase code in bits: `cells` blocks of `phases` bits; an active cell j with phase
+/// p sets bit j·`phases` + p (one bit per active block).
+pub fn phase_code(cells: &[(usize, usize)], n_cells: usize, phases: usize) -> BitVector {
+    let mut v = zeros(n_cells * phases);
+    for &(j, p) in cells {
+        v.bit_set(j * phases + p % phases);
+    }
+    v
+}
+
+/// The (cell, phase) pairs of a phase code (the first phase of each block).
+pub fn phase_cells(x: &BitVector, phases: usize) -> Vec<(usize, usize)> {
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    for b in active(x) {
+        let j = b / phases;
+        if out.last().map(|l| l.0) != Some(j) {
+            out.push((j, b % phases));
+        }
+    }
+    out
+}
+
+/// Gives a plain pattern phases: each active bit j becomes cell j with a phase from a
+/// fixed hash of (the whole pattern, j), so every distinct event gets its own random
+/// phases (as spikes of an assembly fall at event-specific phases of a rhythm).
+pub struct Phase {
+    phases: usize,
+    seed: u64,
+    out: BitVector,
+}
+
+impl Phase {
+    pub fn new(phases: usize, seed: u64) -> Self {
+        Self { phases: phases.max(1), seed, out: BitVector::EMPTY }
+    }
+}
+
+impl Module for Phase {
+    fn name(&self) -> String {
+        format!("Phase({})", self.phases)
+    }
+    fn n_inputs(&self) -> usize {
+        1
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let bits = active(inputs[0]);
+        let key = bits.iter().fold(self.seed, |h, &b| mix64(h ^ b as u64));
+        let cells: Vec<(usize, usize)> = bits.iter().map(|&j| (j, (mix64(key ^ j as u64) % self.phases as u64) as usize)).collect();
+        self.out = phase_code(&cells, inputs[0].bit_len().max(1), self.phases);
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = BitVector::EMPTY;
+    }
+}
+
+/// Drops the phases of a phase code: the active cells as a plain pattern.
+pub struct Cells {
+    phases: usize,
+    out: BitVector,
+}
+
+impl Module for Cells {
+    fn name(&self) -> String {
+        format!("Cells({})", self.phases)
+    }
+    fn n_inputs(&self) -> usize {
+        1
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let n = (inputs[0].bit_len() / self.phases).max(1);
+        let mut out = zeros(n);
+        for (j, _) in phase_cells(inputs[0], self.phases) {
+            out.bit_set(j);
+        }
+        self.out = out;
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = BitVector::EMPTY;
+    }
+}
+
+/// A Hebbian population with phase-coded (integer complex) weights: a phasor
+/// associative memory.
+///
+/// Inputs `[teach, pre]`, output `[activity]`, all phase codes (`pre` may be a plain
+/// pattern if `in_phases` = 1: every input at phase 0).
+/// - **Write:** for each active input i (phase φ_i) and teach cell j (phase θ_j),
+///   w_ij += e^{i(θ_j − φ_i)}, as integer (cos, sin) pairs from a table (scale 2^14).
+/// - **Read:** h_j = Σ_i w_ij · e^{iφ_i}. A cell's score is |h_j|²; the k best cells fire,
+///   each at the table phase nearest to arg h_j.
+/// - **Why phases:** the stored event's terms all arrive at the same phase and add up
+///   (|signal| = cue size); other events' terms arrive at unrelated phases and largely
+///   cancel (their sum grows like √n, not n). Crosstalk has mean zero with nothing
+///   subtracted: the complex sum is the projection of each cell's phase histogram onto
+///   its first harmonic, which has no constant term.
+/// - `inverse`: weight each input row by 1/n (its writes), as `Scale::Inverse`.
+pub struct PhaseAssociate {
+    cells: usize,
+    k: usize,
+    phases: usize,
+    in_phases: usize,
+    inverse: bool,
+    table: Vec<(i32, i32)>,
+    in_table: Vec<(i32, i32)>,
+    rows: Vec<Option<Vec<(i32, i32)>>>,
+    writes: Vec<u32>,
+    out: BitVector,
+}
+
+impl PhaseAssociate {
+    pub fn new(cells: usize, k: usize, phases: usize, in_phases: usize, inverse: bool) -> Self {
+        let phases = phases.max(1);
+        let in_phases = in_phases.max(1);
+        Self {
+            cells,
+            k,
+            phases,
+            in_phases,
+            inverse,
+            table: phasors(phases),
+            in_table: phasors(in_phases),
+            rows: Vec::new(),
+            writes: Vec::new(),
+            out: zeros(cells * phases),
+        }
+    }
+
+    fn inputs(&self, x: &BitVector) -> Vec<(usize, usize)> {
+        if self.in_phases == 1 { active(x).into_iter().map(|i| (i, 0)).collect() } else { phase_cells(x, self.in_phases) }
+    }
+}
+
+/// (a + ib)(c + id) / 2^14.
+fn cmul(a: (i32, i32), b: (i32, i32)) -> (i32, i32) {
+    let (a0, a1, b0, b1) = (a.0 as i64, a.1 as i64, b.0 as i64, b.1 as i64);
+    (((a0 * b0 - a1 * b1) >> 14) as i32, ((a0 * b1 + a1 * b0) >> 14) as i32)
+}
+
+impl Module for PhaseAssociate {
+    fn name(&self) -> String {
+        format!("PhaseAssociate({} cells, k={}, {} phases)", self.cells, self.k, self.phases)
+    }
+    fn n_inputs(&self) -> usize {
+        2
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let pre = self.inputs(inputs[1]);
+        let teach = phase_cells(inputs[0], self.phases);
+        if !teach.is_empty() {
+            for &(i, phi) in &pre {
+                if i >= self.rows.len() {
+                    self.rows.resize_with(i + 1, || None);
+                    self.writes.resize(i + 1, 0);
+                }
+                let (c, sn) = self.in_table[phi];
+                let conj = (c, -sn);
+                let row = self.rows[i].get_or_insert_with(|| vec![(0, 0); self.cells]);
+                for &(j, theta) in &teach {
+                    if j < self.cells {
+                        let z = cmul(self.table[theta], conj);
+                        row[j].0 += z.0;
+                        row[j].1 += z.1;
+                    }
+                }
+                self.writes[i] = self.writes[i].saturating_add(1);
+            }
+            self.out = inputs[0].clone();
+            return;
+        }
+        let mut h = vec![(0i64, 0i64); self.cells];
+        for &(i, phi) in &pre {
+            let Some(Some(row)) = self.rows.get(i) else { continue };
+            let per = if self.inverse { recip(self.writes[i].max(1) as u64) as i64 } else { ONE as i64 };
+            let rot = self.in_table[phi];
+            for (hj, &w) in h.iter_mut().zip(row.iter()) {
+                if w != (0, 0) {
+                    let z = cmul(w, rot);
+                    hj.0 += z.0 as i64 * per >> 4;
+                    hj.1 += z.1 as i64 * per >> 4;
+                }
+            }
+        }
+        // scores |h|² (scaled down to stay in u64), then the k best cells and their phases
+        let score: Vec<u64> = h.iter().map(|&(a, b)| ((a as i128 * a as i128 + b as i128 * b as i128) >> 32) as u64).collect();
+        let winners = top_k(score.into_iter(), self.k);
+        let cells: Vec<(usize, usize)> = winners
+            .iter()
+            .map(|&j| {
+                let (a, b) = h[j as usize];
+                let best = (0..self.phases).max_by_key(|&p| a * self.table[p].0 as i64 + b * self.table[p].1 as i64).unwrap_or(0);
+                (j as usize, best)
+            })
+            .collect();
+        self.out = phase_code(&cells, self.cells, self.phases);
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = zeros(self.cells * self.phases);
     }
 }
 
@@ -808,6 +1064,11 @@ pub enum Prim {
     Gate,
     /// An `Associate` population: one input pathway per entry of `pathways` (its
     /// presynaptic scaling), recurrent settling steps (0 = no recurrent pathway).
+    /// Plain pattern → phase code (`Phase`); phase code → plain cells (`Cells`).
+    Phase { phases: usize, seed: u64 },
+    Cells { phases: usize },
+    /// A `PhaseAssociate` population.
+    PhaseAssociate { cells: usize, k: usize, phases: usize, in_phases: usize, inverse: bool },
     Associate { cells: usize, pathways: Vec<Scale>, settle: usize, readout: Readout, half_life: u32, gain: Q16, gain_k: usize },
 }
 
@@ -825,6 +1086,9 @@ impl Prim {
             &Prim::SeparateTable { inputs, cells, fan_in, k, seed } => Box::new(Separate::table(inputs, cells, fan_in, k, seed)),
             &Prim::Scatter { inputs, outputs, seed } => Box::new(Scatter::new(inputs, outputs, seed)),
             Prim::Gate => Box::new(Gate { out: BitVector::EMPTY }),
+            &Prim::Phase { phases, seed } => Box::new(Phase::new(phases, seed)),
+            &Prim::Cells { phases } => Box::new(Cells { phases: phases.max(1), out: BitVector::EMPTY }),
+            &Prim::PhaseAssociate { cells, k, phases, in_phases, inverse } => Box::new(PhaseAssociate::new(cells, k, phases, in_phases, inverse)),
             Prim::Associate { cells, pathways, settle, readout, half_life, gain, gain_k } => {
                 Box::new(Associate::new(*cells, pathways, *settle, *readout, *half_life, *gain, *gain_k))
             }
@@ -1283,6 +1547,9 @@ mod tests {
             Prim::Separate { cells: 128, fan_out: 4, k: 8, seed: 1 },
             Prim::Scatter { inputs: 128, outputs: 64, seed: 2 },
             Prim::Gate,
+            Prim::Phase { phases: 8, seed: 3 },
+            Prim::Cells { phases: 8 },
+            Prim::PhaseAssociate { cells: 64, k: 4, phases: 8, in_phases: 8, inverse: true },
             Prim::Associate { cells: 128, pathways: vec![Scale::Inverse, Scale::Shift], settle: 1, readout: Readout::TopK(8), half_life: 50, gain: ONE, gain_k: 8 },
         ];
         for _ in 0..50 {
@@ -1426,5 +1693,76 @@ mod tests {
         let ec = active(&theta_recall(&mut net, &bv(&cue), &mut ctx));
         assert_eq!(ec, h.recall(&cue).ec);
         assert!(word(51).iter().filter(|b| ec.contains(b)).count() >= 12, "the one-shot family comes back");
+    }
+    fn random_events(n: usize, seed: u64, phases: usize) -> Vec<(Vec<(usize, usize)>, Vec<(usize, usize)>)> {
+        use rand::seq::SliceRandom;
+        let mut rng = StdRng::seed_from_u64(seed);
+        let all: Vec<usize> = (0..1024).collect();
+        (0..n)
+            .map(|_| {
+                let mut x: Vec<(usize, usize)> = all.choose_multiple(&mut rng, 32).map(|&b| (b, rng.gen_range(0..phases))).collect();
+                let mut y: Vec<(usize, usize)> = all.choose_multiple(&mut rng, 16).map(|&b| (b, rng.gen_range(0..phases))).collect();
+                x.sort_unstable();
+                y.sort_unstable();
+                (x, y)
+            })
+            .collect()
+    }
+
+    /// Centering with a running rate (no division) recalls as well as exact centering.
+    #[test]
+    fn homeostatic_centering_matches_exact() {
+        let data = random_events(1500, 3, 1);
+        let mut r = StdRng::seed_from_u64(0);
+        let mut ctx = Ctx { rng: &mut r, learn: true };
+        let mut recalled = Vec::new();
+        for c in [Center::Off, Center::Exact, Center::Homeostatic(16)] {
+            let mut a = Associate::new(1024, &[Scale::None], 0, Readout::TopK(16), 100_000, 0, 16);
+            a.set_center(c);
+            let bits = |v: &[(usize, usize)]| BitVector::from_bits(&v.iter().map(|p| p.0).collect::<Vec<_>>(), 1024);
+            for (x, y) in &data {
+                a.tick(&[&bits(y), &BitVector::EMPTY, &bits(x)], &mut ctx);
+            }
+            let mut right = 0;
+            for (x, y) in &data {
+                a.tick(&[&BitVector::EMPTY, &BitVector::EMPTY, &bits(x)], &mut ctx);
+                if y.iter().filter(|p| a.output(0).bit_get(p.0)).count() >= 13 {
+                    right += 1;
+                }
+            }
+            recalled.push(right);
+        }
+        assert!(recalled[1] > recalled[0], "centering helps: {recalled:?}");
+        assert!(recalled[2] * 100 >= recalled[1] * 99, "homeostatic ≈ exact: {recalled:?}");
+    }
+
+    /// A phasor memory recalls cells and their phases, and phase-coded inputs let it
+    /// hold more than plain inputs (crosstalk cancels).
+    #[test]
+    fn phase_population_recalls_cells_and_phases() {
+        let run = |n: usize, phased_in: bool| {
+            let data = random_events(n, 4, 16);
+            let mut a = PhaseAssociate::new(1024, 16, 16, if phased_in { 16 } else { 1 }, false);
+            let mut r = StdRng::seed_from_u64(0);
+            let mut ctx = Ctx { rng: &mut r, learn: true };
+            let input = |x: &[(usize, usize)]| {
+                if phased_in { phase_code(x, 1024, 16) } else { BitVector::from_bits(&x.iter().map(|p| p.0).collect::<Vec<_>>(), 1024) }
+            };
+            for (x, y) in &data {
+                a.tick(&[&phase_code(y, 1024, 16), &input(x)], &mut ctx);
+            }
+            let mut right = 0;
+            for (x, y) in &data {
+                a.tick(&[&BitVector::EMPTY, &input(x)], &mut ctx);
+                let got = phase_cells(a.output(0), 16);
+                if y.iter().filter(|p| got.contains(p)).count() >= 13 {
+                    right += 1;
+                }
+            }
+            right
+        };
+        assert_eq!(run(200, true), 200);
+        let (plain, phased) = (run(1500, false), run(1500, true));
+        assert!(phased > plain + 300, "phase-coded inputs cancel crosstalk: {phased} vs {plain} of 1500");
     }
 }

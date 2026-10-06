@@ -266,8 +266,9 @@ These are not research stages. They keep earlier results trustworthy as the code
   - **Done ([52](experiments/52-associate-and-hippocampus-genome.md)):** a Hebbian
     `Associate` leaf, and the hippocampus as a genome at bit parity.
   - **Next:** replay, tags and the sparse binding space in the genome; switch the
-    harness to it; try 1/n scaling with centering
-    ([math](concepts/superposition-and-clean-up.md)).
+    harness to it; try 1/n scaling with homeostatic centering, both division-free
+    ([53](experiments/53-phase-codes-and-centering.md)), and a phase-bound binding
+    space ([math](concepts/superposition-and-clean-up.md)).
   - **Then:** scalar signals as population codes, and the episodic harness migrated one
     component at a time.
   - **The goal:** the whole architecture is one genome that can be mutated and searched.

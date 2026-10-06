@@ -178,6 +178,11 @@ impl Pathway {
         out
     }
 
+    /// Bytes held: each allocated row is `planes` bit planes over the targets.
+    pub(crate) fn bytes(&self) -> usize {
+        self.rows.iter().flatten().map(|(row, _)| row.planes() * self.targets.div_ceil(8) + 8).sum::<usize>() + 8 * self.rows.len()
+    }
+
     /// Number of nonzero counters (stored synapses), as of their last normalization.
     fn synapses(&self) -> usize {
         self.rows

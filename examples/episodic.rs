@@ -1349,6 +1349,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut season_bins = [(0usize, 0usize); 6];
     // COST: wall time and words for training and test
     let (mut train_secs, mut test_secs, mut train_words, mut test_words) = (0f64, 0f64, 0usize, 0usize);
+    let mut train_text_bytes = 0usize;
     let mut phase_start = std::time::Instant::now();
     let mut prof = [0f64; 6];
     let sleep_every: Option<usize> = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok());
@@ -1709,6 +1710,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             test_words += s.words.len();
         } else {
             train_words += s.words.len();
+            train_text_bytes += s.words.iter().map(|w| w.len() + 1).sum::<usize>();
         }
         let mut ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         completed_sentence = false;
@@ -3403,6 +3405,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 sem_hstats[0], sem_hstats[1], sem_hstats[2], sem_hstats[3]
             );
         }
+        eprintln!(
+            "  MEMORY seed {seed}: training text {} bytes ({} words); hippocampus {} bytes; list memory {} bytes ({} episodes)",
+            train_text_bytes,
+            train_words,
+            bind_hc.as_ref().map_or(0, |h| h.memory_bytes()),
+            bind_mem.bytes(),
+            bind_mem.len()
+        );
         if let Some(hc) = &bind_hc {
             let (hits, all, nov_sum, nov_n) = hc.stats();
             eprintln!(

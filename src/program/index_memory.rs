@@ -386,6 +386,12 @@ impl EpisodicCircuit for IndexMemory {
     fn stats(&self) -> (usize, usize, u64, usize) {
         (0, self.recalls.get(), self.novelty_sum.0, self.novelty_sum.1)
     }
+    /// Keys as u32, outputs as indices (usize), the row header, and the postings.
+    fn memory_bytes(&self) -> usize {
+        let rows: usize = self.rows.iter().map(|r| 4 * r.keys.len() + 8 * r.out.len() + 24).sum();
+        let postings: usize = self.postings.iter().map(|p| 4 * p.len() + 24).sum();
+        rows + postings
+    }
 }
 
 #[cfg(test)]

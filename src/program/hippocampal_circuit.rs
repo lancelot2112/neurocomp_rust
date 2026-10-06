@@ -552,6 +552,10 @@ pub trait EpisodicCircuit {
     fn len(&self) -> usize;
     /// (recalls answered from the cache, all recalls, novelty sum in `Q16`, stores judged)
     fn stats(&self) -> (usize, usize, u64, usize);
+    /// Bytes the memory's state occupies (weights or rows, and their indexes).
+    fn memory_bytes(&self) -> usize {
+        0
+    }
 }
 
 impl EpisodicCircuit for Hippocampus {
@@ -592,6 +596,9 @@ impl EpisodicCircuit for Hippocampus {
     fn stats(&self) -> (usize, usize, u64, usize) {
         let (h, a) = self.cache_hits.get();
         (h, a, self.novelty_sum.0, self.novelty_sum.1)
+    }
+    fn memory_bytes(&self) -> usize {
+        self.perforant.bytes() + self.recurrent.bytes() + self.schaffer.bytes() + self.ca2_ca1.bytes() + self.output.bytes() + 4 * (self.perforant_writes.len() + self.ca3_writes.len())
     }
 }
 

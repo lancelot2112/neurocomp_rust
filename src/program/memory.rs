@@ -328,6 +328,11 @@ impl EpisodicMemory {
         out
     }
 
+    /// Bytes held: the stored episodes (dense bit vectors), the bit counts and the index.
+    pub fn bytes(&self) -> usize {
+        self.episodes.len() * self.bits.div_ceil(8) + 4 * self.bit_counts.len() + self.index.iter().map(|p| 4 * p.len() + 24).sum::<usize>()
+    }
+
     pub fn len(&self) -> usize {
         self.episodes.len()
     }

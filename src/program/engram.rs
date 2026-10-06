@@ -540,6 +540,14 @@ impl EpisodicCircuit for EngramStore {
     fn stats(&self) -> (usize, usize, u64, usize) {
         (0, self.recalls.get(), self.novelty_sum.0, self.novelty_sum.1)
     }
+    /// Live rows (ids as u32, phases, outputs as indices, header), the what postings and
+    /// the place index.
+    fn memory_bytes(&self) -> usize {
+        let rows: usize = self.ring.iter().flatten().map(|r| 4 * r.what.len() + r.phase.len() + 8 * r.out.len() + 24).sum();
+        let what: usize = self.what.iter().map(|p| 4 * p.len() + 24).sum();
+        let place: usize = self.place.values().map(|p| 4 * p.len() + 32).sum();
+        rows + what + place
+    }
 }
 
 #[cfg(test)]

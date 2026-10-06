@@ -50,11 +50,12 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   - **Role cells emerge** but do not help as an extra frame.
 
   Spawning a general copy beside the specific kernel ([32](experiments/32-general-and-specific.md))
-  keeps the transfer and lifts habit to 86–89%. The name-dependent rule is mixed, with
-  too many near-identical copies. Next:
-  - spawn only after repeated evidence;
-  - merge copies by what they keep;
-  - then one-exposure learning of new specifics on top of general kernels.
+  keeps the transfer and lifts habit to 86–89%. Spawning after 3 confirmations, covered
+  only by as-reliable kernels, passes all three tests (transfer, name rule, habit), at
+  42,000 kernels. Next:
+  - compaction that keeps the specifics (a longer replay for sleep's merge);
+  - generalisation during sleep;
+  - one-exposure learning of new specifics on top of general kernels.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

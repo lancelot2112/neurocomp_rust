@@ -93,12 +93,66 @@ these results.
    - Where it matters (habit), the specific ones win.
    - The remaining weakness is how copies are made: too many, too similar.
 
+## Step 1: repeated evidence, and only reliable cover
+Two changes to how copies are made:
+- **Repeated evidence (`HIER_SPAWN_AFTER=n`, `set_spawn_after`).** An input is dropped
+  from a copy only after it was absent in n confirmed near-misses of the kernel. A copy
+  then stands for a regularity, not one coincidence.
+- **Subsumption (always on with spawning).** No copy is spawned if a kernel with the same
+  output already reads a subset of the kept inputs (it matches whenever the copy would)
+  and is at least as reliable as the kernel the copy comes from.
+  - The candidates are found through the covering kernel's lowest input bit, as in
+    sleep's merge.
+  - A first version omitted the reliability condition. It blocked 100,000–360,000 copies,
+    and the unreliable over-general kernels that "covered" them then answered: habit
+    fell to 62–78%. Requiring the cover to be at least as reliable, as sleep's merge does,
+    fixed it.
+
+| Seeds 0 / 1 / 2 | Role rule: known / **new** names | Name rule | Habit | Kernels (name rule) | Test µs/word (name rule) |
+|---|---|---|---|---|---|
+| No generalisation | 52 / 56 / 64% / **21 / 0 / 32%** | 66 / 57 / 73% | 81 / 82 / 80% | 4,000–4,300 | 106 |
+| Spawning (above) | 66 / 68 / 80% / **62 / 72 / 81%** | 46 / 71 / 43% | 86 / 87 / 89% | 11,200–14,000 | – |
+| Spawn after 1 + reliable cover | 68 / 67 / 74% / **71 / 67 / 80%** | 52 / 73 / 61% | 88 / 84 / 86% | 8,500–9,900 | – |
+| **Spawn after 3 + reliable cover** | 61 / 81 / 70% / **61 / 81 / 69%** | **69 / 73 / 71%** | **85 / 84 / 82%** | 42,000 | 865 |
+| … + sleep in the higher area | 66 / 65 / 62% / 62 / 56 / 68% | 66 / 67 / 56% | 67 / 69 / 82% | 2,000–2,400 | 69–83 |
+
+1. **Spawning after three confirmations passes all three tests:**
+   - new names as accurate as known ones (61–81%);
+   - no loss on the name rule (69–73% against 57–73%, better on average);
+   - habit above the default (82–85% against 80–82%).
+2. **The price is size.** Copies made after repeated evidence are more varied (each keeps
+   a different subset), so the higher area holds about 42,000 kernels, and test time
+   rises to 865 µs/word, about 8×.
+3. **Sleep compacts it 20×** (to 2,000–2,400 kernels, 69–83 µs/word) but gives back 5–15
+   points on each test. Its merge removes specific kernels whenever a general one is at
+   least as reliable over the replay, and 512 replayed inputs are too few to show where a
+   specific kernel still matters.
+
+## Does sleep prune, or consolidate into more general rules?
+Both, but it does not invent rules. `KernelClass::sleep` does three things:
+1. **Downscale.** Every kernel's hit and miss counts are halved, so old evidence weighs
+   less (synaptic homeostasis, Tononi & Cirelli).
+2. **Prune** kernels that have only failed.
+3. **Merge:**
+   - A kernel is removed when another with the same output reads a subset of its inputs
+     and is at least as reliable. The general one then answers for both.
+   - Kernels that match exactly the same replayed inputs collapse into the most reliable
+     one.
+
+So sleep chooses between general and specific versions that waking learning made. It
+consolidates toward the general one when the evidence says the specifics add nothing.
+With spawning, that is where specific kernels get absorbed into their general copies:
+the complementary-learning-systems picture of slow consolidation into general
+structure. What it cannot do yet is create a new, more general rule offline. Replay
+could do that by applying the near-miss rule to replayed inputs (generalisation during
+sleep), a natural next step.
+
 ## Next
-- **Spawn less often:** only when the dropped inputs have been absent in several
-  confirmed near-misses (`generalize_after` greater than 1 for the copy). Then a copy
-  stands for a regularity, not one coincidence.
-- **Merge copies by what they keep:** two copies that keep the same frames' bits for the
-  same output are one general rule.
+- ~~Spawn less often~~, ~~merge copies by what they keep~~: done (step 1).
+- **Keep it small without losing specifics:** sleep with a longer replay (so the merge
+  sees where specifics matter), or a cap on copies per source kernel.
+- **Generalise during sleep:** run the near-miss rule on replayed inputs, so general rules
+  form offline.
 - **Then the schema test proper:** a new name learned in one exposure for a
   name-dependent rule (Tse et al. 2007). The general kernels give the structure, and one
   episode supplies the specific fact.

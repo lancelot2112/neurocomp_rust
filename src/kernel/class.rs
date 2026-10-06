@@ -1421,12 +1421,12 @@ impl KernelClass<SimpleKernel> {
     /// whose prediction the target confirms keep only the connections that were
     /// active, so inputs that didn't matter stop being required.
     fn generalize_near_misses(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig) {
-        let mut spawns: Vec<(Vec<u32>, Vec<u32>)> = Vec::new();
+        let mut spawns: Vec<(Vec<u32>, Vec<u32>, Rate)> = Vec::new();
         self.generalize_in_place(input, target, cfg, &mut spawns);
         // the general copies: same output, the kept inputs, a threshold tolerating a frame's
         // worth of noise as at growth; skipped if an identical kernel exists
         let frame_bits = cfg.frame_words * 64;
-        for (kept, output_set) in spawns {
+        for (kept, output_set, source_rate) in spawns {
             if let Some(st) = self.predictive.as_ref() {
                 if let Some(canon) = st.canon.as_ref() {
                     if let Some(&k) = canon.get(&connection_key(&kept, &output_set)) {
@@ -1438,8 +1438,9 @@ impl KernelClass<SimpleKernel> {
                 }
             }
             // subsumed: a kernel with the same output already reads a subset of the kept
-            // inputs (it matches whenever the copy would); found through its lowest input
-            // bit, which must be one of the kept bits
+            // inputs (it matches whenever the copy would) and is at least as reliable as the
+            // kernel the copy comes from (as sleep's merge requires); found through its
+            // lowest input bit, which must be one of the kept bits
             let subsumed = self.predictive.as_ref().map_or(false, |st| {
                 let free: std::collections::HashSet<usize> = st.free.iter().copied().collect();
                 kept.iter().any(|&b| {
@@ -1450,6 +1451,7 @@ impl KernelClass<SimpleKernel> {
                                 && kern.input_set.first() == Some(&b)
                                 && kern.output_set == output_set
                                 && kern.input_set.len() <= kept.len()
+                                && Rate::of(&kern.stats) >= source_rate
                                 && kern.input_set.iter().all(|x| kept.binary_search(x).is_ok())
                         })
                     })
@@ -1480,7 +1482,7 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
-    fn generalize_in_place(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig, spawns: &mut Vec<(Vec<u32>, Vec<u32>)>) {
+    fn generalize_in_place(&mut self, input: &BitVector, target: &BitVector, cfg: &GrowthConfig, spawns: &mut Vec<(Vec<u32>, Vec<u32>, Rate)>) {
         let Some(st) = self.predictive.as_mut() else { return };
         let near = std::mem::take(&mut st.last_near);
         let min_bits = cfg.sample_bits.max(2);
@@ -1550,7 +1552,7 @@ impl KernelClass<SimpleKernel> {
                 }
                 let mut kept: Vec<u32> = old.iter().filter(|b| !drop.contains(b)).map(|&b| b as u32).collect();
                 kept.sort_unstable();
-                spawns.push((kept, self.active_kernels[k].output_set.clone()));
+                spawns.push((kept, self.active_kernels[k].output_set.clone(), Rate::of(&self.active_kernels[k].stats)));
                 continue;
             }
             for &b in &drop {

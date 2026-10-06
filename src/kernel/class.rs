@@ -158,6 +158,10 @@ struct PredictiveState {
     generalize_spawn: bool,
     /// General kernels spawned so far.
     spawned: usize,
+    /// Spawning needs the dropped inputs absent in this many confirmed near misses.
+    spawn_after: u8,
+    /// Copies not spawned because a more general kernel already covered them.
+    spawn_subsumed: usize,
     /// Memoised interpretation (see `set_memo`): input hash -> (prior version, winner).
     memo: Option<std::collections::HashMap<u64, (u64, Option<u32>)>>,
     /// Bumped whenever the prior changes in a way that could change a winner.
@@ -431,6 +435,8 @@ impl KernelClass<SimpleKernel> {
             canon_reused: 0,
             generalize_spawn: false,
             spawned: 0,
+            spawn_after: 1,
+            spawn_subsumed: 0,
             version: 0,
             matches_stale: false,
             memo_lookups: 0,
@@ -840,6 +846,21 @@ impl KernelClass<SimpleKernel> {
     /// General kernels spawned by near-miss generalisation.
     pub fn spawned(&self) -> usize {
         self.predictive.as_ref().map_or(0, |st| st.spawned)
+    }
+
+    /// Spawning needs repeated evidence: an input is dropped from a copy only after it was
+    /// absent in `n` confirmed near misses of the kernel (default 1), so a copy stands for a
+    /// regularity rather than one coincidence.
+    pub fn set_spawn_after(&mut self, n: u8) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.spawn_after = n.max(1);
+        }
+    }
+
+    /// Copies not spawned because a kernel with the same output reading a subset of the kept
+    /// inputs already existed.
+    pub fn spawn_subsumed(&self) -> usize {
+        self.predictive.as_ref().map_or(0, |st| st.spawn_subsumed)
     }
 
     /// Growth events that found an identical kernel already present.
@@ -1416,6 +1437,30 @@ impl KernelClass<SimpleKernel> {
                     }
                 }
             }
+            // subsumed: a kernel with the same output already reads a subset of the kept
+            // inputs (it matches whenever the copy would); found through its lowest input
+            // bit, which must be one of the kept bits
+            let subsumed = self.predictive.as_ref().map_or(false, |st| {
+                let free: std::collections::HashSet<usize> = st.free.iter().copied().collect();
+                kept.iter().any(|&b| {
+                    st.index.get(b as usize).map_or(false, |ks| {
+                        ks.iter().any(|&k| {
+                            let kern = &self.active_kernels[k as usize];
+                            !free.contains(&(k as usize))
+                                && kern.input_set.first() == Some(&b)
+                                && kern.output_set == output_set
+                                && kern.input_set.len() <= kept.len()
+                                && kern.input_set.iter().all(|x| kept.binary_search(x).is_ok())
+                        })
+                    })
+                })
+            });
+            if subsumed {
+                if let Some(st) = self.predictive.as_mut() {
+                    st.spawn_subsumed += 1;
+                }
+                continue;
+            }
             let mut per_frame: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
             for &b in &kept {
                 *per_frame.entry(b as usize / frame_bits).or_default() += 1;
@@ -1439,7 +1484,7 @@ impl KernelClass<SimpleKernel> {
         let Some(st) = self.predictive.as_mut() else { return };
         let near = std::mem::take(&mut st.last_near);
         let min_bits = cfg.sample_bits.max(2);
-        let need = cfg.generalize_after.max(1);
+        let need = if st.generalize_spawn { cfg.generalize_after.max(st.spawn_after).max(1) } else { cfg.generalize_after.max(1) };
         let frame_bits = cfg.frame_words * 64;
         // Bad credit: a tagged bit that was active when its kernel fired and mispredicted,
         // and whose copied bit is not in the target, loses its tag.

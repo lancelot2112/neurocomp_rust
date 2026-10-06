@@ -761,6 +761,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // HIER_GEN_SPAWN=1: near-miss generalisation in the higher area spawns a general
         // copy and keeps the specific kernel (with HIER_GENERALIZE)
         c.set_generalize_spawn(std::env::var("HIER_GEN_SPAWN").is_ok());
+        // HIER_SPAWN_AFTER=n: spawn a copy only after n confirmed near misses without the
+        // dropped inputs (default 1)
+        c.set_spawn_after(std::env::var("HIER_SPAWN_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(1));
         // HIER_GROW_TRUST=p/q: growth trust floor in the higher area (did not help)
         c.set_growth_trust(ratio_env("HIER_GROW_TRUST"));
         // HIER_SLEEP=1: sleep compacts the higher area too (half the cost, a few points less
@@ -2341,7 +2344,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  SEASON seed {seed}: accuracy by filler stories since the season was announced: {}", parts.join(", "));
         }
         if hier && area.column.l23.spawned() > 0 {
-            eprintln!("  SPAWN seed {seed}: the higher area spawned {} general kernels", area.column.l23.spawned());
+            eprintln!("  SPAWN seed {seed}: the higher area spawned {} general kernels ({} copies skipped as already covered)", area.column.l23.spawned(), area.column.l23.spawn_subsumed());
         }
         if hier {
             eprintln!(

@@ -260,6 +260,21 @@ fn season_place(n: usize, s: usize) -> usize {
     (2 * n + [0, 1, 3, 4][s] + 1) % PLACES.len()
 }
 
+/// FAMILY=1 (schema test with structure): names belong to families, and the family decides
+/// the place. Questions read "X <surname> went to the"; trained names: mary, john, sandra
+/// smith and daniel, anna, peter jones; new names (held-out): tom smith, lucy jones, sam
+/// smith, whose places follow their family's rule.
+const SURNAMES: &[&str] = &["smith", "jones"];
+fn family() -> bool {
+    std::env::var("FAMILY").is_ok()
+}
+fn family_place(f: usize, s: usize) -> usize {
+    [[0, 2, 3, 5], [1, 4, 5, 3]][f][s]
+}
+fn family_of(name_i: usize, new: bool) -> usize {
+    if new { [0, 1, 0][name_i % 3] } else { name_i / 3 }
+}
+
 /// Schema test (SCHEMA_K): the new names' own places, one per season. The mapping has the
 /// opposite parity to every trained name's, so it cannot be copied from any of them.
 fn new_place(i: usize, s: usize) -> usize {
@@ -310,16 +325,24 @@ fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: 
         None if held_out && new_names() => NEW_NAMES[n % NEW_NAMES.len()],
         None => NAMES[n],
     };
+    let fam = family().then(|| match new_i {
+        Some(i) => family_of(i, true),
+        None => family_of(n, false),
+    });
     if held_out && new_wording() {
         words.extend([name, "walked", "into", "the"]);
+    } else if let Some(f) = fam {
+        words.extend([name, SURNAMES[f], "went", "to", "the"]);
     } else {
         words.extend([name, "went", "to", "the"]);
     }
     let answer_at = words.len();
-    let place = match new_i {
-        Some(i) => new_place(i, season),
-        None if random_places() => rng.gen_range(0..PLACES.len()),
-        None => season_place(n, season),
+    let place = match (new_i, fam) {
+        (_, Some(_)) if random_places() && new_i.is_none() => rng.gen_range(0..PLACES.len()),
+        (_, Some(f)) => family_place(f, season),
+        (Some(i), None) => new_place(i, season),
+        (None, None) if random_places() => rng.gen_range(0..PLACES.len()),
+        (None, None) => season_place(n, season),
     };
     words.extend([PLACES[place], "."]);
     Story { words, answer_at, held_out }
@@ -553,6 +576,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     if task == Task::Season && (new_names() || std::env::var("SCHEMA_K").is_ok()) {
         vocab.extend(NEW_NAMES);
+    }
+    if task == Task::Season && family() {
+        vocab.extend(SURNAMES);
     }
     if task == Task::Books {
         vocab.extend(&BOOKS[..book_ids()]);

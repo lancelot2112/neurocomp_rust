@@ -708,6 +708,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut upper_in: Vec<Option<BitVector>> = vec![None; upper.len()];
     // test answers where each upper area's prediction held the answer
     let mut upper_has_answer = vec![0usize; upper.len()];
+    // HIER_RESET=1: a story boundary is a context boundary: every area forgets its window
+    let hier_reset = std::env::var("HIER_RESET").is_ok();
+    // READBACK=top|all: self-supervised read-back. At each sentence end, an area says back
+    // the most recent rare word its window holds (rare: seen in fewer than READBACK_RARE of
+    // the sentences so far, default 0.02). Its target is that word, from its own input; it
+    // learns from the mismatch (training only), and what it says is heard: it joins the
+    // next sentence's surprising words, so it re-enters every area's window (rehearsal)
+    let readback = std::env::var("READBACK").ok();
+    let readback_rare: f64 = std::env::var("READBACK_RARE").ok().and_then(|v| v.parse().ok()).unwrap_or(0.02);
+    let mut word_count = vec![0u32; vocab.len()];
+    let mut sentence_count = 0u32;
+    // read-back at test: (attempts, spoke the target)
+    let mut readback_stats = (0usize, 0usize);
     let mut hier_in: Option<BitVector> = None;
     let hier_residual = std::env::var("HIER_RESIDUAL").map_or(true, |v| v != "0");
     // HIER_GATE=1: a corticothalamic gate on the top-down channel, learned from use (L5
@@ -858,6 +871,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             train_words += s.words.len();
         }
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
+        if hier && hier_reset {
+            area.clear();
+            for u in upper.iter_mut() {
+                u.clear();
+            }
+        }
         for t in 0..ids.len() {
             // PROF: [4] storage and everything after learning (from the previous word)
             prof[4] += prof_t.elapsed().as_secs_f64();
@@ -1592,6 +1611,56 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 surprising = BitVector::new(BITS, Some(0));
+                // word frequencies (per sentence), for read-back's "rare"
+                sentence_count += 1;
+                for w in s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".") {
+                    word_count[index[w]] += 1;
+                }
+                // read-back: say back the most recent rare word held, hear it
+                if hier {
+                    if let Some(mode) = readback.as_deref() {
+                        let n = upper.len();
+                        let empty = BitVector::new(BITS, Some(0));
+                        let rare = |w: usize| (word_count[w] as f64) < readback_rare * sentence_count as f64;
+                        let words_of = |bv: &BitVector| -> Option<usize> { enc.decode(bv) };
+                        let mut heard: Vec<usize> = Vec::new();
+                        // areas that read back: the top one, or all; index n = area 2
+                        let which: Vec<usize> = if mode == "all" { (0..=n).collect() } else { vec![if n > 0 { n - 1 } else { n }] };
+                        for k in which {
+                            let a = if k == n { &mut area } else { &mut upper[k] };
+                            // the target: the most recent rare word in the window
+                            let target = a.recent_words().filter_map(|c| words_of(c)).find(|&w| rare(w));
+                            let Some(target) = target else { continue };
+                            // the probe: the area's state alone (no current sentence); an area
+                            // reading from above gets an empty frame there
+                            let probe = if a.column.l23.kernels().is_empty() { None } else { Some(()) };
+                            let x = if (k == n && n > 0 && !chain_mix) || (k + 1 < n && !chain_mix) {
+                                a.input_with(&empty, &empty, Some(&empty))
+                            } else {
+                                a.input_with(&empty, &empty, None)
+                            };
+                            let said = probe.and_then(|_| words_of(&a.predict(&x)));
+                            if testing {
+                                readback_stats.0 += 1;
+                                readback_stats.1 += (said == Some(target)) as usize;
+                            } else if said != Some(target) {
+                                a.learn(&x, &enc.codes[target], &mut rng);
+                            }
+                            if let Some(w) = said {
+                                heard.push(w);
+                            }
+                        }
+                        // hearing itself: the spoken words are surprising input of the next
+                        // sentence, for every area's window
+                        for w in heard {
+                            surprising.or_mut(&enc.codes[w]);
+                            area.note_word(&enc.codes[w]);
+                            for u in upper.iter_mut() {
+                                u.note_word(&enc.codes[w]);
+                            }
+                        }
+                    }
+                }
             }
             prev = Some(ids[t]);
         }
@@ -1726,6 +1795,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .map(|(i, (u, h))| format!("area {} (window {} sentences) {} kernels, held the answer at {:.1}%", i + 3, u.span(), u.column.l23.live(), 100.0 * *h as f64 / TEST as f64))
                 .collect();
             eprintln!("  CHAIN seed {seed}: {}", parts.join("; "));
+        }
+        if readback.is_some() && readback_stats.0 > 0 {
+            eprintln!(
+                "  READBACK seed {seed}: at test, said back the most recent rare word held at {:.1}% of {} read-backs",
+                100.0 * readback_stats.1 as f64 / readback_stats.0 as f64,
+                readback_stats.0
+            );
         }
         if task == Task::Season {
             let names = ["0", "1", "2-3", "4-7", "8-15", "16+"];

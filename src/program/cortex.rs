@@ -425,6 +425,18 @@ impl HigherArea {
         x
     }
 
+    /// The surprising words of the window, newest sentence first (as noted).
+    pub fn recent_words(&self) -> impl Iterator<Item = &BitVector> {
+        self.window_words.iter().rev().flat_map(|ws| ws.iter().rev())
+    }
+
+    /// Context boundary (a new story): forget the window.
+    pub fn clear(&mut self) {
+        self.window.clear();
+        self.window_words.clear();
+        self.pending_words.clear();
+    }
+
     /// The area's window, in sentences.
     pub fn span(&self) -> usize {
         self.span

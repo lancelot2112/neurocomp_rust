@@ -21,6 +21,9 @@ pub struct BitVector {
 }
 
 impl BitVector {
+    /// A vector of no bits (an unconnected port).
+    pub const EMPTY: BitVector = BitVector { words: Vec::new() };
+
     /// Creates a new BitVector with the given number of bits.
     /// The number of bits must be a multiple of 64.
     /// If init_val is provided, all bits are initialized to that value.

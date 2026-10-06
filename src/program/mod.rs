@@ -24,3 +24,6 @@ pub use basal_ganglia::*;
 
 pub mod prefrontal;
 pub use prefrontal::*;
+
+pub mod modules;
+pub use modules::{Genome, Module, NetOp, Network, Prim};

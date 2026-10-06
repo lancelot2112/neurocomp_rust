@@ -124,6 +124,26 @@ flow that connects them is still written by hand in the experiment harness
 - Novelty from the memory's own familiarity signal, gating both replay and stepping.
 - The learned hippocampus.
 
+## Composition: networks of base kernels (after [51](../experiments/51-networks-of-kernels.md))
+Components are being moved from hand-written structs into networks of base kernels,
+built by a grammar (`src/program/modules.rs`). Each module has bit-vector ports. A network
+is a module, so networks nest. A `Genome` of definitions builds them, and definitions
+place earlier ones.
+
+- **Expressed so far:**
+  - the cortical column (bit-identical to `CorticalColumn`);
+  - a two-level hierarchy of columns;
+  - the semantic store (a predictor);
+  - the dentate gyrus (`Separate`);
+  - a one-shot CA3 sequence memory.
+- **Still to become leaves:**
+  - the Hebbian pathways (`Associate`);
+  - competitive role cells;
+  - relay matching;
+  - the scalar-signal systems: the thalamic mix, basal ganglia and gates.
+- **The goal:** the whole architecture as one genome, at regression parity, so it can be
+  mutated and searched.
+
 ## Connections that exist
 
 ```

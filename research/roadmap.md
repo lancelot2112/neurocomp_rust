@@ -259,3 +259,11 @@ These are not research stages. They keep earlier results trustworthy as the code
 - **Integer only** ([47](experiments/47-integer-only.md)). Every per-step computation is
   bitwise or integer (`Q16` fixed point, `src/fixed.rs`). A unit test fails on any float
   in `src/` outside test code and marked configuration or report lines.
+- **Networks of kernels and a grammar** ([51](experiments/51-networks-of-kernels.md), in
+  progress). `src/program/modules.rs` is a `Module` interface with base-kernel leaves.
+  Networks are modules, so they nest, and a stack grammar (`Genome`, `NetOp`) builds them.
+  The column and a hierarchy of columns are expressed so far.
+  - **Next:** a Hebbian `Associate` leaf, then the hippocampus as a genome at parity.
+  - **Then:** scalar signals as population codes, and the episodic harness migrated one
+    component at a time.
+  - **The goal:** the whole architecture is one genome that can be mutated and searched.

@@ -936,8 +936,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // memory has a filler for the expected slot, that filler is inserted as an internal step
     // (heard from memory, not read from the page), at most once per sentence. With
     // COMPLETE=test only at test.
+    // COMPLETE=rollout (rollout-test: only at test): the cortex follows its own expectation
+    // instead. When the next word contradicts a definite expectation (the column expects one
+    // word only), and then while it is not one the column expects, the expected word is
+    // inserted as an internal step, up to 4 per sentence, until the page matches the
+    // expectation again: "tom [is a smith] went". The step's word is the slot memory's if it
+    // is of the kind the column expects (the schema gives the kind, memory which one), else
+    // the column's own.
     let complete = std::env::var("COMPLETE").ok();
+    let rollout = complete.as_deref().map_or(false, |m| m.starts_with("rollout"));
     let mut completed_sentence = false;
+    let mut rolled = 0usize; // internal steps inserted in this sentence
     let mut complete_stats = [0usize; 3]; // completions: training, test (trained names), test (held out)
     let mut complete_words: HashMap<String, usize> = HashMap::new(); // test, held out: "name -> word"
     // (question sentence bag, the story's (word, slot) bindings, answer word, familiarity band)
@@ -1315,6 +1324,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         let mut ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         completed_sentence = false;
+        rolled = 0;
         page_marks = vec![false; ids.len()];
         // the previous story's bindings become one episode (training stories only)
         if bind {
@@ -2038,7 +2048,47 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
 
-                if let (Some(mode), Some(w), false, false) = (complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
+                if std::env::var("COMPLETEDIAG").is_ok() && bind && (s.held_out || !testing) && NEW_NAMES.contains(&s.words[t]) && bind_diag < 12 {
+                    bind_diag += 1;
+                    let wl = |v: &BitVector| -> Vec<&str> { (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect() };
+                    let next_slot = roles.winner(&slot_input(&expect_prev, slot_prev, &roles)).map(|w| w.0);
+                    let story: Vec<String> = bind_list.iter().map(|(w, sl)| format!("{}@{}", vocab[*w], sl)).collect();
+                    eprintln!("  COMPLETEDIAG {} {:?}\n    at {}: expects {:?}; next slot {:?}; memory reads {:?}; bindings {:?}", if testing { "test" } else { "train" }, s.words, s.words[t], wl(&expect_prev), next_slot, bind_answer.map(|w| vocab[w]), story);
+                }
+                let rollout_w = if rollout && rolled < 4 && (testing || complete.as_deref() == Some("rollout")) && bind && !bind_mem.is_empty() {
+                    let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+                    let n = bind_mem.len() as f32;
+                    let band = bind_sentence.iter().map(|b| (bind_mem.frequency(b) * n).round() as u64).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
+                    let expect = column.l23.peek_union(&input, BITS);
+                    // a definite expectation (one word) violated starts a rollout; a started
+                    // rollout continues while the page does not match the expectation
+                    let definite = (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1;
+                    let skipped = (definite || rolled > 0) && expect.count_ones() > 0 && ov(ids[t + 1], &expect) < 24;
+                    let own = bind_answer.filter(|&w| !(testing && bind_lesion) && ov(w, &expect) >= 24).or_else(|| column.l23.peek(&input).and_then(|o| enc.decode(&o)));
+                    if std::env::var("COMPLETEDIAG").is_ok() && testing && NEW_NAMES.contains(&s.words[t]) {
+                        eprintln!("  ROLLDIAG at {}: band {band}, skipped {skipped}, own {:?}, next {}", s.words[t], own.map(|w| vocab[w]), s.words[t + 1]);
+                    }
+                    let _ = band;
+                    own.filter(|&w| skipped && w != ids[t + 1] && vocab[w] != "." && s.words[t + 1] != ".")
+                } else {
+                    None
+                };
+                if let Some(w) = rollout_w {
+                    let k = if !testing { 0 } else if s.held_out { 2 } else { 1 };
+                    complete_stats[k] += 1;
+                    if k == 2 {
+                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        *complete_words.entry(format!("{} -> {}", s.words[start..=t].join(" "), vocab[w])).or_default() += 1;
+                    }
+                    ids.insert(t + 1, w);
+                    s.words.insert(t + 1, vocab[w]);
+                    page_marks.insert(t + 1, false);
+                    if s.answer_at > t {
+                        s.answer_at += 1;
+                    }
+                    rolled += 1;
+                }
+                if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                     let n = bind_mem.len() as f32;
                     let band = bind_sentence.iter().map(|b| (bind_mem.frequency(b) * n).round() as u64).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
@@ -2466,6 +2516,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 sentence = BitVector::new(BITS, Some(0));
                 bind_sentence.clear();
                 completed_sentence = false;
+                rolled = 0;
                 if hier {
                     area.end_sentence(&surprising);
                     for u in upper.iter_mut() {
@@ -2702,7 +2753,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 complete_stats[0],
                 complete_stats[1],
                 complete_stats[2],
-                cw.iter().take(8).collect::<Vec<_>>()
+                cw.iter().filter(|x| NEW_NAMES.iter().any(|n| x.0.contains(n))).take(16).collect::<Vec<_>>()
             );
         }
         if consolidate.is_some() {

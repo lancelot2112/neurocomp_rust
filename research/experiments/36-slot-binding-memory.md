@@ -122,11 +122,8 @@ Trained-name accuracy is unchanged (56–72%).
      (cortex unfamiliar, memory specific) as a prior.
 
 ## Next
-- ~~**Familiarity-gated arbitration:**~~ partly done (above). Next: more evidence for the
-  novel band (learning at test, or a prior).
-- **Familiarity-gated arbitration (first idea):** the familiarity band of the current sentence's
-  surprising words, from the store's own frequency statistics, in every source's
-  reliability key. Then rerun the schema test.
+- **More evidence for the novel band:** familiarity-gated arbitration is built and helps
+  partly (above). Let the mix keep learning at test, or give the novel band a prior.
 - **Consolidation:** replay the one-shot episodes in the next sleeps, so the cortex
   learns them too, as in Tse's 48-hour consolidation.
 

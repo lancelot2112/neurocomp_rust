@@ -667,6 +667,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // per (previous word, current word, own-confidence bucket); the word with the most
     // evidence is the prediction (see `SourceMix`)
     let mixing = std::env::var("MIX").is_ok();
+    // MIX_TEST_LEARN=1: the mix's reliability counters keep learning at test (online
+    // arbitration; nothing else learns, and test stories are not stored in memory)
+    let mix_test_learn = std::env::var("MIX_TEST_LEARN").is_ok();
+    // held-out (new-name) answers right, in the first and second half of the test
+    let mut held_halves = [(0usize, 0usize); 2];
     let mut mix = SourceMix::new();
     // test answers: [answers, column right, mix right, changed, changed and right,
     // sources agreed, agreed and right]
@@ -1971,7 +1976,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         out = enc.codes[w].clone();
                         mix_conf = Some(SourceMix::confidence(total));
                     }
-                    if !testing {
+                    if !testing || mix_test_learn {
                         for (src, key, ws) in &proposals {
                             for &w in ws {
                                 mix.record(*src, *key, w == next);
@@ -2085,6 +2090,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
+                    if s.held_out {
+                        let h = &mut held_halves[(s_i - TRAIN >= TEST / 2) as usize];
+                        h.0 += right as usize;
+                        h.1 += 1;
+                    }
                     if task == Task::Season && saccade.is_some() {
                         sacc_wording[(s.held_out && new_wording()) as usize].2 += right as usize;
                     }
@@ -2496,6 +2506,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[2] as f64 / (sacc_stats[2] + sacc_stats[3]) as f64,
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
+            );
+        }
+        if mixing && held_halves[0].1 > 0 {
+            eprintln!(
+                "  HALVES seed {seed}: held-out answers right in the first half of the test {:.1}%, second half {:.1}%",
+                100.0 * held_halves[0].0 as f64 / held_halves[0].1 as f64,
+                100.0 * held_halves[1].0 as f64 / held_halves[1].1.max(1) as f64
             );
         }
         if bind {

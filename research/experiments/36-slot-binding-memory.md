@@ -121,7 +121,47 @@ Trained-name accuracy is unchanged (56–72%).
      does not stop learning), or seed the novel band from the no-schema-like case
      (cortex unfamiliar, memory specific) as a prior.
 
+## Learning at test (`MIX_TEST_LEARN=1`)
+The mix's reliability counters keep learning at test, as a brain does not stop learning.
+- **Only the arbitration learns:** how far to trust each source, per context and
+  familiarity band.
+- **Nothing else learns, and test stories are not stored in the slot memory,** so no test
+  answer can be recalled later.
+- The `HALVES` report gives new-name accuracy in the first and second half of the test.
+
+| Schema group, seeds 0 / 1 / 2 | Slot memory on new names | Familiarity only | **+ learning at test** | First → second half of the test |
+|---|---|---|---|---|
+| Never shown | 2–3% | 5% | 4–6% | – |
+| Shown once | 28 / 36 / 76% | 13 / 18 / 11% | **16 / 21 / 28%** | 12→20, 22→21, 27→30% |
+| Shown twice | 65 / 40 / 67% | 24 / 19 / 20% | **52 / 28 / 31%** | 46→58, 27→29, 26→37% |
+| Shown 4 times | 70 / 52 / 70% | 10 / 29 / 26% | **48 / 37 / 30%** | 48→48, 32→42, 29→32% |
+| No-schema group, shown once | 30–69% | 20–59% | 21–70% | – |
+
+Trained names are unchanged (62–70%).
+
+6. **With the arbitration still learning, one-shot memories reach the answer.** After two
+   to four exposures, new names score 28–52% in the final answer (from 19–29%), and the
+   gain grows during the test as the mix accumulates evidence that, for novel names,
+   memory is right and the cortex is not.
+7. **But the schema does not yet speed learning.** After one exposure the no-schema
+   group does as well or better (21–70% against 16–28%). Its unreliable cortex never
+   competes with memory, while the schema group's cortex is reliable on trained names
+   and must first be overruled for novel ones. In Tse's rats the schema made new pairs
+   easier. Here it makes them harder to use, because the cortical prediction competes
+   with the hippocampal one instead of supporting it.
+8. **What would make a schema help.** The general rules should do more than step aside:
+   they should supply the structure the memory fills in, as the slot to read out and the
+   kind of answer expected.
+   - Here the slot readout already uses the column's expectation, so that part exists.
+   - What is missing is that the cortex's own answer for a novel name is a confident
+     guess. It is not "a place, which one I don't know".
+   - A cortex that predicts the class (all places, superposed) when the name is novel
+     would leave the choice to memory, and with the slot memory's specific answer the
+     two would agree. That is the schema supporting the episode.
+
 ## Next
+- **Class-level predictions for novel items:** when the item is unfamiliar, the cortex's
+  vote should be its superposed expectation (the class), not one guessed member.
 - **More evidence for the novel band:** familiarity-gated arbitration is built and helps
   partly (above). Let the mix keep learning at test, or give the novel band a prior.
 - **Consolidation:** replay the one-shot episodes in the next sleeps, so the cortex

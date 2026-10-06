@@ -64,7 +64,10 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
 
   Slot ⊗ content memory ([36](experiments/36-slot-binding-memory.md)) learns new pairs
   in one exposure (28–76%), and a setting slot emerges. But the schema group's mix keeps
-  trusting its cortex on new names. Next: familiarity-gated arbitration.
+  trusting its cortex on new names. Familiarity-gated arbitration that keeps learning at
+  test brings new names to 28–52% after 2–4 exposures. But the no-schema group learns
+  them as well or better. Next: class-level cortical predictions for novel items, so the
+  schema supports the episode instead of competing with it.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

@@ -104,6 +104,11 @@ representations: Whittington et al. 2020; Bernardi et al. 2020).
 **Test.** A rule trained with one set of names, tested with names never seen in that
 rule, at 90% or more.
 
+**Status** ([39](experiments/39-schema-advantage.md)): a schema advantage. New members
+of a known family are answered with no exposure (55–75% vs 10–28% without the schema), and
+the knowledge is cortical (it survives a hippocampal lesion). The path there ran through
+[30](experiments/30-cortex-driven-saccades.md)–[38](experiments/38-consolidation-of-one-shot-episodes.md).
+
 **Status** ([30](experiments/30-cortex-driven-saccades.md)): the first transfer test.
 - An unseen question wording gives 0% even with a perfect look-back: every kernel is
   keyed on word identities.

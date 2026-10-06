@@ -73,8 +73,11 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   - **consolidation:** replaying novel episodes' gist in sleep
     ([38](experiments/38-consolidation-of-one-shot-episodes.md)) moves some pairs into the
     cortex after 4 exposures (lesioned 13–31%), little after 1. Interleaved replay feeding
-    generalisation makes it steadier (22–27%). Next: a test where new items follow the
-    learned structure.
+    generalisation makes it steadier (22–27%).
+  - **A schema advantage** ([39](experiments/39-schema-advantage.md)): new members of a
+    known family are answered with no exposure (55–75% vs 10–28% without the schema),
+    from the cortex (54–72% with the hippocampus lesioned). Next: a family stated once
+    ("tom is a smith"), completed from memory and applied by the cortex.
 - **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
   higher area reach 88–99.6% on the season task, with no story boundaries and at half
   the cost of the three-area chain. Open:

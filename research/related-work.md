@@ -348,6 +348,10 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   time instead of holding it: the world as external memory.
 
 ## Roles and schemas ([31](experiments/31-role-cells-and-transfer.md))
+- **Kumaran, D., Hassabis, D. & McClelland, J. L. (2016).** *What learning systems do
+  intelligent agents need? Complementary learning systems theory updated.* Trends in
+  Cognitive Sciences 20. Schema-consistent information integrates quickly
+  ([39](experiments/39-schema-advantage.md)).
 - **Squire, L. R. & Alvarez, P. (1995).** *Retrograde amnesia and memory consolidation: a
   neurobiological perspective.* Current Opinion in Neurobiology 5. Systems consolidation
   from hippocampus to neocortex ([38](experiments/38-consolidation-of-one-shot-episodes.md)).

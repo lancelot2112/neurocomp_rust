@@ -138,6 +138,9 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   Research 34. Place cells.
 - **Hafting, T. et al. (2005).** *Microstructure of a spatial map in the entorhinal
   cortex.* Nature 436. Grid cells.
+- **Tse, D. et al. (2007).** *Schemas and memory consolidation.* Science 316. With a
+  learned schema, rats learn new flavour–place pairs in one trial and consolidate them
+  within a day. The target for the transfer test of [30](experiments/30-cortex-driven-saccades.md).
 - **Whittington, J. et al. (2020).** *The Tolman-Eichenbaum Machine: unifying space and
   relational memory through generalization in the hippocampal formation.* Cell 183. Structure
   (EC) vs content (sensory), bound in hippocampus.

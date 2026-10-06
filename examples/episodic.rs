@@ -947,6 +947,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let rollout = complete.as_deref().map_or(false, |m| m.starts_with("rollout"));
     let mut completed_sentence = false;
     let mut rolled = 0usize; // internal steps inserted in this sentence
+    // held-out answers by the surname the rollout supplied: (right, total) for none, the
+    // right family, the wrong family
+    let mut rolled_surname: Option<bool> = None;
+    let mut by_surname = [(0usize, 0usize); 3];
     let mut complete_stats = [0usize; 3]; // completions: training, test (trained names), test (held out)
     let mut complete_words: HashMap<String, usize> = HashMap::new(); // test, held out: "name -> word"
     // (question sentence bag, the story's (word, slot) bindings, answer word, familiarity band)
@@ -1325,6 +1329,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let mut ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         completed_sentence = false;
         rolled = 0;
+        rolled_surname = None;
         page_marks = vec![false; ids.len()];
         // the previous story's bindings become one episode (training stories only)
         if bind {
@@ -2087,6 +2092,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         s.answer_at += 1;
                     }
                     rolled += 1;
+                    if let (true, Some(i)) = (SURNAMES.contains(&vocab[w]), NEW_NAMES.iter().position(|n| s.words[..=t].contains(n))) {
+                        rolled_surname = Some(vocab[w] == SURNAMES[family_of(i, true)]);
+                    }
                 }
                 if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
@@ -2321,6 +2329,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             d[i] += pending_diag[i];
                         }
                         d[3] += 1;
+                    }
+                    if s.held_out {
+                        let k = match rolled_surname {
+                            None => 0,
+                            Some(true) => 1,
+                            Some(false) => 2,
+                        };
+                        by_surname[k].0 += right as usize;
+                        by_surname[k].1 += 1;
                     }
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
@@ -2749,7 +2766,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let mut cw: Vec<_> = complete_words.iter().collect();
             cw.sort_by(|a, b| b.1.cmp(a.1));
             eprintln!(
-                "  COMPLETE seed {seed}: completions in training {}, at test {} (trained names) and {} (held out); held out: {:?}",
+                "  COMPLETE seed {seed}: held-out answers right: no surname supplied {}/{}, right family {}/{}, wrong family {}/{}; completions in training {}, at test {} (trained names) and {} (held out); held out: {:?}",
+                by_surname[0].0,
+                by_surname[0].1,
+                by_surname[1].0,
+                by_surname[1].1,
+                by_surname[2].0,
+                by_surname[2].1,
                 complete_stats[0],
                 complete_stats[1],
                 complete_stats[2],

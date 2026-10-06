@@ -143,9 +143,8 @@ So sleep chooses between general and specific versions that waking learning made
 consolidates toward the general one when the evidence says the specifics add nothing.
 With spawning, that is where specific kernels get absorbed into their general copies:
 the complementary-learning-systems picture of slow consolidation into general
-structure. What it cannot do yet is create a new, more general rule offline. Replay
-could do that by applying the near-miss rule to replayed inputs (generalisation during
-sleep), a natural next step.
+structure. It could not yet create a new, more general rule offline. Generalisation from
+replay now does ([33](33-generalisation-during-sleep.md)).
 
 ## Next
 - ~~Spawn less often~~, ~~merge copies by what they keep~~: done (step 1).

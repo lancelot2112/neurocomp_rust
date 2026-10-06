@@ -348,6 +348,11 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   time instead of holding it: the world as external memory.
 
 ## Roles and schemas ([31](experiments/31-role-cells-and-transfer.md))
+- **Wagner, U., Gais, S., Haider, H., Verleger, R. & Born, J. (2004).** *Sleep inspires
+  insight.* Nature 427. More people discover a hidden rule after sleep. **Lewis, P. A. &
+  Durrant, S. J. (2011).** *Overlapping memory replay during sleep builds cognitive
+  schemata.* Trends in Cognitive Sciences 15. Generalisation from replay during sleep
+  ([33](experiments/33-generalisation-during-sleep.md)).
 - **Carpenter, G. A. & Grossberg, S. (1987).** *A massively parallel architecture for a
   self-organizing neural pattern recognition machine.* Computer Vision, Graphics, and
   Image Processing 37 (ART). New categories are recruited only when no existing one

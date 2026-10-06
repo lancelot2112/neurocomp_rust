@@ -773,6 +773,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // HIER_SLEEP_GEN=n: generalisation during the higher area's sleep (inputs absent in n
         // confirmed near misses over the replay; candidates tested on the replay)
         c.set_sleep_generalize(std::env::var("HIER_SLEEP_GEN").ok().and_then(|v| v.parse().ok()));
+        // HIER_DREAM=1: the higher area only generalises from its replay at each sleep time
+        // (no downscaling, pruning or merging)
+        if std::env::var("HIER_DREAM").is_ok() {
+            c.set_replay(std::env::var("HIER_REPLAY_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(512));
+        }
         if std::env::var("HIER_SLEEP").is_ok() {
             c.set_replay(std::env::var("HIER_REPLAY_LEN").or_else(|_| std::env::var("REPLAY_LEN")).ok().and_then(|v| v.parse().ok()).unwrap_or(512));
         }
@@ -945,6 +950,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
         if !testing && s_i > 0 && sleep_every.map_or(false, |n| s_i % n == 0) {
             let (p, m) = column.l23.sleep();
+            if hier && std::env::var("HIER_DREAM").is_ok() {
+                area.column.l23.generalize_from_replay();
+            }
             if hier && std::env::var("HIER_SLEEP").is_ok() {
                 area.column.l23.sleep();
                 for u in upper.iter_mut() {

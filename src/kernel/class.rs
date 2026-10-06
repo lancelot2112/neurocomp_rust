@@ -885,6 +885,12 @@ impl KernelClass<SimpleKernel> {
         self.predictive.as_ref().map_or((0, 0), |st| st.slept_general)
     }
 
+    /// Generalisation from the replay alone, without sleep's downscaling, pruning and merging:
+    /// new general rules are added, nothing is removed.
+    pub fn generalize_from_replay(&mut self) {
+        self.generalize_offline();
+    }
+
     /// Form general rules offline from the replay (see `set_sleep_generalize`).
     fn generalize_offline(&mut self) {
         let Some(st) = self.predictive.as_ref() else { return };

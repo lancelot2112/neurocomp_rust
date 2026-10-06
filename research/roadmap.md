@@ -123,6 +123,11 @@ now live side by side.
 - The copies are too many and too similar; the name-dependent rule is mixed.
 - Next: spawn after repeated evidence, then the one-exposure schema test.
 
+**Update** ([33](experiments/33-generalisation-during-sleep.md)): general rules are now
+formed offline from replay and tested on it. They give transfer to new names, no loss on
+name-dependent rules, and better habit, at the default size and speed. Next: the
+one-exposure schema test.
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

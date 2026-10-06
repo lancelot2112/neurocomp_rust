@@ -4,8 +4,8 @@
 Input: a story dump from the episodic harness (DUMP_STORIES=dir), one story per line:
     train|test <TAB> held_out <TAB> answer_at <TAB> words...
 
-Every story read so far is kept as text (training stories, and each test story once it
-has been answered). At a test question (the story up to `answer_at`), two searches:
+The training stories are kept as text. Test stories are not added (as the network stores
+nothing at test), unless --keep-test is given. At a test question (the story up to `answer_at`), two searches:
 
 - grep: find the most recent occurrence in the text of the longest suffix of the
   question (up to 8 words) that occurs, and answer with the word that followed it.
@@ -25,6 +25,7 @@ import sys
 from collections import defaultdict
 
 MAX_N = 8
+KEEP_TEST = False
 
 
 def main(path):
@@ -42,6 +43,14 @@ def main(path):
     def add_story(words):
         sid = len(story_words)
         story_words.append(set(words))
+        sent = []
+        for w in words:
+            sent.append(w)
+            if w == ".":
+                for x in set(sent):
+                    word_sents[x].append(len(sentences))
+                sentences.append((sid, sent))
+                sent = []
         for w in set(words):
             df[w] += 1
         for w in words:
@@ -54,7 +63,9 @@ def main(path):
                 grams[tuple(tokens[end - n + 1 : end + 1])].append(end)
 
     train_text = []
-    tally = {"grep": [[0, 0], [0, 0]], "grep + context": [[0, 0], [0, 0]]}
+    tally = {name: [[0, 0], [0, 0]] for name in ("grep", "grep + context", "3-gram + context", "graph walk (3-gram + context + 1 hop)")}
+    sentences = []        # (story index, words) of every stored sentence
+    word_sents = defaultdict(list)
     for kind, held, at, words in stories:
         if kind == "train":
             add_story(words)
@@ -77,19 +88,42 @@ def main(path):
                 return sum(math.log(stories_n / df[w]) for w in shared)
             best = max(hits, key=lambda p: (score(p), p))
             c = tokens[best + 1]
-        for name, guess in (("grep", g), ("grep + context", c)):
+        # the answer slot: continuations of the question's last three words, anywhere
+        occ3 = [p for p in grams.get(tuple(prefix[-3:]), []) if p + 1 < len(tokens) and story_of[p + 1] == story_of[p]]
+        stories_n = len(story_words)
+        idf = lambda w: math.log(stories_n / df[w]) if df[w] else 0.0
+        def pick(query):
+            if not occ3:
+                return None
+            best = max(occ3, key=lambda p: (sum(idf(w) for w in story_words[story_of[p]] & query), p))
+            return tokens[best + 1]
+        c3 = pick(here)
+        # one hop over the graph: the question sentence's rare words reach the sentences that
+        # contain them elsewhere (word -> sentence -> word), and their words join the query
+        last = prefix[len(prefix) - 1 - prefix[::-1].index(".") + 1:] if "." in prefix else prefix
+        expanded = set(here)
+        for w in last:
+            if df[w] and idf(w) > math.log(20):  # a rare word: in under 1 in 20 stories
+                # the walk goes through it: what it leads to replaces it in the query
+                expanded.discard(w)
+                for si in word_sents[w]:
+                    expanded |= set(sentences[si][1]) - {w}
+        hop = pick(expanded)
+        for name, guess in (("grep", g), ("grep + context", c), ("3-gram + context", c3), ("graph walk (3-gram + context + 1 hop)", hop)):
             t = tally[name][held]
             t[0] += guess == answer
             t[1] += 1
-        add_story(words)
+        if KEEP_TEST:
+            add_story(words)
 
     raw = " ".join(train_text).encode()
     print(f"training text: {len(train_text)} words, {len(raw)} bytes raw, {len(gzip.compress(raw, 9))} bytes gzip -9, {len(train_text)} bytes as one-byte word ids")
     print(f"index (n-grams up to {MAX_N}, positions as u32): {sum(len(v) for v in grams.values()) * 4} bytes")
     for name, t in tally.items():
         seen, held = t[0], t[1]
-        print(f"{name:16s} trained {100 * seen[0] / max(1, seen[1]):5.1f}% of {seen[1]}   held out {100 * held[0] / max(1, held[1]):5.1f}% of {held[1]}")
+        print(f"{name:40s} trained {100 * seen[0] / max(1, seen[1]):5.1f}% of {seen[1]}   held out {100 * held[0] / max(1, held[1]):5.1f}% of {held[1]}")
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    KEEP_TEST = "--keep-test" in sys.argv
+    main([a for a in sys.argv[1:] if not a.startswith("--")][0])

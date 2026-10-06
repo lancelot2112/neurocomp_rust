@@ -1,5 +1,10 @@
 # 57 · How big is a memory, compared with the text? And a dumb text search
 
+> **Correction ([58](58-a-story-is-a-graph.md)):** the text search below also stored each
+> test story after answering it, so later questions found earlier test answers. With
+> test stories not stored, as for the network, grep + context gets 92% trained but only
+> 17% held out (family stated once). The memory sizes are unaffected.
+
 **Question.** Each hippocampus model stores the training stories in some form. How many
 bytes does that take, against the text itself? And how well does the dumbest possible
 memory do: keep the text and search it?

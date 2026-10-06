@@ -255,6 +255,12 @@ fn season_place(n: usize, s: usize) -> usize {
     (2 * n + [0, 1, 3, 4][s] + 1) % PLACES.len()
 }
 
+/// SEASON_NEW_WORDING=1: held-out test questions read "X walked into the" (never seen in
+/// training) instead of "X went to the".
+fn new_wording() -> bool {
+    std::env::var("SEASON_NEW_WORDING").is_ok()
+}
+
 fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
     let season = rng.gen_range(0..SEASONS.len());
     let mut words: Vec<&'static str> = vec![SEASONS[season], "came", "."];
@@ -268,7 +274,11 @@ fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
     }
     words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
     let n = rng.gen_range(0..NAMES.len());
-    words.extend([NAMES[n], "went", "to", "the"]);
+    if held_out && new_wording() {
+        words.extend([NAMES[n], "walked", "into", "the"]);
+    } else {
+        words.extend([NAMES[n], "went", "to", "the"]);
+    }
     let answer_at = words.len();
     words.extend([PLACES[season_place(n, season)], "."]);
     Story { words, answer_at, held_out }
@@ -496,6 +506,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if task == Task::Season || task == Task::Books {
         vocab.extend(SEASONS);
         vocab.push("came");
+    }
+    if task == Task::Season && new_wording() {
+        vocab.extend(["walked", "into"]);
     }
     if task == Task::Books {
         vocab.extend(&BOOKS[..book_ids()]);
@@ -872,6 +885,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the next word (a peek without top-down, no state change), in 4 buckets: no prediction,
     // < 0.5, < 0.8, >= 0.8
     let sacc_conf = std::env::var("SACCADE_CONF").is_ok();
+    // SACCADE_CTX=cortex: the selector's context is the column's own state, not the word
+    // identities: the union of what its matching kernels predict next (one word when
+    // confident, a superposed class when not) plus a code for its confidence bucket. Each
+    // candidate is bound to that state by its own rotation, so similar states share values
+    let sacc_cortex = std::env::var("SACCADE_CTX").map_or(false, |v| v == "cortex");
+    // test answers (trained wording, new wording): (answers, re-read the first sentence
+    // just before, right)
+    let mut sacc_wording = [(0usize, 0usize, 0usize); 2];
     // SACCADE=index: no fixed targets. The page keeps an index of where each surprising
     // word was read (landmarks); a regression's candidates are "read on" plus each landmark
     // word (its latest position before the current sentence), valued per context
@@ -1124,18 +1145,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             if let (true, Some(mode)) = (hier && t + 1 < ids.len(), saccade.as_deref()) {
                 let cur_start = s.words[..=t].iter().rposition(|w| *w == ".").map_or(0, |i| i + 1);
                 // the column's own confidence about the next word (peek, no top-down)
-                let bucket = if sacc_conf {
+                let peek_l4 = (sacc_conf || sacc_cortex).then(|| {
                     let empty = BitVector::new(BITS, Some(0));
-                    let l4 = column.assemble(code, &vec![empty; l4_mid]);
-                    match column.l23.peek_scored(&l4) {
-                        None => 0,
-                        Some((_, c)) if c < 0.5 => 1,
-                        Some((_, c)) if c < 0.8 => 2,
-                        _ => 3,
-                    }
-                } else {
-                    0
+                    column.assemble(code, &vec![empty; l4_mid])
+                });
+                let bucket = match (sacc_conf || sacc_cortex, peek_l4.as_ref().and_then(|x| column.l23.peek_scored(x))) {
+                    (false, _) => 0,
+                    (true, None) => 0,
+                    (true, Some((_, c))) if c < 0.5 => 1,
+                    (true, Some((_, c))) if c < 0.8 => 2,
+                    _ => 3,
                 };
+                // the cortical state: possible continuations + confidence code
+                let state = peek_l4.as_ref().filter(|_| sacc_cortex).map(|x| {
+                    let mut st = column.l23.peek_union(x, BITS);
+                    st.or_mut(&sacc_code(10 + bucket));
+                    st
+                });
                 let prev_w = if t > 0 { ids[t - 1] } else { vocab.len() };
                 let ctx = (prev_w * 131 + ids[t] * 7919 + bucket * 104_729) % BITS;
                 // landmarks (index mode): distinct surprising words before the current
@@ -1151,7 +1177,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let a = if mode == "oracle" {
                     if t + 1 == s.answer_at { 2 } else { 0 }
                 } else {
-                    let cands: Vec<BitVector> = if mode == "index" {
+                    let cands: Vec<BitVector> = if let Some(state) = state.as_ref() {
+                        // candidate = the cortical state rotated by the candidate's own amount
+                        let ids_c: Vec<usize> = if mode == "index" { std::iter::once(0).chain(marks.iter().map(|m| m.0 + 1)).collect() } else { (0..3).collect() };
+                        ids_c
+                            .iter()
+                            .map(|&c| {
+                                let mut x = state.clone();
+                                x.rotl_mut((c * 2_654_435_761 + 97) % BITS);
+                                x
+                            })
+                            .collect()
+                    } else if mode == "index" {
                         std::iter::once(sacc_code(0))
                             .chain(marks.iter().map(|m| enc.codes[m.0].clone()))
                             .map(|mut c| {
@@ -1190,6 +1227,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 };
                 if testing {
                     sacc_stats[3] += 1;
+                }
+                if testing && t + 1 == s.answer_at && task == Task::Season {
+                    let k = (s.held_out && new_wording()) as usize;
+                    sacc_wording[k].0 += 1;
+                    sacc_wording[k].1 += target.map_or(false, |(st, _)| st == 0) as usize;
                 }
                 if let Some((start, end)) = target {
                     if testing {
@@ -1784,6 +1826,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
+                    if task == Task::Season && saccade.is_some() {
+                        sacc_wording[(s.held_out && new_wording()) as usize].2 += right as usize;
+                    }
                     if task == Task::Books {
                         book_bins[book_bin].0 += 1;
                         book_bins[book_bin].1 += right as usize;
@@ -2186,6 +2231,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * sacc_stats[4] as f64 / TEST as f64,
                 100.0 * sacc_hit_first as f64 / TEST as f64
             );
+        }
+        if saccade.is_some() && new_wording() {
+            let f = |k: usize| {
+                let (n, l, r) = sacc_wording[k];
+                format!("{:.1}% right, looked back at the season before {:.1}% of {n} answers", 100.0 * r as f64 / n.max(1) as f64, 100.0 * l as f64 / n.max(1) as f64)
+            };
+            eprintln!("  WORDING seed {seed}: trained wording: {}; new wording: {}", f(0), f(1));
         }
         if bound_detect {
             eprintln!(

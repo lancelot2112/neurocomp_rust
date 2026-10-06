@@ -606,6 +606,34 @@ impl KernelClass<SimpleKernel> {
             .map(|((_, rel, _), k)| (self.active_kernels[k].output_vector(), rel.value()))
     }
 
+    /// The union of what every matching kernel predicts for `input` (the column's possible
+    /// continuations, superposed), without changing any state. A confident context gives
+    /// one word's code; an uncertain one superposes a whole class (e.g. every place), so
+    /// similar uncertain states share bits.
+    pub fn peek_union(&self, input: &BitVector, bits: usize) -> BitVector {
+        let mut out = BitVector::new(bits, Some(0));
+        let Some(st) = self.predictive.as_ref() else { return out };
+        let mut counts: std::collections::HashMap<u32, u32> = std::collections::HashMap::new();
+        for b in set_bits(input) {
+            if let Some(ks) = st.index.get(b) {
+                for &k in ks {
+                    *counts.entry(k).or_default() += 1;
+                }
+            }
+        }
+        for (k, c) in counts {
+            let kern = &self.active_kernels[k as usize];
+            if c as usize >= kern.threshold {
+                for &b in &kern.output_set {
+                    if (b as usize) < bits {
+                        out.bit_set(b as usize);
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Restrict which input bits newly grown kernels may sample (None = all).
     /// A caller can use it for credit-guided growth: e.g. let new kernels depend
     /// on one memory unit at a time, chosen by that unit's credit.

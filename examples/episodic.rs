@@ -811,6 +811,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             c.set_replay(std::env::var("HIER_REPLAY_LEN").or_else(|_| std::env::var("REPLAY_LEN")).ok().and_then(|v| v.parse().ok()).unwrap_or(512));
         }
         let mut a = HigherArea::new(BITS, c, span);
+        // HIER_FADE=f: a fading state instead of the window, half-life f × the area's span
+        // (in sentences)
+        a.set_fade(std::env::var("HIER_FADE").ok().and_then(|v| v.parse::<f64>().ok()).map(|f| f * span as f64));
         // HIER_SEPARATE=1: one slow-state frame per recent sentence (worse: deep kernels at
         // varying lags); default: one frame with all recent surprises
         a.separate = std::env::var("HIER_SEPARATE").is_ok();

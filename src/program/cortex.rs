@@ -467,6 +467,7 @@ impl RoleArea {
 pub struct AreaContext {
     window: std::collections::VecDeque<BitVector>,
     window_words: std::collections::VecDeque<Vec<BitVector>>,
+    faded: BitVector,
 }
 
 pub struct HigherArea {
@@ -485,16 +486,47 @@ pub struct HigherArea {
     /// The surprising words, one code each: of the current sentence, and of recent ones.
     pending_words: Vec<BitVector>,
     window_words: std::collections::VecDeque<Vec<BitVector>>,
+    /// Fading state (see `set_fade`): the per-sentence survival probability of a bit.
+    fade: Option<f64>,
+    faded: BitVector,
+    fade_rng: rand::rngs::StdRng,
 }
 
 impl HigherArea {
     pub fn new(bits: usize, l23: KernelClass<SimpleKernel>, span: usize) -> Self {
-        Self { column: CorticalColumn::new(bits, l23, ContextBuffer::new(bits, 4, Vec::new())), separate: false, bits, span: span.max(1), window: std::collections::VecDeque::new(), focus: false, pending_words: Vec::new(), window_words: std::collections::VecDeque::new() }
+        Self {
+            column: CorticalColumn::new(bits, l23, ContextBuffer::new(bits, 4, Vec::new())),
+            separate: false,
+            bits,
+            span: span.max(1),
+            window: std::collections::VecDeque::new(),
+            focus: false,
+            pending_words: Vec::new(),
+            window_words: std::collections::VecDeque::new(),
+            fade: None,
+            faded: BitVector::new(bits, Some(0)),
+            fade_rng: rand::SeedableRng::seed_from_u64(span as u64 * 7919 + 13),
+        }
+    }
+
+    /// A fading state instead of a window (a drifting temporal context, after Howard &
+    /// Kahana's temporal context model and the time-varying codes of lateral entorhinal
+    /// cortex). Every sentence end, each bit of the state survives with probability
+    /// 0.5^(1 / half_life); the sentence's surprising words then enter with all their
+    /// bits. Newer words are stronger, older ones fade, and a word's strength is how many
+    /// of its bits remain, so recency is in the code itself. None: the fixed window.
+    pub fn set_fade(&mut self, half_life: Option<f64>) {
+        self.fade = half_life.map(|h| 0.5f64.powf(1.0 / h.max(0.1)));
     }
 
     /// The slow state: everything the lower column found surprising in the last `span`
     /// sentences (including the current one's surprises so far, `current`).
     pub fn state(&self, current: &BitVector) -> BitVector {
+        if self.fade.is_some() {
+            let mut s = current.clone();
+            s.or_mut(&self.faded);
+            return s;
+        }
         let mut s = current.clone();
         for w in &self.window {
             s.or_mut(w);
@@ -556,18 +588,20 @@ impl HigherArea {
 
     /// The area's context (its window), to be saved and later reinstated.
     pub fn save_context(&self) -> AreaContext {
-        AreaContext { window: self.window.clone(), window_words: self.window_words.clone() }
+        AreaContext { window: self.window.clone(), window_words: self.window_words.clone(), faded: self.faded.clone() }
     }
 
     /// Reinstate a saved context: the window becomes what it was when saved.
     pub fn restore_context(&mut self, c: &AreaContext) {
         self.window = c.window.clone();
         self.window_words = c.window_words.clone();
+        self.faded = c.faded.clone();
         self.pending_words.clear();
     }
 
     /// Context boundary (a new story): forget the window.
     pub fn clear(&mut self) {
+        self.faded = BitVector::new(self.bits, Some(0));
         self.window.clear();
         self.window_words.clear();
         self.pending_words.clear();
@@ -624,6 +658,20 @@ impl HigherArea {
 
     /// End of a sentence: its surprising content joins the slow state.
     pub fn end_sentence(&mut self, surprising: &BitVector) {
+        if let Some(p) = self.fade {
+            use rand::Rng;
+            for w in self.faded.as_words_mut() {
+                let mut x = *w;
+                while x != 0 {
+                    let b = x.trailing_zeros();
+                    x &= x - 1;
+                    if !self.fade_rng.gen_bool(p) {
+                        *w &= !(1u64 << b);
+                    }
+                }
+            }
+            self.faded.or_mut(surprising);
+        }
         let words = std::mem::take(&mut self.pending_words);
         if !words.is_empty() {
             self.window_words.push_back(words);
@@ -646,6 +694,29 @@ impl HigherArea {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fading_state_keeps_recent_words_strongest() {
+        use crate::kernel::GrowthConfig;
+        let bits = 512;
+        let cfg = GrowthConfig { frame_words: bits / 64, max_frames: 2, sample_bits: 8, ..GrowthConfig::default() };
+        let mut area = HigherArea::new(bits, KernelClass::predictive(cfg), 4);
+        area.set_fade(Some(4.0));
+        let word = |i: usize| BitVector::from_bits(&(i * 64..i * 64 + 32).collect::<Vec<_>>(), bits);
+        let empty = BitVector::new(bits, Some(0));
+        area.end_sentence(&word(0)); // an old word
+        for _ in 0..8 {
+            area.end_sentence(&empty); // 8 sentences pass
+        }
+        area.end_sentence(&word(1)); // a recent word
+        let st = area.state(&empty);
+        let strength = |w: &BitVector| w.as_words().iter().zip(st.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+        // half-life 4 sentences: after 9 sentences about 32 * 0.5^(9/4) = 7 bits remain
+        assert_eq!(strength(&word(1)), 32);
+        assert!(strength(&word(0)) < 16, "old word kept {} bits", strength(&word(0)));
+        area.clear();
+        assert_eq!(area.state(&empty).count_ones(), 0);
+    }
+
     #[test]
     fn role_cells_learn_two_kinds_of_input_unsupervised() {
         use rand::{Rng, SeedableRng};

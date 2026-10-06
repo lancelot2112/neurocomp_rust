@@ -42,6 +42,15 @@ The staged plan these feed into is in the [roadmap](roadmap.md).
   the fact they hold (80–97%). As rehearsal it extends a single area's reach, but it hurts
   a chain that already holds the fact. Use it where an area must hold something beyond
   its window, and test it with recitation and answering.
+- **Active reading** ([29](experiments/29-saccades.md)): learned saccades with one
+  higher area reach 88–99.6% on the season task, with no story boundaries and at half
+  the cost of the three-area chain. Open:
+  - **Too many regressions** (11–42 per story, against 1 for the oracle): let the choice
+    see the column's confidence.
+  - **Targets:** a spatial index of where facts appeared, instead of the fixed "page top"
+    landmark.
+  - **Skipping** confident words.
+  - **The books task** with reaching plus looking back.
 - **Actions as context** ([28](experiments/28-reading-with-actions.md)): reinstating
   a book's windows when it is opened lifts interleaved reading from chance to 41–54%.
   The ceiling comes from crowded windows (every earlier question's words) and from

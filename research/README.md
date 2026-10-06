@@ -39,6 +39,7 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Compaction: event-based fast path, uncertainty-gated growth, sleep (downscale, prune, merge by replay) | **5–14× fewer kernels**, accuracy kept on every task; answering 5–62 µs/word (from 160–3,600) with surprise-gated learning, event-based recall, sparse storage and canonical kernels | transformer 16–100 µs/word, but 25–77% on held-out binding where we get 72–100% | [23](experiments/23-compaction.md), [comparison](concepts/brain-transformer-comparison.md) |
 | – | A cortical hierarchy: a higher area (sentence + slow state of past surprises) learns the column's errors and feeds back a top-down frame | **81 / 82 / 80%** on a task needing story-level context | column alone 0%, episodic memory 49–52% | [24](experiments/24-cortical-hierarchy.md) |
 | – | A chain of areas (windows of 4, 16, 64 sentences), each voting in a precision-weighted mix: how far back a fact can be used | each area extends the reach (4–7 stories back: 5 → 18 → 23%), but accuracy stays low | as frames into the area below: worse (0%) | [25](experiments/25-area-chain.md) |
+| – | Active reading: the basal ganglia choose saccades (read on, look back to the previous sentence or the page top); the page is external memory | **99.6 / 88 / 97%** with one higher area, no boundaries needed, half the cost of the three-area chain | reading straight through 3–11% | [29](experiments/29-saccades.md) |
 | – | Reading with actions: "@open book" reinstates that book's saved context; three books read in interleaved sessions | 41–54% (reinstate + contradiction detection), chance 25–33% without | limited by crowded windows, not by the actions | [28](experiments/28-reading-with-actions.md) |
 | – | Story boundaries detected by the network: a rare fact contradicted by a newer one of the same kind (kinds learned from neighbouring words) | **91 / 90 / 99%**, as good as being told (86 / 96 / 98%) | surprise spikes do not mark story starts here | [27](experiments/27-boundary-detection.md) |
 | – | Same chain with a context boundary at each new story; self-supervised read-back (say back the fact you hold, hear it) | **86 / 96 / 98%**, and 87–100% with the fact 16+ stories back | no boundary 9–23%; read-back helps one area (3–11 → 27–33%), not the chain | [26](experiments/26-context-and-readback.md) |
@@ -99,6 +100,7 @@ Experiments (chronological)
 26. [Context boundaries and read-back: keeping the right facts in reach](experiments/26-context-and-readback.md)
 27. [Detecting context boundaries: when a fact is contradicted, a new story has begun](experiments/27-boundary-detection.md)
 28. [Reading with actions: opening a book brings back its context](experiments/28-reading-with-actions.md)
+29. [Active reading: look back instead of holding everything](experiments/29-saccades.md)
 
 Concepts
 - [Brain, this network, and a transformer: function vs speed and memory](concepts/brain-transformer-comparison.md)

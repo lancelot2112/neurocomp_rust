@@ -331,6 +331,19 @@ arXiv or publisher pages where they are stable. Otherwise the citation is enough
   context.* J. Mathematical Psychology 46. A drifting context gives recency: the model
   for a decaying state.
 
+## Active reading ([29](experiments/29-saccades.md))
+- **Rayner, K. (1998).** *Eye movements in reading and information processing: 20 years
+  of research.* Psychological Bulletin 124. About 30% of words skipped, 10–15% of
+  saccades regressions, which follow comprehension difficulty.
+- **Reichle, E. D., Pollatsek, A., Fisher, D. L. & Rayner, K. (1998).** *Toward a model of
+  eye movement control in reading.* Psychological Review 105 (E-Z Reader). Where to look
+  next as a decision driven by processing.
+- **Hikosaka, O., Takikawa, Y. & Kawagoe, R. (2000).** *Role of the basal ganglia in the
+  control of purposive saccadic eye movements.* Physiological Reviews 80.
+- **Ballard, D. H., Hayhoe, M. M. & Pelz, J. B. (1995).** *Memory representations in
+  natural tasks.* J. Cognitive Neuroscience 7. Re-fixating to fetch information just in
+  time instead of holding it: the world as external memory.
+
 ## Data
 - Project Gutenberg texts via the NLTK data repository (*Alice*, Bryant's stories), and the
   Brown corpus (Francis & Kučera, 1979) with tags, via NLTK. Fetched by

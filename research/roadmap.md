@@ -139,6 +139,13 @@ to 41–54%. Next: let the network choose the action (reach for the book a quest
 needs), and hold states per kind so a restored context is not crowded. 28 also audits
 what is still hand-supplied.
 
+**Update** ([29](experiments/29-saccades.md)): active reading changes the picture.
+With learned saccades the page is external memory, and one higher area reaches 88–99.6%
+where three areas and context boundaries were needed before. Depth is still needed for
+what is not on the page (a gist, or a book read days ago), but looking back is the cheaper
+first resort. Next: confidence-driven regressions, a spatial index of the page, and
+skipping.
+
 **Growing areas by need (proposed).** Instead of fixing the number of areas, grow
 one where the top area cannot contain its surprise:
 - **A bud.** The top area keeps a candidate area above it, with a window 4× longer. The

@@ -837,11 +837,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     //   with the slot the column expects next, answers "what filled this slot in the
     //   matching episode?". The answer is a source in the mix (MIX), source 6.
     let bind = std::env::var("BIND").is_ok();
+    // BIND_HAB=f: habituation of the cue, leaving out bindings present in more than a share f
+    // of stored episodes (the store's own frequency statistics)
+    let bind_hab: Option<f32> = std::env::var("BIND_HAB").ok().and_then(|v| v.parse().ok());
     let mut bind_mem = EpisodicMemory::new(BITS, 5000);
     let mut bind_story = BitVector::new(BITS, Some(0));
     let mut expect_prev = BitVector::new(BITS, Some(0));
     let mut slot_prev: Option<usize> = None;
     let mut bind_answer: Option<usize> = None;
+    let mut bind_list: Vec<(usize, usize)> = Vec::new(); // this story's (word, slot) bindings
+    let mut bind_diag = 0usize;
     let slot_offset = |c: usize| ((c + 1) * 2_654_435_761usize) % BITS;
     let slot_input = |expect: &BitVector, prev: Option<usize>, roles: &RoleArea| {
         let mut x = expect.clone();
@@ -1163,6 +1168,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 bind_mem.store(&bind_story);
             }
             bind_story = BitVector::new(BITS, Some(0));
+            bind_list.clear();
         }
         if hier && hier_reset {
             area.clear();
@@ -1285,6 +1291,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let mut b = code.clone();
                     b.rotl_mut(slot_offset(c));
                     bind_story.or_mut(&b);
+                    bind_list.push((ids[t], c));
                 }
                 slot_prev = slot;
             }
@@ -1830,10 +1837,30 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let next_slot = roles.winner(&slot_input(&expect_prev, slot_prev, &roles)).map(|w| w.0);
                     bind_answer = None;
                     if let (Some(c), true) = (next_slot, bind_story.count_ones() > 0) {
-                        if let Some(ep) = bind_mem.recall(&bind_story, 64) {
+                        let cue = match bind_hab {
+                            Some(f) if bind_mem.len() > 50 => bind_mem.novel(&bind_story, f),
+                            _ => bind_story.clone(),
+                        };
+                        // BIND_RARE=1: rarity-weighted recall
+                        let found = if std::env::var("BIND_RARE").is_ok() { bind_mem.recall_rare(&cue, 64) } else { bind_mem.recall(&cue, 64) };
+                        if let Some(ep) = found {
                             let mut u = ep.clone();
                             u.rotr_mut(slot_offset(c));
                             bind_answer = enc.decode(&u);
+                            if std::env::var("BINDDIAG").is_ok() && testing && s.held_out && t + 1 == s.answer_at && bind_diag < 6 {
+                                bind_diag += 1;
+                                let unbind = |slot: usize| -> Vec<&str> {
+                                    let mut v = ep.clone();
+                                    v.rotr_mut(slot_offset(slot));
+                                    (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
+                                };
+                                let story: Vec<String> = bind_list.iter().map(|(w, sl)| format!("{}@{}", vocab[*w], sl)).collect();
+                                let mut slots: Vec<usize> = bind_list.iter().map(|x| x.1).chain(std::iter::once(c)).collect();
+                                slots.sort_unstable();
+                                slots.dedup();
+                                let rec: Vec<String> = slots.iter().map(|&sl| format!("{}:{:?}", sl, unbind(sl))).collect();
+                                eprintln!("  BINDDIAG {:?}\n    story bindings {:?}; next slot {c}; answer {} -> read {:?}\n    recalled episode by slot: {}", s.words, story, s.words[t + 1], bind_answer.map(|w| vocab[w]), rec.join(" "));
+                            }
                         }
                     }
                 }

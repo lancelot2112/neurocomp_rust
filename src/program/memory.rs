@@ -164,6 +164,38 @@ impl EpisodicMemory {
         self.recall_excluding(cue, min_overlap, &[]).map(|(_, e)| e)
     }
 
+    /// Rarity-weighted recall: each active cue bit votes for the episodes containing it with
+    /// weight ≈ log2(stored episodes / episodes containing the bit), from integer bit lengths
+    /// (at least 1). A rare shared item (a name seen once) then outweighs several common
+    /// ones (filler words shared by many episodes). Returns the best episode scoring at
+    /// least `min_score`, the most recent on ties.
+    pub fn recall_rare(&self, cue: &BitVector, min_score: u64) -> Option<&BitVector> {
+        let bitlen = |x: u64| 64 - x.leading_zeros();
+        let total = bitlen(self.stored as u64 + 1);
+        let mut scores = vec![0u64; self.episodes.len()];
+        for (wi, &w) in cue.as_words().iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                let b = wi * 64 + w.trailing_zeros() as usize;
+                w &= w - 1;
+                if let Some(ids) = self.index.get(b) {
+                    let c = self.bit_counts.get(b).copied().unwrap_or(0) as u64;
+                    let weight = total.saturating_sub(bitlen(c + 1)).max(1) as u64;
+                    for &id in ids {
+                        scores[id as usize - self.first_id] += weight;
+                    }
+                }
+            }
+        }
+        let mut best: Option<(u64, usize)> = None;
+        for (i, &o) in scores.iter().enumerate() {
+            if o >= min_score && o > 0 && best.map_or(true, |(bo, _)| o >= bo) {
+                best = Some((o, i));
+            }
+        }
+        best.map(|(_, i)| &self.episodes[i])
+    }
+
     /// Like `recall`, skipping episodes whose ids are in `exclude`; returns (id, episode).
     pub fn recall_excluding(&self, cue: &BitVector, min_overlap: u32, exclude: &[usize]) -> Option<(usize, &BitVector)> {
         // event-based: each active cue bit votes for the episodes that contain it
@@ -299,6 +331,30 @@ fn set_bits(bv: &BitVector) -> Vec<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn rarity_weighted_recall_prefers_a_rare_shared_item() {
+        let bits = 1024;
+        let word = |i: usize| BitVector::from_bits(&(i * 32..i * 32 + 32).collect::<Vec<_>>(), bits);
+        let or = |ws: &[usize]| {
+            let mut v = BitVector::new(bits, Some(0));
+            for &w in ws {
+                v.or_mut(&word(w));
+            }
+            v
+        };
+        let mut m = EpisodicMemory::new(bits, 100);
+        // common words 0, 1, 2 in most episodes; the rare word 9 in one
+        for i in 0..20 {
+            m.store(&or(&[0, 1, 2, 10 + i % 5]));
+        }
+        m.store(&or(&[9, 20]));
+        // cue: two common words and the rare one; plain recall prefers the common pair,
+        // rarity-weighted recall the episode with the rare word
+        let cue = or(&[0, 1, 9]);
+        assert!(m.recall(&cue, 1).unwrap().bit_get(32));
+        assert!(m.recall_rare(&cue, 1).unwrap().bit_get(9 * 32));
+    }
+
 
     #[test]
     fn indexed_recall_matches_a_full_scan() {

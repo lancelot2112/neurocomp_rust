@@ -117,6 +117,12 @@ rule, at 90% or more.
   names when the rule is role-level, but breaks rules where identity matters.
 - Next: keep general and specific kernels side by side, arbitrated by reliability.
 
+**Update** ([32](experiments/32-general-and-specific.md)): general and specific kernels
+now live side by side.
+- New names transfer fully, and habit improves to 86–89%.
+- The copies are too many and too similar; the name-dependent rule is mixed.
+- Next: spawn after repeated evidence, then the one-exposure schema test.
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

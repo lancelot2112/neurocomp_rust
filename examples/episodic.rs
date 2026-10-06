@@ -1002,6 +1002,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             if let Some(f) = ratio_env("TRUST_AT_TEST") {
                 column.l23.set_trust_floor(Some(f));
             }
+            // HIER_TRUST_AT_TEST=f: the same reliability floor in the higher areas
+            if let Some(f) = ratio_env("HIER_TRUST_AT_TEST") {
+                area.column.l23.set_trust_floor(Some(f));
+                for u in upper.iter_mut() {
+                    u.column.l23.set_trust_floor(Some(f));
+                }
+            }
         }
         let s = if task == Task::Books {
             // pick a book; a finished one is replaced by a new book with a new season

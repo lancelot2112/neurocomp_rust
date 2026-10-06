@@ -717,6 +717,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         _ => (None, None),
     };
     let mut sentence = BitVector::new(BITS, Some(0)); // bag of the current sentence so far
+    // COOPERATE=1: what memory says about the sentence's uncertain words, added to the higher
+    // area's sentence context (experiment 63)
+    let cooperate = std::env::var("COOPERATE").is_ok();
+    let mut coop_stats = [0usize; 2]; // enrichments, of them in held-out test stories
     let mut bg = BasalGanglia::new(BITS);
     bg.trace_len = std::env::var("BG_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     // BG_BASELINE=rate: the selector's error is reward − a running-average reward
@@ -1997,6 +2001,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             if share < predicted_share {
                 surprising.or_mut(code);
                 page_marks[t] = true;
+
                 // a fact conflict (BOUNDARY): this rare surprising word against a different
                 // rare word of the same kind still held; checked as the word arrives, so the
                 // old context is gone before the next prediction
@@ -2471,12 +2476,39 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     BitVector::from_words(m)
                 };
+                // COOPERATE: where the column is uncertain about the next word (its own prediction,
+                // without top-down or memory frames, is missing or under half reliable), the
+                // cortex asks memory about the sentence's least familiar word: the semantic
+                // store's content for it ("lucy" → "is a jones") joins the higher areas'
+                // sentence context for this step. Where the column is sure, nothing is asked.
+                let sentence_plus = {
+                    let mut x = sentence.clone();
+                    if cooperate {
+                        let empty = BitVector::new(BITS, Some(0));
+                        let own = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid]));
+                        let unsure = own.map_or(true, |(_, c)| c < Q_HALF);
+                        if unsure {
+                            let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                            let cue = if hippo_self {
+                                bind_sentence_pairs.iter().zip(&bind_sentence).min_by_key(|((w, c), b)| fam_binding(&bind_hc, &bind_mem, true, sparse_bind, b, &enc.codes[*w], *w, *c)).map(|((w, _), _)| *w)
+                            } else {
+                                ids[start..=t].iter().min_by_key(|&&w| word_count[w]).copied()
+                            };
+                            if let Some(out) = cue.and_then(|w| sem_store.peek(&enc.codes[w])) {
+                                x.or_mut(&out);
+                                coop_stats[0] += 1;
+                                coop_stats[1] += (testing && s.held_out) as usize;
+                            }
+                        }
+                    }
+                    x
+                };
                 if hier {
                     // the chain, top down: each upper area predicts from its window and the
                     // prediction of the area above it
                     let mut above: Option<BitVector> = None;
                     for i in (0..upper.len()).rev() {
-                        let hin_u = upper[i].input_with(&sentence, &surprising, if chain_mix { None } else { above.as_ref() });
+                        let hin_u = upper[i].input_with(&sentence_plus, &surprising, if chain_mix { None } else { above.as_ref() });
                         let p = upper[i].predict(&hin_u);
                         upper_pred[i] = (p.count_ones() > 0).then(|| p.clone());
                         if testing && t + 1 == s.answer_at {
@@ -2495,9 +2527,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             role_now = roles.observe(&expect, !testing, &mut role_rng);
                             role_now.map_or(empty, |c| roles.code(c).clone())
                         };
-                        area.input_lead(&lead, &sentence, &surprising)
+                        area.input_lead(&lead, &sentence_plus, &surprising)
                     } else {
-                        area.input_with(&sentence, &surprising, if chain_mix { None } else { above.as_ref() })
+                        area.input_with(&sentence_plus, &surprising, if chain_mix { None } else { above.as_ref() })
                     };
                     let td = area.predict(&hin);
                     if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
@@ -3577,6 +3609,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
+        }
+        if cooperate {
+            eprintln!("  COOPERATE seed {seed}: {} uncertain steps answered from the semantic store ({} in held-out test stories)", coop_stats[0], coop_stats[1]);
         }
         if infer_reps.is_some() {
             eprintln!("  INFER seed {seed}: {} inferred events ({} as word pairs taught to the higher area; {} words read as replay stories)", infer_stats[0], infer_stats[1], replay_words);

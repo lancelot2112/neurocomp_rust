@@ -226,3 +226,22 @@ the transformer baseline ([comparison](concepts/brain-transformer-comparison.md)
 - questions whose right answer is "unknown".
 
 Then real text again, where the earlier stages (03–05) left off.
+
+## To do: infrastructure
+These are not research stages. They keep earlier results trustworthy as the code grows.
+- **Exactly repeatable runs.** Two runs at the same seed can differ by about a point
+  ([40](experiments/40-family-stated-once.md)). The likely cause is hash-map iteration
+  order (Rust's `HashMap` is randomly seeded per process) in kernel matching or
+  ranking. Replace it with a fixed-order map or a seeded hasher wherever iteration order
+  can change a result. Then check that two runs at one seed print identical output.
+- **An experiment regression suite.** Today `cargo test` checks only the building blocks
+  (about 120 unit tests in `src/`). The experiments are example programs run by hand,
+  so nothing checks that their numbers still hold after a code change. The plan:
+  - a script (`scripts/regress.sh`) that reruns a short version of each key experiment
+    (fewer stories, one or two seeds) with its recorded settings;
+  - a table of expected results, so the run fails if accuracy drops more than a set
+    margin below the recorded figure;
+  - first entries: the season task with story boundaries (26), saccades (29), role
+    transfer (31), sleep generalisation (33), slot memory (36), the schema advantage
+    (39) and the stated family (40);
+  - this needs repeatable runs first, or the margins must absorb the noise.

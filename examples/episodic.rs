@@ -1499,7 +1499,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let mut prng = StdRng::seed_from_u64(seed.wrapping_add(4242));
             let phase: usize = std::env::var("SCHEMA_PHASE").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
             for j in 0..PRACTICE_NAMES.len() {
-                let f = prng.gen_range(0..SURNAMES.len());
+                // families balanced within each kind: a lopsided share would make the
+                // majority family part of the learned frame ("X is a smith"), and those
+                // facts would no longer parse
+                let f = (j / 3) % SURNAMES.len();
                 truth.push(f);
                 let tellers: Vec<(usize, usize)> = match j % 3 {
                     0 => vec![(0, f), (k - 1, 1 - f)],

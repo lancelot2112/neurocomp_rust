@@ -355,6 +355,10 @@ fn family_of(name_i: usize, new: bool) -> usize {
 fn family_stated() -> bool {
     std::env::var("FAMILY_STATED").is_ok()
 }
+/// BELIEF_Q=1: test questions that ask a new name's family (see `season_story_with`).
+fn belief_q() -> bool {
+    std::env::var("BELIEF_Q").is_ok()
+}
 /// FAMILY_SHORT=p (with FAMILY): a trained name's question omits the surname with
 /// probability p ("mary went to the"), as people are often named by first name only.
 fn family_short() -> Option<f64> {
@@ -429,6 +433,17 @@ fn season_story_with(rng: &mut StdRng, distance: usize, held_out: bool, forced: 
         Some(i) => family_of(i, true),
         None => family_of(n, false),
     });
+    // BELIEF_Q=1 (with FAMILY_STATED): half the held-out questions about a new name ask its
+    // family itself ("tom is a"), the fact the narrators gave; the other half its place, which
+    // the family decides
+    if let (Some(_), true, true, Some(f)) = (new_i, family_stated(), forced.is_none() && held_out && belief_q(), fam) {
+        if rng.gen_bool(0.5) {
+            words.extend([name, "is", "a"]);
+            let answer_at = words.len();
+            words.extend([SURNAMES[f], "."]);
+            return Story { words, answer_at, held_out };
+        }
+    }
     if held_out && new_wording() {
         words.extend([name, "walked", "into", "the"]);
     } else if let (Some(_), true, true) = (new_i, family_stated(), forced.is_none()) {
@@ -1369,6 +1384,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut topdown_has_answer = 0usize;
     let mut prev: Option<usize> = None;
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
+    // BELIEF_Q: held-out answers (right, asked) for place questions and family questions
+    let mut belief_tally = [(0usize, 0usize); 2];
     // calibration of the column's L5 confidence at test answers: (answers, right) per
     // confidence bucket [0, .5), [.5, .7), [.7, .8), [.8, .9), [.9, 1], plus the summed
     // confidence per bucket (for the expected calibration error)
@@ -1423,6 +1440,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         m
     };
+    // each statement about a new name: (name, its place among that name's statements in time)
+    let schema_ord: HashMap<usize, (usize, usize)> = {
+        let mut slots: Vec<(usize, usize)> = schema_at.iter().map(|(&p, &(i, _))| (p, i)).collect();
+        slots.sort_unstable();
+        let mut count = [0usize; 8];
+        slots.into_iter().map(|(p, i)| { let o = count[i % 8]; count[i % 8] += 1; (p, (i, o)) }).collect()
+    };
+    // NARRATOR_SPLIT=1 (with NARRATORS, LIAR): the statements about each new name alternate
+    // between the liar, who always lies in them, and the first (honest) narrator, so each new
+    // name's family is a 1:1 conflict a vote cannot settle; which comes first alternates by
+    // name. Trust must come from the other facts (the trained names'), where the liar lies
+    // with probability LIAR among honest narrators.
+    let narrator_split = std::env::var("NARRATOR_SPLIT").is_ok();
     // Books task: each book's season, sessions left, last session read; this session's
     // book and its bin [first session, back to back, after 1-2 other sessions, after 3+]
     let (mut book_season, mut book_left, mut book_last) = ([0usize; 3], [0usize; 3], [0usize; 3]);
@@ -2257,12 +2287,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // NARRATORS=k: each training story is told by narrator s_i % k (the reader knows who
         // tells it, as one knows a book's author). LIAR=p: the last narrator swaps the family
         // in a fact sentence ("X is a jones" → "smith") with probability p.
-        let narrator: u16 = narrators.map_or(0, |k| (s_i % k) as u16);
+        let split = narrators.zip(schema_ord.get(&s_i)).filter(|_| narrator_split && !testing).map(|(k, &(i, o))| if (i + o) % 2 == 0 { k - 1 } else { 0 });
+        let narrator: u16 = split.map_or_else(|| narrators.map_or(0, |k| (s_i % k) as u16), |n| n as u16);
         if let (Some(k), false) = (narrators, testing) {
             if narrator as usize == k - 1 && liar > 0 {
                 let mut lrng = StdRng::seed_from_u64(seed ^ (s_i as u64).wrapping_mul(0x9E37_79B9));
+                let p = if split.is_some() { ONE } else { liar };
                 for i in 3..s.words.len() {
-                    if s.words[i - 2] == "is" && s.words[i - 1] == "a" && chance(&mut lrng, liar) {
+                    if s.words[i - 2] == "is" && s.words[i - 1] == "a" && chance(&mut lrng, p) {
                         if let Some(f) = SURNAMES.iter().position(|x| *x == s.words[i]) {
                             s.words[i] = SURNAMES[1 - f];
                             lies_told += 1;
@@ -3747,6 +3779,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
+                    if s.held_out && belief_q() {
+                        let q = &mut belief_tally[(s.words[s.answer_at - 1] == "a") as usize];
+                        q.0 += right as usize;
+                        q.1 += 1;
+                    }
                     if s.held_out {
                         let h = &mut held_halves[(s_i - TRAIN >= TEST / 2) as usize];
                         h.0 += right as usize;
@@ -4700,6 +4737,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     (1..=k as u16).map(|n| format!("{n}{} {:.2}", if n as usize == k { " (liar)" } else { "" }, to_f32(rel.trust(n)))).collect::<Vec<_>>().join(", "),
                     beliefs.join("; ")
                 );
+                // the believed family of each new name, the relation store's answer, and the
+                // truth
+                let verdicts: Vec<String> = NEW_NAMES
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, n)| index.get(n).map(|&w| (i, w)))
+                    .map(|(i, w)| {
+                        let truth = SURNAMES[family_of(i, true)];
+                        let believed = isa.and_then(|r| rel.bayes.believed(&(r, w, 0, 1))).map_or("-", |v| vocab[v]);
+                        let stored = isa.and_then(|r| rel.ask(&enc.codes, w, r, 0, 1)).map_or("-", |v| vocab[v]);
+                        format!("{}: believed {believed}, store {stored}, true {truth}", vocab[w])
+                    })
+                    .collect();
+                eprintln!("  BELIEF seed {seed}: {}", verdicts.join("; "));
             }
             for fam in ["jones", "smith"] {
                 if let Some(&w) = index.get(fam) {
@@ -4907,6 +4958,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * cn as f64 / n as f64
             );
         }
+    }
+    if belief_q() {
+        let pc = |x: (usize, usize)| 100.0 * x.0 as f64 / x.1.max(1) as f64;
+        eprintln!("  BELIEF_Q seed {seed}: new names' place questions {:.1}% of {}, family questions {:.1}% of {}", pc(belief_tally[0]), belief_tally[0].1, pc(belief_tally[1]), belief_tally[1].1);
     }
     if dump.is_none() {
         let total: f64 = prof.iter().sum();

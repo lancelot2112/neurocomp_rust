@@ -1405,6 +1405,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // - The efference copy is the forward model's prediction, compared with what is heard
     //   (not a flag): a word heard as predicted is not surprising.
     let motor_speech = std::env::var("SPEECH").map_or(false, |v| v == "motor");
+    // SPEAK_CTX: what the go/no-go sees besides the mix's confidence band: "novelty" (the
+    // sentence's least familiar binding, in four bands: a new name is new), "agree" (every
+    // source in the mix proposed the same word), or both ("novelty,agree"). Default: the
+    // confidence band only.
+    let speak_ctx_cfg = std::env::var("SPEAK_CTX").unwrap_or_default();
+    let (ctx_novelty, ctx_agree) = (speak_ctx_cfg.contains("novelty"), speak_ctx_cfg.contains("agree"));
+    let speak_ctx = |cb: usize, fam_band: u64, agreed: bool| -> usize {
+        if !ctx_novelty && !ctx_agree {
+            return cb;
+        }
+        cb * 8 + if ctx_novelty { (fam_band.min(7) / 2) as usize * 2 } else { 0 } + if ctx_agree { agreed as usize } else { 0 }
+    };
+    // at test: (questions, spoken, right) when the sources agreed, and when they did not
+    let mut sp_agree = [[0usize; 3]; 2];
+    // at test: (questions, spoken, right) per novelty band
+    let mut sp_novel = [[0usize; 3]; 4];
     let speak_penalty: i32 = q16(std::env::var("SPEAK_PENALTY").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0)) as i32;
     let tract = VocalTract::new(vocab.len(), BITS, 32, &mut StdRng::seed_from_u64(seed ^ 0x5eec_0001));
     let mut motor = MotorArea::new(BITS);
@@ -3242,6 +3258,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 // MIX: every source votes for its words with its reliability as the weight
                 let mut mix_conf: Option<Q16> = None;
+                let mut mix_agreed = false;
                 // familiarity band of the current sentence (BIND_FAM), 7 = familiar / none
                 let fam_band: u64 = if bind && bind_fam && mem_size(&bind_hc, &bind_mem, hippo_self) > 0 {
                     bind_sentence
@@ -3355,6 +3372,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         out = enc.codes[w].clone();
                         mix_conf = Some(SourceMix::confidence(total));
+                        mix_agreed = proposals.len() > 1 && proposals.iter().all(|p| p.2 == vec![w]);
                     }
                     // (not on an internal step: its "next word" is the network's own)
                     if (!testing || mix_test_learn) && !inner[t + 1] && !reciting {
@@ -3538,13 +3556,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let said = if motor_speech {
                             // the basal ganglia release speech or hold it; the motor area says it
                             let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
-                            let cands = [speak_code(cb, 0), speak_code(cb, 1)];
+                            let sc = speak_ctx(cb, fam_band, mix_agreed);
+                            let cands = [speak_code(sc, 0), speak_code(sc, 1)];
                             let go = speak_bg.select(&cands, None::<&mut StdRng>) == Some(1);
                             sp_stats[cb][0] += 1;
+                            let nb = (fam_band.min(7) / 2) as usize;
+                            sp_agree[mix_agreed as usize][0] += 1;
+                            sp_novel[nb][0] += 1;
                             let word = if go {
                                 let (w, p) = motor_say(&motor, &tract, &out);
+                                let r = (w == Some(next)) as usize;
                                 sp_stats[cb][1] += 1;
-                                sp_stats[cb][2] += (w == Some(next)) as usize;
+                                sp_stats[cb][2] += r;
+                                sp_agree[mix_agreed as usize][1] += 1;
+                                sp_agree[mix_agreed as usize][2] += r;
+                                sp_novel[nb][1] += 1;
+                                sp_novel[nb][2] += r;
                                 eff_pred[t + 1] = p;
                                 w
                             } else {
@@ -3570,7 +3597,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if motor_speech && !testing && !replaying && t + 1 == s.answer_at {
                     let c = mix_conf.unwrap_or_else(|| column.confidence());
                     let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
-                    let cands = [speak_code(cb, 0), speak_code(cb, 1)];
+                    let sc = speak_ctx(cb, fam_band, mix_agreed);
+                    let cands = [speak_code(sc, 0), speak_code(sc, 1)];
                     let a = speak_bg.select(&cands, Some(&mut rng)).unwrap_or(0);
                     sp_train[0] += 1;
                     let r = if a == 1 {
@@ -4164,7 +4192,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     format!("band {b}: spoke {:.0}% of {n}, {:.1}% right", 100.0 * sp as f64 / n.max(1) as f64, 100.0 * r as f64 / sp.max(1) as f64)
                 })
                 .collect();
-            let values: Vec<String> = (0..5).map(|b| format!("{:.2}/{:.2}", to_f32(speak_bg.value(&speak_code(b, 0))), to_f32(speak_bg.value(&speak_code(b, 1))))).collect();
+            let values: Vec<String> = (0..5).map(|b| format!("{:.2}/{:.2}", to_f32(speak_bg.value(&speak_code(speak_ctx(b, 7, true), 0))), to_f32(speak_bg.value(&speak_code(speak_ctx(b, 7, true), 1))))).collect();
+            let part = |x: [usize; 3]| format!("spoke {:.0}% of {}, {:.1}% right", 100.0 * x[1] as f64 / x[0].max(1) as f64, x[0], 100.0 * x[2] as f64 / x[1].max(1) as f64);
+            eprintln!(
+                "  SPEECH seed {seed} (context: {}): sources agreed: {}; disagreed: {}; by novelty band (0 = newest): {}",
+                if speak_ctx_cfg.is_empty() { "confidence" } else { speak_ctx_cfg.as_str() },
+                part(sp_agree[1]),
+                part(sp_agree[0]),
+                (0..4).map(|b| format!("{b}: {}", part(sp_novel[b]))).collect::<Vec<_>>().join("; ")
+            );
             eprintln!("  SPEECH seed {seed}: at test questions, by the mix's confidence band: {}; value silent/speak per band {}", bands.join(", "), values.join(" "));
         }
         if efference_on || recite.is_some() || speak {

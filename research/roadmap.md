@@ -201,10 +201,15 @@ slot codes bound to content in the hippocampus, recalled by slot.
   - belief isolated behind a swappable rule (full / vote / graded / posterior); proposals
     validated by belief × credibility ([76](experiments/76-belief-rules.md)).
   - inference from every statement of a fact ([77](experiments/77-infer-from-every-statement.md)).
+  - a task where the believed fact decides the answer: family questions 98–100% with
+    graded or posterior belief, 29–68% trusting everyone or counting votes
+    ([78](experiments/78-belief-decides-the-answer.md)).
 - **Next:**
   1. ~~independent random streams per subsystem~~ (done, see Infrastructure);
-  2. a task where the believed fact decides the answer;
-  3. proposals and self-generated claims as sources with earned trust.
+  2. ~~a task where the believed fact decides the answer~~ (done, [78](experiments/78-belief-decides-the-answer.md));
+  3. carry the believed family into place questions (name → family → place);
+  4. proposals and self-generated claims as sources with earned trust;
+  5. "unknown" when belief is split.
 
 ## 5. A third level and a slower clock
 **Build.**

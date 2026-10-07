@@ -30,10 +30,20 @@ everything (`full`) let a lie heard first become a premise, and eight false infe
 became knowledge (64 → 50% on that seed); any graded rule rejected them. Proposals are now
 validated by the module: the belief in their fact times their source's credibility.
 
+## Belief deciding an answer ([78](../experiments/78-belief-decides-the-answer.md))
+Asked a new name's family, where an honest narrator and the liar each stated it once,
+graded and posterior belief answer 98–100% right; trusting everyone or counting votes
+answers 29–68% (every conflict is a tie). Trust learned from other facts breaks the tie.
+A source that contradicts itself among single-valued sources is now a conflict, not a
+many-valued relation (that rule had stopped trust from being learned at all).
+
 ## What is still missing
 - Proposals and the network's own claims as sources with earned trust (premise credibility
   already comes from belief: [76](../experiments/76-belief-rules.md)).
 - Inference from every statement of a fact is built ([77](../experiments/77-infer-from-every-statement.md)):
   graded belief then validates only the true inferences.
+- The believed fact carried into questions that need it as one step of several (a new
+  name's place by its family, [78](../experiments/78-belief-decides-the-answer.md)).
+- "Unknown" as an answer when belief is split.
 - Deciding a source from content when the tag is lost (reality monitoring proper).
 - Curiosity acting: open proposals steering replay and attention.

@@ -34,6 +34,9 @@ pub use index_memory::{IndexConfig, IndexMemory};
 pub mod engram;
 pub use engram::{Dedup, EngramConfig, EngramStore};
 
+pub mod bayes;
+pub use bayes::Bayes;
+
 pub mod relations;
 pub use relations::RelationStore;
 

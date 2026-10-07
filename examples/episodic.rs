@@ -1180,7 +1180,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the places joneses went.
     rel.lift = std::env::var("REL_LIFT").is_ok();
     // TRUST=vote (a control): every source counts the same in a conflict (a plain vote)
-    rel.use_trust = std::env::var("TRUST").map_or(true, |v| v != "vote");
+    rel.bayes.use_trust = std::env::var("TRUST").map_or(true, |v| v != "vote");
     let rel_hops: usize = std::env::var("REL_HOPS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut rel_stats = [0usize; 3]; // facts parsed at sleep, answers given at test, of those for held-out stories
     let sem_frame = sem_typed > 0 && std::env::var("SEM_FRAME").is_ok();

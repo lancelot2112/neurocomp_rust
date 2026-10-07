@@ -4,9 +4,10 @@
 //! knowledge is a *claim*: a value for a key, made by a source (a narrator, the network's
 //! own words, one of its proposals). Claims on one key with different values conflict.
 //!
-//! - **A many-valued key is not a conflict.** If one source gives a key several values
-//!   ("al's children"), the values are compatible; a conflict is different sources giving
-//!   different values, each one value.
+//! - **A many-valued key is not a conflict.** If most of a key's sources give it several
+//!   values ("al's children"), the values are compatible. A source that gives two values
+//!   where the others give one contradicts itself, and the key is a conflict like any
+//!   other (a liar who lies some of the time).
 //! - **Trust and belief are estimated together** (truth discovery, after TruthFinder):
 //!   - a value's belief is the summed trust of the sources that claim it;
 //!   - a source's trust is the mean share of belief its claims win, over the keys at least
@@ -180,9 +181,16 @@ impl<K: Hash + Eq + Clone> Bayes<K> {
     }
 }
 
-/// A key one source gave several values: a many-valued relation, not a conflict.
+/// A many-valued key, not a conflict: more than half of the sources that claim it gave it
+/// several values ("al's children", listed by whoever tells of them). One source giving two
+/// values among sources that each give one is contradicting itself (a liar who lies some of
+/// the time): a conflict.
 pub fn many_valued(c: &[(usize, u16)]) -> bool {
-    c.iter().any(|a| c.iter().any(|b| a.1 == b.1 && a.0 != b.0))
+    let mut sources: Vec<u16> = c.iter().map(|x| x.1).collect();
+    sources.sort_unstable();
+    sources.dedup();
+    let several = sources.iter().filter(|&&s| c.iter().any(|a| a.1 == s && c.iter().any(|b| b.1 == s && b.0 != a.0))).count();
+    several * 2 > sources.len()
 }
 
 #[cfg(test)]
@@ -255,6 +263,28 @@ mod tests {
         f.claim(9, 2, 3);
         f.resolve();
         assert_eq!((f.belief(&9, 1), f.belief(&9, 2)), (ONE, ONE));
+    }
+
+    #[test]
+    fn a_source_that_contradicts_itself_among_honest_ones_is_a_conflict() {
+        let mut b: Bayes<u32> = Bayes::new();
+        // on keys 0..10, sources 1 and 2 say 1; source 3 says 1 a quarter of the time and 2
+        // as well, contradicting itself
+        for k in 0..10 {
+            b.claim(k, 1, 1);
+            b.claim(k, 1, 2);
+            b.claim(k, 2, 3);
+            if k % 4 == 0 {
+                b.claim(k, 1, 3);
+            }
+        }
+        // a 1:1 tie between source 1 and source 3
+        b.claim(99, 6, 1);
+        b.claim(99, 5, 3);
+        b.resolve();
+        assert!(b.trust(3) < b.trust(1), "trust {} vs {}", b.trust(3), b.trust(1));
+        assert_eq!(b.believed(&99), Some(6));
+        assert_eq!(b.contested().len(), 11);
     }
 
     #[test]

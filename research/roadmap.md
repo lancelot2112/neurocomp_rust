@@ -177,7 +177,7 @@ slot codes bound to content in the hippocampus, recalled by slot.
 - **Next:**
   1. one-step rules (merge differently worded relations) and transitive relations,
      judged by contradiction;
-  2. let a frame word be an entity, so the cortex composes lucy → jones → place;
+  2. ~~let a frame word be an entity~~ (done, [68](experiments/68-lifted-frames-and-sparse-gating.md));
   3. a cue controller that reacts to the first recall and is rewarded at the answer.
 
 ### Output and self-supervision (after [71](experiments/71-speech-routing.md))
@@ -187,7 +187,8 @@ slot codes bound to content in the hippocampus, recalled by slot.
   - the efference copy and recitation ([70](experiments/70-efference-copy-and-recitation.md));
   - speech routed as in the brain ([71](experiments/71-speech-routing.md)).
 - **Next:**
-  1. a go/no-go that sees novelty and agreement between memory and cortex;
+  1. ~~a go/no-go that sees novelty and agreement between memory and cortex~~ (done,
+     [72](experiments/72-go-no-go-signals.md));
   2. read-back as training for the area chain
      ([plan](concepts/output-and-self-supervision.md)).
 
@@ -353,6 +354,10 @@ These are not research stages. They keep earlier results trustworthy as the code
     threads costs more than it saves.
   - Profiled run, all of it: 217 → 84 s (training 566 → 237 µs per word, test 7.35 →
     2.77 ms per word), output identical.
+  - **The three-seed suite on the final build: every entry the same** (all 24, every
+    seed's figure equal to the recorded one). The suite (72 runs on 4 cores) took 912 s,
+    against 1 789 s after the first round of changes (response cache, hot fields, the
+    walk's reuse).
   - A GPU is a poor fit: the work is sparse and event-driven (index fan-out, a few
     matched kernels, early exits), not dense matrix products.
 - **Integer only** ([47](experiments/47-integer-only.md)). Every per-step computation is

@@ -481,8 +481,9 @@ impl EngramStore {
     /// reading order with the word in N's slot replaced by N (or N put first), and F
     /// dropped ("lucy went to the hallway"); and the same keeping F. Returns up to
     /// `max_rows` source rows' events, most recent first, as (content ids in order, context
-    /// ids, source row, fact row): the event and its two premises.
-    pub fn infer_from(&self, fact: u32, new: &[usize], max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32)> {
+    /// ids, source row, fact row, partner word): the event, its two premises, and the word
+    /// that links them (the fact's filler F).
+    pub fn infer_from(&self, fact: u32, new: &[usize], max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32, usize)> {
         let ws = self.cfg.word_space.max(1);
         let Some(r) = self.row(fact) else { return Vec::new() };
         let count = |w: usize| self.word_rows(w);
@@ -539,7 +540,7 @@ impl EngramStore {
                 if !placed {
                     seq.insert(0, n_id);
                 }
-                out.push((seq, context.clone(), t.0, fact));
+                out.push((seq, context.clone(), t.0, fact, f));
             }
         }
         out
@@ -837,7 +838,7 @@ impl EpisodicCircuit for EngramStore {
         self.last_row.get()
     }
 
-    fn infer(&mut self, max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32)> {
+    fn infer(&mut self, max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32, usize)> {
         let facts = std::mem::take(&mut self.facts);
         facts.iter().flat_map(|(r, new)| self.infer_from(*r, new, max_rows)).collect()
     }
@@ -1052,7 +1053,7 @@ mod tests {
         m.store(&event(&[tom, is, a, smith, dot]));
         let inferred = m.infer(8);
         // tom took john's slot; smith dropped (and kept, in the second variant)
-        assert!(inferred.iter().any(|(seq, c, _, _)| seq == &vec![b(tom, 0), b(went, 2), b(to, 3), b(the, 4), b(kitchen, 5), b(dot, 6)] && c == &vec![ctx(autumn)]), "{inferred:?}");
-        assert!(inferred.iter().any(|(seq, _, _, _)| seq.contains(&b(smith, 1))));
+        assert!(inferred.iter().any(|(seq, c, _, _, _)| seq == &vec![b(tom, 0), b(went, 2), b(to, 3), b(the, 4), b(kitchen, 5), b(dot, 6)] && c == &vec![ctx(autumn)]), "{inferred:?}");
+        assert!(inferred.iter().any(|(seq, _, _, _, _)| seq.contains(&b(smith, 1))));
     }
 }

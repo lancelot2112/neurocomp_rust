@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1058,8 +1058,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let proposals_on = std::env::var("PROPOSALS").is_ok();
     let proposal_support: usize = std::env::var("PROPOSAL_SUPPORT").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
     // (season, sentence words) → (source rows, confirmed, contradicted, replayed, each source's
-    // prefix, fact rows)
-    let mut proposals: HashMap<(usize, Vec<usize>), (Vec<u32>, u32, u32, bool, Vec<Vec<usize>>, Vec<u32>)> = HashMap::default();
+    // prefix, fact rows, partner words)
+    let mut proposals: HashMap<(usize, Vec<usize>), (Vec<u32>, u32, u32, bool, Vec<Vec<usize>>, Vec<u32>, Vec<usize>)> = HashMap::default();
+    // with the relation store, a proposal's credibility comes from the Bayes module: the
+    // belief in its fact ("lucy is a jones") times the credibility of the narrator who told
+    // its source event; validated at PROPOSAL_MIN (default 0.5)
+    let proposal_min: Q16 = q16(std::env::var("PROPOSAL_MIN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
+    // the narrator of each stored hippocampal event (who told it)
+    let mut row_narrator: HashMap<u32, u16> = HashMap::default();
     let mut row_state: HashMap<u32, Vec<u32>> = HashMap::default(); // engram row → higher-area state
     // engram row → the words of its story before its sentence (what was read up to it)
     let mut row_prefix: HashMap<u32, Vec<usize>> = HashMap::default();
@@ -1182,8 +1188,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // only (from an earlier filler to a later one) from each first answer: lucy → jones →
     // the places joneses went.
     rel.lift = std::env::var("REL_LIFT").is_ok();
-    // TRUST=vote (a control): every source counts the same in a conflict (a plain vote)
-    rel.bayes.use_trust = std::env::var("TRUST").map_or(true, |v| v != "vote");
+    // BELIEF=full|vote|graded|posterior: the Bayes module's belief rule (default graded);
+    // TRUST=vote is the same as BELIEF=vote
+    rel.bayes.rule = BeliefRule::named(&std::env::var("BELIEF").unwrap_or_else(|_| if std::env::var("TRUST").map_or(false, |v| v == "vote") { "vote".into() } else { "graded".into() }));
     let rel_hops: usize = std::env::var("REL_HOPS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut rel_stats = [0usize; 3]; // facts parsed at sleep, answers given at test, of those for held-out stories
     let sem_frame = sem_typed > 0 && std::env::var("SEM_FRAME").is_ok();
@@ -1684,7 +1691,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let mut stories: Vec<Story> = Vec::new();
                 if proposals_on {
                     // the inferences become proposals (and hippocampal events tagged as such)
-                    for (seq, ctx, src, fact) in &events {
+                    for (seq, ctx, src, fact, partner) in &events {
                         let Some(prefix) = row_prefix.get(src) else { continue };
                         let Some(season) = prefix.iter().find_map(|&w| SEASONS.iter().position(|x| *x == vocab[w])) else { continue };
                         let words: Vec<usize> = seq.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len() && vocab[w] != ".").collect();
@@ -1701,8 +1708,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             hc.set_source(2);
                             hc.store_split(seq, ctx, &set_bits(&ev));
                             hc.set_source(0);
-                            (Vec::new(), 0, 0, false, Vec::new(), Vec::new())
+                            (Vec::new(), 0, 0, false, Vec::new(), Vec::new(), Vec::new())
                         });
+                        if !e.6.contains(partner) {
+                            e.6.push(*partner);
+                        }
                         if !e.0.contains(src) {
                             e.0.push(*src);
                             e.4.push(prefix.clone());
@@ -1712,29 +1722,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                     // the validated ones, not yet replayed, are replayed now
-                    let mut keys: Vec<(usize, Vec<usize>)> = proposals.keys().cloned().collect();
-                    keys.sort();
-                    for k in keys {
-                        let e = proposals.get_mut(&k).unwrap();
-                        // independent premises: the weaker of the facts' testimonies (how
-                        // many episodes stated them) and the distinct source events
-                        let support = e.5.iter().map(|&f| hc.testimony(f) as usize).sum::<usize>().min(e.0.len());
-                        let valid = (e.1 > 0 || support >= proposal_support) && e.2 == 0;
-                        if valid && !e.3 {
-                            // replayed in each of its sources' contexts, as inferred events are
-                            e.3 = true;
-                            for prefix in &e.4 {
-                                let mut words: Vec<&'static str> = prefix.iter().map(|&w| vocab[w]).collect();
-                                words.extend(k.1.iter().map(|&w| vocab[w]));
-                                words.push(".");
-                                let answer_at = words.len().saturating_sub(2);
-                                stories.push(Story { words, answer_at, held_out: false });
-                                infer_stats[0] += 1;
-                            }
-                        }
-                    }
+                    let isa = rel_reps.and(rel.relation_for(&[index["is"], index["a"]]));
+                    let st = validate_proposals(&mut proposals, isa.map(|i| (&rel, i)), &**hc, &row_narrator, &vocab, proposal_min, proposal_support);
+                    infer_stats[0] += st.len();
+                    stories.extend(st);
                 }
-                for (seq, _ctx, src, _) in events.iter().filter(|_| !proposals_on) {
+                for (seq, _ctx, src, _, _) in events.iter().filter(|_| !proposals_on) {
                     let Some(prefix) = row_prefix.get(src) else { continue };
                     let mut words: Vec<&'static str> = prefix.iter().map(|&w| vocab[w]).collect();
                     words.extend(seq.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len()).map(|w| vocab[w]));
@@ -1761,7 +1754,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let size = hc.len().max(1) as u64;
             // per inferred event: its words and the higher area's state when its source was read
             let mut items: Vec<(Vec<usize>, BitVector)> = Vec::new();
-            for (seq, ctx, src, _fact) in &events {
+            for (seq, ctx, src, _fact, _) in &events {
                 let mut state = BitVector::new(BITS, Some(0));
                 match row_state.get(src).filter(|_| std::env::var("INFER_CTX_STATE").is_err()) {
                     // the higher area's own state when the source event was read
@@ -2017,6 +2010,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rng);
+            // proposals judged again now that the facts of this stretch are in the module
+            if let (true, Some(ireps), Some(hc), Some(isa)) = (proposals_on, infer_reps, bind_hc.as_ref(), rel.relation_for(&[index["is"], index["a"]])) {
+                let stories = validate_proposals(&mut proposals, Some((&rel, isa)), &**hc, &row_narrator, &vocab, proposal_min, proposal_support);
+                infer_stats[0] += stories.len();
+                for _ in 0..ireps {
+                    let mut order: Vec<usize> = (0..stories.len()).collect();
+                    order.shuffle(&mut rng);
+                    for i in order {
+                        let st = &stories[i];
+                        replay_queue.push(Story { words: st.words.clone(), answer_at: st.answer_at, held_out: false });
+                    }
+                }
+            }
         }
         if let (Some(reps), true) = (semantic_reps, !hippo_self && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             let rare = |w: usize| (word_count[w] as u64) * 100 < sentence_count as u64;
@@ -4040,6 +4046,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
                                 let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)).collect();
                                 hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
+                                if let Some(r) = hc.last_row() {
+                                    row_narrator.insert(r, narrator + 1);
+                                }
                                 // the cortical state this event was read in (the higher area's
                                 // slow state at the sentence's start), kept per row for replay
                                 if let (true, Some(r)) = (infer_reps.is_some() && hier, hc.last_row()) {
@@ -4379,7 +4388,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             for ((season, w), e) in &proposals {
                 let tr = truth(*season, w);
                 let support = e.5.iter().map(|&f| bind_hc.as_ref().map_or(1, |h| h.testimony(f)) as usize).sum::<usize>().min(e.0.len());
-                let corroborated = support >= proposal_support;
+                let cred = rel_reps.and(rel.relation_for(&[index["is"], index["a"]])).map(|isa| proposal_credibility(&rel, isa, w, &e.6, &e.0, &row_narrator));
+                let corroborated = cred.map_or(support >= proposal_support, |c| c >= proposal_min);
                 let valid = (e.1 > 0 || corroborated) && e.2 == 0;
                 for (k, on) in [true, corroborated, e.1 > 0, e.2 > 0, valid].into_iter().enumerate() {
                     if on {
@@ -4389,7 +4399,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 if !valid && e.2 == 0 && open.len() < 6 {
-                    open.push(format!("{} {} (independent premises {support}: {} testimonies of the fact, {} source events)", SEASONS[*season], w.iter().map(|&x| vocab[x]).collect::<Vec<_>>().join(" "), e.5.iter().map(|&f| bind_hc.as_ref().map_or(1, |h| h.testimony(f))).sum::<u32>(), e.0.len()));
+                    open.push(format!("{} {} (credibility {:.2}; independent premises {support}: {} testimonies of the fact, {} source events)", SEASONS[*season], w.iter().map(|&x| vocab[x]).collect::<Vec<_>>().join(" "), to_f32(cred.unwrap_or(0)), e.5.iter().map(|&f| bind_hc.as_ref().map_or(1, |h| h.testimony(f))).sum::<u32>(), e.0.len()));
                 }
             }
             let names = ["made", "corroborated", "confirmed by reading", "contradicted by reading", "validated (replayed)"];
@@ -5140,4 +5150,57 @@ fn exposure_band(count: &[u32], ids: &[usize], words: &[&str], t: usize) -> u64 
         64..=255 => 4,
         _ => 6,
     }
+}
+
+/// A proposal's credibility from the Bayes module: the belief in its fact (its first word,
+/// the new name, is a member of the partner's family) times the best credibility among the
+/// narrators of its source events.
+fn proposal_credibility(rel: &RelationStore, isa: usize, words: &[usize], partners: &[usize], sources: &[u32], narrator: &HashMap<u32, u16>) -> u32 {
+    let Some(&name) = words.first() else { return 0 };
+    let fact = partners.iter().map(|&f| rel.belief(name, isa, 0, 1, f)).max().unwrap_or(0);
+    let told = sources.iter().map(|r| narrator.get(r).map_or(0, |&n| rel.bayes.credibility(n))).max().unwrap_or(0);
+    ((fact as u64 * told as u64) >> 16) as u32
+}
+
+type Proposals = HashMap<(usize, Vec<usize>), (Vec<u32>, u32, u32, bool, Vec<Vec<usize>>, Vec<u32>, Vec<usize>)>;
+
+/// Judge the proposals not yet replayed: validated when confirmed by a reading, or credible
+/// (with the relation store: the Bayes module's belief in the fact times the source
+/// narrator's credibility, at least `min`; without it: at least `support_min` independent
+/// premises), and never contradicted. Returns the stories that replay the newly validated
+/// ones, one per source context.
+fn validate_proposals(
+    proposals: &mut Proposals,
+    rel: Option<(&RelationStore, usize)>,
+    hc: &dyn EpisodicCircuit,
+    narrator: &HashMap<u32, u16>,
+    vocab: &[&'static str],
+    min: Q16,
+    support_min: usize,
+) -> Vec<Story> {
+    let mut stories = Vec::new();
+    let mut keys: Vec<(usize, Vec<usize>)> = proposals.keys().cloned().collect();
+    keys.sort();
+    for k in keys {
+        let e = proposals.get_mut(&k).unwrap();
+        if e.3 {
+            continue;
+        }
+        let corroborated = match rel {
+            Some((r, isa)) => proposal_credibility(r, isa, &k.1, &e.6, &e.0, narrator) >= min,
+            None => e.5.iter().map(|&f| hc.testimony(f) as usize).sum::<usize>().min(e.0.len()) >= support_min,
+        };
+        if (e.1 > 0 || corroborated) && e.2 == 0 {
+            // replayed in each of its sources' contexts, as inferred events are
+            e.3 = true;
+            for prefix in &e.4 {
+                let mut words: Vec<&'static str> = prefix.iter().map(|&w| vocab[w]).collect();
+                words.extend(k.1.iter().map(|&w| vocab[w]));
+                words.push(".");
+                let answer_at = words.len().saturating_sub(2);
+                stories.push(Story { words, answer_at, held_out: false });
+            }
+        }
+    }
+    stories
 }

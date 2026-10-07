@@ -383,6 +383,11 @@ impl RelationStore {
         self.bayes.trust(source)
     }
 
+    /// How far `value` is believed for `entity` through relation `r` from `from` to `to`.
+    pub fn belief(&self, entity: usize, r: usize, from: usize, to: usize, value: usize) -> u32 {
+        self.bayes.belief(&(r, entity, from, to), value)
+    }
+
     /// The claims about `entity` through relation `r` from `from` to `to`: (value, source,
     /// the value's share of all belief on this key).
     pub fn claims(&self, entity: usize, r: usize, from: usize, to: usize) -> Vec<(usize, u16, u32)> {

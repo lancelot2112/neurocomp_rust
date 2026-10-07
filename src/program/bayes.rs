@@ -13,22 +13,48 @@
 //!     two claims were made on (a lone claim says nothing about its source), with one win
 //!     and one loss as a prior;
 //!   - eight rounds settle both. Integers only (`Q16`).
+//! - **Belief is isolated behind one rule** (`BeliefRule`), so it can be swapped:
+//!   - `Full`: everything claimed is believed (belief 1), every source fully credible;
+//!   - `Vote`: a value's share of the claims; sources not modelled (credibility 1);
+//!   - `Graded`: a value's share of the trust (a trust-weighted vote);
+//!   - `Posterior`: Bayesian. Each source is right with probability t (its trust); a
+//!     value's odds are the product of its sources' odds t / (1 − t), and its belief is
+//!     odds / (1 + Σ odds over the claimed values), the 1 standing for "none of these".
+//!     A single claim is believed as far as its source is trusted; agreeing sources
+//!     multiply. Computed exactly in integers: multiplied through by Π (1 − t), it is a
+//!     ratio of products of `Q16` numbers.
 //! - **The believed value** of a key is the one with the most belief.
-//! - **Not yet a full posterior.** The belief is a trust-weighted vote, a linear stand-in
-//!   for the Bayesian posterior, which would add each source's log-odds
-//!   (log t / (1 − t)) instead of its trust; a source that is almost always right would
-//!   then outweigh several weak ones. That is the natural next step.
 
 use std::hash::Hash;
 
 use crate::det::HashMap;
 use crate::fixed::ONE;
 
+/// How belief is computed from claims (see the module doc).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BeliefRule {
+    Full,
+    Vote,
+    Graded,
+    Posterior,
+}
+
+impl BeliefRule {
+    /// From a name: "full", "vote", "graded", "posterior" (default: graded).
+    pub fn named(name: &str) -> Self {
+        match name {
+            "full" => Self::Full,
+            "vote" => Self::Vote,
+            "posterior" => Self::Posterior,
+            _ => Self::Graded,
+        }
+    }
+}
+
 pub struct Bayes<K> {
     claims: HashMap<K, Vec<(usize, u16)>>,
     trust: HashMap<u16, u32>,
-    /// Learn the sources' trust (true), or count every source the same: a plain vote.
-    pub use_trust: bool,
+    pub rule: BeliefRule,
 }
 
 impl<K: Hash + Eq + Clone> Default for Bayes<K> {
@@ -39,7 +65,7 @@ impl<K: Hash + Eq + Clone> Default for Bayes<K> {
 
 impl<K: Hash + Eq + Clone> Bayes<K> {
     pub fn new() -> Self {
-        Self { claims: HashMap::default(), trust: HashMap::default(), use_trust: true }
+        Self { claims: HashMap::default(), trust: HashMap::default(), rule: BeliefRule::Graded }
     }
 
     /// `source` claims `value` for `key`. Returns false if it had already.
@@ -61,7 +87,8 @@ impl<K: Hash + Eq + Clone> Bayes<K> {
                 trust.insert(s, ONE / 2);
             }
         }
-        for _ in 0..if self.use_trust { 8 } else { 0 } {
+        let learn = matches!(self.rule, BeliefRule::Graded | BeliefRule::Posterior);
+        for _ in 0..if learn { 8 } else { 0 } {
             let mut credit: HashMap<u16, (u64, u64)> = HashMap::default();
             for c in &keys {
                 let total: u64 = c.iter().map(|x| trust[&x.1] as u64).sum::<u64>().max(1);
@@ -80,17 +107,16 @@ impl<K: Hash + Eq + Clone> Bayes<K> {
         self.trust = trust;
     }
 
-    /// The believed value of `key`: the one with the most summed trust (unknown sources
-    /// count half; ties to the lower value). None if nothing was claimed, or the key is
-    /// many-valued.
+    /// The believed value of `key`: the one with the most belief (ties to the lower
+    /// value). None if nothing was claimed, or the key is many-valued.
     pub fn believed(&self, key: &K) -> Option<usize> {
         let c = self.claims.get(key)?;
         if many_valued(c) {
             return None;
         }
-        let mut best: Option<(u64, usize)> = None;
+        let mut best: Option<(u32, usize)> = None;
         for &(v, _) in c {
-            let b: u64 = c.iter().filter(|x| x.0 == v).map(|x| self.trust(x.1) as u64).sum();
+            let b = self.belief(key, v);
             if best.map_or(true, |(bb, bv)| b > bb || (b == bb && v < bv)) {
                 best = Some((b, v));
             }
@@ -98,17 +124,54 @@ impl<K: Hash + Eq + Clone> Bayes<K> {
         best.map(|x| x.1)
     }
 
+    /// How far `value` is believed for `key` (`Q16`), by the rule. 0 if not claimed; for a
+    /// many-valued key, as if each value were claimed alone.
+    pub fn belief(&self, key: &K, value: usize) -> u32 {
+        let Some(c) = self.claims.get(key) else { return 0 };
+        if !c.iter().any(|x| x.0 == value) {
+            return 0;
+        }
+        let c: Vec<(usize, u16)> = if many_valued(c) { c.iter().copied().filter(|x| x.0 == value).collect() } else { c.clone() };
+        match self.rule {
+            BeliefRule::Full => ONE,
+            BeliefRule::Vote => ((c.iter().filter(|x| x.0 == value).count() as u64 * ONE as u64) / c.len() as u64) as u32,
+            BeliefRule::Graded => {
+                let t = |s: u16| self.trust(s) as u64;
+                let total: u64 = c.iter().map(|x| t(x.1)).sum::<u64>().max(1);
+                ((c.iter().filter(|x| x.0 == value).map(|x| t(x.1)).sum::<u64>() << 16) / total) as u32
+            }
+            BeliefRule::Posterior => {
+                // each claim's source right with probability t: multiplied through by
+                // Π (1 − t), value u's odds become Π_{s says u} t · Π_{s says other} (1 − t)
+                let t = |s: u16| self.trust(s).clamp(1, ONE - 1) as u64;
+                let mut values: Vec<usize> = c.iter().map(|x| x.0).collect();
+                values.sort_unstable();
+                values.dedup();
+                let weight = |u: usize| c.iter().fold(ONE as u64, |acc, &(v, s)| (acc * if v == u { t(s) } else { ONE as u64 - t(s) }) >> 16);
+                let none = c.iter().fold(ONE as u64, |acc, &(_, s)| (acc * (ONE as u64 - t(s))) >> 16);
+                let total: u64 = none + values.iter().map(|&u| weight(u)).sum::<u64>();
+                ((weight(value) << 16) / total.max(1)) as u32
+            }
+        }
+    }
+
+    /// How credible a source is (`Q16`): its trust where the rule models trust, else fully.
+    pub fn credibility(&self, source: u16) -> u32 {
+        match self.rule {
+            BeliefRule::Full | BeliefRule::Vote => ONE,
+            BeliefRule::Graded | BeliefRule::Posterior => self.trust(source),
+        }
+    }
+
     /// A source's trust (`Q16`; half for a source never contested).
     pub fn trust(&self, source: u16) -> u32 {
         self.trust.get(&source).copied().unwrap_or(ONE / 2)
     }
 
-    /// The claims on `key`: (value, source, the value's share of all belief on the key).
+    /// The claims on `key`: (value, source, the value's belief).
     pub fn claims(&self, key: &K) -> Vec<(usize, u16, u32)> {
         let Some(c) = self.claims.get(key) else { return Vec::new() };
-        let t = |s: u16| self.trust(s) as u64;
-        let total: u64 = c.iter().map(|x| t(x.1)).sum::<u64>().max(1);
-        c.iter().map(|&(v, s)| (v, s, ((c.iter().filter(|x| x.0 == v).map(|x| t(x.1)).sum::<u64>() << 16) / total) as u32)).collect()
+        c.iter().map(|&(v, s)| (v, s, self.belief(key, v))).collect()
     }
 
     /// The keys in conflict (different sources, different values; not many-valued).
@@ -144,7 +207,7 @@ mod tests {
         // a plain vote cannot tell (the tie goes to the lower value either way, so check
         // with the liar on the lower value)
         let mut v: Bayes<u32> = Bayes::new();
-        v.use_trust = false;
+        v.rule = BeliefRule::Vote;
         for k in 0..10 {
             v.claim(k, 1, 1);
             v.claim(k, 1, 2);
@@ -158,6 +221,40 @@ mod tests {
         b.claim(98, 5, 3);
         b.resolve();
         assert_eq!(b.believed(&98), Some(6), "trust follows the reliable source");
+    }
+
+    #[test]
+    fn the_posterior_multiplies_agreeing_sources_and_a_single_claim_is_its_trust() {
+        let mut b: Bayes<u32> = Bayes::new();
+        b.rule = BeliefRule::Posterior;
+        // build trust: sources 1 and 2 agree on keys 0..20, source 3 contradicts on 0..10
+        for k in 0..20 {
+            b.claim(k, 1, 1);
+            b.claim(k, 1, 2);
+        }
+        for k in 0..10 {
+            b.claim(k, 2, 3);
+        }
+        b.claim(50, 7, 1); // a single claim
+        b.claim(51, 7, 1); // two agreeing sources
+        b.claim(51, 7, 2);
+        b.resolve();
+        let t1 = b.trust(1);
+        let single = b.belief(&50, 7);
+        assert!(single.abs_diff(t1) <= ONE / 100, "single claim {single} vs trust {t1}");
+        assert!(b.belief(&51, 7) > single, "agreeing sources raise belief");
+        // graded gives a lone claim full belief; the posterior only its source's trust
+        let mut g: Bayes<u32> = Bayes::new();
+        g.claim(50, 7, 1);
+        g.resolve();
+        assert_eq!(g.belief(&50, 7), ONE);
+        // full trusts everything
+        let mut f: Bayes<u32> = Bayes::new();
+        f.rule = BeliefRule::Full;
+        f.claim(9, 1, 1);
+        f.claim(9, 2, 3);
+        f.resolve();
+        assert_eq!((f.belief(&9, 1), f.belief(&9, 2)), (ONE, ONE));
     }
 
     #[test]

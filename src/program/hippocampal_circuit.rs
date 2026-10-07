@@ -571,8 +571,8 @@ pub trait EpisodicCircuit {
     fn begin_sleep(&mut self) {}
     /// Inferred events from the facts stored since the last call (generative replay): each
     /// (content ids in reading order, context ids, the source row, the fact row: the event's
-    /// two premises). Default: none.
-    fn infer(&mut self, _max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32)> {
+    /// two premises, the partner word linking them). Default: none.
+    fn infer(&mut self, _max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32, usize)> {
         Vec::new()
     }
     /// The episode played forward from the event `cue` recalls: up to `max` following

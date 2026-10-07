@@ -91,7 +91,11 @@ Read-back is built in its rehearsal form ([26](../experiments/26-context-and-rea
   an `OutputBuffer` the cortex writes to, abstention from confidence (about 60% answered
   at 84–91% right with the hippocampus lesioned), and the spoken word heard in place of
   the page's.
-- **Still to build:** the `self` frame (efference copy) and recitation.
+- **The efference copy and recitation are built** ([70](../experiments/70-efference-copy-and-recitation.md)):
+  own words are not surprising and a mismatch is caught; the hippocampus plans a
+  retelling and the cortex speaks it (93–98% of words in place).
+- **Still to build:** speech routed as in the brain (a motor area, a basal-ganglia
+  go/no-go, a learned forward model), and read-back as training.
 
 ## The experiments, in order
 1. **26 · Answering by speaking, with abstention.** The question stories end without the

@@ -1055,8 +1055,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // contradicted) are what to investigate next.
     let proposals_on = std::env::var("PROPOSALS").is_ok();
     let proposal_support: usize = std::env::var("PROPOSAL_SUPPORT").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
-    // (season, sentence words) → (source rows, confirmed, contradicted, replayed, a source prefix)
-    let mut proposals: HashMap<(usize, Vec<usize>), (Vec<u32>, u32, u32, bool, Vec<usize>)> = HashMap::default();
+    // (season, sentence words) → (source rows, confirmed, contradicted, replayed, each source's prefix)
+    let mut proposals: HashMap<(usize, Vec<usize>), (Vec<u32>, u32, u32, bool, Vec<Vec<usize>>)> = HashMap::default();
     let mut row_state: HashMap<u32, Vec<u32>> = HashMap::default(); // engram row → higher-area state
     // engram row → the words of its story before its sentence (what was read up to it)
     let mut row_prefix: HashMap<u32, Vec<usize>> = HashMap::default();
@@ -1685,14 +1685,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let Some(prefix) = row_prefix.get(src) else { continue };
                         let Some(season) = prefix.iter().find_map(|&w| SEASONS.iter().position(|x| *x == vocab[w])) else { continue };
                         let words: Vec<usize> = seq.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len() && vocab[w] != ".").collect();
+                        // the event's pattern, as a read sentence's: each word's code bound to its slot
+                        let mut ev = BitVector::new(BITS, Some(0));
+                        for &i in seq.iter() {
+                            if i % 4096 < vocab.len() {
+                                let mut b = enc.codes[i % 4096].clone();
+                                b.rotl_mut(slot_offset((i / 4096) % SPARSE_FIELDS));
+                                ev.or_mut(&b);
+                            }
+                        }
                         let e = proposals.entry((season, words)).or_insert_with(|| {
                             hc.set_source(2);
-                            hc.store_split(seq, ctx, seq);
+                            hc.store_split(seq, ctx, &set_bits(&ev));
                             hc.set_source(0);
-                            (Vec::new(), 0, 0, false, prefix.clone())
+                            (Vec::new(), 0, 0, false, Vec::new())
                         });
                         if !e.0.contains(src) {
                             e.0.push(*src);
+                            e.4.push(prefix.clone());
                         }
                     }
                     // the validated ones, not yet replayed, are replayed now
@@ -1702,13 +1712,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let e = proposals.get_mut(&k).unwrap();
                         let valid = (e.1 > 0 || e.0.len() >= proposal_support) && e.2 == 0;
                         if valid && !e.3 {
+                            // replayed in each of its sources' contexts, as inferred events are
                             e.3 = true;
-                            let mut words: Vec<&'static str> = e.4.iter().map(|&w| vocab[w]).collect();
-                            words.extend(k.1.iter().map(|&w| vocab[w]));
-                            words.push(".");
-                            let answer_at = words.len().saturating_sub(2);
-                            stories.push(Story { words, answer_at, held_out: false });
-                            infer_stats[0] += 1;
+                            for prefix in &e.4 {
+                                let mut words: Vec<&'static str> = prefix.iter().map(|&w| vocab[w]).collect();
+                                words.extend(k.1.iter().map(|&w| vocab[w]));
+                                words.push(".");
+                                let answer_at = words.len().saturating_sub(2);
+                                stories.push(Story { words, answer_at, held_out: false });
+                                infer_stats[0] += 1;
+                            }
                         }
                     }
                 }

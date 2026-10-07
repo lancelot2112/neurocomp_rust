@@ -1411,11 +1411,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // confidence band only.
     let speak_ctx_cfg = std::env::var("SPEAK_CTX").unwrap_or_default();
     // FAMILIARITY=cortex: novelty from a cortical familiarity signal (as perirhinal
-    // cortex's, which survives a hippocampal lesion), not the hippocampus's counts: how many
-    // of the column's kernels are keyed on the word (sample its current-word bits from the
-    // word's code). A trained name has many, a name stated once few. Recomputed every 100
-    // stories in training and when the test begins (the cortex does not learn at test).
+    // cortex's, which survives a hippocampal lesion), not the hippocampus's counts: the
+    // word's exposure, how many sentences holding it were read (replays not counted). Bands
+    // of the sentence's least exposed word: under 16, under 64, under 256, more.
+    // FAMILIARITY=kernels: the number of the column's kernels keyed on the word (they sample
+    // its current-word bits), recomputed every 100 stories (a measure that failed: growth
+    // is driven by surprise and replay, so new names have more kernels than trained ones).
     let cortex_fam_on = std::env::var("FAMILIARITY").map_or(false, |v| v == "cortex");
+    let kernel_fam_on = std::env::var("FAMILIARITY").map_or(false, |v| v == "kernels");
     let mut cortex_fam: Vec<u32> = Vec::new();
     let (ctx_novelty, ctx_agree) = (speak_ctx_cfg.contains("novelty"), speak_ctx_cfg.contains("agree"));
     let speak_ctx = |cb: usize, fam_band: u64, agreed: bool| -> usize {
@@ -1436,6 +1439,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         motor.babble(&tract, &enc.codes, rounds, &mut StdRng::seed_from_u64(seed ^ 0xbab1_e000));
     }
     let mut speak_bg = BasalGanglia::new(BITS);
+    // its own random draws, so that what the go/no-go sees does not change the rest of the
+    // run's training (a shared generator made every variant a different training run)
+    let mut speak_rng = StdRng::seed_from_u64(seed ^ 0x5bea_7000);
     let speak_code = |ctx: usize, act: usize| {
         let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(13_000_027) ^ ((ctx * 2 + act) as u64 + 11_000));
         let all: Vec<usize> = (0..BITS).collect();
@@ -1446,6 +1452,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut sp_train = [0usize; 2];
     // the forward model's prediction for the word heard at each position (motor speech)
     let mut eff_pred: Vec<Option<BitVector>> = Vec::new();
+    // story boundaries after an altered ending (an answer spoken or withheld): the step
+    // carries of the last story that ended as read (previous word, its slot, the column's
+    // expectation), restored at the next story's start, as a boundary resets them. The
+    // role cells chain each word's slot on the previous one, so an unusual ending ("went to
+    // the .") would otherwise shift every slot of the next story.
+    let mut boundary_carry: Option<(Option<usize>, Option<usize>, Option<usize>, BitVector)> = None;
+    let mut story_altered = false;
+    let mut prev_altered = false;
     let mut speech = OutputBuffer::new(q16(std::env::var("SPEAK_MIN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0)));
     let mut transcripts: Vec<String> = Vec::new();
     // RECITE=k: recitation. After each test story, the network retells it: a copy is read
@@ -1571,7 +1585,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut prof_t = std::time::Instant::now();
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
-        if cortex_fam_on && (s_i % 100 == 0 || s_i == TRAIN) {
+        if kernel_fam_on && (s_i % 100 == 0 || s_i == TRAIN) {
             cortex_fam = cortical_familiarity(column.l23.kernels(), &enc.codes, BITS);
         }
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
@@ -2104,6 +2118,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // and the step-to-step carries: the previous word, its slot (the role cells chain
         // each word's slot on the previous one), the column's expectation
         let saved_carry = reciting.then(|| (prev, slot_prev, role_now, expect_prev.clone()));
+        if prev_altered && !reciting {
+            if let Some((p, sp, rn, ep)) = boundary_carry.clone() {
+                prev = p;
+                slot_prev = sp;
+                role_now = rn;
+                expect_prev = ep;
+            }
+        }
+        story_altered = false;
         if reciting {
         } else if replaying {
             replay_words += s.words.len();
@@ -3567,7 +3590,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let said = if motor_speech {
                             // the basal ganglia release speech or hold it; the motor area says it
                             let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
-                            let nov = if cortex_fam_on { sentence_familiarity(&cortex_fam, &ids, &s.words, t) } else { fam_band };
+                            let nov = if cortex_fam_on {
+                                exposure_band(&word_count, &ids, &s.words, t)
+                            } else if kernel_fam_on {
+                                sentence_familiarity(&cortex_fam, &ids, &s.words, t)
+                            } else {
+                                fam_band
+                            };
                             let sc = speak_ctx(cb, nov, mix_agreed);
                             let cands = [speak_code(sc, 0), speak_code(sc, 1)];
                             let go = speak_bg.select(&cands, None::<&mut StdRng>) == Some(1);
@@ -3597,7 +3626,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let q_start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                             transcripts.push(format!("{:?} -> said {:?} (page: {})", &s.words[q_start..=t], said.map_or("unknown", |w| vocab[w]), vocab[next]));
                         }
+                        let gap = std::env::var("SILENCE").map_or(false, |v| v == "gap");
+                        story_altered = said.is_some() || gap;
                         match said {
+                            // silence (SILENCE unset): the network says nothing and hears the
+                            // answer from the page, as the other speaker gives it in a dialogue
+                            None if !gap => {}
                             Some(heard) => {
                                 ids[t + 1] = heard;
                                 s.words[t + 1] = vocab[heard];
@@ -3605,8 +3639,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 efference[t + 1] = Some(heard);
                             }
                             None => {
-                                // silence is no word: the answer's position is taken out of
-                                // the stream, and the story goes on with what follows it
+                                // SILENCE=gap: silence is no word; the answer's position is
+                                // taken out of the stream, and the story goes on
                                 ids.remove(t + 1);
                                 s.words.remove(t + 1);
                                 page_marks.remove(t + 1);
@@ -3623,10 +3657,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if motor_speech && !testing && !replaying && t + 1 == s.answer_at {
                     let c = mix_conf.unwrap_or_else(|| column.confidence());
                     let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
-                    let nov = if cortex_fam_on { sentence_familiarity(&cortex_fam, &ids, &s.words, t) } else { fam_band };
+                    let nov = if cortex_fam_on {
+                        exposure_band(&word_count, &ids, &s.words, t)
+                    } else if kernel_fam_on {
+                        sentence_familiarity(&cortex_fam, &ids, &s.words, t)
+                    } else {
+                        fam_band
+                    };
                     let sc = speak_ctx(cb, nov, mix_agreed);
                     let cands = [speak_code(sc, 0), speak_code(sc, 1)];
-                    let a = speak_bg.select(&cands, Some(&mut rng)).unwrap_or(0);
+                    let a = speak_bg.select(&cands, Some(&mut speak_rng)).unwrap_or(0);
                     sp_train[0] += 1;
                     let r = if a == 1 {
                         sp_train[1] += 1;
@@ -3634,7 +3674,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     } else {
                         0
                     };
-                    speak_bg.reward_candidate(&cands[a], r, &mut rng);
+                    speak_bg.reward_candidate(&cands[a], r, &mut speak_rng);
                 }
                 // RECITE: past the cue, the network says the next word and hears it
                 if let (true, Some(cue_len)) = (reciting, recite) {
@@ -4034,6 +4074,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             sent_surprise = 0.0;
             sent_words = 0;
         }
+        if !reciting {
+            if !story_altered {
+                boundary_carry = Some((prev, slot_prev, role_now, expect_prev.clone()));
+            }
+            prev_altered = story_altered;
+        }
         if let Some((p, sp, rn, ep)) = saved_carry {
             prev = p;
             slot_prev = sp;
@@ -4220,10 +4266,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 })
                 .collect();
             let values: Vec<String> = (0..5).map(|b| format!("{:.2}/{:.2}", to_f32(speak_bg.value(&speak_code(speak_ctx(b, 7, true), 0))), to_f32(speak_bg.value(&speak_code(speak_ctx(b, 7, true), 1))))).collect();
-            if cortex_fam_on {
-                let f = |n: &str| index.get(n).map_or(0, |&w| cortex_fam.get(w).copied().unwrap_or(0));
+            if cortex_fam_on || kernel_fam_on {
+                let f = |n: &str| index.get(n).map_or(0, |&w| if cortex_fam_on { word_count[w] } else { cortex_fam.get(w).copied().unwrap_or(0) });
                 eprintln!(
-                    "  SPEECH seed {seed}: cortical familiarity (kernels keyed on the word): new names {}; trained names {}",
+                    "  SPEECH seed {seed}: cortical familiarity ({}) at the end of the test: new names {}; trained names {}",
+                    if cortex_fam_on { "exposure" } else { "kernels keyed on the word" },
                     NEW_NAMES.iter().map(|n| format!("{n} {}", f(n))).collect::<Vec<_>>().join(", "),
                     ["john", "mary", "anna", "daniel"].iter().map(|n| format!("{n} {}", f(n))).collect::<Vec<_>>().join(", ")
                 );
@@ -4868,19 +4915,16 @@ fn motor_say(motor: &MotorArea, tract: &VocalTract, meant: &BitVector) -> (Optio
 /// Cortical familiarity of each word: how many of the column's kernels are keyed on it,
 /// i.e. sample their current-word (frame 0) bits mostly from its code.
 fn cortical_familiarity(kernels: &[SimpleKernel], codes: &[BitVector], bits: usize) -> Vec<u32> {
-    let frame = bits / 64;
     let mut fam = vec![0u32; codes.len()];
     for k in kernels {
-        let m = k.input_mask.as_words();
-        let in_frame0: Vec<(usize, u64)> = m.iter().enumerate().map(|(i, &w)| (k.input_idx + i, w)).filter(|&(a, w)| a < frame && w != 0).collect();
-        let n: u32 = in_frame0.iter().map(|x| x.1.count_ones()).sum();
-        if n < 4 {
+        // the kernel's sampled bits in frame 0 (the current word)
+        let b0: Vec<usize> = k.input_set.iter().map(|&b| b as usize).filter(|&b| b < bits).collect();
+        if b0.len() < 4 {
             continue;
         }
         for (w, code) in codes.iter().enumerate() {
-            let c = code.as_words();
-            let o: u32 = in_frame0.iter().map(|&(a, mw)| (mw & c[a]).count_ones()).sum();
-            if o * 2 >= n {
+            let o = b0.iter().filter(|&&b| code.bit_get(b)).count();
+            if o * 2 >= b0.len() {
                 fam[w] += 1;
             }
         }
@@ -4893,4 +4937,18 @@ fn cortical_familiarity(kernels: &[SimpleKernel], codes: &[BitVector], bits: usi
 fn sentence_familiarity(fam: &[u32], ids: &[usize], words: &[&str], t: usize) -> u64 {
     let start = words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
     ids[start..=t].iter().map(|&w| fam.get(w).copied().unwrap_or(0)).min().map_or(7, |c| (32 - c.leading_zeros() as u64).min(7))
+}
+
+/// Novelty from exposure: the band of the current sentence's least exposed word (sentences
+/// read that held it): under 16 → 0, under 64 → 2, under 256 → 4, more → 6 (the go/no-go
+/// halves it into four bands).
+fn exposure_band(count: &[u32], ids: &[usize], words: &[&str], t: usize) -> u64 {
+    let start = words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+    let c = ids[start..=t].iter().map(|&w| count.get(w).copied().unwrap_or(0)).min().unwrap_or(u32::MAX);
+    match c {
+        0..=15 => 0,
+        16..=63 => 2,
+        64..=255 => 4,
+        _ => 6,
+    }
 }

@@ -36,3 +36,6 @@ pub use engram::{Dedup, EngramConfig, EngramStore};
 
 pub mod relations;
 pub use relations::RelationStore;
+
+pub mod speech;
+pub use speech::{OutputBuffer, Spoken};

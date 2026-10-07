@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, RelationStore, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, OutputBuffer, RelationStore, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1383,6 +1383,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // (the column's own confidence band × the cue word's familiarity band). Reward: how
     // well the higher area then predicts the next word (its L5 outcome), minus GATE_COST
     // (default 0.05) for asking. Learns in training (not in replay).
+    // SPEAK=1: answering by speaking. At a test question the network writes its answer to
+    // an output buffer: the source mix's word, with the mix's confidence (else the
+    // column's), or "unknown" under SPEAK_MIN (default 0: always speak). The page's answer
+    // is not read: the spoken word comes back as the next input in its place (an internal
+    // step: nothing learns from it as the world's word; "unknown" is heard as "."). The
+    // report scores the buffer against the page: accuracy, coverage, and the curve at
+    // other thresholds.
+    let speak = std::env::var("SPEAK").is_ok();
+    let mut speech = OutputBuffer::new(q16(std::env::var("SPEAK_MIN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0)));
+    let mut transcripts: Vec<String> = Vec::new();
     let sparse_hc = std::env::var("SPARSE_HC").is_ok();
     let gate_learned = std::env::var("GATE").map_or(false, |v| v == "learned");
     let gate_cost: i32 = q16(std::env::var("GATE_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05)) as i32;
@@ -3411,6 +3421,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     calib[b].0 += 1;
                     calib[b].1 += right as usize;
                     calib[b].2 += to_f32(c) as f64; // report
+                    if speak && !replaying {
+                        // the cortex speaks its answer into the output buffer, and hears it
+                        // in place of the page's word
+                        let said = speech.speak(enc.decode(&out), c, Some(next), s.held_out as u8);
+                        if transcripts.len() < 6 && s.held_out {
+                            let q_start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                            transcripts.push(format!("{:?} -> said {:?} (page: {})", &s.words[q_start..=t], said.map_or("unknown", |w| vocab[w]), vocab[next]));
+                        }
+                        let heard = said.unwrap_or(index["."]);
+                        ids[t + 1] = heard;
+                        s.words[t + 1] = vocab[heard];
+                        inner[t + 1] = true;
+                    }
                 }
                 // the question's recall contained the answer: good credit for that episode
                 // (whether or not the still-learning predictor used it)
@@ -3859,6 +3882,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
+        }
+        if speak {
+            let line = |tag: Option<u8>| {
+                let (sp, r, n) = speech.score(tag);
+                format!("{} questions, spoken {:.1}%, right {:.1}% of spoken, {:.1}% of all", n, 100.0 * sp as f64 / n.max(1) as f64, 100.0 * r as f64 / sp.max(1) as f64, 100.0 * r as f64 / n.max(1) as f64)
+            };
+            eprintln!("  SPEAK seed {seed}: held out: {}; trained: {}", line(Some(1)), line(Some(0)));
+            let curve: Vec<String> = [0.0, 0.5, 0.7, 0.8, 0.9]
+                .iter()
+                .map(|&th| {
+                    let (sp, r, n) = speech.score_at(q16(th), Some(1));
+                    format!(">= {th}: {:.0}% answered, {:.1}% right", 100.0 * sp as f64 / n.max(1) as f64, 100.0 * r as f64 / sp.max(1) as f64)
+                })
+                .collect();
+            eprintln!("  SPEAK seed {seed}: held out, by threshold: {}", curve.join("; "));
+            for tr in &transcripts {
+                eprintln!("  SPEAK seed {seed}: {tr}");
+            }
         }
         if gate_learned || sparse_hc {
             let bands: Vec<String> = (0..5).map(|b| format!("band {b}: asked {:.1}% of {}", 100.0 * mg_stats[b][1] as f64 / mg_stats[b][0].max(1) as f64, mg_stats[b][0])).collect();

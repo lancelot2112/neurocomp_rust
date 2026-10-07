@@ -215,7 +215,29 @@ struct PredictiveState {
     /// Record waking (input, target) pairs into the replay (default). Off when the replay
     /// comes only from outside, e.g. hippocampal replay (`add_replay`).
     record_waking: bool,
+    /// Bumped whenever a kernel's connections or threshold change (growth, pruning,
+    /// sleep): what decides which kernels match an input.
+    wiring: u64,
+    /// Cached responses (see `matching`).
+    peek_cache: std::cell::RefCell<PeekCache>,
 }
+
+/// The class caches its response: the kernels matching an input, for the last few
+/// distinct inputs it was asked about. The cortex asks about the same input several
+/// times a step (its own prediction, the superposed expectation, gating); the fan-out
+/// through the index is done once. An entry holds while the wiring is unchanged. The
+/// winner and the outputs are read from the matched kernels on every ask, so learning
+/// that only changes a kernel's record (its hit rate) needs no invalidation.
+#[derive(Default)]
+struct PeekCache {
+    /// (input's active bits, wiring, (kernel, matched bits) at or above threshold),
+    /// most recent last.
+    entries: Vec<(Vec<u32>, u64, std::sync::Arc<[(u32, u32)]>)>,
+    lookups: usize,
+    hits: usize,
+}
+
+const PEEK_CACHE: usize = 8;
 
 /// Per-frame memo of match counts, after Hashlife's memoised sub-nodes: the input is a
 /// stack of frames (current word, relayed / recalled content, previous word), and each
@@ -468,6 +490,8 @@ impl KernelClass<SimpleKernel> {
             record_waking: true,
             surprise_gate: false,
             expected_steps: 0,
+            wiring: 0,
+            peek_cache: std::cell::RefCell::new(PeekCache::default()),
             memo: None,
             frame_memo: None,
             canon: None,
@@ -642,24 +666,57 @@ impl KernelClass<SimpleKernel> {
     /// Like `peek`, also returning the winning kernel's smoothed hit rate.
     /// The rate is in `Q16`.
     pub fn peek_scored(&self, input: &BitVector) -> Option<(BitVector, Q16)> {
-        let st = self.predictive.as_ref()?;
-        let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
-        for b in set_bits(input) {
-            if let Some(ks) = st.index.get(b) {
-                for &k in ks {
-                    *counts.entry(k).or_default() += 1;
-                }
-            }
-        }
-        counts
-            .into_iter()
-            .filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold)
-            .map(|(k, c)| {
+        let matched = self.matching(input)?;
+        matched
+            .iter()
+            .map(|&(k, c)| {
                 let kern = &self.active_kernels[k as usize];
                 ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
             .map(|((_, rel, _), k)| (self.active_kernels[k].output_vector(), rel.q16()))
+    }
+
+    /// The kernels matching `input` and their matched bits: from the cache if this input
+    /// was asked about since the wiring last changed, else by fanning its active bits out
+    /// through the index. None if the class is not predictive.
+    fn matching(&self, input: &BitVector) -> Option<std::sync::Arc<[(u32, u32)]>> {
+        let st = self.predictive.as_ref()?;
+        let bits: Vec<u32> = set_bits(input).into_iter().map(|b| b as u32).collect();
+        let mut cache = st.peek_cache.borrow_mut();
+        cache.lookups += 1;
+        if let Some(i) = cache.entries.iter().position(|e| e.1 == st.wiring && e.0 == bits) {
+            cache.hits += 1;
+            let e = cache.entries.remove(i);
+            let m = e.2.clone();
+            cache.entries.push(e);
+            return Some(m);
+        }
+        let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
+        for &b in &bits {
+            if let Some(ks) = st.index.get(b as usize) {
+                for &k in ks {
+                    *counts.entry(k).or_default() += 1;
+                }
+            }
+        }
+        let mut m: Vec<(u32, u32)> = counts.into_iter().filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold).collect();
+        m.sort_unstable();
+        let m: std::sync::Arc<[(u32, u32)]> = m.into();
+        cache.entries.retain(|e| e.1 == st.wiring);
+        if cache.entries.len() >= PEEK_CACHE {
+            cache.entries.remove(0);
+        }
+        cache.entries.push((bits, st.wiring, m.clone()));
+        Some(m)
+    }
+
+    /// (asks, answered from the cache) of `peek`, `peek_scored` and `peek_union`.
+    pub fn peek_cache_stats(&self) -> (usize, usize) {
+        self.predictive.as_ref().map_or((0, 0), |st| {
+            let c = st.peek_cache.borrow();
+            (c.lookups, c.hits)
+        })
     }
 
     /// The union of what every matching kernel predicts for `input` (the column's possible
@@ -668,22 +725,11 @@ impl KernelClass<SimpleKernel> {
     /// similar uncertain states share bits.
     pub fn peek_union(&self, input: &BitVector, bits: usize) -> BitVector {
         let mut out = BitVector::new(bits, Some(0));
-        let Some(st) = self.predictive.as_ref() else { return out };
-        let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
-        for b in set_bits(input) {
-            if let Some(ks) = st.index.get(b) {
-                for &k in ks {
-                    *counts.entry(k).or_default() += 1;
-                }
-            }
-        }
-        for (k, c) in counts {
-            let kern = &self.active_kernels[k as usize];
-            if c as usize >= kern.threshold {
-                for &b in &kern.output_set {
-                    if (b as usize) < bits {
-                        out.bit_set(b as usize);
-                    }
+        let Some(matched) = self.matching(input) else { return out };
+        for &(k, _) in matched.iter() {
+            for &b in &self.active_kernels[k as usize].output_set {
+                if (b as usize) < bits {
+                    out.bit_set(b as usize);
                 }
             }
         }
@@ -1463,6 +1509,7 @@ impl KernelClass<SimpleKernel> {
                 }
             }
         }
+        st.wiring += 1;
         for list in st.index.iter_mut() {
             list.clear();
         }
@@ -1815,6 +1862,7 @@ impl KernelClass<SimpleKernel> {
                 spawns.push((kept, self.active_kernels[k].output_set.clone(), Rate::of(&self.active_kernels[k].stats)));
                 continue;
             }
+            st.wiring += 1;
             for &b in &drop {
                 st.index[b].retain(|&x| x as usize != k);
                 counts.remove(&b);
@@ -1998,6 +2046,7 @@ impl KernelClass<SimpleKernel> {
             victim
         };
 
+        st.wiring += 1;
         if st.index.len() < input.bit_len() {
             st.index.resize(input.bit_len(), Vec::new());
         }

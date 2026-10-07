@@ -3425,7 +3425,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         // the cortex speaks its answer into the output buffer, and hears it
                         // in place of the page's word
                         let said = speech.speak(enc.decode(&out), c, Some(next), s.held_out as u8);
-                        if transcripts.len() < 6 && s.held_out {
+                        if s.held_out && speech.score(Some(1)).2 % 80 == 1 {
                             let q_start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                             transcripts.push(format!("{:?} -> said {:?} (page: {})", &s.words[q_start..=t], said.map_or("unknown", |w| vocab[w]), vocab[next]));
                         }
@@ -3897,6 +3897,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 })
                 .collect();
             eprintln!("  SPEAK seed {seed}: held out, by threshold: {}", curve.join("; "));
+            // what the wrong answers were: the end of the sentence ("."), another place, or else
+            let (mut dot, mut place, mut other) = (0, 0, 0);
+            for sp in speech.said().iter().filter(|x| x.tag == 1 && x.word.is_some() && x.word != x.truth) {
+                let w = sp.word.unwrap();
+                if vocab[w] == "." {
+                    dot += 1;
+                } else if PLACES.contains(&vocab[w]) {
+                    place += 1;
+                } else {
+                    other += 1;
+                }
+            }
+            eprintln!("  SPEAK seed {seed}: held-out wrong answers: \".\" {dot}, another place {place}, another word {other}");
             for tr in &transcripts {
                 eprintln!("  SPEAK seed {seed}: {tr}");
             }

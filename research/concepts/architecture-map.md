@@ -37,6 +37,7 @@ connections between them exist. "Not modelled" is as important as what is.
 | Hippocampus | Episodic store, dentate gyrus expansion + CA3, big-loop recall, replay into a semantic store, rarity-weighted recall, slot ⊗ content episodes ([11](../experiments/11-episodic-memory.md)–[17](../experiments/17-consolidation.md), [36](../experiments/36-slot-binding-memory.md)) |
 | Semantic store (anterior temporal hub) | A cortical cue → content store trained only by novelty-prioritised sleep replay; it carries a once-stated fact ("tom is a smith") after a hippocampal lesion ([17](../experiments/17-consolidation.md), [42](../experiments/42-semantic-store.md)) |
 | Relational memory (cortical) | A learned, directed relation graph: frames from sentence shape, permutation-bound edges, multi-valued readout, relations of relations learned at sleep and their inferred facts replayed ([66](../experiments/66-typed-relations.md), [67](../experiments/67-relation-store-in-reading.md); [concept](relational-memory.md)) |
+| Speech output | An output buffer; a vocal tract with its own motor codes; a motor area (inverse and forward models) learned by babbling; a basal-ganglia go/no-go to speak; the forward model's prediction as the efference copy; hippocampal sequence replay planning a retelling ([69](../experiments/69-answering-by-speaking.md)–[71](../experiments/71-speech-routing.md)) |
 | Entorhinal cortex | Temporal context (fading state, lateral EC), learned slot cells (a coarse structure code, medial EC), a setting slot that emerged ([31](../experiments/31-role-cells-and-transfer.md), [35](../experiments/35-fading-state-and-entorhinal-codes.md), [36](../experiments/36-slot-binding-memory.md)) |
 | Sleep | Downscaling, pruning, merging, generalisation from replay ([23](../experiments/23-compaction.md), [33](../experiments/33-generalisation-during-sleep.md)) |
 | Eye movements | Basal-ganglia saccades with regressions, a page index of landmarks, cortex-driven context ([29](../experiments/29-saccades.md), [30](../experiments/30-cortex-driven-saccades.md)) |
@@ -54,8 +55,7 @@ connections between them exist. "Not modelled" is as important as what is.
 
 **Not built yet:**
 - **Cerebellum** as a separate system: fine-tuning of saccades and timing.
-- **Motor / speech output:** saying words, the efference copy of speech, the read-back
-  loop of the [output plan](output-and-self-supervision.md).
+- **Read-back as training:** the self-supervised loop of the [output plan](output-and-self-supervision.md) (speech output itself is built: 69–71).
 - **Grid cells / metric structure codes;** path-integrated structure (TEM proper).
 - **Subiculum's projections** to thalamus and prefrontal cortex; a learned entorhinal layer (II / III / V).
 - **Perirhinal cortex** (item familiarity as its own system).

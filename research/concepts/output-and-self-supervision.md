@@ -94,8 +94,10 @@ Read-back is built in its rehearsal form ([26](../experiments/26-context-and-rea
 - **The efference copy and recitation are built** ([70](../experiments/70-efference-copy-and-recitation.md)):
   own words are not surprising and a mismatch is caught; the hippocampus plans a
   retelling and the cortex speaks it (93–98% of words in place).
-- **Still to build:** speech routed as in the brain (a motor area, a basal-ganglia
-  go/no-go, a learned forward model), and read-back as training.
+- **Speech is routed as in the brain** ([71](../experiments/71-speech-routing.md)): a
+  motor area learned by babbling (inverse and forward models), a basal-ganglia go/no-go to
+  speak, the forward model's prediction as the efference copy.
+- **Still to build:** read-back as training.
 
 ## The experiments, in order
 1. **26 · Answering by speaking, with abstention.** The question stories end without the

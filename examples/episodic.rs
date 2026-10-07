@@ -1326,6 +1326,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
     };
     let mut step_pending: Vec<(BitVector, bool)> = Vec::new(); // this story's choices
+    // CUE_CTL=1 (with HIPPO_SELF + SPARSE_BIND): a cue controller. The hippocampus is still
+    // cued at every word (automatic recall), but the basal ganglia choose how the cue is
+    // edited first, per context (the column's confidence band × the sentence's familiarity
+    // band): 0 the cue as is, 1 the cue as is with the walk's bridge allowed, 2 the
+    // sentence's content only (the story's context dropped), 3 the sentence's least
+    // familiar binding + the story's context (focus). Reward: the recalled word is the
+    // next word read (1, else 0), minus CUE_COST (default 0.02) for the walk's second
+    // recall. Learns in training (not in replay); CUE_TEST_LEARN=1 at test too.
+    let cue_ctl = std::env::var("CUE_CTL").is_ok();
+    let cue_test_learn = std::env::var("CUE_TEST_LEARN").is_ok();
+    let cue_cost: i32 = q16(std::env::var("CUE_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.02)) as i32;
+    let mut cue_bg = BasalGanglia::new(BITS);
+    let cue_code = |ctx: usize, act: usize| {
+        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(9_000_011) ^ ((ctx * 4 + act) as u64 + 7000));
+        let all: Vec<usize> = (0..BITS).collect();
+        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
+    };
+    let mut cue_pending: Option<(BitVector, usize)> = None;
+    // at test: [action] → (chosen, recalled the next word); in training: chosen
+    let mut cue_stats = [[0usize; 2]; 4];
+    let mut cue_train = [0usize; 4];
+    let mut cue_last_test: Option<usize> = None;
     let mut step_stats = [[0usize; 2]; 4]; // at test, per offering source: (offered, stepped)
     // SEMANTIC_MIX=1: the semantic store votes in the mix as source 8 (its word of the kind
     // the column expects, for the sentence's rarest word), with its own learned reliability.
@@ -2670,7 +2692,47 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 idx.extend(bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)));
                                 idx.sort_unstable();
                                 idx.dedup();
-                                hc.recall(&idx)
+                                if cue_ctl && !bind_sentence_pairs.is_empty() {
+                                    let fams: Vec<u64> = bind_sentence_pairs.iter().zip(&bind_sentence).map(|(&(w, c), b)| fam_binding(&bind_hc, &bind_mem, true, true, b, &enc.codes[w], w, c)).collect();
+                                    let band = fams.iter().min().map_or(7, |&c| (64 - c.leading_zeros() as usize).min(7));
+                                    let conf = CONF_BANDS.iter().filter(|&&e| column.confidence() >= e).count();
+                                    let cctx = conf * 8 + band;
+                                    let cands: Vec<BitVector> = (0..4).map(|a| cue_code(cctx, a)).collect();
+                                    let learn = !replaying && (!testing || cue_test_learn);
+                                    let a = cue_bg.select(&cands, if learn { Some(&mut rng) } else { None }).unwrap_or(0);
+                                    if learn {
+                                        cue_pending = Some((cands[a].clone(), a));
+                                    }
+                                    if testing && !replaying {
+                                        cue_stats[a][0] += 1;
+                                    } else if !replaying {
+                                        cue_train[a] += 1;
+                                    }
+                                    if testing && !replaying {
+                                        cue_last_test = Some(a);
+                                    }
+                                    match a {
+                                        0 => hc.recall_as(&idx, false),
+                                        1 => hc.recall_as(&idx, true),
+                                        2 => {
+                                            let mut c: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                                            c.sort_unstable();
+                                            c.dedup();
+                                            hc.recall_as(&c, false)
+                                        }
+                                        _ => {
+                                            let i = (0..fams.len()).min_by_key(|&i| fams[i]).unwrap();
+                                            let (w, c) = bind_sentence_pairs[i];
+                                            let mut c: Vec<usize> = sparse_binding(&enc.codes[w], w, c, false);
+                                            c.extend(bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)));
+                                            c.sort_unstable();
+                                            c.dedup();
+                                            hc.recall_as(&c, false)
+                                        }
+                                    }
+                                } else {
+                                    hc.recall(&idx)
+                                }
                             } else {
                                 hc.recall(&set_bits(&cue))
                             };
@@ -2736,6 +2798,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
 
+                // the cue controller's outcome: did the recall it shaped give the next word?
+                let cue_right = bind_answer == Some(ids[t + 1]);
+                if let Some((code, a)) = cue_pending.take() {
+                    cue_bg.reward_candidate(&code, if cue_right { ONE as i32 } else { 0 } - if a == 1 { cue_cost } else { 0 }, &mut rng);
+                }
+                if let Some(a) = cue_last_test.take() {
+                    cue_stats[a][1] += cue_right as usize;
+                }
                 if std::env::var("COMPLETEDIAG").is_ok() && bind && (s.held_out || !testing) && NEW_NAMES.contains(&s.words[t]) && bind_diag < 12 {
                     bind_diag += 1;
                     let wl = |v: &BitVector| -> Vec<&str> { (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect() };
@@ -3668,6 +3738,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
         }
         if graded {
+            if cue_ctl {
+                let pct = |a: usize, b: usize| if b == 0 { 0.0 } else { 100.0 * a as f64 / b as f64 };
+                let tr: usize = cue_train.iter().sum();
+                let te: usize = cue_stats.iter().map(|x| x[0]).sum();
+                let names = ["as is", "walk", "content only", "focus"];
+                eprintln!(
+                    "  CUE seed {seed}: training choices {}; at test {}",
+                    (0..4).map(|a| format!("{} {:.1}%", names[a], pct(cue_train[a], tr))).collect::<Vec<_>>().join(", "),
+                    (0..4).map(|a| format!("{} {:.1}% ({:.1}% gave the next word)", names[a], pct(cue_stats[a][0], te), pct(cue_stats[a][1], cue_stats[a][0]))).collect::<Vec<_>>().join(", ")
+                );
+                // the learned policy: the preferred edit per (confidence band, familiarity band)
+                let mut pol = String::new();
+                for c in 0..5 {
+                    pol.push_str(&format!(" conf{c}:"));
+                    for f in 0..8 {
+                        let best = (0..4).max_by_key(|&a| cue_bg.value(&cue_code(c * 8 + f, a))).unwrap();
+                        pol.push(['A', 'W', 'C', 'F'][best]);
+                    }
+                }
+                eprintln!("  CUE seed {seed}: policy (per familiarity band 0..7; A as is, W walk, C content only, F focus){pol}");
+            }
             eprintln!("  GRADED seed {seed}: {} steps with a semantic-store answer in the mix", graded_stats[0]);
         }
         if cooperate {

@@ -532,6 +532,11 @@ impl Hippocampus {
 /// input indices; recall and replay give EC V patterns (`Recall::ec`).
 pub trait EpisodicCircuit {
     fn recall(&self, cue: &[usize]) -> Recall;
+    /// Recall with the walk on or off for this one call (a cue controller's choice).
+    /// Default: as `recall` (circuits without a walk).
+    fn recall_as(&self, cue: &[usize], _walk: bool) -> Recall {
+        self.recall(cue)
+    }
     fn familiarity(&self, bits: &[usize]) -> u64;
     fn novelty(&self, x: &[usize]) -> Q16;
     fn store(&mut self, x: &[usize]) -> Q16;

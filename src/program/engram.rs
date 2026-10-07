@@ -618,6 +618,11 @@ impl EpisodicCircuit for EngramStore {
         if self.cfg.walk { self.recall_walk(cue, true) } else { self.recall_row(cue, true) }
     }
 
+    fn recall_as(&self, cue: &[usize], walk: bool) -> Recall {
+        self.recalls.set(self.recalls.get() + 1);
+        if walk { self.recall_walk(cue, true) } else { self.recall_row(cue, true) }
+    }
+
     fn familiarity(&self, ids: &[usize]) -> u64 {
         if ids.is_empty() {
             return 0;

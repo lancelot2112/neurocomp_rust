@@ -161,6 +161,8 @@ pub struct EngramStore {
     /// return (a bit per source; all by default).
     source_now: u8,
     recall_mask: Cell<u8>,
+    /// Rows stored from sources other than the world (0: rarity needs no filtering).
+    others: usize,
     place: HashMap<u64, Vec<u32>>,
     live: usize,
     evicted: usize,
@@ -197,6 +199,7 @@ impl EngramStore {
             prev_episode_rows: Vec::new(),
             source_now: 0,
             recall_mask: Cell::new(u8::MAX),
+            others: 0,
             place: HashMap::default(),
             live: 0,
             evicted: 0,
@@ -235,7 +238,21 @@ impl EngramStore {
     }
 
     fn n(&self, id: usize) -> usize {
-        self.what.get(id).map_or(0, |p| p.len())
+        let Some(p) = self.what.get(id) else { return 0 };
+        if self.others == 0 || self.recall_mask.get() == u8::MAX {
+            return p.len();
+        }
+        // source memory: rarity among the rows recall may return only
+        p.iter().filter(|&&s| self.row(s).is_some_and(|r| self.recall_mask.get() >> r.source & 1 == 1)).count()
+    }
+
+    /// Rows holding word `w` in any content slot (among the sources recall may return).
+    fn word_rows(&self, w: usize) -> usize {
+        let Some(p) = self.words.get(w) else { return 0 };
+        if self.others == 0 || self.recall_mask.get() == u8::MAX {
+            return p.len();
+        }
+        p.iter().filter(|&&s| self.row(s).is_some_and(|r| self.recall_mask.get() >> r.source & 1 == 1)).count()
     }
 
     fn weight(&self, n: usize) -> u64 {
@@ -427,9 +444,9 @@ impl EngramStore {
                     && i / ws < self.cfg.content_fields
                     && r1.what.binary_search(&(i as u32)).is_ok()
                     // rare as a word, in any slot (slot-specific ids fragment common words)
-                    && self.words.get(i % ws).map_or(0, |l| l.len()) <= self.cfg.walk_rare
+                    && self.word_rows(i % ws) <= self.cfg.walk_rare
             })
-            .min_by_key(|&i| self.words.get(i % ws).map_or(0, |l| l.len()));
+            .min_by_key(|&i| self.word_rows(i % ws));
         let Some(b) = bridge else { return self.recall_row(cue, bump) };
         let bw = b % ws;
         // context ids stay slot-specific; the rest of the cue's content, as words in any
@@ -465,7 +482,7 @@ impl EngramStore {
     pub fn infer_from(&self, fact: u32, new: &[usize], max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
         let ws = self.cfg.word_space.max(1);
         let Some(r) = self.row(fact) else { return Vec::new() };
-        let count = |w: usize| self.words.get(w).map_or(0, |l| l.len());
+        let count = |w: usize| self.word_rows(w);
         // N: a new word (held by this row alone), not just a known word in a new slot
         let Some(&n_id) = new.iter().find(|&&i| i / ws < self.cfg.content_fields && count(i % ws) <= 1) else { return Vec::new() };
         let (n_word, n_slot) = (n_id % ws, n_id / ws);
@@ -773,6 +790,7 @@ impl EpisodicCircuit for EngramStore {
             err: Cell::new(ONE),
             source: self.source_now,
         };
+        self.others += (self.source_now != 0) as usize;
         let s = self.append(row);
         self.last_row.set(Some(s));
         self.episode_rows.borrow_mut().push(s);

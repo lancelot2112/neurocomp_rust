@@ -1374,9 +1374,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // next word read (1, else 0), minus CUE_COST (default 0.02) for the walk's second
     // recall. Learns in training (not in replay); CUE_TEST_LEARN=1 at test too.
     // Sparse gating of memory (after 63, 64, 67).
-    // SPARSE_HC=1: the hippocampus's answer enters the source mix only where the column is
-    // unsure (its own prediction under half reliable), as the semantic/relation store's
-    // does under COOPERATE: sparse in time for both stores.
+    // SPARSE_HC=1: the hippocampus's answers (its memory frames and its slot readout) enter
+    // the source mix only where the column is unsure (its own prediction under half
+    // reliable), as the semantic/relation store's does under COOPERATE: sparse in time for
+    // both stores.
     // GATE=learned (with COOPERATE): the basal ganglia decide whether the cortex asks the
     // store at this step, instead of the fixed "under half reliable" threshold, per
     // (the column's own confidence band × the cue word's familiarity band). Reward: how
@@ -3203,7 +3204,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     // slot ⊗ content memory (BIND)
                     if let Some(w) = bind_answer {
-                        proposals.push((6, ctx + bind_strength, vec![w]));
+                        if sparse_hc && own_conf_step >= Q_HALF {
+                            // sparse in time: the column is sure here, the hippocampus's answer is not sent
+                            hc_withheld += (testing && !replaying) as usize;
+                        } else {
+                            proposals.push((6, ctx + bind_strength, vec![w]));
+                        }
                     }
                     // the upper areas of the chain, one source each
                     for (i, p) in upper_pred.iter().enumerate() {

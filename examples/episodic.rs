@@ -355,6 +355,11 @@ fn family_of(name_i: usize, new: bool) -> usize {
 fn family_stated() -> bool {
     std::env::var("FAMILY_STATED").is_ok()
 }
+/// A belief's band, in eighths (0..=7).
+fn belief_band(b: Q16) -> usize {
+    ((b as u64 * 8) >> 16).min(7) as usize
+}
+
 /// BELIEF_Q=1: test questions that ask a new name's family (see `season_story_with`).
 fn belief_q() -> bool {
     std::env::var("BELIEF_Q").is_ok()
@@ -379,6 +384,12 @@ fn random_places() -> bool {
 
 /// NEW_NAMES=1: held-out test stories use names never seen in training.
 const NEW_NAMES: &[&str] = &["tom", "lucy", "sam"];
+/// PRACTICE=1 (with BELIEF_UNKNOWN=learned): people met only in training, whose family is
+/// stated with a conflict of a known kind and then revealed in a quiz (see `practice_at`).
+const PRACTICE_NAMES: &[&str] = &["kim", "joe", "eve", "ian", "amy", "bob", "ann", "dan", "liz", "max", "pam", "ray", "sue", "ted", "una", "vic", "wes", "zoe"];
+fn practice() -> bool {
+    std::env::var("PRACTICE").is_ok()
+}
 fn new_names() -> bool {
     std::env::var("NEW_NAMES").is_ok()
 }
@@ -697,6 +708,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     if task == Task::Season && (new_names() || std::env::var("SCHEMA_K").is_ok()) {
         vocab.extend(NEW_NAMES);
+    }
+    if task == Task::Season && practice() {
+        vocab.extend(PRACTICE_NAMES);
     }
     if task == Task::Season && family() {
         vocab.extend(SURNAMES);
@@ -1463,6 +1477,47 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the word ("sam is a"), the answer is "unknown" unless the believed value is believed
     // more than half (more likely than every alternative together)
     let belief_unknown = std::env::var("BELIEF_UNKNOWN").is_ok();
+    // BELIEF_UNKNOWN=learned: answer or "unknown" is a basal-ganglia go/no-go per band of
+    // the rule's own belief in its best value (eighths), learned from practice quizzes:
+    // answering right is worth 1, answering wrong 0, "unknown" one half, so answering wins
+    // a band once its answers there are right more often than not
+    let unknown_learned = std::env::var("BELIEF_UNKNOWN").map_or(false, |v| v == "learned");
+    let mut unknown_bg = BasalGanglia::new(256);
+    let unknown_code = |band: usize, answer: bool| BitVector::from_bits(&((band * 2 + answer as usize) * 8..(band * 2 + answer as usize) * 8 + 8).collect::<Vec<_>>(), 256);
+    let mut quiz_rng = StdRng::seed_from_u64(seed ^ 0x5157_4954);
+    let mut quiz_stats = [[0usize; 3]; 8]; // per band: (quizzes, answered, answered right)
+    let quiz_reps: usize = std::env::var("QUIZ_REPS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+    // PRACTICE: each practice name has a true family and one of three kinds of statement:
+    // 0, the first honest narrator (truth) against the liar (a lie); 1, the first honest
+    // narrator (truth) against the second (wrong, once: undecidable); 2, one honest
+    // statement. Statements fall in stories told by the right narrator, before the new
+    // names' phase. (slot -> (practice name, family stated))
+    let (practice_at, practice_truth): (HashMap<usize, (usize, usize)>, Vec<usize>) = {
+        let mut m = HashMap::default();
+        let mut truth = Vec::new();
+        if let (true, Some(k)) = (practice(), narrators) {
+            let mut prng = StdRng::seed_from_u64(seed.wrapping_add(4242));
+            let phase: usize = std::env::var("SCHEMA_PHASE").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
+            for j in 0..PRACTICE_NAMES.len() {
+                let f = prng.gen_range(0..SURNAMES.len());
+                truth.push(f);
+                let tellers: Vec<(usize, usize)> = match j % 3 {
+                    0 => vec![(0, f), (k - 1, 1 - f)],
+                    1 => vec![(0, f), (1, 1 - f)],
+                    _ => vec![(prng.gen_range(0..k - 1), f)],
+                };
+                let mut at = prng.gen_range(100..TRAIN - phase - 200);
+                for (n, fam) in tellers {
+                    while at % k != n || m.contains_key(&at) {
+                        at += 1;
+                    }
+                    m.insert(at, (j, fam));
+                    at += 1 + prng.gen_range(0..60);
+                }
+            }
+        }
+        (m, truth)
+    };
     let mut unknown_tally = [[0usize; 4]; 3]; // per new name: (asked, right, wrong, unknown)
     // Books task: each book's season, sessions left, last session read; this session's
     // book and its bin [first session, back to back, after 1-2 other sessions, after 3+]
@@ -2128,6 +2183,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rel_rng);
+            // the practice quiz: each practice name the module has claims about is asked its
+            // family; the go/no-go answers (the believed family) or says "unknown", and the
+            // world then reveals the truth
+            if let (true, Some(isa), false) = (unknown_learned, rel.relation_for(&[index["is"], index["a"]]), testing) {
+                for _ in 0..quiz_reps {
+                    for (j, n) in PRACTICE_NAMES.iter().enumerate() {
+                        let Some(&w) = index.get(n) else { continue };
+                        let Some(v) = rel.bayes.believed(&(isa, w, 0, 1)) else { continue };
+                        let band = belief_band(rel.belief(w, isa, 0, 1, v));
+                        let cands = [unknown_code(band, false), unknown_code(band, true)];
+                        let answer = unknown_bg.select(&cands, Some(&mut quiz_rng)) == Some(1);
+                        let right = vocab[v] == SURNAMES[practice_truth[j]];
+                        let r = if !answer { ONE / 2 } else if right { ONE } else { 0 };
+                        unknown_bg.reward_candidate(&cands[answer as usize], r as i32, &mut quiz_rng);
+                        let q = &mut quiz_stats[band];
+                        q[0] += 1;
+                        q[1] += answer as usize;
+                        q[2] += (answer && right) as usize;
+                    }
+                }
+            }
             // proposals judged again now that the facts of this stretch are in the module
             if let (true, Some(ireps), Some(hc), Some(isa)) = (proposals_on, infer_reps, bind_hc.as_ref(), rel.relation_for(&[index["is"], index["a"]])) {
                 let stories = validate_proposals(&mut proposals, Some((&rel, isa)), &**hc, &row_narrator, &vocab, proposal_min, proposal_support);
@@ -2310,6 +2386,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         });
         let narrator: u16 = split.map_or_else(|| narrators.map_or(0, |k| (s_i % k) as u16), |n| n.0 as u16);
+        // a practice statement, after the story's first sentence
+        if let (Some(&(j, f)), false) = (practice_at.get(&s_i), testing) {
+            let at = s.words.iter().position(|w| *w == ".").map_or(0, |i| i + 1);
+            s.words.splice(at..at, [PRACTICE_NAMES[j], "is", "a", SURNAMES[f], "."]);
+            if s.answer_at >= at {
+                s.answer_at += 5;
+            }
+        }
         if let (Some(k), false) = (narrators, testing) {
             if (narrator as usize == k - 1 && liar > 0) || split.is_some_and(|x| x.1) {
                 let mut lrng = StdRng::seed_from_u64(seed ^ (s_i as u64).wrapping_mul(0x9E37_79B9));
@@ -2318,7 +2402,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     None => liar,
                 };
                 for i in 3..s.words.len() {
-                    if s.words[i - 2] == "is" && s.words[i - 1] == "a" && chance(&mut lrng, p) {
+                    // (a practice statement is stated as designed)
+                    if s.words[i - 2] == "is" && s.words[i - 1] == "a" && !PRACTICE_NAMES.contains(&s.words[i - 3]) && chance(&mut lrng, p) {
                         if let Some(f) = SURNAMES.iter().position(|x| *x == s.words[i]) {
                             s.words[i] = SURNAMES[1 - f];
                             lies_told += 1;
@@ -3824,7 +3909,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if let Some(i) = NEW_NAMES.iter().position(|n| *n == s.words[s.answer_at - 3]) {
                             let w = index[NEW_NAMES[i]];
                             let isa = rel.relation_for(&[index["is"], index["a"]]);
-                            let sure = isa.and_then(|r| rel.bayes.believed(&(r, w, 0, 1)).map(|v| rel.belief(w, r, 0, 1, v))).is_some_and(|b| b > ONE / 2);
+                            let belief = isa.and_then(|r| rel.bayes.believed(&(r, w, 0, 1)).map(|v| rel.belief(w, r, 0, 1, v)));
+                            let sure = match (unknown_learned, belief) {
+                                (_, None) => false,
+                                (true, Some(b)) => unknown_bg.value(&unknown_code(belief_band(b), true)) > unknown_bg.value(&unknown_code(belief_band(b), false)),
+                                (false, Some(b)) => b > ONE / 2,
+                            };
                             let u = &mut unknown_tally[i];
                             u[0] += 1;
                             if belief_unknown && !sure {
@@ -5032,6 +5122,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             })
             .collect();
         eprintln!("  UNKNOWN seed {seed}: family questions {}", parts.join("; "));
+        if unknown_learned {
+            let bands: Vec<String> = (0..8)
+                .filter(|&b| quiz_stats[b][0] > 0)
+                .map(|b| {
+                    let q = quiz_stats[b];
+                    format!(
+                        "{}/8: {} quizzes, answered {:.0}% ({:.0}% of those right), now {}",
+                        b,
+                        q[0],
+                        100.0 * q[1] as f64 / q[0] as f64,
+                        100.0 * q[2] as f64 / q[1].max(1) as f64,
+                        if unknown_bg.value(&unknown_code(b, true)) > unknown_bg.value(&unknown_code(b, false)) { "answers" } else { "says unknown" }
+                    )
+                })
+                .collect();
+            eprintln!("  UNKNOWN seed {seed}: learned go/no-go by belief band: {}", bands.join("; "));
+        }
     }
     if belief_q() {
         let pc = |x: (usize, usize)| 100.0 * x.0 as f64 / x.1.max(1) as f64;

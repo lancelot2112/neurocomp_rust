@@ -633,6 +633,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
     let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
+    // Independent random streams, one per subsystem, split off the seed: switching a
+    // subsystem on (or changing what it does) draws only from its own stream, so the rest
+    // of the run is unchanged and differences between configurations can be attributed.
+    // `rng` stays for setup and the cortex's waking learning.
+    let stream = |k: u64| StdRng::seed_from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ k.wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    let mut story_rng = stream(1); // which story is read, and its words
+    let mut bg_rng = stream(2); // the basal ganglia's exploration and learning
+    let mut sleep_rng = stream(3); // offline: replay order, consolidation, sleep learning
+    let mut rel_rng = stream(4); // the relation store
+    let mut noise_rng = stream(5); // altered feedback
 
     let mut routes = vec![
         RelayChannel { query_lag: 1, value_offset: 4 },
@@ -1659,13 +1669,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // round; every replay also feeds sleep generalisation, which then runs
                 let familiar: Vec<usize> = (0..traces.len()).filter(|&i| traces[i].3 >= 4).collect();
                 let mut order: Vec<usize> = novel.clone();
-                order.extend(familiar.choose_multiple(&mut rng, novel.len()).copied());
+                order.extend(familiar.choose_multiple(&mut sleep_rng, novel.len()).copied());
                 for _ in 0..reps {
-                    order.shuffle(&mut rng);
+                    order.shuffle(&mut sleep_rng);
                     for &i in &order {
                         let (sent, bl, ans, _) = &traces[i];
                         let x = replay_input(sent, bl);
-                        area.learn(&x, &enc.codes[*ans], &mut rng);
+                        area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                         area.column.l23.add_replay(&x, &enc.codes[*ans]);
                         replayed += 1;
                     }
@@ -1676,7 +1686,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let (sent, bl, ans, _) = &traces[i];
                     let x = replay_input(sent, bl);
                     for _ in 0..reps {
-                        area.learn(&x, &enc.codes[*ans], &mut rng);
+                        area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                         replayed += 1;
                     }
                 }
@@ -1748,7 +1758,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 for _ in 0..reps {
                     let mut order: Vec<usize> = (0..stories.len()).collect();
-                    order.shuffle(&mut rng);
+                    order.shuffle(&mut sleep_rng);
                     for i in order {
                         let st = &stories[i];
                         replay_queue.push(Story { words: st.words.clone(), answer_at: st.answer_at, held_out: false });
@@ -1841,12 +1851,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                             area.column.l23.set_growth_mask(Some(mask));
                             for _ in 0..reps {
-                                area.column.l23.grow(&x, &enc.codes[words[k]], 2, &mut rng);
+                                area.column.l23.grow(&x, &enc.codes[words[k]], 2, &mut sleep_rng);
                             }
                             area.column.l23.set_growth_mask(None);
                         } else {
                             for _ in 0..reps {
-                                area.learn(&x, &enc.codes[words[k]], &mut rng);
+                                area.learn(&x, &enc.codes[words[k]], &mut sleep_rng);
                             }
                         }
                         infer_stats[1] += 1;
@@ -1867,7 +1877,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let r = if cued {
                     let mut cue = None;
                     for _ in 0..64 {
-                        let (w, c) = (rng.gen_range(0..vocab.len()), rng.gen_range(0..roles.used().max(1)));
+                        let (w, c) = (sleep_rng.gen_range(0..vocab.len()), sleep_rng.gen_range(0..roles.used().max(1)));
                         let b = sparse_binding(&enc.codes[w], w, c, false);
                         if hc.familiarity(&b) > 0 {
                             cue = Some(b);
@@ -1879,7 +1889,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         None => continue,
                     }
                 } else {
-                    hc.replay(&mut rng)
+                    hc.replay(&mut sleep_rng)
                 };
                 gen_stats[0] += 1;
                 if r.ec.is_empty() {
@@ -1949,7 +1959,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 (0..vocab.len()).max_by_key(|&w| enc.codes[w].as_words().iter().zip(code.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>())
             };
             for i in 0..tagged.len() + sem_hreplays * reps {
-                let r = if i < tagged.len() { hc.replay_from(&tagged[i].0) } else { hc.replay(&mut rng) };
+                let r = if i < tagged.len() { hc.replay_from(&tagged[i].0) } else { hc.replay(&mut sleep_rng) };
                 sem_hstats[0] += 1;
                 if r.ec.is_empty() {
                     continue;
@@ -2009,19 +2019,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     hc.mark_consolidated(&tagged[i].0);
                     sem_hstats[3] += 1;
                 }
-                sem_store.feedback(cue, &content, &mut rng);
+                sem_store.feedback(cue, &content, &mut sleep_rng);
                 sem_replays += 1;
             }
         }
         if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
-            rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rng);
+            rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rel_rng);
             // proposals judged again now that the facts of this stretch are in the module
             if let (true, Some(ireps), Some(hc), Some(isa)) = (proposals_on, infer_reps, bind_hc.as_ref(), rel.relation_for(&[index["is"], index["a"]])) {
                 let stories = validate_proposals(&mut proposals, Some((&rel, isa)), &**hc, &row_narrator, &vocab, proposal_min, proposal_support);
                 infer_stats[0] += stories.len();
                 for _ in 0..ireps {
                     let mut order: Vec<usize> = (0..stories.len()).collect();
-                    order.shuffle(&mut rng);
+                    order.shuffle(&mut sleep_rng);
                     for i in order {
                         let st = &stories[i];
                         replay_queue.push(Story { words: st.words.clone(), answer_at: st.answer_at, held_out: false });
@@ -2034,14 +2044,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let novel: Vec<usize> = (0..sem_buf.len()).filter(|&i| sem_buf[i].iter().any(|&w| rare(w))).collect();
             let others: Vec<usize> = (0..sem_buf.len()).filter(|&i| !novel.contains(&i)).collect();
             let mut order = novel.clone();
-            order.extend(others.choose_multiple(&mut rng, novel.len()).copied());
+            order.extend(others.choose_multiple(&mut sleep_rng, novel.len()).copied());
             // SEMANTIC_RANDOM=n (control): n sentences drawn at random, no novelty priority
             if let Some(n) = std::env::var("SEMANTIC_RANDOM").ok().and_then(|v| v.parse::<usize>().ok()) {
                 let all: Vec<usize> = (0..sem_buf.len()).collect();
-                order = all.choose_multiple(&mut rng, n).copied().collect();
+                order = all.choose_multiple(&mut sleep_rng, n).copied().collect();
             }
             for _ in 0..reps {
-                order.shuffle(&mut rng);
+                order.shuffle(&mut sleep_rng);
                 for &i in &order {
                     let sent = &sem_buf[i];
                     let Some(&cue_w) = sent.iter().min_by_key(|&&w| word_count[w]) else { continue };
@@ -2055,7 +2065,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let cue = &enc.codes[cue_w];
                     let mut out = BitVector::new(BITS, Some(0));
                     sem_store.process_predictive(cue, &mut out);
-                    sem_store.feedback(cue, &content, &mut rng);
+                    sem_store.feedback(cue, &content, &mut sleep_rng);
                     sem_replays += 1;
                 }
             }
@@ -2139,11 +2149,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         let mut s = if task == Task::Books {
             // pick a book; a finished one is replaced by a new book with a new season
-            let b = rng.gen_range(0..3);
+            let b = story_rng.gen_range(0..3);
             let first = book_left[b] == 0;
             if first {
-                book_season[b] = rng.gen_range(0..SEASONS.len());
-                book_left[b] = rng.gen_range(3..=8);
+                book_season[b] = story_rng.gen_range(0..SEASONS.len());
+                book_left[b] = story_rng.gen_range(3..=8);
                 // the new book's action: its slot's (3 ids), or the next of BOOK_IDS in turn
                 book_id[b] = if book_ids() == 3 { b } else { next_book_id };
                 next_book_id = (next_book_id + 1) % book_ids();
@@ -2160,27 +2170,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             };
             book_last[b] = s_i;
             open_book_next = book_id[b];
-            book_session(&mut rng, book_id[b], book_season[b], first, testing && s_i % 2 == 1)
+            book_session(&mut story_rng, book_id[b], book_season[b], first, testing && s_i % 2 == 1)
         } else if task == Task::Season {
-            season_distance = rng.gen_range(0..season_len);
+            season_distance = story_rng.gen_range(0..season_len);
             let at = schema_at.get(&s_i).copied();
             if family_stated() {
-                season_story_with(&mut rng, season_distance, testing && s_i % 2 == 1, None, at.map(|a| a.0))
+                season_story_with(&mut story_rng, season_distance, testing && s_i % 2 == 1, None, at.map(|a| a.0))
             } else {
-                season_story_with(&mut rng, season_distance, testing && s_i % 2 == 1, at, None)
+                season_story_with(&mut story_rng, season_distance, testing && s_i % 2 == 1, at, None)
             }
         } else if task == Task::Habit {
-            habit_story(&mut rng, testing && s_i % 2 == 1)
+            habit_story(&mut story_rng, testing && s_i % 2 == 1)
         } else if task == Task::Elim {
-            elim_story(&mut rng, testing && s_i % 2 == 1)
+            elim_story(&mut story_rng, testing && s_i % 2 == 1)
         } else if task == Task::Give {
-            give_story(&mut rng, testing && s_i % 2 == 1)
+            give_story(&mut story_rng, testing && s_i % 2 == 1)
         } else if task == Task::Topic {
-            topic_story(&mut rng, testing && s_i % 2 == 1)
+            topic_story(&mut story_rng, testing && s_i % 2 == 1)
         } else if task == Task::Persist {
-            persist_story(&mut rng, s_i, testing && s_i % 2 == 1, testing)
+            persist_story(&mut story_rng, s_i, testing && s_i % 2 == 1, testing)
         } else {
-            story(&mut rng, task, max_facts, testing && s_i % 2 == 1)
+            story(&mut story_rng, task, max_facts, testing && s_i % 2 == 1)
         };
         // NARRATORS=k: each training story is told by narrator s_i % k (the reader knows who
         // tells it, as one knows a book's author). LIAR=p: the last narrator swaps the family
@@ -2321,7 +2331,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     c
                                 })
                                 .collect();
-                            let explore = if testing { None } else { Some(&mut rng) };
+                            let explore = if testing { None } else { Some(&mut bg_rng) };
                             ctx_pending = true;
                             ctx_bg.select(&cands, explore).unwrap_or(0)
                         }
@@ -2499,7 +2509,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             })
                             .collect()
                     };
-                    let explore = if testing { None } else { Some(&mut rng) };
+                    let explore = if testing { None } else { Some(&mut bg_rng) };
                     let a = sacc_bg.select(&cands, explore).unwrap_or(0);
                     sacc_pending = Some(a);
                     a
@@ -2577,7 +2587,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             };
             if let Policy::Pfc { learned } = policy {
                 let load = if learned {
-                    let explore = if testing { None } else { Some(&mut rng) };
+                    let explore = if testing { None } else { Some(&mut bg_rng) };
                     pfc_gate.decide(ids[t], explore) == Gate::Load
                 } else {
                     names_set.contains(&ids[t]) // hand-set rule: hold the last name
@@ -2634,7 +2644,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     code
                                 })
                                 .collect();
-                            let explore = if testing { None } else { Some(&mut rng) };
+                            let explore = if testing { None } else { Some(&mut bg_rng) };
                             if let Some(i) = gate_bg.select(&cands, explore) {
                                 released = contents[i].1.clone();
                                 gate_pending = Some(released.clone());
@@ -2675,7 +2685,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             code.clone()
                         };
                         let open = if gated && s_i >= l6_warmup {
-                            let explore = if testing { None } else { Some(&mut rng) };
+                            let explore = if testing { None } else { Some(&mut bg_rng) };
                             l6_gate.open(&ctx, explore)
                         } else {
                             vec![true; contents.len()]
@@ -2739,7 +2749,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     *c &= !u;
                                 }
                                 let items = memory.items(&hop1, 16);
-                                let explore = if testing { None } else { Some(&mut rng) };
+                                let explore = if testing { None } else { Some(&mut bg_rng) };
                                 if let Some(i) = bg.select(&items, explore) {
                                     let item = &items[i];
                                     let need = (neurocomp::fixed::mul_ceil(item.count_ones() as u64, SEVEN_TENTHS) as u32).max(1);
@@ -2892,7 +2902,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let fb = (64 - cue_fam.leading_zeros() as usize).min(7);
                             let cands = [mg_code(cb * 8 + fb, 0), mg_code(cb * 8 + fb, 1)];
                             let learn = !testing && !replaying;
-                            let a = mg_bg.select(&cands, if learn { Some(&mut rng) } else { None }).unwrap_or(0);
+                            let a = mg_bg.select(&cands, if learn { Some(&mut bg_rng) } else { None }).unwrap_or(0);
                             if learn {
                                 mg_pending = Some((cands[a].clone(), a == 1));
                             }
@@ -2991,7 +3001,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // (its winning kernel's reliability, the L5 confidence it sends up)
                     let confident = s_i < hier_gate_warmup || hier_gate_conf.map_or(true, |c| area.column.confidence() >= c);
                     let passed = confident && if hier_gate_on && s_i >= hier_gate_warmup {
-                        let explore = if testing { None } else { Some(&mut rng) };
+                        let explore = if testing { None } else { Some(&mut bg_rng) };
                         hier_gate.open(code, explore)[0]
                     } else {
                         true
@@ -3080,7 +3090,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     let cctx = conf * 8 + band;
                                     let cands: Vec<BitVector> = (0..4).map(|a| cue_code(cctx, a)).collect();
                                     let learn = !replaying && (!testing || cue_test_learn);
-                                    let a = cue_bg.select(&cands, if learn { Some(&mut rng) } else { None }).unwrap_or(0);
+                                    let a = cue_bg.select(&cands, if learn { Some(&mut bg_rng) } else { None }).unwrap_or(0);
                                     if learn {
                                         cue_pending = Some((cands[a].clone(), a));
                                     }
@@ -3191,7 +3201,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // the cue controller's outcome: did the recall it shaped give the next word?
                 let cue_right = bind_answer == Some(ids[t + 1]);
                 if let Some((code, a)) = cue_pending.take() {
-                    cue_bg.reward_candidate(&code, if cue_right { ONE as i32 } else { 0 } - if a == 1 { cue_cost } else { 0 }, &mut rng);
+                    cue_bg.reward_candidate(&code, if cue_right { ONE as i32 } else { 0 } - if a == 1 { cue_cost } else { 0 }, &mut bg_rng);
                 }
                 if let Some(a) = cue_last_test.take() {
                     cue_stats[a][1] += cue_right as usize;
@@ -3314,7 +3324,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let cb = if conf < Q_HALF { 0 } else if conf < Q_08 { 1 } else { 2 };
                             let ctx = definite as usize + 2 * cb + 12 * (band < 4) as usize + 24 * src;
                             let cands = [step_code(ctx, 0), step_code(ctx, 1)];
-                            let explore = if !testing || step_test_learn { Some(&mut rng) } else { None };
+                            let explore = if !testing || step_test_learn { Some(&mut bg_rng) } else { None };
                             let choice = step_bg.select(&cands, explore).unwrap_or(1);
                             if !testing || step_test_learn {
                                 step_pending.push((cands[choice].clone(), choice == 0));
@@ -3406,7 +3416,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     ctx_pending = false;
                     if !testing {
                         let right = enc.decode(&out) == Some(next);
-                        ctx_bg.reward(if right { ONE as i32 } else { 0 }, &mut rng);
+                        ctx_bg.reward(if right { ONE as i32 } else { 0 }, &mut bg_rng);
                     }
                 }
                 // MIX: every source votes for its words with its reliability as the weight
@@ -3555,7 +3565,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if step_learned && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     for (code, stepped) in step_pending.drain(..) {
-                        step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut rng);
+                        step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut bg_rng);
                     }
                 }
                 if bind && consolidate.is_some() && !testing && !replaying && t + 1 == s.answer_at {
@@ -3580,7 +3590,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if !testing {
                         let right = enc.decode(&out) == Some(next);
                         let r = (if right { ONE as i32 } else { 0 } - if a > 0 { saccade_cost } else { 0 }).max(0);
-                        sacc_bg.reward(r, &mut rng);
+                        sacc_bg.reward(r, &mut bg_rng);
                     }
                 }
                 if testing && t + 1 == s.answer_at {
@@ -3851,7 +3861,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         recite_stats[1] += (said == truth) as usize;
                         recited.push(said);
                         // altered feedback: what is heard may differ from what was said
-                        let heard = if self_noise > 0 && chance(&mut rng, self_noise) { (said + 1 + rng.gen_range(0..vocab.len() - 1)) % vocab.len() } else { said };
+                        let heard = if self_noise > 0 && chance(&mut noise_rng, self_noise) { (said + 1 + noise_rng.gen_range(0..vocab.len() - 1)) % vocab.len() } else { said };
                         // RECITE_DRY=1 (a control): speak, but hear the story's word
                         let heard = if std::env::var("RECITE_DRY").is_ok() { truth } else { heard };
                         ids[t + 1] = heard;
@@ -3885,7 +3895,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     if cue.count_ones() > 0 && content.count_ones() > 0 {
                                         let mut o = BitVector::new(BITS, Some(0));
                                         semantic.process_predictive(&cue, &mut o);
-                                        semantic.feedback(&cue, &content, &mut rng);
+                                        semantic.feedback(&cue, &content, &mut sleep_rng);
                                         tagged_or_replayed += 1;
                                     }
                                 }
@@ -3897,7 +3907,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // the learned gate's outcome: how well the higher area predicted the next word
                 if let Some((code, asked)) = mg_pending.take() {
                     let r = area.column.outcome(&enc.codes[next]) as i32 - if asked { gate_cost } else { 0 };
-                    mg_bg.reward_candidate(&code, r, &mut rng);
+                    mg_bg.reward_candidate(&code, r, &mut bg_rng);
                 }
                 // L5 → basal ganglia: the column's outcome for this prediction
                 // L5 attribution for the L6 gate, read before L2/3 learns: per channel passed,
@@ -3919,7 +3929,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         // dopamine: the recall that working memory cued contained the answer
                         // (local), or the column predicted the answer (L5)
                         let r = if l5_reward { l5 as i32 } else if recall_had_answer { ONE as i32 } else { 0 };
-                        pfc_gate.reward(r, &mut rng);
+                        pfc_gate.reward(r, &mut bg_rng);
                         l5_sum[0] += to_f32(l5) as f64; // report
                         l5_sum[1] += 1.0;
                         pfc_rewards += recall_had_answer as usize;
@@ -3979,13 +3989,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     if let Some(rel) = gate_pending.take() {
                         let hit = rel.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                        gate_bg.reward(if l5_reward { l5 as i32 } else if hit { ONE as i32 } else { 0 }, &mut rng);
+                        gate_bg.reward(if l5_reward { l5 as i32 } else if hit { ONE as i32 } else { 0 }, &mut bg_rng);
                         l5_sum[0] += to_f32(l5) as f64; // report
                         l5_sum[1] += 1.0;
                     }
                     if let Some(hop2) = bg_pending.take() {
                         let hit = hop2.as_words().iter().zip(enc.codes[next].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
-                        bg.reward(if l5_reward { l5 as i32 } else if hit { ONE as i32 } else { 0 }, &mut rng);
+                        bg.reward(if l5_reward { l5 as i32 } else if hit { ONE as i32 } else { 0 }, &mut bg_rng);
                         l5_sum[0] += to_f32(l5) as f64; // report
                         l5_sum[1] += 1.0;
                     }
@@ -4147,7 +4157,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 readback_stats.0 += 1;
                                 readback_stats.1 += (said == Some(target)) as usize;
                             } else if said != Some(target) {
-                                a.learn(&x, &enc.codes[target], &mut rng);
+                                a.learn(&x, &enc.codes[target], &mut sleep_rng);
                             }
                             if let Some(w) = said {
                                 heard.push(w);
@@ -4167,11 +4177,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
             prev = Some(ids[t]);
         }
-        if policy == Policy::Consolidate && !testing && !memory.is_empty() && chance(&mut rng, replay_prob) {
+        if policy == Policy::Consolidate && !testing && !memory.is_empty() && chance(&mut sleep_rng, replay_prob) {
             // sleep: replay stored episodes into the cortical semantic store
             let boost = if replay_mode == "tagged" { tag_boost } else { 0 };
             for _ in 0..replays {
-                let i = memory.sample_replay(&mut rng, boost).unwrap();
+                let i = memory.sample_replay(&mut sleep_rng, boost).unwrap();
                 let ep = memory.get(i).unwrap().clone();
                 // a tagged episode is replayed under the cue of the question that tagged it
                 let cue = tag_cues.get(&memory.id_of(i)).cloned().unwrap_or_else(|| memory.rarest(&ep, Q_TENTH, rarity_ratio));
@@ -4187,7 +4197,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 let mut out = BitVector::new(BITS, Some(0));
                 semantic.process_predictive(&cue, &mut out);
-                semantic.feedback(&cue, &content, &mut rng);
+                semantic.feedback(&cue, &content, &mut sleep_rng);
             }
         }
         if let (true, Some(cue_len)) = (reciting, recite) {

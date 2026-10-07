@@ -981,6 +981,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // INFER_KEEP_ONLY=1: inferred events keep the partner word ("lucy jones went to …")
         cfg.infer_drop = std::env::var("INFER_KEEP_ONLY").is_err();
         // ENGRAM_DEDUP=any | move (default) | place
+        // INFER_EVERY=k: infer from every statement of a fact about a rare word (held by at
+        // most k rows), not only the first statement of a word never seen before
+        if let Some(k) = std::env::var("INFER_EVERY").ok().and_then(|v| v.parse().ok()) {
+            cfg.infer_rare = k;
+        }
         cfg.dedup = match std::env::var("ENGRAM_DEDUP").as_deref() {
             Ok("any") => Dedup::Any,
             Ok("place") => Dedup::Place,

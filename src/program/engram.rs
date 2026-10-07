@@ -79,6 +79,11 @@ pub struct EngramConfig {
     pub second_chances: usize,
     /// New ids needed to tag an event as novel.
     pub tag_min: usize,
+    /// Inference from every statement of a fact: a stored world event that holds a content
+    /// word held by at most this many rows is a fact to infer from, and that word can be
+    /// the inference's new word N. 1 (default): only words never seen before (the first
+    /// statement only).
+    pub infer_rare: usize,
     pub dedup: Dedup,
     /// Make the current place's rows candidates even when they share no id with the cue.
     pub seed_place: bool,
@@ -109,6 +114,7 @@ impl Default for EngramConfig {
             keep: 32,
             second_chances: 8,
             tag_min: 1,
+            infer_rare: 1,
             dedup: Dedup::Move,
             seed_place: false,
             word_space: 4096,
@@ -488,7 +494,7 @@ impl EngramStore {
         let Some(r) = self.row(fact) else { return Vec::new() };
         let count = |w: usize| self.word_rows(w);
         // N: a new word (held by this row alone), not just a known word in a new slot
-        let Some(&n_id) = new.iter().find(|&&i| i / ws < self.cfg.content_fields && count(i % ws) <= 1) else { return Vec::new() };
+        let Some(&n_id) = new.iter().filter(|&&i| i / ws < self.cfg.content_fields && count(i % ws) <= self.cfg.infer_rare.max(1)).min_by_key(|&&i| count(i % ws)) else { return Vec::new() };
         let (n_word, n_slot) = (n_id % ws, n_id / ws);
         // the fact's schema: rows that share all but two of its content words, in any slot
         // ("X is a Y ."); slot ids vary with the learned roles, words do not
@@ -810,6 +816,14 @@ impl EpisodicCircuit for EngramStore {
         if self.source_now == 0 && unseen.len() >= self.cfg.tag_min && self.tags.len() < 4096 {
             self.facts.push((s, unseen.clone()));
             self.tags.push((vec![s], unseen));
+        } else if self.source_now == 0 && self.cfg.infer_rare > 1 && self.facts.len() < 4096 {
+            // a later statement about a rare word ("lucy is a smith", after "lucy is a
+            // jones"): a fact to infer from too
+            let ws = self.cfg.word_space.max(1);
+            let rare: Vec<usize> = content.iter().copied().filter(|&i| i / ws < self.cfg.content_fields && self.word_rows(i % ws) <= self.cfg.infer_rare).collect();
+            if !rare.is_empty() {
+                self.facts.push((s, rare));
+            }
         }
         novelty
     }

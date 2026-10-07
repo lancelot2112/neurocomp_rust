@@ -15,6 +15,12 @@
 //!   father and tom's mother are different rotations of tom.
 //! - **The store is a predictive kernel class**, trained by replay (`consolidate`), like
 //!   the semantic store: facts are buffered while read and replayed `reps` times.
+//! - **A frame word can also be an entity** (`lift`): "jones" is a filler of "X is a Y"
+//!   and part of the frame "X jones went to the Y". A fact is then read twice: as parsed,
+//!   and with its weak frame positions (under 3/4 of its neighbours agree) and its frame
+//!   words that are entities elsewhere lifted into the fillers ("X _ went to the Y":
+//!   john, jones, hallway). So jones → (went, 1→2) → the places joneses went, and lucy →
+//!   jones → place can be followed.
 //! - **Relations of relations are learned at sleep.** For each stated fact (x, r, z),
 //!   every two-step path x →s1→ y →s2→ z through the store is counted. A path that
 //!   gives the stated filler for at least three quarters of the r-facts it applies to (and
@@ -50,6 +56,11 @@ pub struct RelationStore {
     stated: Vec<(usize, usize, usize)>,
     /// Learned compositions: relation = step ∘ step, with (confirmations, applicable).
     rules: Vec<Rule>,
+    /// Words seen as fillers (entities).
+    entities: std::collections::BTreeSet<usize>,
+    /// Lift frame words that are entities elsewhere into fillers (a second reading of the
+    /// fact, kept beside the first).
+    pub lift: bool,
     inferred: usize,
     replays: usize,
 }
@@ -93,6 +104,8 @@ impl RelationStore {
             links: HashMap::default(),
             stated: Vec::new(),
             rules: Vec::new(),
+            entities: Default::default(),
+            lift: false,
             inferred: 0,
             replays: 0,
         }
@@ -132,6 +145,13 @@ impl RelationStore {
     /// where more than half of its neighbours (same length, all but two positions equal)
     /// have the same word.
     pub fn parse(&self, fact: &[usize]) -> Option<((usize, Vec<(usize, usize)>), Vec<usize>)> {
+        let fp = self.frame_positions(fact)?;
+        Self::reading(fact, &fp.iter().map(|x| x.0).collect::<Vec<_>>())
+    }
+
+    /// The frame positions of a fact and whether each is strong (at least 3/4 of its
+    /// neighbours agree there); None with fewer than two neighbours.
+    fn frame_positions(&self, fact: &[usize]) -> Option<Vec<(usize, bool)>> {
         let me = self.seen.get(fact).copied();
         let mut nb: Vec<usize> = Vec::new();
         for k in Self::bucket_keys(fact) {
@@ -145,10 +165,22 @@ impl RelationStore {
         if nb.len() < 2 {
             return None;
         }
+        Some(
+            (0..fact.len())
+                .filter_map(|p| {
+                    let agree = nb.iter().filter(|&&f| self.facts[f][p] == fact[p]).count();
+                    (agree * 2 > nb.len()).then_some((p, agree * 4 >= nb.len() * 3))
+                })
+                .collect(),
+        )
+    }
+
+    /// The fact read with these frame positions: (frame, fillers in order), if it has a
+    /// frame and at least two fillers.
+    fn reading(fact: &[usize], frame_pos: &[usize]) -> Option<((usize, Vec<(usize, usize)>), Vec<usize>)> {
         let (mut frame, mut fillers) = (Vec::new(), Vec::new());
         for (p, &w) in fact.iter().enumerate() {
-            let agree = nb.iter().filter(|&&f| self.facts[f][p] == w).count();
-            if agree * 2 > nb.len() {
+            if frame_pos.contains(&p) {
                 frame.push((p, w));
             } else if !fillers.contains(&w) {
                 fillers.push(w);
@@ -188,9 +220,32 @@ impl RelationStore {
         let facts = std::mem::take(&mut self.buffer);
         let mut pairs: Vec<(BitVector, usize, BitVector)> = Vec::new(); // (key, entity, value)
         let mut parsed = 0;
-        for fact in &facts {
-            let Some((frame, fillers)) = self.parse(fact) else { continue };
-            parsed += 1;
+        // the first reading of each fact (its frame: positions where most neighbours agree)
+        let fps: Vec<(Vec<usize>, Vec<(usize, bool)>)> = facts.iter().filter_map(|f| self.frame_positions(f).map(|fp| (f.clone(), fp))).collect();
+        let mut all: Vec<((usize, Vec<(usize, usize)>), Vec<usize>)> = Vec::new();
+        for (fact, fp) in &fps {
+            if let Some((frame, fillers)) = Self::reading(fact, &fp.iter().map(|x| x.0).collect::<Vec<_>>()) {
+                self.entities.extend(fillers.iter().copied());
+                all.push((frame, fillers));
+                parsed += 1;
+            }
+        }
+        // the second reading (`lift`): frame positions that are weak (under 3/4 of the
+        // neighbours agree: "jones" among joneses and smiths) or hold a word that is an
+        // entity elsewhere ("jones" in "X jones went to the Y") read as fillers too
+        if self.lift {
+            for (fact, fp) in &fps {
+                let kept: Vec<usize> = fp.iter().filter(|&&(p, strong)| strong && !self.entities.contains(&fact[p])).map(|x| x.0).collect();
+                if kept.len() < fp.len() {
+                    if let Some(r) = Self::reading(fact, &kept) {
+                        parsed += all.iter().all(|a| a.1 != r.1) as usize;
+                        self.entities.extend(r.1.iter().copied());
+                        all.push(r);
+                    }
+                }
+            }
+        }
+        for (frame, fillers) in all {
             let r = self.relation_of(frame);
             if !self.stated.contains(&(r, fillers[0], fillers[1])) {
                 self.stated.push((r, fillers[0], fillers[1]));
@@ -546,6 +601,40 @@ mod tests {
         let i = 4;
         assert_eq!(s.ask(&codes, node(f(i)), a, 1, 0), Some(node(i)));
         assert_ne!(s.ask(&codes, node(i), a, 0, 1), s.ask(&codes, node(i), a, 1, 0));
+    }
+
+    /// "X is a F" and "X F went to the P": the family word is a filler of the first and
+    /// in the frame of the second. Lifted, the store links a family to its places, and a
+    /// name stated only as "lucy is a jones" reaches the joneses' places in two steps.
+    #[test]
+    fn a_frame_word_is_also_an_entity() {
+        let mut rng = StdRng::seed_from_u64(2);
+        let words = ["is", "a", "went", "to", "the", "jones", "smith", "hall", "yard", "attic", "cellar", "lucy", "ann", "bo", "cy", "di", "ed", "flo", "gil"];
+        let id = |x: &str| words.iter().position(|w| *w == x).unwrap();
+        let codes = codes(words.len(), &mut rng);
+        let mut s = RelationStore::new(BITS);
+        s.lift = true;
+        let fam = [("ann", "jones"), ("bo", "jones"), ("cy", "jones"), ("di", "smith"), ("ed", "smith"), ("flo", "smith"), ("gil", "jones")];
+        let places = |f: &str| if f == "jones" { ["hall", "yard"] } else { ["attic", "cellar"] };
+        for (n, f) in fam {
+            s.observe(&[id(n), id("is"), id("a"), id(f)]);
+            for p in places(f) {
+                s.observe(&[id(n), id(f), id("went"), id("to"), id("the"), id(p)]);
+            }
+        }
+        s.observe(&[id("lucy"), id("is"), id("a"), id("jones")]);
+        s.consolidate(&codes, 20, &mut rng);
+        let is_a = s.relation_for(&[id("is"), id("a")]).unwrap();
+        let went = (0..s.frames().len()).find(|&r| s.template(r).1.iter().all(|x| words[x.1] != "jones" && words[x.1] != "smith") && s.frames()[r].contains(&id("went"))).expect("a lifted relation");
+        assert_eq!(s.ask(&codes, id("lucy"), is_a, 0, 1), Some(id("jones")));
+        // the lifted relation's fillers: (name, family, place); family → place is 1 → 2
+        let mut got = s.ask_all(&codes, id("jones"), went, 1, 2);
+        got.sort_unstable();
+        assert_eq!(got, vec![id("hall"), id("yard")], "{:?}", got.iter().map(|&w| words[w]).collect::<Vec<_>>());
+        let fam_of_lucy = s.ask(&codes, id("lucy"), is_a, 0, 1).unwrap();
+        let mut two = s.ask_all(&codes, fam_of_lucy, went, 1, 2);
+        two.sort_unstable();
+        assert_eq!(two, vec![id("hall"), id("yard")]);
     }
 
     #[test]

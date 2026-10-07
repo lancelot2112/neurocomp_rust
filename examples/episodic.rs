@@ -1155,6 +1155,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // else everything it knows about the word (`about`): the fillers' codes, plain.
     let rel_reps: Option<usize> = std::env::var("REL").ok().and_then(|v| v.parse().ok());
     let mut rel = RelationStore::new(BITS);
+    // REL_LIFT=1: facts are read twice, the second time with weak frame positions and
+    // frame words that are entities elsewhere lifted into the fillers ("X _ went to the
+    // Y": john, jones, hallway). REL_HOPS=2: the answer adds a second hop, forward steps
+    // only (from an earlier filler to a later one) from each first answer: lucy → jones →
+    // the places joneses went.
+    rel.lift = std::env::var("REL_LIFT").is_ok();
+    let rel_hops: usize = std::env::var("REL_HOPS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut rel_stats = [0usize; 3]; // facts parsed at sleep, answers given at test, of those for held-out stories
     let sem_frame = sem_typed > 0 && std::env::var("SEM_FRAME").is_ok();
     let mut sem_frames: HashMap<usize, Vec<u64>> = HashMap::default(); // cue word → its frames
@@ -1366,6 +1373,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // familiar binding + the story's context (focus). Reward: the recalled word is the
     // next word read (1, else 0), minus CUE_COST (default 0.02) for the walk's second
     // recall. Learns in training (not in replay); CUE_TEST_LEARN=1 at test too.
+    // Sparse gating of memory (after 63, 64, 67).
+    // SPARSE_HC=1: the hippocampus's answer enters the source mix only where the column is
+    // unsure (its own prediction under half reliable), as the semantic/relation store's
+    // does under COOPERATE: sparse in time for both stores.
+    // GATE=learned (with COOPERATE): the basal ganglia decide whether the cortex asks the
+    // store at this step, instead of the fixed "under half reliable" threshold, per
+    // (the column's own confidence band × the cue word's familiarity band). Reward: how
+    // well the higher area then predicts the next word (its L5 outcome), minus GATE_COST
+    // (default 0.05) for asking. Learns in training (not in replay).
+    let sparse_hc = std::env::var("SPARSE_HC").is_ok();
+    let gate_learned = std::env::var("GATE").map_or(false, |v| v == "learned");
+    let gate_cost: i32 = q16(std::env::var("GATE_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05)) as i32;
+    let mut mg_bg = BasalGanglia::new(BITS);
+    let mg_code = |ctx: usize, act: usize| {
+        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(11_000_027) ^ ((ctx * 2 + act) as u64 + 9000));
+        let all: Vec<usize> = (0..BITS).collect();
+        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
+    };
+    let mut mg_pending: Option<(BitVector, bool)> = None;
+    // at test, per own-confidence band: (steps, asked); hippocampal answers withheld
+    let mut mg_stats = [[0usize; 2]; 5];
+    let mut hc_withheld = 0usize;
     let cue_ctl = std::env::var("CUE_CTL").is_ok();
     let cue_test_learn = std::env::var("CUE_TEST_LEARN").is_ok();
     let cue_cost: i32 = q16(std::env::var("CUE_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.02)) as i32;
@@ -2559,21 +2588,46 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // cortex asks memory about the sentence's least familiar word: the semantic
                 // store's content for it ("lucy" → "is a jones") joins the higher areas'
                 // sentence context for this step. Where the column is sure, nothing is asked.
+                let mut own_conf_step: Q16 = ONE;
                 let sentence_plus = {
                     let mut x = sentence.clone();
-                    if cooperate || graded_enrich {
+                    if cooperate || graded_enrich || sparse_hc {
                         let empty = BitVector::new(BITS, Some(0));
                         let own = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid]));
                         let conf = own.map_or(0, |(_, c)| c);
-                        let unsure = graded_enrich || conf < Q_HALF;
-                        if unsure {
-                            let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
-                            let cue = if hippo_self {
-                                bind_sentence_pairs.iter().zip(&bind_sentence).min_by_key(|((w, c), b)| fam_binding(&bind_hc, &bind_mem, true, sparse_bind, b, &enc.codes[*w], *w, *c)).map(|((w, _), _)| *w)
-                            } else {
-                                ids[start..=t].iter().min_by_key(|&&w| word_count[w]).copied()
-                            };
-                            if let Some(mut out) = cue.and_then(|w| sem_read(&sem_store, &enc.codes, w, slot_in(&bind_sentence_pairs, w), sem_typed, roles.used(), false, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs)) {
+                        own_conf_step = conf;
+                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let (cue, cue_fam) = if hippo_self {
+                            bind_sentence_pairs
+                                .iter()
+                                .zip(&bind_sentence)
+                                .map(|((w, c), b)| (*w, fam_binding(&bind_hc, &bind_mem, true, sparse_bind, b, &enc.codes[*w], *w, *c)))
+                                .min_by_key(|x| x.1)
+                                .map_or((None, 0), |(w, f)| (Some(w), f))
+                        } else {
+                            ids[start..=t].iter().map(|&w| (w, word_count[w] as u64)).min_by_key(|x| x.1).map_or((None, 0), |(w, f)| (Some(w), f))
+                        };
+                        let cb = CONF_BANDS.iter().filter(|&&e| conf >= e).count();
+                        let unsure = if graded_enrich {
+                            true
+                        } else if gate_learned && cue.is_some() {
+                            let fb = (64 - cue_fam.leading_zeros() as usize).min(7);
+                            let cands = [mg_code(cb * 8 + fb, 0), mg_code(cb * 8 + fb, 1)];
+                            let learn = !testing && !replaying;
+                            let a = mg_bg.select(&cands, if learn { Some(&mut rng) } else { None }).unwrap_or(0);
+                            if learn {
+                                mg_pending = Some((cands[a].clone(), a == 1));
+                            }
+                            a == 1
+                        } else {
+                            conf < Q_HALF
+                        };
+                        if testing && !replaying {
+                            mg_stats[cb][0] += 1;
+                            mg_stats[cb][1] += (unsure && (cooperate || graded_enrich)) as usize;
+                        }
+                        if unsure && (cooperate || graded_enrich) {
+                            if let Some(mut out) = cue.and_then(|w| sem_read(&sem_store, &enc.codes, w, slot_in(&bind_sentence_pairs, w), sem_typed, roles.used(), false, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs)) {
                                 if graded_enrich {
                                     // graded: each bit of the store's answer gets in with
                                     // probability 1 − the column's confidence (a fixed hash per
@@ -2886,7 +2940,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     };
                     let from_sem = || -> Option<usize> {
                         semantic_reps?;
-                        let out = sem_read(&sem_store, &enc.codes, sem_cue_w?, slot_in(&bind_sentence_pairs, sem_cue_w?), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs)?;
+                        let out = sem_read(&sem_store, &enc.codes, sem_cue_w?, slot_in(&bind_sentence_pairs, sem_cue_w?), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs)?;
                         (0..vocab.len()).filter(|&i| ov(i, &out) >= 24 && ov(i, &expect) >= 24).max_by_key(|&i| ov(i, &out))
                     };
                     let mem_w = bind_answer.filter(|&w| !(testing && bind_lesion) && ov(w, &expect) >= 24);
@@ -2931,7 +2985,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             (g.count_ones() >= 24).then_some(g)
                         };
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
-                        let sem_out = semantic_reps.and(sem_cue_w).and_then(|cw| sem_read(&sem_store, &enc.codes, cw, slot_in(&bind_sentence_pairs, cw), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs));
+                        let sem_out = semantic_reps.and(sem_cue_w).and_then(|cw| sem_read(&sem_store, &enc.codes, cw, slot_in(&bind_sentence_pairs, cw), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs));
                         let fed = [
                             bind_raw.as_ref().filter(|_| !(testing && bind_lesion)).and_then(|v| gate(v)).map(|v| (v, 0usize)),
                             sem_out.as_ref().and_then(|v| gate(v)).map(|v| (v, 1)),
@@ -3098,7 +3152,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     } else if let Some(w) = own {
                         proposals.push((0, ctx + bucket(column.confidence()), vec![w]));
                     }
-                    let mw = words_of(&mem_src);
+                    let mut mw = words_of(&mem_src);
+                    if sparse_hc && own_conf_step >= Q_HALF && !mw.is_empty() {
+                        // sparse in time: the column is sure here, the hippocampus's answer is not sent
+                        mw.clear();
+                        hc_withheld += (testing && !replaying) as usize;
+                    }
                     if !mw.is_empty() {
                         // GRADED: the hippocampus's answer is weighed by the cortex's uncertainty
                         // (the column's confidence band), learned per context
@@ -3111,7 +3170,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // familiar word added to its sentence context (peeked: no side effects),
                     // weighed by the column's confidence band
                     if let (true, Some(hin), Some(cue_w)) = (graded, hier_in.as_ref(), sem_cue_w) {
-                        if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), false, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs) {
+                        if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), false, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs) {
                             let mut x = hin.as_words().to_vec();
                             for (w, &b) in x.iter_mut().zip(o.as_words()) {
                                 *w |= b;
@@ -3134,7 +3193,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // the semantic store (SEMANTIC_MIX)
                     if let (true, Some(_)) = (semantic_mix, semantic_reps) {
                         if let Some(cue_w) = sem_cue_w {
-                            if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs) {
+                            if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs) {
                                 let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                                 if let Some(w) = (0..vocab.len()).filter(|&i| ov(i, &o) >= 24 && ov(i, &expect_prev) >= 24).max_by_key(|&i| ov(i, &o)) {
                                     proposals.push((8, ctx, vec![w]));
@@ -3380,6 +3439,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             _ => {}
                         }
                     }
+                }
+                // the learned gate's outcome: how well the higher area predicted the next word
+                if let Some((code, asked)) = mg_pending.take() {
+                    let r = area.column.outcome(&enc.codes[next]) as i32 - if asked { gate_cost } else { 0 };
+                    mg_bg.reward_candidate(&code, r, &mut rng);
                 }
                 // L5 → basal ganglia: the column's outcome for this prediction
                 // L5 attribution for the L6 gate, read before L2/3 learns: per channel passed,
@@ -3790,6 +3854,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
         }
+        if gate_learned || sparse_hc {
+            let bands: Vec<String> = (0..5).map(|b| format!("band {b}: asked {:.1}% of {}", 100.0 * mg_stats[b][1] as f64 / mg_stats[b][0].max(1) as f64, mg_stats[b][0])).collect();
+            eprintln!("  GATE seed {seed}: at test, by the column's own confidence band: {}; hippocampal answers withheld {}", bands.join(", "), hc_withheld);
+        }
         if cue_ctl {
             let pct = |a: usize, b: usize| if b == 0 { 0.0 } else { 100.0 * a as f64 / b as f64 };
             let tr: usize = cue_train.iter().sum();
@@ -3885,6 +3953,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .collect();
             eprintln!("  REL seed {seed}: {} facts parsed, {} relations, {} kernels from {} replays; frames {:?}", rel_stats[0], rel.frames().len(), k, n, fr);
             eprintln!("  REL seed {seed}: about the new names: {}", names.join("; "));
+            for fam in ["jones", "smith"] {
+                if let Some(&w) = index.get(fam) {
+                    let a: Vec<String> = rel.about(&enc.codes, w).iter().map(|&(r, i, j, _)| format!("{r}:{i}>{j} {:?}", rel.ask_all(&enc.codes, w, r, i, j).iter().map(|&x| vocab[x]).collect::<Vec<_>>())).collect();
+                    eprintln!("  REL seed {seed}: about {fam}: {}", a.join("; "));
+                }
+            }
             eprintln!("  REL seed {seed}: {} relations of relations learned ({:?}), {} facts inferred and replayed", rel.rules().len(), rel.rules().iter().take(6).map(|r| format!("{} = {:?} then {:?} ({}/{})", r.relation, r.first, r.second, r.confirmed, r.applicable)).collect::<Vec<_>>(), rel.inferred());
         }
         if semantic_reps.is_some() {
@@ -4294,9 +4368,9 @@ fn slot_in(pairs: &[(usize, usize)], w: usize) -> Option<usize> {
 /// was stored with, when keyed on frames) unbound and the words found in it kept, as
 /// plain codes; typed, not `words`: the role-bound content as is.
 #[allow(clippy::too_many_arguments)]
-fn sem_read(store: &KernelClass<SimpleKernel>, codes: &[BitVector], w: usize, slot: Option<usize>, typed: u8, roles: usize, words: bool, frames: &HashMap<usize, Vec<u64>>, rel: Option<&RelationStore>, sentence: &[(usize, usize)]) -> Option<BitVector> {
-    if let Some(rel) = rel {
-        return rel_answer(rel, codes, w, sentence);
+fn sem_read(store: &KernelClass<SimpleKernel>, codes: &[BitVector], w: usize, slot: Option<usize>, typed: u8, roles: usize, words: bool, frames: &HashMap<usize, Vec<u64>>, rel: Option<(&RelationStore, usize)>, sentence: &[(usize, usize)]) -> Option<BitVector> {
+    if let Some((rel, hops)) = rel {
+        return rel_answer(rel, codes, w, sentence, hops);
     }
     if typed > 1 && slot.is_none() {
         return None;
@@ -4326,7 +4400,7 @@ fn sem_read(store: &KernelClass<SimpleKernel>, codes: &[BitVector], w: usize, sl
 
 /// The relation store's answer about word `w`: the relation the sentence's other words
 /// name, if `w` has it, else all it knows about `w`; the answers' codes OR-ed (plain).
-fn rel_answer(rel: &RelationStore, codes: &[BitVector], w: usize, sentence: &[(usize, usize)]) -> Option<BitVector> {
+fn rel_answer(rel: &RelationStore, codes: &[BitVector], w: usize, sentence: &[(usize, usize)], hops: usize) -> Option<BitVector> {
     let all = rel.about(codes, w);
     if all.is_empty() {
         return None;
@@ -4338,8 +4412,20 @@ fn rel_answer(rel: &RelationStore, codes: &[BitVector], w: usize, sentence: &[(u
         None => all.iter().map(|a| a.3).collect(),
     };
     let mut out = BitVector::new(codes[0].bit_len(), Some(0));
-    for a in pick {
+    for &a in &pick {
         out.or_mut(&codes[a]);
+        if hops > 1 {
+            // the second hop: forward steps from the answer (an earlier filler to a later one)
+            for (r, i, j, _) in rel.about(codes, a) {
+                if i < j {
+                    for b in rel.ask_all(codes, a, r, i, j) {
+                        if b != w {
+                            out.or_mut(&codes[b]);
+                        }
+                    }
+                }
+            }
+        }
     }
     Some(out)
 }

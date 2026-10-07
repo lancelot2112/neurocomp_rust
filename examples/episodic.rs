@@ -1455,6 +1455,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // name. Trust must come from the other facts (the trained names'), where the liar lies
     // with probability LIAR among honest narrators.
     let narrator_split = std::env::var("NARRATOR_SPLIT").is_ok();
+    // UNDECIDED=1 (with NARRATOR_SPLIT): the last new name's statements come from two honest
+    // narrators who disagree (the second states the wrong family, once): a conflict that
+    // trust cannot settle, where "unknown" is the right answer
+    let undecided = std::env::var("UNDECIDED").is_ok();
+    // BELIEF_UNKNOWN=1: at a question that names a relation the relation store holds for
+    // the word ("sam is a"), the answer is "unknown" unless the believed value is believed
+    // more than half (more likely than every alternative together)
+    let belief_unknown = std::env::var("BELIEF_UNKNOWN").is_ok();
+    let mut unknown_tally = [[0usize; 4]; 3]; // per new name: (asked, right, wrong, unknown)
     // Books task: each book's season, sessions left, last session read; this session's
     // book and its bin [first session, back to back, after 1-2 other sessions, after 3+]
     let (mut book_season, mut book_left, mut book_last) = ([0usize; 3], [0usize; 3], [0usize; 3]);
@@ -2289,12 +2298,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // NARRATORS=k: each training story is told by narrator s_i % k (the reader knows who
         // tells it, as one knows a book's author). LIAR=p: the last narrator swaps the family
         // in a fact sentence ("X is a jones" → "smith") with probability p.
-        let split = narrators.zip(schema_ord.get(&s_i)).filter(|_| narrator_split && !testing).map(|(k, &(i, o))| if (i + o) % 2 == 0 { k - 1 } else { 0 });
-        let narrator: u16 = split.map_or_else(|| narrators.map_or(0, |k| (s_i % k) as u16), |n| n as u16);
+        // (narrator, whether this statement is a lie) for a statement about a new name
+        let split = narrators.zip(schema_ord.get(&s_i)).filter(|_| narrator_split && !testing).map(|(k, &(i, o))| {
+            if undecided && i == NEW_NAMES.len() - 1 {
+                // UNDECIDED: two honest narrators disagree; the second is wrong this once
+                (o % 2, o % 2 == 1)
+            } else if (i + o) % 2 == 0 {
+                (k - 1, true)
+            } else {
+                (0, false)
+            }
+        });
+        let narrator: u16 = split.map_or_else(|| narrators.map_or(0, |k| (s_i % k) as u16), |n| n.0 as u16);
         if let (Some(k), false) = (narrators, testing) {
-            if narrator as usize == k - 1 && liar > 0 {
+            if (narrator as usize == k - 1 && liar > 0) || split.is_some_and(|x| x.1) {
                 let mut lrng = StdRng::seed_from_u64(seed ^ (s_i as u64).wrapping_mul(0x9E37_79B9));
-                let p = if split.is_some() { ONE } else { liar };
+                let p = match split {
+                    Some((_, lie)) => if lie { ONE } else { 0 },
+                    None => liar,
+                };
                 for i in 3..s.words.len() {
                     if s.words[i - 2] == "is" && s.words[i - 1] == "a" && chance(&mut lrng, p) {
                         if let Some(f) = SURNAMES.iter().position(|x| *x == s.words[i]) {
@@ -3798,6 +3820,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let r = if s.held_out { &mut held } else { &mut seen };
                     r.0 += right as usize;
                     r.1 += 1;
+                    if s.held_out && belief_q() && s.words[s.answer_at - 1] == "a" {
+                        if let Some(i) = NEW_NAMES.iter().position(|n| *n == s.words[s.answer_at - 3]) {
+                            let w = index[NEW_NAMES[i]];
+                            let isa = rel.relation_for(&[index["is"], index["a"]]);
+                            let sure = isa.and_then(|r| rel.bayes.believed(&(r, w, 0, 1)).map(|v| rel.belief(w, r, 0, 1, v))).is_some_and(|b| b > ONE / 2);
+                            let u = &mut unknown_tally[i];
+                            u[0] += 1;
+                            if belief_unknown && !sure {
+                                u[3] += 1;
+                            } else if right {
+                                u[1] += 1;
+                            } else {
+                                u[2] += 1;
+                            }
+                        }
+                    }
                     if s.held_out && belief_q() {
                         let fam_q = s.words[s.answer_at - 1] == "a";
                         let q = &mut belief_tally[fam_q as usize];
@@ -4983,6 +5021,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * cn as f64 / n as f64
             );
         }
+    }
+    if belief_q() && narrators.is_some() {
+        let parts: Vec<String> = NEW_NAMES
+            .iter()
+            .zip(unknown_tally)
+            .map(|(n, u)| {
+                let p = |x: usize| 100.0 * x as f64 / u[0].max(1) as f64;
+                format!("{n}: right {:.0}%, wrong {:.0}%, unknown {:.0}%", p(u[1]), p(u[2]), p(u[3]))
+            })
+            .collect();
+        eprintln!("  UNKNOWN seed {seed}: family questions {}", parts.join("; "));
     }
     if belief_q() {
         let pc = |x: (usize, usize)| 100.0 * x.0 as f64 / x.1.max(1) as f64;

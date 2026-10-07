@@ -15,6 +15,13 @@
 //!   father and tom's mother are different rotations of tom.
 //! - **The store is a predictive kernel class**, trained by replay (`consolidate`), like
 //!   the semantic store: facts are buffered while read and replayed `reps` times.
+//! - **Relations of relations are learned at sleep.** For each stated fact (x, r, z),
+//!   every two-step path x →s1→ y →s2→ z through the store is counted. A path that
+//!   gives the stated filler for at least three quarters of the r-facts it applies to (and
+//!   at least twice) becomes a rule r = s1 ∘ s2 ("grandfather = father ∘ father"). Each
+//!   rule then infers r for the entities that have the path but no stated r, and those
+//!   inferred facts are replayed into the store like stated ones, so `ask` answers them
+//!   directly (generative replay; the cortex learns what it was never told).
 //! - **Navigation:** `ask(tom, father, 0, 1)` gives bob; `follow(tom, &[father, father])`
 //!   gives bob's father. The relation for a query is found from its words
 //!   (`relation_for(["father"])`): the frame sharing the most of them.
@@ -39,7 +46,26 @@ pub struct RelationStore {
     frames: Vec<(usize, Vec<(usize, usize)>)>,
     /// Per entity: the (relation, from, to) keys stored with it.
     links: HashMap<usize, Vec<(usize, usize, usize)>>,
+    /// Stated binary facts (relation, first filler, second filler).
+    stated: Vec<(usize, usize, usize)>,
+    /// Learned compositions: relation = step ∘ step, with (confirmations, applicable).
+    rules: Vec<Rule>,
+    inferred: usize,
     replays: usize,
+}
+
+/// A step through the store: (relation, from position, to position).
+pub type Step = (usize, usize, usize);
+
+/// A learned relation of relations: `relation` = `first` then `second`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rule {
+    pub relation: usize,
+    pub first: Step,
+    pub second: Step,
+    /// Stated facts the path reproduced, and stated facts it applied to.
+    pub confirmed: usize,
+    pub applicable: usize,
 }
 
 /// At most this many neighbours are compared per fact.
@@ -65,6 +91,9 @@ impl RelationStore {
             buffer: Vec::new(),
             frames: Vec::new(),
             links: HashMap::default(),
+            stated: Vec::new(),
+            rules: Vec::new(),
+            inferred: 0,
             replays: 0,
         }
     }
@@ -163,6 +192,9 @@ impl RelationStore {
             let Some((frame, fillers)) = self.parse(fact) else { continue };
             parsed += 1;
             let r = self.relation_of(frame);
+            if !self.stated.contains(&(r, fillers[0], fillers[1])) {
+                self.stated.push((r, fillers[0], fillers[1]));
+            }
             for i in 0..fillers.len() {
                 for j in 0..fillers.len() {
                     if i != j {
@@ -175,6 +207,31 @@ impl RelationStore {
                 }
             }
         }
+        self.replay(&pairs, reps, rng);
+        // relations of relations: learned from what the store now answers, then the facts
+        // they infer are replayed too
+        self.learn_rules(codes);
+        let mut inferred: Vec<(BitVector, usize, BitVector)> = Vec::new();
+        for rule in self.rules.clone() {
+            let ents: Vec<usize> = self.links.iter().filter(|(_, l)| l.contains(&rule.first)).map(|(&e, _)| e).collect();
+            for x in ents {
+                if self.links.get(&x).is_some_and(|l| l.contains(&(rule.relation, 0, 1))) {
+                    continue;
+                }
+                let Some(z) = self.ask(codes, x, rule.first.0, rule.first.1, rule.first.2).and_then(|y| self.ask(codes, y, rule.second.0, rule.second.1, rule.second.2)) else { continue };
+                if z == x {
+                    continue;
+                }
+                inferred.push((self.key(&codes[x], rule.relation, 0, 1), x, codes[z].clone()));
+                self.links.entry(x).or_default().push((rule.relation, 0, 1));
+                self.inferred += 1;
+            }
+        }
+        self.replay(&inferred, reps, rng);
+        parsed
+    }
+
+    fn replay<R: Rng>(&mut self, pairs: &[(BitVector, usize, BitVector)], reps: usize, rng: &mut R) {
         let mut order: Vec<usize> = (0..pairs.len()).collect();
         for _ in 0..reps {
             for i in (1..order.len()).rev() {
@@ -188,7 +245,43 @@ impl RelationStore {
                 self.replays += 1;
             }
         }
-        parsed
+    }
+
+    /// Count, for every stated fact (x, r, z), the two-step paths x → y → z' through the
+    /// store; keep as rules the paths that reproduce z for at least three quarters of the
+    /// r-facts they apply to, and at least twice.
+    fn learn_rules(&mut self, codes: &[BitVector]) {
+        let mut counts: HashMap<(usize, Step, Step), (usize, usize)> = HashMap::default();
+        for &(r, x, z) in &self.stated {
+            let Some(l1) = self.links.get(&x) else { continue };
+            for &s1 in l1.iter().filter(|s| s.1 < 2 && s.2 < 2 && s.0 != r) {
+                let Some(y) = self.ask(codes, x, s1.0, s1.1, s1.2).filter(|&y| y != x && y != z) else { continue };
+                let Some(l2) = self.links.get(&y) else { continue };
+                for &s2 in l2.iter().filter(|s| s.1 < 2 && s.2 < 2 && s.0 != r) {
+                    let Some(z2) = self.ask(codes, y, s2.0, s2.1, s2.2).filter(|&z2| z2 != y) else { continue };
+                    let c = counts.entry((r, s1, s2)).or_default();
+                    c.0 += (z2 == z) as usize;
+                    c.1 += 1;
+                }
+            }
+        }
+        let mut rules: Vec<Rule> = counts
+            .into_iter()
+            .filter(|(_, (ok, n))| *ok >= 2 && ok * 4 >= n * 3)
+            .map(|((relation, first, second), (confirmed, applicable))| Rule { relation, first, second, confirmed, applicable })
+            .collect();
+        rules.sort_by(|a, b| b.confirmed.cmp(&a.confirmed).then((a.relation, a.first, a.second).cmp(&(b.relation, b.first, b.second))));
+        self.rules = rules;
+    }
+
+    /// The relations of relations learned so far.
+    pub fn rules(&self) -> &[Rule] {
+        &self.rules
+    }
+
+    /// Facts inferred by rules and replayed into the store.
+    pub fn inferred(&self) -> usize {
+        self.inferred
     }
 
     /// The relation whose frame shares the most of `words` (fewest other words on a tie).
@@ -265,7 +358,7 @@ mod tests {
     /// is <woman>", with a few "<x> likes <y>" facts mixed in.
     fn family() -> (Vec<&'static str>, Vec<Vec<usize>>, Vec<(usize, usize, usize)>) {
         let words = vec![
-            "'s", "father", "mother", "is", "likes", // frame words
+            "'s", "father", "mother", "is", "likes", "grandfather", // frame words
             "al", "ann", "bob", "bea", "cy", "cat", "dan", "dee", "ed", "eve", "fred", "fay", "gus", "gem", "hal", "hun",
         ];
         let id = |s: &str| words.iter().position(|w| *w == s).unwrap();
@@ -292,6 +385,12 @@ mod tests {
         }
         for (a, b) in [("al", "ann"), ("cy", "cat"), ("gus", "gem")] {
             facts.push(vec![id(a), id("likes"), id(b)]);
+        }
+        // grandfathers (father's father) stated for some grandchildren only
+        let father_of = |c: usize| tree.iter().find(|t| id(t.0) == c).map(|t| id(t.1));
+        for c in ["dee", "ed", "fay", "fred", "gus", "hal"] {
+            let gf = father_of(id(c)).and_then(father_of).unwrap();
+            facts.push(vec![id(c), id("'s"), id("grandfather"), id("is"), gf]);
         }
         (words, facts, truth)
     }
@@ -331,6 +430,21 @@ mod tests {
         // and backwards: whose father is al? one of his children
         let kid = s.ask(&codes, id("al"), father, 1, 0);
         assert!(kid == Some(id("bob")) || kid == Some(id("cy")), "{:?}", kid.map(|k| words[k]));
+    }
+
+    #[test]
+    fn grandfather_is_learned_as_father_of_father() {
+        let (words, codes, s, truth) = learned();
+        let id = |x: &str| words.iter().position(|w| *w == x).unwrap();
+        let father = s.relation_for(&[id("father")]).unwrap();
+        let gf = s.relation_for(&[id("grandfather")]).unwrap();
+        assert!(s.rules().iter().any(|r| r.relation == gf && r.first == (father, 0, 1) && r.second == (father, 0, 1)), "rules {:?}", s.rules());
+        // never told: gem, hun, dan; the store answers from inferred replay
+        let father_of = |c: usize| truth.iter().find(|t| t.0 == c).map(|t| t.1);
+        for c in ["gem", "hun", "dan"] {
+            let want = father_of(id(c)).and_then(father_of);
+            assert_eq!(s.ask(&codes, id(c), gf, 0, 1), want, "{c}'s grandfather");
+        }
     }
 
     #[test]

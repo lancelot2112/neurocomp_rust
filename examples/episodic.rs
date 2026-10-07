@@ -3885,6 +3885,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .collect();
             eprintln!("  REL seed {seed}: {} facts parsed, {} relations, {} kernels from {} replays; frames {:?}", rel_stats[0], rel.frames().len(), k, n, fr);
             eprintln!("  REL seed {seed}: about the new names: {}", names.join("; "));
+            eprintln!("  REL seed {seed}: {} relations of relations learned ({:?}), {} facts inferred and replayed", rel.rules().len(), rel.rules().iter().take(6).map(|r| format!("{} = {:?} then {:?} ({}/{})", r.relation, r.first, r.second, r.confirmed, r.applicable)).collect::<Vec<_>>(), rel.inferred());
         }
         if semantic_reps.is_some() {
             eprintln!(

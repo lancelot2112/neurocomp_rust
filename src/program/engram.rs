@@ -350,6 +350,12 @@ impl EngramStore {
                 }
             }
         }
+        // MaxScore: once even the best a row not yet touched could reach (the remaining
+        // weight and the place bonus) is below the runner-up, no such row can change the
+        // leader, the runner-up or the answer (both only rise), so the posting lists are
+        // left and only the rows still in reach are scored, by looking each remaining id up
+        // in the row. Exact when every touched row is eligible (min_overlap <= 1).
+        let mut reach: Option<Vec<u32>> = None;
         for &(n, id) in &ids {
             if n == 0 {
                 continue;
@@ -358,8 +364,40 @@ impl EngramStore {
             if first > 0 && first >= second + remaining + self.cfg.where_bonus as u64 {
                 break;
             }
+            if reach.is_none() && self.cfg.min_overlap <= 1 && touched.len() > 1 && second > 0 && remaining + (self.cfg.where_bonus as u64) < second {
+                reach = Some(touched.iter().copied().filter(|&s| score[self.slot(s)] + remaining >= second).collect());
+            }
             let w = self.weight(n);
             remaining -= w;
+            // a row's score rises by w; the leader and runner-up follow (a lone row is not
+            // its own runner-up)
+            let bump = |k: usize, multi: bool, score: &mut Vec<u64>, overlap: &mut Vec<u32>, lead: &mut (u64, u64)| {
+                score[k] += w;
+                overlap[k] += 1;
+                let v = score[k];
+                if v > lead.0 {
+                    if multi {
+                        lead.1 = lead.1.max(lead.0);
+                    }
+                    lead.0 = v;
+                } else if v > lead.1 {
+                    lead.1 = v;
+                }
+            };
+            let mut lead = (first, second);
+            if let Some(rows) = reach.as_mut() {
+                // rows in serial order, as in the posting lists
+                for &s in rows.iter() {
+                    let k = self.slot(s);
+                    if self.ring[k].as_ref().is_some_and(|r| r.what.binary_search(&(id as u32)).is_ok()) {
+                        bump(k, true, score, overlap, &mut lead);
+                    }
+                }
+                (first, second) = lead;
+                work += rows.len() as u64;
+                rows.retain(|&s| score[self.slot(s)] + remaining >= second);
+                continue;
+            }
             for &s in &self.what[id] {
                 let k = self.slot(s);
                 if !self.live_at(k, s) {
@@ -373,18 +411,9 @@ impl EngramStore {
                     touched.push(s);
                     score[k] = bonus(h);
                 }
-                score[k] += w;
-                overlap[k] += 1;
-                let v = score[k];
-                if v > first {
-                    if touched.len() > 1 {
-                        second = second.max(first);
-                    }
-                    first = v;
-                } else if v > second {
-                    second = v;
-                }
+                bump(k, touched.len() > 1, score, overlap, &mut lead);
             }
+            (first, second) = lead;
             work += n as u64;
         }
         self.work.set(self.work.get() + work);

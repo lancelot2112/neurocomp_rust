@@ -176,6 +176,8 @@ struct PredictiveState {
     free: Vec<usize>,
     /// Per-frame memo of match counts (see `set_frame_memo`).
     frame_memo: Option<FrameMemo>,
+    /// Match counts kept from the last step (see `Delta`).
+    delta: std::cell::RefCell<Delta>,
     /// Canonical kernels (see `set_canonical`): connection-set hash -> kernel.
     canon: Option<crate::det::HashMap<u64, u32>>,
     /// Growth events that found an identical kernel already present.
@@ -238,6 +240,87 @@ struct PeekCache {
 }
 
 const PEEK_CACHE: usize = 8;
+
+/// The class keeps its last input's match counts and, while its wiring is unchanged,
+/// updates them for the bits that changed (added bits counted in, removed bits out)
+/// instead of fanning every active bit out again. Successive inputs share most bits (the
+/// sentence bag, the slow state), so a step costs the change, not the input. Exact: the
+/// same counts, the same kernels.
+#[derive(Default)]
+struct Delta {
+    /// `wiring` when the counts were last valid.
+    wiring: u64,
+    valid: bool,
+    input: Vec<u64>,
+    counts: Vec<u32>,
+    /// Kernels whose count may be nonzero (each once), and the flags that say so.
+    nonzero: Vec<u32>,
+    listed: Vec<bool>,
+}
+
+/// Bring the running match counts (`Delta`) to `input`.
+fn delta_to<'a>(delta: &'a std::cell::RefCell<Delta>, index: &[Vec<u32>], wiring: u64, n_kernels: usize, input: &BitVector) -> std::cell::RefMut<'a, Delta> {
+    let words = input.as_words();
+    let mut guard = delta.borrow_mut();
+    let d = &mut *guard;
+    let changed: u32 = if d.valid && d.input.len() == words.len() { words.iter().zip(&d.input).map(|(a, b)| (a ^ b).count_ones()).sum() } else { u32::MAX };
+    let active: u32 = words.iter().map(|w| w.count_ones()).sum();
+    if d.wiring != wiring || changed == u32::MAX || changed > active {
+        // start over from an empty input (more change than input: count it whole)
+        for &k in &d.nonzero {
+            d.counts[k as usize] = 0;
+            d.listed[k as usize] = false;
+        }
+        d.nonzero.clear();
+        d.input.clear();
+        d.input.resize(words.len(), 0);
+        d.wiring = wiring;
+        d.valid = true;
+    }
+    if d.counts.len() < n_kernels {
+        d.counts.resize(n_kernels, 0);
+        d.listed.resize(n_kernels, false);
+    }
+    for (wi, (&w, old)) in words.iter().zip(d.input.iter_mut()).enumerate() {
+        if w == *old {
+            continue;
+        }
+        let (mut add, mut del) = (w & !*old, *old & !w);
+        *old = w;
+        while add != 0 {
+            let b = wi * 64 + add.trailing_zeros() as usize;
+            add &= add - 1;
+            if let Some(ks) = index.get(b) {
+                for &k in ks {
+                    let k = k as usize;
+                    d.counts[k] += 1;
+                    if !d.listed[k] {
+                        d.listed[k] = true;
+                        d.nonzero.push(k as u32);
+                    }
+                }
+            }
+        }
+        while del != 0 {
+            let b = wi * 64 + del.trailing_zeros() as usize;
+            del &= del - 1;
+            if let Some(ks) = index.get(b) {
+                for &k in ks {
+                    d.counts[k as usize] -= 1;
+                }
+            }
+        }
+    }
+    let (counts, listed) = (&d.counts, &mut d.listed);
+    d.nonzero.retain(|&k| {
+        let keep = counts[k as usize] > 0;
+        if !keep {
+            listed[k as usize] = false;
+        }
+        keep
+    });
+    guard
+}
 
 /// Per-frame memo of match counts, after Hashlife's memoised sub-nodes: the input is a
 /// stack of frames (current word, relayed / recalled content, previous word), and each
@@ -494,6 +577,7 @@ impl KernelClass<SimpleKernel> {
             peek_cache: std::cell::RefCell::new(PeekCache::default()),
             memo: None,
             frame_memo: None,
+            delta: std::cell::RefCell::new(Delta::default()),
             canon: None,
             canon_reused: 0,
             generalize_spawn: false,
@@ -692,15 +776,22 @@ impl KernelClass<SimpleKernel> {
             cache.entries.push(e);
             return Some(m);
         }
-        let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
-        for &b in &bits {
-            if let Some(ks) = st.index.get(b as usize) {
-                for &k in ks {
-                    *counts.entry(k).or_default() += 1;
+        let mut m: Vec<(u32, u32)> = if st.frame_memo.is_none() {
+            // through the running counts: the column's own step on this input then finds
+            // nothing left to count
+            let d = delta_to(&st.delta, &st.index, st.wiring, self.active_kernels.len(), input);
+            d.nonzero.iter().map(|&k| (k, d.counts[k as usize])).filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold).collect()
+        } else {
+            let mut counts: crate::det::HashMap<u32, u32> = crate::det::HashMap::default();
+            for &b in &bits {
+                if let Some(ks) = st.index.get(b as usize) {
+                    for &k in ks {
+                        *counts.entry(k).or_default() += 1;
+                    }
                 }
             }
-        }
-        let mut m: Vec<(u32, u32)> = counts.into_iter().filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold).collect();
+            counts.into_iter().filter(|&(k, c)| c as usize >= self.active_kernels[k as usize].threshold).collect()
+        };
         m.sort_unstable();
         let m: std::sync::Arc<[(u32, u32)]> = m.into();
         cache.entries.retain(|e| e.1 == st.wiring);
@@ -1170,20 +1261,12 @@ impl KernelClass<SimpleKernel> {
             st.counts.resize(kernels.len(), 0);
         }
         let Some(fm) = st.frame_memo.as_mut() else {
-            for (wi, &w) in input.as_words().iter().enumerate() {
-                let mut w = w;
-                while w != 0 {
-                    let b = wi * 64 + w.trailing_zeros() as usize;
-                    w &= w - 1;
-                    if let Some(ks) = st.index.get(b) {
-                        for &k in ks {
-                            if st.counts[k as usize] == 0 {
-                                st.touched.push(k);
-                            }
-                            st.counts[k as usize] += 1;
-                        }
-                    }
+            let d = delta_to(&st.delta, &st.index, st.wiring, kernels.len(), input);
+            for &k in &d.nonzero {
+                if st.counts[k as usize] == 0 {
+                    st.touched.push(k);
                 }
+                st.counts[k as usize] += d.counts[k as usize];
             }
             return;
         };

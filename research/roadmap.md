@@ -201,7 +201,7 @@ slot codes bound to content in the hippocampus, recalled by slot.
     validated by belief × credibility ([76](experiments/76-belief-rules.md)).
   - inference from every statement of a fact ([77](experiments/77-infer-from-every-statement.md)).
 - **Next:**
-  1. independent random streams per subsystem, so configurations compare cleanly;
+  1. ~~independent random streams per subsystem~~ (done, see Infrastructure);
   2. a task where the believed fact decides the answer;
   3. proposals and self-generated claims as sources with earned trust.
 
@@ -288,13 +288,15 @@ These are not research stages. They keep earlier results trustworthy as the code
     random order, one draw among several. Figures recorded from now on are exact.
 - **An experiment regression suite.** `cargo test` checks the building blocks (121 unit
   tests in `src/`). [`scripts/regress.sh`](../scripts/regress.sh) reruns the key
-  experiments at their recorded settings (seed 0, full length, in parallel: about a
-  minute on 4 cores). It compares answer accuracy on trained and held-out items with
-  [`scripts/regress.tsv`](../scripts/regress.tsv) and fails on a drop of more than
-  `MARGIN` (3) points. Since runs are deterministic, it also reports any change within
+  experiments at their recorded settings (full length) on three seeds, each (entry, seed)
+  a parallel job. It compares the mean answer accuracy on trained and held-out items with
+  [`scripts/regress.tsv`](../scripts/regress.tsv) and fails on a drop of the mean of more
+  than `MARGIN` (3) points, printing each seed's held-out figure beside it. One seed is
+  too noisy a check (below). `QUICK=1` runs seed 0 only, reported without pass or fail,
+  for a fast look while developing. Since runs are deterministic, it also reports any change within
   the margin. `--record` writes new figures after an intended change.
-  - **Entries:** story boundary (26), saccades (29), role transfer (31), sleep
-    generalisation (33), slot memory (36), schema advantage (39), stated family (40).
+  - **Entries:** 24, from story boundary (26) to motor speech (71); the table lists them
+    with their pages and settings.
   - **Run it before every commit** that touches `src/` or the harness. Add an entry with
     each new experiment.
 - **Independent random streams per subsystem** (after [77](experiments/77-infer-from-every-statement.md)).

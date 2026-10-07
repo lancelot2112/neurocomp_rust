@@ -39,6 +39,9 @@ number, and every claim should point at the code or command that reproduces it.
 | – | Compaction: event-based fast path, uncertainty-gated growth, sleep (downscale, prune, merge by replay) | **5–14× fewer kernels**, accuracy kept on every task; answering 5–62 µs/word (from 160–3,600) with surprise-gated learning, event-based recall, sparse storage and canonical kernels | transformer 16–100 µs/word, but 25–77% on held-out binding where we get 72–100% | [23](experiments/23-compaction.md), [comparison](concepts/brain-transformer-comparison.md) |
 | – | A cortical hierarchy: a higher area (sentence + slow state of past surprises) learns the column's errors and feeds back a top-down frame | **81 / 82 / 80%** on a task needing story-level context | column alone 0%, episodic memory 49–52% | [24](experiments/24-cortical-hierarchy.md) |
 | – | A chain of areas (windows of 4, 16, 64 sentences), each voting in a precision-weighted mix: how far back a fact can be used | each area extends the reach (4–7 stories back: 5 → 18 → 23%), but accuracy stays low | as frames into the area below: worse (0%) | [25](experiments/25-area-chain.md) |
+| – | **The Bayes module:** facts are claims by sources; source trust and claim belief estimated together; conflicts resolved by trust | **a liar's trust is learned from conflicts alone (0.27 / 0.43 against 0.73–0.83 on two seeds); 1:1 conflicts a vote cannot break resolve to the truth** | answers unchanged (this task does not lean on the believed fact); seed 0 barely separates | [75](experiments/75-bayes-module.md) |
+| – | **Inferences as proposals:** held until confirmed by the world or supported by independent premises (the weaker of the fact's testimonies and its source events) | 24 proposals per run, all true when the premise was | nothing is corroborated (each new fact stated once; repeated testimony invisible to the store), so nothing is replayed: walk only falls to 22% | [74](experiments/74-proposals-and-premises.md) |
+| – | **Source memory:** hippocampal events tagged world / self / proposal; recall and its rarity statistics limited by source | **storing the network's own retellings costs nothing when tagged (89.7%)**; untagged, 35–47% of recalls return its own words and answers fall to 61% | the tag alone was not enough: one's own words changed the store's rarity counts | [73](experiments/73-source-memory.md) |
 | – | **The go/no-go sees novelty and agreement:** whether to speak depends on the confidence band × the question's novelty (hippocampal counts, or cortical exposure) × whether every source supports the word | **intact: speaks on 42–50% of new-name questions, 97.6% right (two seeds); answers the sources agree on are 97–98% right** | one seed learns nothing (the newest band never occurs in training); without the hippocampus neither signal helps, and the fixed threshold stays better | [72](experiments/72-go-no-go-signals.md) |
 | – | **Speech routed as in the brain:** a vocal tract with its own motor codes, a motor area (inverse + forward models) learned by babbling, a basal-ganglia go/no-go to speak, the forward model's prediction as the efference copy | **every word said after babbling; recitation 89–100% in place through the motor route; the basal ganglia learn silence in the lowest confidence bands** | they still speak at middle bands where new names are 15–36% right (trained on trained names): 61–70% right of answered, below the fixed 0.9 threshold | [71](experiments/71-speech-routing.md) |
 | – | **The efference copy and recitation:** own words marked as own (no surprise; a mismatch caught); a story retold from its first words, each spoken word driving the next | **hippocampus plans, cortex speaks: 93–98% of words right in place, 86–94% of content words; the copy catches every altered word** | the cortex alone falls into "the dog ran away" (14–16%, content 1–5%); storing test stories to retell interferes with later answers (90 → 74%) | [70](experiments/70-efference-copy-and-recitation.md) |
@@ -187,6 +190,9 @@ Experiments (chronological)
 70. [The efference copy and recitation](experiments/70-efference-copy-and-recitation.md)
 71. [Speech routed as in the brain: motor area, basal-ganglia go/no-go, forward-model efference copy](experiments/71-speech-routing.md)
 72. [What the speak/stay-silent choice should see: novelty and agreement](experiments/72-go-no-go-signals.md)
+73. [Source memory: what was read versus what the network said](experiments/73-source-memory.md)
+74. [The network's inferences as proposals: validated before they count](experiments/74-proposals-and-premises.md)
+75. [The Bayes module: source trust, and conflicts resolved by it](experiments/75-bayes-module.md)
 
 Concepts
 - [Brain, this network, and a transformer: function vs speed and memory](concepts/brain-transformer-comparison.md)
@@ -196,6 +202,7 @@ Concepts
 - [Sparse codes and collisions](concepts/sparse-codes-and-collisions.md)
 - [Variable binding: the gap to transformers](concepts/variable-binding.md)
 - [Relational memory: a learned, directed relation graph, and sparse communication with the cortex](concepts/relational-memory.md)
+- [Epistemics: what the network believes, and why (source memory, proposals, trust)](concepts/epistemics.md)
 - [Top-down bias](concepts/top-down-bias.md)
 - [Credit assignment](concepts/credit-assignment.md)
 - [Hippocampal-formation functions: what we have and what's missing](concepts/hippocampal-functions.md)

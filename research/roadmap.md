@@ -191,6 +191,18 @@ slot codes bound to content in the hippocampus, recalled by slot.
   2. read-back as training for the area chain
      ([plan](concepts/output-and-self-supervision.md)).
 
+### Epistemics (after [75](experiments/75-bayes-module.md))
+- **Done:**
+  - source memory in the hippocampus ([73](experiments/73-source-memory.md));
+  - inferences held as proposals ([74](experiments/74-proposals-and-premises.md));
+  - the Bayes module: source trust, conflicts resolved by it ([75](experiments/75-bayes-module.md)).
+  - See [epistemics](concepts/epistemics.md).
+- **Next:**
+  1. proposals and self-generated claims as sources in the Bayes module;
+  2. premise credibility from belief, not row counts;
+  3. a task where the believed fact decides the answer;
+  4. the posterior form (log-odds).
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

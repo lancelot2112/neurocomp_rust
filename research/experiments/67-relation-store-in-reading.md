@@ -74,6 +74,48 @@ told?
    the same move as inferred replay (61, 62), done by the cortex on relations instead of by
    the hippocampus on episodes.
 
+## Follow-ups: depth, genericity, and graded vs binary gating
+- **Depth grows one level per night.** Test `compositions_build_on_compositions`: six
+  family lines of eight generations; fathers stated for all, grandfathers and
+  great-grandfathers for half.
+  - After one sleep: grandfather (= father ∘ father) is answered for all 18 held-out
+    cases. The great-grandfather rule (father ∘ grandfather) is already found, but answers
+    0 of 15: the grandfathers it builds on are not consolidated yet.
+  - After a second sleep: all 15.
+  - Plain chains of `follow` are exact 7 deep.
+  - Inverse rules are found too (father = grandfather then inverse father).
+- **The store is a generic, directed, labelled graph.** Test `a_generic_directed_graph`:
+  abstract tokens, two relations of different shapes ("X r1 Y", "X r2 to Y").
+  - Forward and inverse answers differ: (r, 0→1) and (r, 1→0) are separate keys.
+  - `ask_all` reads one-to-many relations: the union of every matching kernel, read out
+    as the words it holds at least 3/4 of. Both targets of every source are found.
+- **Binary gating still beats graded, even with the relation store's sparse answers.**
+  Hippocampus lesioned, 50 readings of replay:
+
+  | Gate | Bag store (64) | Relation store |
+  |---|---|---|
+  | binary, where the column is unsure | 59.5% | **64.4%** |
+  | graded, in the mix | 47% | 48.5% (49 / 44 / 52%) |
+  | graded enrichment | 38% | 49.8% (55 / 37 / 57%) |
+  | graded enrichment, intact | 86.5% | 88.8% (binary: 89.8%) |
+
+  - A sparser answer (the filler alone) halves the damage of graded enrichment (38 →
+    50%), but asking only where the column is unsure is still 15 points better.
+  - What helps is sparse in two ways at once: in *what* is sent (one filler, about 32
+    bits, not a bag) and in *when* (only at uncertain steps).
+
+## Limits of "any relation"
+- **Fillers are single words,** and a relation is tied to its wording: "the father of tom
+  is bob" and "tom's father is bob" are two relations until a one-step rule (r1 = r2)
+  merges them. One-step rules are not learned yet.
+- **A frame needs at least two other facts of the same shape** before it parses.
+- **Rules are two steps over the first two fillers.** Longer paths come one night at a
+  time; n-ary relations are stored (every filler pair) but not composed.
+- **Transitive relations (r = r ∘ r) are not learned.** Paths through the same relation
+  are excluded, and under an open world a direct fact ("paris is in france") counts as a
+  miss for "in = in ∘ in". It needs a different test: a rule should be judged by the
+  facts it contradicts, not by those it does not produce.
+
 ## How it relates to the hippocampus
 - **Both are heteroassociative:** a key recalls a different pattern.
 - **The hippocampus (engram store)** learns in one shot, stores whole episodes (bindings +

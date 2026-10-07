@@ -3372,7 +3372,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         out = enc.codes[w].clone();
                         mix_conf = Some(SourceMix::confidence(total));
-                        mix_agreed = proposals.len() > 1 && proposals.iter().all(|p| p.2 == vec![w]);
+                        // every source supports the chosen word (a source may offer several)
+                        mix_agreed = proposals.len() > 1 && proposals.iter().all(|p| p.2.contains(&w));
                     }
                     // (not on an internal step: its "next word" is the network's own)
                     if (!testing || mix_test_learn) && !inner[t + 1] && !reciting {
@@ -3585,11 +3586,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let q_start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                             transcripts.push(format!("{:?} -> said {:?} (page: {})", &s.words[q_start..=t], said.map_or("unknown", |w| vocab[w]), vocab[next]));
                         }
-                        let heard = said.unwrap_or(index["."]);
-                        ids[t + 1] = heard;
-                        s.words[t + 1] = vocab[heard];
-                        inner[t + 1] = true;
-                        efference[t + 1] = Some(heard);
+                        match said {
+                            Some(heard) => {
+                                ids[t + 1] = heard;
+                                s.words[t + 1] = vocab[heard];
+                                inner[t + 1] = true;
+                                efference[t + 1] = Some(heard);
+                            }
+                            None => {
+                                // silence is no word: the answer's position is taken out of
+                                // the stream, and the story goes on with what follows it
+                                ids.remove(t + 1);
+                                s.words.remove(t + 1);
+                                page_marks.remove(t + 1);
+                                inner.remove(t + 1);
+                                inner_code.remove(t + 1);
+                                efference.remove(t + 1);
+                                eff_pred.remove(t + 1);
+                            }
+                        }
                     }
                 }
                 // SPEECH=motor, training: at a question the basal ganglia choose to speak or not;

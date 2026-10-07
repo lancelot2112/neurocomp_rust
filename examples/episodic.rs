@@ -3634,10 +3634,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 last_recall_id = None;
                 last_recall_cue = None;
-                if testing && !reciting {
-                    // the fast inhibitory loop keeps running when slow learning is off (not
-                    // in a retelling: there the context is the network's own words)
-                    column.fast_inhibit(&enc.codes[next]);
+                if testing {
+                    // the fast inhibitory loop keeps running when slow learning is off. It
+                    // learns from what is heard next: the page's word, or, where the network
+                    // spoke, its own word as heard (so it learns only from a real mismatch
+                    // between what was said and what came back)
+                    column.fast_inhibit(&enc.codes[ids[t + 1]]);
                 }
                 if !testing {
                     // PROF: [2] evaluation, diagnostics, rewards

@@ -133,10 +133,10 @@ struct Row {
     /// The content ids in the order they were read.
     order: Vec<u32>,
     phase: Vec<u8>,
+    /// `place_key(&phase)`, kept with the row (recall compares it on every visit).
+    place: u64,
     out: Vec<usize>,
     time: u32,
-    strength: Cell<u8>,
-    touched: Cell<u32>,
     /// The cortex's last reported error on this row (`Q16`; `ONE` = unknown).
     err: Cell<Q16>,
     /// Where the event came from (source memory): 0 the world (read or heard), 1 the
@@ -147,9 +147,28 @@ struct Row {
     testimony: Cell<u16>,
 }
 
+/// A row's fields that recall checks on every visit, kept apart from the row (one small
+/// array, indexed like the ring) so scoring touches a few bytes per posting, not the row.
+struct Hot {
+    /// The row's serial; `u32::MAX` for an empty slot.
+    serial: u32,
+    strength: Cell<u8>,
+    touched: Cell<u32>,
+    source: u8,
+    /// The row's `place` key.
+    place: u64,
+}
+
+impl Hot {
+    fn empty() -> Self {
+        Self { serial: u32::MAX, strength: Cell::new(0), touched: Cell::new(0), source: 0, place: 0 }
+    }
+}
+
 pub struct EngramStore {
     pub cfg: EngramConfig,
     ring: Vec<Option<Row>>,
+    hot: Vec<Hot>,
     head: u32,
     serial: u32,
     clock: u32,
@@ -194,6 +213,7 @@ impl EngramStore {
         let phase = vec![0; cfg.scales.len()];
         Self {
             ring: vec![None; cfg.capacity.max(1)],
+            hot: (0..cfg.capacity.max(1)).map(|_| Hot::empty()).collect(),
             head: 0,
             serial: 0,
             clock: 0,
@@ -238,12 +258,38 @@ impl EngramStore {
 
     /// The live row with this serial, if it is still in the ring.
     fn row(&self, serial: u32) -> Option<&Row> {
-        self.ring[self.slot(serial)].as_ref().filter(|r| r.serial == serial && self.strength(r) > 0)
+        let k = self.slot(serial);
+        if self.live_at(k, serial) { self.ring[k].as_ref() } else { None }
+    }
+
+    /// The row with this serial is in the ring and not faded (strength > 0), from the hot
+    /// fields alone: (now − touched) / τ < strength, without the division.
+    fn live_at(&self, k: usize, serial: u32) -> bool {
+        let h = &self.hot[k];
+        h.serial == serial && ((self.now - h.touched.get()) as u64) < h.strength.get() as u64 * self.cfg.tau.max(1) as u64
+    }
+
+    /// The hot fields of the row with this serial, if it is live.
+    fn hot_live(&self, serial: u32) -> Option<&Hot> {
+        let k = self.slot(serial);
+        self.live_at(k, serial).then(|| &self.hot[k])
+    }
+
+    fn hot(&self, r: &Row) -> &Hot {
+        &self.hot[self.slot(r.serial)]
     }
 
     fn strength(&self, r: &Row) -> u8 {
-        let lost = (self.now - r.touched.get()) / self.cfg.tau.max(1);
-        r.strength.get().saturating_sub(lost.min(255) as u8)
+        let h = self.hot(r);
+        let lost = (self.now - h.touched.get()) / self.cfg.tau.max(1);
+        h.strength.get().saturating_sub(lost.min(255) as u8)
+    }
+
+    /// Strengthen a row on recall or restatement.
+    fn bump_row(&self, r: &Row) {
+        let h = self.hot(r);
+        h.strength.set(self.strength(r).saturating_add(self.cfg.bump));
+        h.touched.set(self.now);
     }
 
     fn n(&self, id: usize) -> usize {
@@ -252,7 +298,7 @@ impl EngramStore {
             return p.len();
         }
         // source memory: rarity among the rows recall may return only
-        p.iter().filter(|&&s| self.row(s).is_some_and(|r| self.recall_mask.get() >> r.source & 1 == 1)).count()
+        p.iter().filter(|&&s| self.hot_live(s).is_some_and(|h| self.recall_mask.get() >> h.source & 1 == 1)).count()
     }
 
     /// Rows holding word `w` in any content slot (among the sources recall may return).
@@ -261,7 +307,7 @@ impl EngramStore {
         if self.others == 0 || self.recall_mask.get() == u8::MAX {
             return p.len();
         }
-        p.iter().filter(|&&s| self.row(s).is_some_and(|r| self.recall_mask.get() >> r.source & 1 == 1)).count()
+        p.iter().filter(|&&s| self.hot_live(s).is_some_and(|h| self.recall_mask.get() >> h.source & 1 == 1)).count()
     }
 
     fn weight(&self, n: usize) -> u64 {
@@ -276,7 +322,7 @@ impl EngramStore {
         let own: u64 = ids.iter().map(|&(n, _)| self.weight(n)).sum();
         let mut remaining = ids.iter().filter(|x| x.0 > 0).map(|&(n, _)| self.weight(n)).sum::<u64>();
         let here = place_key(&self.phase);
-        let bonus = |r: &Row| if place_key(&r.phase) == here { self.cfg.where_bonus as u64 } else { 0 };
+        let bonus = |h: &Hot| if h.place == here { self.cfg.where_bonus as u64 } else { 0 };
         let mut guard = self.scratch.borrow_mut();
         let (score, overlap, touched, local) = &mut *guard;
         if score.len() < self.ring.len() {
@@ -291,14 +337,14 @@ impl EngramStore {
         if self.cfg.seed_place && self.cfg.where_bonus > 0 {
             if let Some(rows) = self.place.get(&here) {
                 for &s in rows {
-                    let Some(r) = self.row(s) else { continue };
-                    if self.recall_mask.get() >> r.source & 1 == 0 {
+                    let Some(h) = self.hot_live(s) else { continue };
+                    if self.recall_mask.get() >> h.source & 1 == 0 {
                         continue;
                     }
                     let k = self.slot(s);
                     if score[k] == 0 {
                         touched.push(s);
-                        score[k] = bonus(r);
+                        score[k] = bonus(h);
                         local[k] = true;
                     }
                 }
@@ -315,14 +361,17 @@ impl EngramStore {
             let w = self.weight(n);
             remaining -= w;
             for &s in &self.what[id] {
-                let Some(r) = self.row(s) else { continue };
-                if self.recall_mask.get() >> r.source & 1 == 0 {
+                let k = self.slot(s);
+                if !self.live_at(k, s) {
                     continue;
                 }
-                let k = self.slot(s);
+                let h = &self.hot[k];
+                if self.recall_mask.get() >> h.source & 1 == 0 {
+                    continue;
+                }
                 if score[k] == 0 {
                     touched.push(s);
-                    score[k] = bonus(r);
+                    score[k] = bonus(h);
                 }
                 score[k] += w;
                 overlap[k] += 1;
@@ -358,12 +407,15 @@ impl EngramStore {
     }
 
     fn recall_row(&self, cue: &[usize], bump: bool) -> Recall {
-        let (best, own) = self.best(cue);
+        self.recall_best(self.best(cue), bump)
+    }
+
+    /// Recall from `best`'s answer for a cue (computed once, reused by the walk).
+    fn recall_best(&self, (best, own): (Option<(u32, u64, u32)>, u64), bump: bool) -> Recall {
         let Some((s, v, o)) = best else { return Recall::default() };
         let r = self.row(s).unwrap();
         if bump {
-            r.strength.set(self.strength(r).saturating_add(self.cfg.bump));
-            r.touched.set(self.now);
+            self.bump_row(r);
         }
         Recall { ec: r.out.clone(), strength: o * 512, ca1_match: ratio(v.min(own), own.max(1)).min(ONE), ca3: vec![s], ca1: vec![s] }
     }
@@ -438,8 +490,8 @@ impl EngramStore {
     /// {is, a, smith} + "went to the" + the story's context → a smiths' event in this
     /// season. Otherwise, as `recall`.
     pub fn recall_walk(&self, cue: &[usize], bump: bool) -> Recall {
-        let (best, _) = self.best(cue);
-        let Some((s, _, _)) = best else { return Recall::default() };
+        let found = self.best(cue);
+        let Some((s, _, _)) = found.0 else { return Recall::default() };
         let r1 = self.row(s).unwrap();
         // a bridge: a rare content id of the cue, through a row from another episode (a
         // fact stated elsewhere)
@@ -456,7 +508,7 @@ impl EngramStore {
                     && self.word_rows(i % ws) <= self.cfg.walk_rare
             })
             .min_by_key(|&i| self.word_rows(i % ws));
-        let Some(b) = bridge else { return self.recall_row(cue, bump) };
+        let Some(b) = bridge else { return self.recall_best(found, bump) };
         let bw = b % ws;
         // context ids stay slot-specific; the rest of the cue's content, as words in any
         // slot, must still be answered (at least half of it)
@@ -464,16 +516,15 @@ impl EngramStore {
         let cue_ids: Vec<u32> = cue.iter().map(|&i| i as u32).filter(|&i| i as usize != b).collect();
         let cue_words: Vec<usize> = self.content_words(&cue_ids).into_iter().filter(|&w| w != bw).collect();
         if cue_words.is_empty() {
-            return self.recall_row(cue, bump);
+            return self.recall_best(found, bump);
         }
         let words: Vec<usize> = self.content_words(&r1.what).into_iter().filter(|&w| w != bw && !cue_words.contains(&w)).collect();
         let need = (cue_words.len() as u32).div_ceil(2);
-        let Some((s2, _, o2)) = self.best_mixed(&ctx, &cue_words, &words, s, need) else { return self.recall_row(cue, bump) };
+        let Some((s2, _, o2)) = self.best_mixed(&ctx, &cue_words, &words, s, need) else { return self.recall_best(found, bump) };
         self.walks.set(self.walks.get() + 1);
         let r2 = self.row(s2).unwrap();
         if bump {
-            r2.strength.set(self.strength(r2).saturating_add(self.cfg.bump));
-            r2.touched.set(self.now);
+            self.bump_row(r2);
         }
         Recall { ec: r2.out.clone(), strength: o2 * 512, ca1_match: 0, ca3: vec![s2], ca1: vec![s, s2] }
     }
@@ -567,7 +618,7 @@ impl EngramStore {
     /// The next row of the same episode (same place, later time), if any.
     pub fn successor(&self, s: u32) -> Option<u32> {
         let r = self.row(s)?;
-        let rows = self.place.get(&place_key(&r.phase))?;
+        let rows = self.place.get(&r.place)?;
         rows.iter().copied().filter_map(|t| self.row(t).map(|x| (x.time, t))).filter(|&(time, _)| time > r.time).min().map(|x| x.1)
     }
 
@@ -585,7 +636,7 @@ impl EngramStore {
     }
 
     /// Append a row at the write head (evicting or giving second chances), and index it.
-    fn append(&mut self, mut row: Row) -> u32 {
+    fn append(&mut self, mut row: Row, strength: u8) -> u32 {
         let mut chances = 0;
         loop {
             let k = self.head as usize % self.ring.len();
@@ -602,6 +653,7 @@ impl EngramStore {
                 chances += 1;
                 let mut old = self.ring[k].take().unwrap();
                 old.serial = self.serial;
+                self.hot[k].serial = old.serial;
                 self.serial += 1;
                 for &id in &old.what {
                     self.what[id as usize].push(old.serial);
@@ -609,7 +661,7 @@ impl EngramStore {
                 for w in self.content_words(&old.what) {
                     self.words[w].push(old.serial);
                 }
-                self.place.entry(place_key(&old.phase)).or_default().push(old.serial);
+                self.place.entry(old.place).or_default().push(old.serial);
                 self.ring[k] = Some(old);
                 self.head += 1;
                 continue;
@@ -642,13 +694,14 @@ impl EngramStore {
                 self.words[w].retain(|&s| ring[s as usize % len].as_ref().map_or(false, |r| r.serial == s));
                 self.words[w].push(row.serial);
             }
-            let key = place_key(&row.phase);
+            let key = row.place;
             let ring = &self.ring;
             let len = ring.len();
             let bucket = self.place.entry(key).or_default();
             bucket.retain(|&s| ring[s as usize % len].as_ref().map_or(false, |r| r.serial == s));
             bucket.push(row.serial);
             let s = row.serial;
+            self.hot[k] = Hot { serial: s, strength: Cell::new(strength), touched: Cell::new(self.now), source: row.source, place: row.place };
             self.ring[k] = Some(row);
             self.head += 1;
             self.live += 1;
@@ -760,13 +813,12 @@ impl EpisodicCircuit for EngramStore {
                 let here = r.phase == self.phase;
                 let same = r.what == what && (here || self.cfg.dedup != Dedup::Place);
                 if same {
-                    r.strength.set(self.strength(r).saturating_add(self.cfg.bump));
-                    r.touched.set(self.now);
+                    self.bump_row(r);
                     if !here {
                         r.testimony.set(r.testimony.get().saturating_add(1));
                     }
                 }
-                (same, here, place_key(&r.phase))
+                (same, here, r.place)
             };
             if same {
                 self.deduped += 1;
@@ -779,8 +831,10 @@ impl EpisodicCircuit for EngramStore {
                     let (phase, now) = (self.phase.clone(), self.now);
                     if let Some(row) = self.ring[k].as_mut() {
                         row.phase = phase;
+                        row.place = new;
                         row.time = now;
                     }
+                    self.hot[k].place = new;
                     if let Some(b) = self.place.get_mut(&old) {
                         b.retain(|&t| t != s);
                     }
@@ -800,16 +854,15 @@ impl EpisodicCircuit for EngramStore {
             what,
             order,
             phase: self.phase.clone(),
+            place: place_key(&self.phase),
             out,
             time: self.now,
-            strength: Cell::new(strength),
-            touched: Cell::new(self.now),
             err: Cell::new(ONE),
             source: self.source_now,
             testimony: Cell::new(1),
         };
         self.others += (self.source_now != 0) as usize;
-        let s = self.append(row);
+        let s = self.append(row, strength);
         self.last_row.set(Some(s));
         self.episode_rows.borrow_mut().push(s);
         // the network's own words are not new facts about the world

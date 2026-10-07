@@ -1410,6 +1410,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // source in the mix proposed the same word), or both ("novelty,agree"). Default: the
     // confidence band only.
     let speak_ctx_cfg = std::env::var("SPEAK_CTX").unwrap_or_default();
+    // FAMILIARITY=cortex: novelty from a cortical familiarity signal (as perirhinal
+    // cortex's, which survives a hippocampal lesion), not the hippocampus's counts: how many
+    // of the column's kernels are keyed on the word (sample its current-word bits from the
+    // word's code). A trained name has many, a name stated once few. Recomputed every 100
+    // stories in training and when the test begins (the cortex does not learn at test).
+    let cortex_fam_on = std::env::var("FAMILIARITY").map_or(false, |v| v == "cortex");
+    let mut cortex_fam: Vec<u32> = Vec::new();
     let (ctx_novelty, ctx_agree) = (speak_ctx_cfg.contains("novelty"), speak_ctx_cfg.contains("agree"));
     let speak_ctx = |cb: usize, fam_band: u64, agreed: bool| -> usize {
         if !ctx_novelty && !ctx_agree {
@@ -1564,6 +1571,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut prof_t = std::time::Instant::now();
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
+        if cortex_fam_on && (s_i % 100 == 0 || s_i == TRAIN) {
+            cortex_fam = cortical_familiarity(column.l23.kernels(), &enc.codes, BITS);
+        }
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
         // consolidation replay: at every sleep, and the night before the test
         if let (Some(reps), true) = (consolidate, hier && bind && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
@@ -3557,11 +3567,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let said = if motor_speech {
                             // the basal ganglia release speech or hold it; the motor area says it
                             let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
-                            let sc = speak_ctx(cb, fam_band, mix_agreed);
+                            let nov = if cortex_fam_on { sentence_familiarity(&cortex_fam, &ids, &s.words, t) } else { fam_band };
+                            let sc = speak_ctx(cb, nov, mix_agreed);
                             let cands = [speak_code(sc, 0), speak_code(sc, 1)];
                             let go = speak_bg.select(&cands, None::<&mut StdRng>) == Some(1);
                             sp_stats[cb][0] += 1;
-                            let nb = (fam_band.min(7) / 2) as usize;
+                            let nb = (nov.min(7) / 2) as usize;
                             sp_agree[mix_agreed as usize][0] += 1;
                             sp_novel[nb][0] += 1;
                             let word = if go {
@@ -3612,7 +3623,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if motor_speech && !testing && !replaying && t + 1 == s.answer_at {
                     let c = mix_conf.unwrap_or_else(|| column.confidence());
                     let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
-                    let sc = speak_ctx(cb, fam_band, mix_agreed);
+                    let nov = if cortex_fam_on { sentence_familiarity(&cortex_fam, &ids, &s.words, t) } else { fam_band };
+                    let sc = speak_ctx(cb, nov, mix_agreed);
                     let cands = [speak_code(sc, 0), speak_code(sc, 1)];
                     let a = speak_bg.select(&cands, Some(&mut rng)).unwrap_or(0);
                     sp_train[0] += 1;
@@ -4208,6 +4220,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 })
                 .collect();
             let values: Vec<String> = (0..5).map(|b| format!("{:.2}/{:.2}", to_f32(speak_bg.value(&speak_code(speak_ctx(b, 7, true), 0))), to_f32(speak_bg.value(&speak_code(speak_ctx(b, 7, true), 1))))).collect();
+            if cortex_fam_on {
+                let f = |n: &str| index.get(n).map_or(0, |&w| cortex_fam.get(w).copied().unwrap_or(0));
+                eprintln!(
+                    "  SPEECH seed {seed}: cortical familiarity (kernels keyed on the word): new names {}; trained names {}",
+                    NEW_NAMES.iter().map(|n| format!("{n} {}", f(n))).collect::<Vec<_>>().join(", "),
+                    ["john", "mary", "anna", "daniel"].iter().map(|n| format!("{n} {}", f(n))).collect::<Vec<_>>().join(", ")
+                );
+            }
             let part = |x: [usize; 3]| format!("spoke {:.0}% of {}, {:.1}% right", 100.0 * x[1] as f64 / x[0].max(1) as f64, x[0], 100.0 * x[2] as f64 / x[1].max(1) as f64);
             eprintln!(
                 "  SPEECH seed {seed} (context: {}): sources agreed: {}; disagreed: {}; by novelty band (0 = newest): {}",
@@ -4843,4 +4863,34 @@ fn motor_say(motor: &MotorArea, tract: &VocalTract, meant: &BitVector) -> (Optio
         Some(cmd) => (tract.articulate(&cmd), motor.predict(&cmd)),
         None => (None, None),
     }
+}
+
+/// Cortical familiarity of each word: how many of the column's kernels are keyed on it,
+/// i.e. sample their current-word (frame 0) bits mostly from its code.
+fn cortical_familiarity(kernels: &[SimpleKernel], codes: &[BitVector], bits: usize) -> Vec<u32> {
+    let frame = bits / 64;
+    let mut fam = vec![0u32; codes.len()];
+    for k in kernels {
+        let m = k.input_mask.as_words();
+        let in_frame0: Vec<(usize, u64)> = m.iter().enumerate().map(|(i, &w)| (k.input_idx + i, w)).filter(|&(a, w)| a < frame && w != 0).collect();
+        let n: u32 = in_frame0.iter().map(|x| x.1.count_ones()).sum();
+        if n < 4 {
+            continue;
+        }
+        for (w, code) in codes.iter().enumerate() {
+            let c = code.as_words();
+            let o: u32 = in_frame0.iter().map(|&(a, mw)| (mw & c[a]).count_ones()).sum();
+            if o * 2 >= n {
+                fam[w] += 1;
+            }
+        }
+    }
+    fam
+}
+
+/// The current sentence's least familiar word (by cortical familiarity), as a band
+/// (log2 of its count, at most 7).
+fn sentence_familiarity(fam: &[u32], ids: &[usize], words: &[&str], t: usize) -> u64 {
+    let start = words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+    ids[start..=t].iter().map(|&w| fam.get(w).copied().unwrap_or(0)).min().map_or(7, |c| (32 - c.leading_zeros() as u64).min(7))
 }

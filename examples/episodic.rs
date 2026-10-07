@@ -1169,6 +1169,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // answers the relation named by the current sentence's words if the word has one,
     // else everything it knows about the word (`about`): the fillers' codes, plain.
     let rel_reps: Option<usize> = std::env::var("REL").ok().and_then(|v| v.parse().ok());
+    let narrators: Option<usize> = std::env::var("NARRATORS").ok().and_then(|v| v.parse().ok()).filter(|&k: &usize| k > 0);
+    let liar: Q16 = q16(std::env::var("LIAR").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0));
+    let mut lies_told = 0usize;
     let mut rel = RelationStore::new(BITS);
     // REL_LIFT=1: facts are read twice, the second time with weak frame positions and
     // frame words that are entities elsewhere lifted into the fillers ("X _ went to the
@@ -1176,6 +1179,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // only (from an earlier filler to a later one) from each first answer: lucy → jones →
     // the places joneses went.
     rel.lift = std::env::var("REL_LIFT").is_ok();
+    // TRUST=vote (a control): every source counts the same in a conflict (a plain vote)
+    rel.use_trust = std::env::var("TRUST").map_or(true, |v| v != "vote");
     let rel_hops: usize = std::env::var("REL_HOPS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
     let mut rel_stats = [0usize; 3]; // facts parsed at sleep, answers given at test, of those for held-out stories
     let sem_frame = sem_typed > 0 && std::env::var("SEM_FRAME").is_ok();
@@ -2144,6 +2149,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         } else {
             story(&mut rng, task, max_facts, testing && s_i % 2 == 1)
         };
+        // NARRATORS=k: each training story is told by narrator s_i % k (the reader knows who
+        // tells it, as one knows a book's author). LIAR=p: the last narrator swaps the family
+        // in a fact sentence ("X is a jones" → "smith") with probability p.
+        let narrator: u16 = narrators.map_or(0, |k| (s_i % k) as u16);
+        if let (Some(k), false) = (narrators, testing) {
+            if narrator as usize == k - 1 && liar > 0 {
+                let mut lrng = StdRng::seed_from_u64(seed ^ (s_i as u64).wrapping_mul(0x9E37_79B9));
+                for i in 3..s.words.len() {
+                    if s.words[i - 2] == "is" && s.words[i - 1] == "a" && chance(&mut lrng, liar) {
+                        if let Some(f) = SURNAMES.iter().position(|x| *x == s.words[i]) {
+                            s.words[i] = SURNAMES[1 - f];
+                            lies_told += 1;
+                        }
+                    }
+                }
+            }
+        }
         if let Some(out) = dump.as_mut() {
             use std::io::Write;
             writeln!(out, "{}\t{}\t{}\t{}", if testing { "test" } else { "train" }, s.held_out as u8, s.answer_at, s.words.join(" ")).unwrap();
@@ -4035,7 +4057,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if rel_reps.is_some() && !testing && !replaying {
                     let fact: Vec<usize> = s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect();
-                    rel.observe(&fact.into_iter().rev().collect::<Vec<_>>());
+                    rel.observe_from(&fact.into_iter().rev().collect::<Vec<_>>(), narrator + 1);
                 }
                 if semantic_reps.is_some() && !testing && !replaying && !hippo_self {
                     sem_buf.push(s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect());
@@ -4552,6 +4574,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .collect();
             eprintln!("  REL seed {seed}: {} facts parsed, {} relations, {} kernels from {} replays; frames {:?}", rel_stats[0], rel.frames().len(), k, n, fr);
             eprintln!("  REL seed {seed}: about the new names: {}", names.join("; "));
+            if let Some(k) = narrators {
+                let isa = rel.relation_for(&[index["is"], index["a"]]);
+                let beliefs: Vec<String> = NEW_NAMES
+                    .iter()
+                    .filter_map(|n| index.get(n))
+                    .map(|&w| {
+                        let c = isa.map(|r| rel.claims(w, r, 0, 1)).unwrap_or_default();
+                        format!("{}: {}", vocab[w], c.iter().map(|&(v, src, b)| format!("{} by {} ({:.2})", vocab[v], src, to_f32(b))).collect::<Vec<_>>().join(", "))
+                    })
+                    .collect();
+                eprintln!(
+                    "  TRUST seed {seed}: {} lies told; trust per narrator: {}; claims about the new names: {}",
+                    lies_told,
+                    (1..=k as u16).map(|n| format!("{n}{} {:.2}", if n as usize == k { " (liar)" } else { "" }, to_f32(rel.trust(n)))).collect::<Vec<_>>().join(", "),
+                    beliefs.join("; ")
+                );
+            }
             for fam in ["jones", "smith"] {
                 if let Some(&w) = index.get(fam) {
                     let a: Vec<String> = rel.about(&enc.codes, w).iter().map(|&(r, i, j, _)| format!("{r}:{i}>{j} {:?}", rel.ask_all(&enc.codes, w, r, i, j).iter().map(|&x| vocab[x]).collect::<Vec<_>>())).collect();

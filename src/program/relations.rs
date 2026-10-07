@@ -60,6 +60,8 @@ pub struct RelationStore {
     claims: HashMap<(usize, usize, usize, usize), Vec<(usize, u16)>>,
     /// Each source's trust (`Q16`), from the last resolution.
     trust: HashMap<u16, u32>,
+    /// Learn the sources' trust (true), or count every source the same: a plain vote.
+    pub use_trust: bool,
     /// Learned relations: each a frame (its length and its (position, word)s).
     frames: Vec<(usize, Vec<(usize, usize)>)>,
     /// Per entity: the (relation, from, to) keys stored with it.
@@ -114,6 +116,7 @@ impl RelationStore {
             buffer: Vec::new(),
             claims: HashMap::default(),
             trust: HashMap::default(),
+            use_trust: true,
             frames: Vec::new(),
             links: HashMap::default(),
             stated: Vec::new(),
@@ -393,7 +396,7 @@ impl RelationStore {
                 trust.insert(s, ONE / 2);
             }
         }
-        for _ in 0..8 {
+        for _ in 0..if self.use_trust { 8 } else { 0 } {
             let mut credit: HashMap<u16, (u64, u64)> = HashMap::default();
             for c in &keys {
                 let total: u64 = c.iter().map(|x| trust[&x.1] as u64).sum::<u64>().max(1);

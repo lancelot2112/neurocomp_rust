@@ -447,6 +447,53 @@ mod tests {
         }
     }
 
+    /// Depth: six family lines of eight generations. Fathers are stated for everyone;
+    /// grandfathers and great-grandfathers for half of those who have one. Rules build on
+    /// rules across sleeps: grandfather from father, then great-grandfather from those.
+    #[test]
+    fn compositions_build_on_compositions() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let (lines, gens) = (6usize, 8usize);
+        let frame = ["'s", "father", "grandfather", "greatgrandfather", "is"];
+        let n_words = frame.len() + lines * gens;
+        let person = |l: usize, g: usize| frame.len() + l * gens + g; // g = 0 is the root
+        let codes = codes(n_words, &mut rng);
+        let mut s = RelationStore::new(BITS);
+        let (mut held_gf, mut held_ggf) = (Vec::new(), Vec::new());
+        for l in 0..lines {
+            for g in 1..gens {
+                s.observe(&[person(l, g), 0, 1, 4, person(l, g - 1)]);
+                if g >= 2 {
+                    if (l + g) % 2 == 0 {
+                        s.observe(&[person(l, g), 0, 2, 4, person(l, g - 2)]);
+                    } else {
+                        held_gf.push((person(l, g), person(l, g - 2)));
+                    }
+                }
+                if g >= 3 {
+                    if (l + g) % 2 == 1 {
+                        s.observe(&[person(l, g), 0, 3, 4, person(l, g - 3)]);
+                    } else {
+                        held_ggf.push((person(l, g), person(l, g - 3)));
+                    }
+                }
+            }
+        }
+        s.consolidate(&codes, 20, &mut rng);
+        s.consolidate(&codes, 20, &mut rng); // a second night: rules over inferred facts too
+        let gf = s.relation_for(&[2]).unwrap();
+        let ggf = s.relation_for(&[3]).unwrap();
+        let right = |r: usize, held: &[(usize, usize)]| held.iter().filter(|&&(x, z)| s.ask(&codes, x, r, 0, 1) == Some(z)).count();
+        assert_eq!(right(gf, &held_gf), held_gf.len(), "rules {:?}", s.rules());
+        assert_eq!(right(ggf, &held_ggf), held_ggf.len(), "rules {:?}", s.rules());
+        // and plain chains of fathers, as deep as the lines go
+        let father = s.relation_for(&[1]).unwrap();
+        for depth in 1..gens {
+            let ok = (0..lines).filter(|&l| s.follow(&codes, person(l, gens - 1), &vec![father; depth]) == Some(person(l, gens - 1 - depth))).count();
+            assert_eq!(ok, lines, "father x{depth}");
+        }
+    }
+
     #[test]
     fn relations_chain() {
         let (words, codes, s, _) = learned();

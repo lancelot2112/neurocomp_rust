@@ -21,7 +21,9 @@ that a name and a relation give the filler ("tom" + father → "bob"), and relat
    - **Relations are learned from word counts.** A fact's frame is the words above its
      largest frequency gap (at least `frame_ratio`, leaving at least two words below):
      "'s father is" recurs in every fact of the kind, the names only in facts about
-     them. The words below, in reading order, are its fillers. A relation is a frame (a
+     them. The words below, in reading order, are its fillers. (Replaced in
+     [67](67-relation-store-in-reading.md) by a rule from fact shapes: frequency failed on
+     the stories.) A relation is a frame (a
      set of words, any order); its code is its index.
    - **Binding is a permutation.** For fillers i ≠ j of a fact of relation r: the key is
      filler i's code rotated by an offset hashed from (r, i, j), the value is filler j's

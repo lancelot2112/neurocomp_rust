@@ -204,6 +204,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
   - a task where the believed fact decides the answer: family questions 98–100% with
     graded or posterior belief, 29–68% trusting everyone or counting votes
     ([78](experiments/78-belief-decides-the-answer.md)).
+  - "unknown" when belief is split: the posterior abstains on every question about a name
+    two equally trusted sources dispute, and never where trust settles the conflict
+    ([79](experiments/79-unknown-when-belief-is-split.md)).
 - **Next:**
   1. ~~independent random streams per subsystem~~ (done, see Infrastructure);
   2. ~~a task where the believed fact decides the answer~~ (done, [78](experiments/78-belief-decides-the-answer.md));
@@ -211,7 +214,10 @@ slot codes bound to content in the hippocampus, recalled by slot.
      lucy's place answers 1–15% under a wrong belief, 36–68% under a right one; the limit
      is holding the season, [78](experiments/78-belief-decides-the-answer.md));
   4. proposals and self-generated claims as sources with earned trust;
-  5. "unknown" when belief is split.
+  5. ~~"unknown" when belief is split~~ (done: the posterior abstains exactly on the
+     undecidable conflict, [79](experiments/79-unknown-when-belief-is-split.md));
+  6. learn the answer-or-abstain threshold as a go/no-go, and seek evidence on an
+     "unknown".
 
 ## 5. A third level and a slower clock
 **Build.**

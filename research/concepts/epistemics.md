@@ -37,6 +37,14 @@ answers 29–68% (every conflict is a tie). Trust learned from other facts break
 A source that contradicts itself among single-valued sources is now a conflict, not a
 many-valued relation (that rule had stopped trust from being learned at all).
 
+## Saying "unknown" ([79](../experiments/79-unknown-when-belief-is-split.md))
+The answer is "unknown" unless the believed value is believed more than half. Only the
+posterior uses this well: its "none of these" term leaves every value under one half when
+two equally trusted sources disagree, and keeps a trusted source's value over one half
+against a distrusted one. Graded belief always puts one side of a two-way conflict at or
+over half (it answers the undecidable name, wrong); a vote puts every 1:1 conflict at one
+half (it abstains on everything).
+
 ## What is still missing
 - Proposals and the network's own claims as sources with earned trust (premise credibility
   already comes from belief: [76](../experiments/76-belief-rules.md)).
@@ -44,6 +52,8 @@ many-valued relation (that rule had stopped trust from being learned at all).
   graded belief then validates only the true inferences.
 - The believed fact carried into questions that need it as one step of several (a new
   name's place by its family, [78](../experiments/78-belief-decides-the-answer.md)).
-- "Unknown" as an answer when belief is split.
+- ~~"Unknown" as an answer when belief is split~~ ([79](../experiments/79-unknown-when-belief-is-split.md));
+  next: the threshold learned as a go/no-go, and an "unknown" prompting a search for
+  evidence.
 - Deciding a source from content when the tag is lost (reality monitoring proper).
 - Curiosity acting: open proposals steering replay and attention.

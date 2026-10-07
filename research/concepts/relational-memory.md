@@ -4,7 +4,7 @@ Collected from experiments [63](../experiments/63-routes-cooperate.md)–[67](..
 
 ## The three stores, side by side
 
-| | Hippocampus (engram store, [55](../experiments/55-engram-store.md)–[60](../experiments/60-walk-alone.md)) | Semantic store ([42](../experiments/42-semantic-store.md)) | Relation store ([66](../experiments/66-typed-relations.md), [67](../experiments/67-relation-store-in-reading.md)) |
+| | Hippocampus (engram store, [56](../experiments/56-engram-store.md)–[60](../experiments/60-walk-alone.md)) | Semantic store ([42](../experiments/42-semantic-store.md)) | Relation store ([66](../experiments/66-typed-relations.md), [67](../experiments/67-relation-store-in-reading.md)) |
 |---|---|---|---|
 | Kind | auto + heteroassociative | heteroassociative | heteroassociative |
 | Learns | one shot, while reading | slowly, by sleep replay | slowly, by sleep replay |

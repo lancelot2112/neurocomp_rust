@@ -87,8 +87,11 @@ Read-back is built in its rehearsal form ([26](../experiments/26-context-and-rea
   hold (80–97% at test), and what they say is heard again.
 - **Effect:** it extends a single area's reach (3–11% → 27–33%), but it does not help a
   chain that already holds the fact once stories are separated by a context boundary.
-- **Still to build:** the `self` frame (efference copy), answering by speaking, and
-  recitation.
+- **Answering by speaking is built** ([69](../experiments/69-answering-by-speaking.md)):
+  an `OutputBuffer` the cortex writes to, abstention from confidence (about 60% answered
+  at 84–91% right with the hippocampus lesioned), and the spoken word heard in place of
+  the page's.
+- **Still to build:** the `self` frame (efference copy) and recitation.
 
 ## The experiments, in order
 1. **26 · Answering by speaking, with abstention.** The question stories end without the

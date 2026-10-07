@@ -180,6 +180,14 @@ slot codes bound to content in the hippocampus, recalled by slot.
   2. let a frame word be an entity, so the cortex composes lucy → jones → place;
   3. a cue controller that reacts to the first recall and is rewarded at the answer.
 
+### Output and self-supervision (after [69](experiments/69-answering-by-speaking.md))
+- **Done:** an output buffer; answering by speaking, with abstention from confidence.
+- **Next, in order:**
+  1. the efference copy (`self` frame);
+  2. recitation;
+  3. read-back as training for the area chain
+     ([plan](concepts/output-and-self-supervision.md)).
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

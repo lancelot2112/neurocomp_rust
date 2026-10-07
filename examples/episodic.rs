@@ -39,6 +39,68 @@ use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
 
+// Runs (one per policy and seed) go in parallel threads; each thread's printing is kept in
+// a buffer of its own and printed in run order when the run ends, so the output reads as
+// if the runs went one after another.
+thread_local! {
+    static OUT: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) };
+}
+
+fn emit(err: bool, newline: bool, text: String) {
+    let text = if newline { text + "\n" } else { text };
+    let rest = OUT.with(|o| match o.borrow_mut().as_mut() {
+        Some((out, er)) => {
+            if err { er } else { out }.push_str(&text);
+            None
+        }
+        None => Some(text),
+    });
+    if let Some(text) = rest {
+        if err {
+            std::eprint!("{text}");
+        } else {
+            std::print!("{text}");
+        }
+    }
+}
+
+macro_rules! println {
+    () => { emit(false, true, String::new()) };
+    ($($t:tt)*) => { emit(false, true, format!($($t)*)) };
+}
+macro_rules! eprintln {
+    () => { emit(true, true, String::new()) };
+    ($($t:tt)*) => { emit(true, true, format!($($t)*)) };
+}
+macro_rules! eprint {
+    ($($t:tt)*) => { emit(true, false, format!($($t)*)) };
+}
+
+/// Run every (policy, seed) job on up to THREADS threads (default: the machine's cores),
+/// each with its output buffered: (outcome, printed, printed to stderr) in job order. Each
+/// run depends only on its seed, so the results do not depend on the thread count.
+fn run_all(jobs: &[(Policy, u64)], task: Task, max_facts: usize) -> Vec<(Outcome, String, String)> {
+    let threads = std::env::var("THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get())).clamp(1, jobs.len().max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done: Vec<std::sync::Mutex<Option<(Outcome, String, String)>>> = jobs.iter().map(|_| std::sync::Mutex::new(None)).collect();
+    std::thread::scope(|sc| {
+        for _ in 0..threads {
+            std::thread::Builder::new()
+                .stack_size(256 << 20)
+                .spawn_scoped(sc, || loop {
+                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(&(policy, seed)) = jobs.get(i) else { break };
+                    OUT.with(|o| *o.borrow_mut() = Some((String::new(), String::new())));
+                    let outcome = run(policy, task, max_facts, seed);
+                    let (out, err) = OUT.with(|o| o.borrow_mut().take()).unwrap_or_default();
+                    *done[i].lock().unwrap() = Some((outcome, out, err));
+                })
+                .expect("spawn a run thread");
+        }
+    });
+    done.into_iter().map(|m| m.into_inner().unwrap().expect("every job ran")).collect()
+}
+
 /// Fixed-point constants (`Q16`, `ONE` = 1): the model's per-step arithmetic is integer.
 const Q_TENTH: Q16 = 6554;
 const Q_03: Q16 = 19661;
@@ -5007,8 +5069,18 @@ fn main() {
                 ],
                 _ => vec![Policy::NoMemory, Policy::FixedRelay, Policy::Episodic],
             };
+            let jobs: Vec<(Policy, u64)> = policies.iter().flat_map(|&p| (seed_start..seed_start + seeds).map(move |seed| (p, seed))).collect();
+            let mut all = run_all(&jobs, task, max_facts).into_iter();
             for policy in policies {
-                let runs: Vec<Outcome> = (seed_start..seed_start + seeds).map(|seed| run(policy, task, max_facts, seed)).collect();
+                let runs: Vec<Outcome> = all
+                    .by_ref()
+                    .take(seeds as usize)
+                    .map(|(o, out, err)| {
+                        std::print!("{out}");
+                        std::eprint!("{err}");
+                        o
+                    })
+                    .collect();
                 let mean = |f: fn(&Outcome) -> f64| runs.iter().map(f).sum::<f64>() / runs.len() as f64;
                 println!(
                     "  {:<40} seen pairs {:5.1}%   held-out pairs {:5.1}%   answer in recall {:5.1}%   places in recall {:4.2}   held-out runs [{}]",

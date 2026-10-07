@@ -532,6 +532,11 @@ impl Hippocampus {
 /// input indices; recall and replay give EC V patterns (`Recall::ec`).
 pub trait EpisodicCircuit {
     fn recall(&self, cue: &[usize]) -> Recall;
+    /// Recall without side effects on the store (no strengthening of what is recalled):
+    /// for cues the network made itself, e.g. while retelling. Default: as `recall`.
+    fn recall_peek(&self, cue: &[usize]) -> Recall {
+        self.recall(cue)
+    }
     /// Recall with the walk on or off for this one call (a cue controller's choice).
     /// Default: as `recall` (circuits without a walk).
     fn recall_as(&self, cue: &[usize], _walk: bool) -> Recall {
@@ -554,6 +559,18 @@ pub trait EpisodicCircuit {
     /// Inferred events from the facts stored since the last call (generative replay): each
     /// (content ids in reading order, context ids, the source row). Default: none.
     fn infer(&mut self, _max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
+        Vec::new()
+    }
+    /// The episode played forward from the event `cue` recalls: up to `max` following
+    /// events, each as its content ids in reading order (sequence replay, e.g. to retell a
+    /// story). Default: none (circuits without event order).
+    fn sequence_from(&self, _cue: &[usize], _max: usize) -> Vec<Vec<usize>> {
+        Vec::new()
+    }
+    /// The most recent episode (the one the latest stored event belongs to), its events in
+    /// time order, each as content ids in reading order: recall by recency, e.g. to retell
+    /// the story just read. Default: none.
+    fn recent_episode(&self, _max: usize) -> Vec<Vec<usize>> {
         Vec::new()
     }
     /// The row the latest store wrote or strengthened (for a caller that keeps something

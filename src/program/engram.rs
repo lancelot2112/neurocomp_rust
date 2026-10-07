@@ -150,6 +150,10 @@ pub struct EngramStore {
     /// New facts since the last `infer`: (row, its new ids).
     facts: Vec<(u32, Vec<usize>)>,
     last_row: Cell<Option<u32>>,
+    /// The rows written or strengthened in the current episode (sequence), in order, and
+    /// in the previous one.
+    episode_rows: RefCell<Vec<u32>>,
+    prev_episode_rows: Vec<u32>,
     place: HashMap<u64, Vec<u32>>,
     live: usize,
     evicted: usize,
@@ -182,6 +186,8 @@ impl EngramStore {
             walks: Cell::new(0),
             facts: Vec::new(),
             last_row: Cell::new(None),
+            episode_rows: RefCell::new(Vec::new()),
+            prev_episode_rows: Vec::new(),
             place: HashMap::default(),
             live: 0,
             evicted: 0,
@@ -618,6 +624,31 @@ impl EpisodicCircuit for EngramStore {
         if self.cfg.walk { self.recall_walk(cue, true) } else { self.recall_row(cue, true) }
     }
 
+    fn sequence_from(&self, cue: &[usize], max: usize) -> Vec<Vec<usize>> {
+        let first = self.recall_row(cue, false);
+        let Some(&s) = first.ca3.first() else { return Vec::new() };
+        let mut out = Vec::new();
+        let mut next = self.successor(s);
+        while let (Some(t), true) = (next, out.len() < max) {
+            if let Some(r) = self.row(t) {
+                out.push(r.order.iter().map(|&i| i as usize).collect());
+            }
+            next = self.successor(t);
+        }
+        out
+    }
+
+    fn recent_episode(&self, max: usize) -> Vec<Vec<usize>> {
+        // the episode being read, else the one before (a new sequence may just have begun)
+        let cur = self.episode_rows.borrow();
+        let rows: &[u32] = if cur.is_empty() { &self.prev_episode_rows } else { &cur };
+        rows.iter().take(max).filter_map(|&t| self.row(t)).map(|r| r.order.iter().map(|&i| i as usize).collect()).collect()
+    }
+
+    fn recall_peek(&self, cue: &[usize]) -> Recall {
+        if self.cfg.walk { self.recall_walk(cue, false) } else { self.recall_row(cue, false) }
+    }
+
     fn recall_as(&self, cue: &[usize], walk: bool) -> Recall {
         self.recalls.set(self.recalls.get() + 1);
         if walk { self.recall_walk(cue, true) } else { self.recall_row(cue, true) }
@@ -673,6 +704,7 @@ impl EpisodicCircuit for EngramStore {
             if same {
                 self.deduped += 1;
                 self.last_row.set(Some(s));
+                self.episode_rows.borrow_mut().push(s);
                 if !here && self.cfg.dedup == Dedup::Move {
                     // last seen here: re-index the row under the current place
                     let new = place_key(&self.phase);
@@ -709,6 +741,7 @@ impl EpisodicCircuit for EngramStore {
         };
         let s = self.append(row);
         self.last_row.set(Some(s));
+        self.episode_rows.borrow_mut().push(s);
         if unseen.len() >= self.cfg.tag_min && self.tags.len() < 4096 {
             self.facts.push((s, unseen.clone()));
             self.tags.push((vec![s], unseen));
@@ -720,6 +753,7 @@ impl EpisodicCircuit for EngramStore {
 
     /// A story ended: move one step on the grid (the next story is a new place).
     fn end_sequence(&mut self) {
+        self.prev_episode_rows = std::mem::take(&mut *self.episode_rows.borrow_mut());
         self.move_by(1);
     }
 

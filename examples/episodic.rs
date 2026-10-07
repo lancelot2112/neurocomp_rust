@@ -1406,6 +1406,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // surprise. SELF_NOISE=p: what is heard is a random other word with probability p
     // (altered feedback), to test that the mismatch is caught.
     let recite: Option<usize> = std::env::var("RECITE").ok().and_then(|v| v.parse().ok());
+    // RECITE_PLAN=1: the hippocampus plans the retelling, the cortex speaks it. At the
+    // first spoken step the hippocampus recalls the most recent episode (the story just
+    // read, by recency: `recent_episode`) and plays it forward from the event after the
+    // one the cue matches (else the episode the cue's bindings recall: `sequence_from`):
+    // the events' words in reading order, each ended by ".". With RECITE_PLAN the test
+    // stories are stored in the hippocampus too (experience to retell), as training ones. At each step the planned word is spoken
+    // if the column's expectation admits it (its kind fits here), else the cortex's own.
+    let recite_plan = std::env::var("RECITE_PLAN").is_ok();
+    let mut plan: Vec<usize> = Vec::new();
+    let mut plan_stats = [0usize; 2]; // steps with a planned word, planned word spoken
     let efference_on = std::env::var("EFFERENCE").is_ok();
     let self_noise: Q16 = q16(std::env::var("SELF_NOISE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0));
     // recitation: positions scored, right; content words, said
@@ -2027,6 +2037,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let mut s = s;
         // a retelling: nothing stored or counted (as a replay), nothing learned (as a test)
         let testing = (testing && !replaying) || reciting;
+        // the reading context is saved before a retelling and put back after it: what the
+        // network said to itself does not become the context of the next story it reads
+        let saved_reading = (reciting && hier && std::env::var("RECITE_KEEP_CONTEXT").is_err()).then(|| {
+            let mut c = vec![area.save_context()];
+            c.extend(upper.iter().map(|u| u.save_context()));
+            c
+        });
+        // and the step-to-step carries: the previous word, its slot (the role cells chain
+        // each word's slot on the previous one), the column's expectation
+        let saved_carry = reciting.then(|| (prev, slot_prev, role_now, expect_prev.clone()));
         if reciting {
         } else if replaying {
             replay_words += s.words.len();
@@ -2046,6 +2066,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         efference = vec![None; ids.len()];
         let truth_ids = ids.clone();
         let mut recited: Vec<usize> = Vec::new();
+        plan.clear();
         step_pending.clear();
         // the previous story's bindings become one episode (training stories only)
         if bind {
@@ -2891,6 +2912,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                             hc.recall_as(&c, false)
                                         }
                                     }
+                                } else if reciting {
+                                    // cued by the network's own words: recall without
+                                    // strengthening what is recalled
+                                    hc.recall_peek(&idx)
                                 } else {
                                     hc.recall(&idx)
                                 }
@@ -3295,7 +3320,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         mix_conf = Some(SourceMix::confidence(total));
                     }
                     // (not on an internal step: its "next word" is the network's own)
-                    if (!testing || mix_test_learn) && !inner[t + 1] {
+                    if (!testing || mix_test_learn) && !inner[t + 1] && !reciting {
                         for (src, key, ws) in &proposals {
                             for &w in ws {
                                 mix.record(*src, *key, w == next);
@@ -3488,13 +3513,53 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // RECITE: past the cue, the network says the next word and hears it
                 if let (true, Some(cue_len)) = (reciting, recite) {
                     if t + 1 >= cue_len && t + 1 < ids.len() {
-                        let said = enc.decode(&out).unwrap_or(index["."]);
+                        if recite_plan && t + 1 == cue_len && !(testing && bind_lesion) {
+                            if let Some(hc) = &bind_hc {
+                                let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
+                                let mut idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                                idx.extend(bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)));
+                                idx.sort_unstable();
+                                idx.dedup();
+                                // the story just read: the most recent episode, by recency; its
+                                // first event is the cue's, so the plan starts after the event
+                                // the cue's words match best; else, the episode the cue recalls
+                                let recent = hc.recent_episode(32);
+                                let cue_words: Vec<usize> = truth_ids[..cue_len].to_vec();
+                                let words_of_ev = |ev: &Vec<usize>| ev.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len()).collect::<Vec<usize>>();
+                                let start = recent
+                                    .iter()
+                                    .enumerate()
+                                    .max_by_key(|(i, ev)| (words_of_ev(ev).iter().filter(|w| cue_words.contains(w)).count(), std::cmp::Reverse(*i)))
+                                    .map_or(0, |(i, _)| i + 1);
+                                let events: Vec<Vec<usize>> = if recent.is_empty() { hc.sequence_from(&idx, 16) } else { recent[start.min(recent.len())..].to_vec() };
+                                for ev in events {
+                                    plan.extend(ev.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len()));
+                                    if plan.last().map_or(true, |&w| vocab[w] != ".") {
+                                        plan.push(index["."]);
+                                    }
+                                }
+                            }
+                        }
+                        let k = t + 1 - cue_len;
+                        let cortex = enc.decode(&out).unwrap_or(index["."]);
+                        let said = match plan.get(k) {
+                            Some(&p) => {
+                                plan_stats[0] += 1;
+                                let expect = column.l23.peek_union(&input, BITS);
+                                let fits = expect.count_ones() == 0 || enc.codes[p].as_words().iter().zip(expect.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
+                                plan_stats[1] += fits as usize;
+                                if fits { p } else { cortex }
+                            }
+                            None => cortex,
+                        };
                         let truth = truth_ids[t + 1];
                         recite_stats[0] += 1;
                         recite_stats[1] += (said == truth) as usize;
                         recited.push(said);
                         // altered feedback: what is heard may differ from what was said
                         let heard = if self_noise > 0 && chance(&mut rng, self_noise) { (said + 1 + rng.gen_range(0..vocab.len() - 1)) % vocab.len() } else { said };
+                        // RECITE_DRY=1 (a control): speak, but hear the story's word
+                        let heard = if std::env::var("RECITE_DRY").is_ok() { truth } else { heard };
                         ids[t + 1] = heard;
                         s.words[t + 1] = vocab[heard];
                         inner[t + 1] = true;
@@ -3569,8 +3634,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 last_recall_id = None;
                 last_recall_cue = None;
-                if testing {
-                    // the fast inhibitory loop keeps running when slow learning is off
+                if testing && !reciting {
+                    // the fast inhibitory loop keeps running when slow learning is off (not
+                    // in a retelling: there the context is the network's own words)
                     column.fast_inhibit(&enc.codes[next]);
                 }
                 if !testing {
@@ -3671,7 +3737,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sentence = BitVector::new(BITS, Some(0));
                 if hippo_self && bind && !bind_sentence.is_empty() {
-                    if !testing && !replaying {
+                    if (!testing || recite_plan) && !replaying {
                         if let Some(hc) = &mut bind_hc {
                             let ev = event_vec(&bind_sentence, &bind_prev, ctx_offset);
                             let content = event_vec(&bind_sentence, &BitVector::new(BITS, Some(0)), ctx_offset);
@@ -3820,6 +3886,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     truth_ids[..cue_len.min(truth_ids.len())].iter().map(|&w| vocab[w]).collect::<Vec<_>>().join(" "),
                     recited.iter().map(|&w| vocab[w]).collect::<Vec<_>>().join(" ")
                 ));
+            }
+        }
+        if reciting {
+            // a retelling can stop mid-sentence: its unfinished sentence must not run into
+            // the next story's first sentence (a page always ends with ".")
+            sentence = BitVector::new(BITS, Some(0));
+            surprising = BitVector::new(BITS, Some(0));
+            bind_sentence.clear();
+            bind_sentence_pairs.clear();
+            sent_surprise = 0.0;
+            sent_words = 0;
+        }
+        if let Some((p, sp, rn, ep)) = saved_carry {
+            prev = p;
+            slot_prev = sp;
+            role_now = rn;
+            expect_prev = ep;
+        }
+        if let Some(c) = saved_reading {
+            area.restore_context(&c[0]);
+            for (u, x) in upper.iter_mut().zip(&c[1..]) {
+                u.restore_context(x);
             }
         }
         prev_replaying = replaying;
@@ -3973,6 +4061,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * recite_stats[3] as f64 / recite_stats[2].max(1) as f64,
                 recite_stats[2]
             );
+            if recite_plan {
+                eprintln!("  RECITE seed {seed}: the hippocampus planned {} steps; the planned word fit the cortex's expectation and was spoken at {:.1}%", plan_stats[0], 100.0 * plan_stats[1] as f64 / plan_stats[0].max(1) as f64);
+            }
             for x in &recite_sample {
                 eprintln!("  RECITE seed {seed}: {x}");
             }

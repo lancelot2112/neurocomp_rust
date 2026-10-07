@@ -1,5 +1,5 @@
 # Experiment regression table for scripts/regress.sh (tab-separated).
-# name	page	expected seen %	expected held-out %	settings (seed 0; recorded with scripts/regress.sh --record)
+# name	page	expected seen %	expected held-out %	settings (expected: mean over seeds 0, 1, 2; recorded with scripts/regress.sh --record)
 story-boundary	26	98.6	98.4	COPY_GROW=1 GROW_TRUST=0.5 STICKY=255 GENERALIZE=0.5 GENERALIZE_AFTER=1 TRUST_AT_TEST=0.5 GROW_GATE=3 SLEEP_EVERY=500 SURPRISE_GATE=1 MEMO=1 CANON=1 TASK=season POLICIES=nomemory HIER=1 HIER_LEVELS=3 HIER_CHAIN=mix MIX=1 HIER_RESET=1
 saccades	29	91.6	92.2	COPY_GROW=1 GROW_TRUST=0.5 STICKY=255 GENERALIZE=0.5 GENERALIZE_AFTER=1 TRUST_AT_TEST=0.5 GROW_GATE=3 SLEEP_EVERY=500 SURPRISE_GATE=1 MEMO=1 CANON=1 TASK=season POLICIES=nomemory HIER=1 HIER_LEVELS=1 MIX=1 SACCADE=learned
 role-transfer	31	64.4	59.2	COPY_GROW=1 GROW_TRUST=0.5 STICKY=255 GENERALIZE=0.5 GENERALIZE_AFTER=1 TRUST_AT_TEST=0.5 GROW_GATE=3 SLEEP_EVERY=500 SURPRISE_GATE=1 MEMO=1 CANON=1 TASK=season POLICIES=nomemory HIER=1 SEASON_LEN=4 SEASON_RULE=season NEW_NAMES=1 HIER_LEVELS=1 MIX=1 HIER_GENERALIZE=0.5

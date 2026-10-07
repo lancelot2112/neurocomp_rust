@@ -28,6 +28,13 @@
 //!   rule then infers r for the entities that have the path but no stated r, and those
 //!   inferred facts are replayed into the store like stated ones, so `ask` answers them
 //!   directly (generative replay; the cortex learns what it was never told).
+//! - **No source is fully trusted.** Every fact is a *claim* by a source (a narrator, the
+//!   network itself, a proposal). Claims about the same thing (entity, relation,
+//!   direction) with different values conflict. At sleep, the sources' trust and the
+//!   claims' belief are estimated together (truth discovery, as TruthFinder): a value's
+//!   belief is the summed trust of the sources claiming it; a source's trust is the share
+//!   of belief its claims win, over the facts at least two sources spoke about. Only the
+//!   believed value of a conflict is consolidated; the others stay recorded as claims.
 //! - **Navigation:** `ask(tom, father, 0, 1)` gives bob; `follow(tom, &[father, father])`
 //!   gives bob's father. The relation for a query is found from its words
 //!   (`relation_for(["father"])`): the frame sharing the most of them.
@@ -36,6 +43,7 @@ use rand::Rng;
 
 use crate::bitvec::BitVector;
 use crate::det::HashMap;
+use crate::fixed::ONE;
 use crate::kernel::{GrowthConfig, KernelClass, SimpleKernel};
 
 pub struct RelationStore {
@@ -46,8 +54,12 @@ pub struct RelationStore {
     facts: Vec<Vec<usize>>,
     seen: HashMap<Vec<usize>, usize>,
     buckets: HashMap<(usize, usize, usize, u64), Vec<usize>>,
-    /// Facts read since the last consolidation.
-    buffer: Vec<Vec<usize>>,
+    /// Facts read since the last consolidation, with their source.
+    buffer: Vec<(Vec<usize>, u16)>,
+    /// Claims: (relation, entity, from, to) → the (value, source) pairs claimed.
+    claims: HashMap<(usize, usize, usize, usize), Vec<(usize, u16)>>,
+    /// Each source's trust (`Q16`), from the last resolution.
+    trust: HashMap<u16, u32>,
     /// Learned relations: each a frame (its length and its (position, word)s).
     frames: Vec<(usize, Vec<(usize, usize)>)>,
     /// Per entity: the (relation, from, to) keys stored with it.
@@ -100,6 +112,8 @@ impl RelationStore {
             seen: HashMap::default(),
             buckets: HashMap::default(),
             buffer: Vec::new(),
+            claims: HashMap::default(),
+            trust: HashMap::default(),
             frames: Vec::new(),
             links: HashMap::default(),
             stated: Vec::new(),
@@ -126,6 +140,11 @@ impl RelationStore {
     /// Read a fact (word ids in order): keep it for the next replay, and among the facts
     /// whose shape it is compared with.
     pub fn observe(&mut self, fact: &[usize]) {
+        self.observe_from(fact, 0);
+    }
+
+    /// Read a fact claimed by `source` (who said it).
+    pub fn observe_from(&mut self, fact: &[usize], source: u16) {
         if fact.len() < 3 {
             return;
         }
@@ -137,7 +156,7 @@ impl RelationStore {
             }
             self.facts.push(fact.to_vec());
         }
-        self.buffer.push(fact.to_vec());
+        self.buffer.push((fact.to_vec(), source));
     }
 
     /// A fact's (frame, fillers in order), by the facts read so far; None unless it has
@@ -217,16 +236,24 @@ impl RelationStore {
     /// replayed `reps` times, shuffled; every ordered pair of fillers is a binding.
     /// Returns the facts that parsed as relations.
     pub fn consolidate<R: Rng>(&mut self, codes: &[BitVector], reps: usize, rng: &mut R) -> usize {
-        let facts = std::mem::take(&mut self.buffer);
+        let batch = std::mem::take(&mut self.buffer);
+        let facts: Vec<Vec<usize>> = batch.iter().map(|x| x.0.clone()).collect();
+        let source_of: HashMap<Vec<usize>, Vec<u16>> = batch.iter().fold(HashMap::default(), |mut m, (f, src)| {
+            let e: &mut Vec<u16> = m.entry(f.clone()).or_default();
+            if !e.contains(src) {
+                e.push(*src);
+            }
+            m
+        });
         let mut pairs: Vec<(BitVector, usize, BitVector)> = Vec::new(); // (key, entity, value)
         let mut parsed = 0;
         // the first reading of each fact (its frame: positions where most neighbours agree)
         let fps: Vec<(Vec<usize>, Vec<(usize, bool)>)> = facts.iter().filter_map(|f| self.frame_positions(f).map(|fp| (f.clone(), fp))).collect();
-        let mut all: Vec<((usize, Vec<(usize, usize)>), Vec<usize>)> = Vec::new();
+        let mut all: Vec<((usize, Vec<(usize, usize)>), Vec<usize>, Vec<u16>)> = Vec::new();
         for (fact, fp) in &fps {
             if let Some((frame, fillers)) = Self::reading(fact, &fp.iter().map(|x| x.0).collect::<Vec<_>>()) {
                 self.entities.extend(fillers.iter().copied());
-                all.push((frame, fillers));
+                all.push((frame, fillers, source_of.get(fact).cloned().unwrap_or_default()));
                 parsed += 1;
             }
         }
@@ -240,12 +267,13 @@ impl RelationStore {
                     if let Some(r) = Self::reading(fact, &kept) {
                         parsed += all.iter().all(|a| a.1 != r.1) as usize;
                         self.entities.extend(r.1.iter().copied());
-                        all.push(r);
+                        all.push((r.0, r.1, source_of.get(fact).cloned().unwrap_or_default()));
                     }
                 }
             }
         }
-        for (frame, fillers) in all {
+        let mut batch_claims: Vec<((usize, usize, usize, usize), usize)> = Vec::new();
+        for (frame, fillers, sources) in all {
             let r = self.relation_of(frame);
             if !self.stated.contains(&(r, fillers[0], fillers[1])) {
                 self.stated.push((r, fillers[0], fillers[1]));
@@ -253,12 +281,37 @@ impl RelationStore {
             for i in 0..fillers.len() {
                 for j in 0..fillers.len() {
                     if i != j {
-                        pairs.push((self.key(&codes[fillers[i]], r, i, j), fillers[i], codes[fillers[j]].clone()));
+                        let c = self.claims.entry((r, fillers[i], i, j)).or_default();
+                        for &src in &sources {
+                            if !c.contains(&(fillers[j], src)) {
+                                c.push((fillers[j], src));
+                            }
+                        }
+                        batch_claims.push(((r, fillers[i], i, j), fillers[j]));
                         let l = self.links.entry(fillers[i]).or_default();
                         if !l.contains(&(r, i, j)) {
                             l.push((r, i, j));
                         }
                     }
+                }
+            }
+        }
+        // conflicts: trust and belief estimated together; what is replayed is what is believed
+        self.resolve();
+        let mut seen_keys: std::collections::BTreeSet<(usize, usize, usize, usize)> = Default::default();
+        pairs.clear();
+        for (k, v) in batch_claims {
+            let w = self.believed(k).unwrap_or(v);
+            if seen_keys.insert(k) || w == v {
+                pairs.push((self.key(&codes[k.1], k.0, k.2, k.3), k.1, codes[w].clone()));
+            }
+        }
+        // a conflict whose verdict changed with the trust is replayed too
+        let contested: Vec<(usize, usize, usize, usize)> = self.claims.iter().filter(|(_, c)| !many_valued(c) && c.iter().any(|x| x.0 != c[0].0)).map(|(k, _)| *k).collect();
+        for k in contested {
+            if seen_keys.insert(k) {
+                if let Some(w) = self.believed(k) {
+                    pairs.push((self.key(&codes[k.1], k.0, k.2, k.3), k.1, codes[w].clone()));
                 }
             }
         }
@@ -327,6 +380,68 @@ impl RelationStore {
             .collect();
         rules.sort_by(|a, b| b.confirmed.cmp(&a.confirmed).then((a.relation, a.first, a.second).cmp(&(b.relation, b.first, b.second))));
         self.rules = rules;
+    }
+
+    /// Truth discovery over the claims that at least two sources made: a value's belief is
+    /// the summed trust of its sources; a source's trust is the mean share of belief its
+    /// claims win (with one win and one loss as a prior). Eight rounds, integers only.
+    fn resolve(&mut self) {
+        let keys: Vec<&Vec<(usize, u16)>> = self.claims.values().filter(|c| c.len() >= 2 && !many_valued(c)).collect();
+        let mut trust: HashMap<u16, u32> = HashMap::default();
+        for c in &keys {
+            for &(_, s) in c.iter() {
+                trust.insert(s, ONE / 2);
+            }
+        }
+        for _ in 0..8 {
+            let mut credit: HashMap<u16, (u64, u64)> = HashMap::default();
+            for c in &keys {
+                let total: u64 = c.iter().map(|x| trust[&x.1] as u64).sum::<u64>().max(1);
+                for &(v, s) in c.iter() {
+                    let belief: u64 = c.iter().filter(|x| x.0 == v).map(|x| trust[&x.1] as u64).sum();
+                    let e = credit.entry(s).or_default();
+                    e.0 += (belief << 16) / total;
+                    e.1 += 1;
+                }
+            }
+            for (s, (sum, n)) in credit {
+                // prior: one claim won, one lost
+                trust.insert(s, ((sum + ONE as u64 / 2) / (n + 1)) as u32);
+            }
+        }
+        self.trust = trust;
+    }
+
+    /// The believed value of a claim key: the one with the most summed trust (unknown
+    /// sources count half), None if nothing was claimed.
+    fn believed(&self, k: (usize, usize, usize, usize)) -> Option<usize> {
+        let c = self.claims.get(&k)?;
+        if many_valued(c) {
+            return None;
+        }
+        let t = |s: u16| self.trust.get(&s).copied().unwrap_or(ONE / 2) as u64;
+        let mut best: Option<(u64, usize)> = None;
+        for &(v, _) in c {
+            let b: u64 = c.iter().filter(|x| x.0 == v).map(|x| t(x.1)).sum();
+            if best.map_or(true, |(bb, bv)| b > bb || (b == bb && v < bv)) {
+                best = Some((b, v));
+            }
+        }
+        best.map(|x| x.1)
+    }
+
+    /// A source's trust (`Q16`; half for a source never contested).
+    pub fn trust(&self, source: u16) -> u32 {
+        self.trust.get(&source).copied().unwrap_or(ONE / 2)
+    }
+
+    /// The claims about `entity` through relation `r` from `from` to `to`: (value, source,
+    /// the value's belief in `Q16` of all belief on this key).
+    pub fn claims(&self, entity: usize, r: usize, from: usize, to: usize) -> Vec<(usize, u16, u32)> {
+        let Some(c) = self.claims.get(&(r, entity, from, to)) else { return Vec::new() };
+        let t = |s: u16| self.trust(s) as u64;
+        let total: u64 = c.iter().map(|x| t(x.1)).sum::<u64>().max(1);
+        c.iter().map(|&(v, s)| (v, s, ((c.iter().filter(|x| x.0 == v).map(|x| t(x.1)).sum::<u64>() << 16) / total) as u32)).collect()
     }
 
     /// The relations of relations learned so far.
@@ -401,6 +516,12 @@ impl RelationStore {
     pub fn stats(&self) -> (usize, usize) {
         (self.store.len(), self.replays)
     }
+}
+
+/// A key one source gave several values ("al's children"): a many-valued relation, not a
+/// conflict between sources.
+fn many_valued(c: &[(usize, u16)]) -> bool {
+    c.iter().any(|a| c.iter().any(|b| a.1 == b.1 && a.0 != b.0))
 }
 
 fn decode(codes: &[BitVector], out: &BitVector) -> Option<usize> {
@@ -635,6 +756,50 @@ mod tests {
         let mut two = s.ask_all(&codes, fam_of_lucy, went, 1, 2);
         two.sort_unstable();
         assert_eq!(two, vec![id("hall"), id("yard")]);
+    }
+
+    /// No source is fully trusted: three honest narrators each state half the facts, a
+    /// fourth states all of them and lies in 3 of 4. Trust is learned from the conflicts,
+    /// and the believed fact is the true one, also where only one honest narrator and the
+    /// liar spoke (a tie a vote cannot break).
+    #[test]
+    fn trust_resolves_conflicts_between_sources() {
+        let mut rng = StdRng::seed_from_u64(4);
+        let fams = 4usize;
+        let n = 40usize;
+        let (is, a) = (0usize, 1usize);
+        let fam = |f: usize| 2 + f;
+        let person = |i: usize| 2 + fams + i;
+        let codes = codes(2 + fams + n, &mut rng);
+        let truth = |i: usize| (i * 7 + 1) % fams;
+        let mut s = RelationStore::new(BITS);
+        let mut ties = Vec::new();
+        for i in 0..n {
+            let mut honest = 0;
+            for src in 1..=3u16 {
+                if rng.gen_range(0..2) == 0 {
+                    s.observe_from(&[person(i), is, a, fam(truth(i))], src);
+                    honest += 1;
+                }
+            }
+            let lie = rng.gen_range(0..4) < 3;
+            let f = if lie { (truth(i) + 1 + rng.gen_range(0..fams - 1)) % fams } else { truth(i) };
+            s.observe_from(&[person(i), is, a, fam(f)], 9);
+            if honest == 1 && lie {
+                ties.push(i);
+            }
+        }
+        s.consolidate(&codes, 20, &mut rng);
+        assert!(s.trust(9) < s.trust(1) && s.trust(9) < s.trust(2) && s.trust(9) < s.trust(3), "trust {} {} {} liar {}", s.trust(1), s.trust(2), s.trust(3), s.trust(9));
+        let r = s.relation_for(&[is, a]).unwrap();
+        let right = (0..n).filter(|&i| s.ask(&codes, person(i), r, 0, 1) == Some(fam(truth(i)))).count();
+        // facts only the liar stated cannot be checked: count the others
+        let checkable = (0..n).filter(|&i| s.claims(person(i), r, 0, 1).iter().any(|c| c.1 != 9)).count();
+        assert!(right * 10 >= checkable * 9, "right {right} of {checkable} checkable");
+        assert!(!ties.is_empty());
+        for &i in &ties {
+            assert_eq!(s.ask(&codes, person(i), r, 0, 1), Some(fam(truth(i))), "tie for person {i}: {:?}", s.claims(person(i), r, 0, 1));
+        }
     }
 
     #[test]

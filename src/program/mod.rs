@@ -39,3 +39,6 @@ pub use relations::RelationStore;
 
 pub mod speech;
 pub use speech::{OutputBuffer, Spoken};
+
+pub mod motor;
+pub use motor::{MotorArea, VocalTract};

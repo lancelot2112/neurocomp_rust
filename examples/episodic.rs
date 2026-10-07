@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, OutputBuffer, RelationStore, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1392,6 +1392,37 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // report scores the buffer against the page: accuracy, coverage, and the curve at
     // other thresholds.
     let speak = std::env::var("SPEAK").is_ok();
+    // SPEECH=motor (with SPEAK and/or RECITE): speech routed as in the brain.
+    // - The vocal tract (the world) says a word from its own motor code, unrelated to how
+    //   the word sounds. A motor area learned by babbling (before reading; SPEECH_BABBLE
+    //   rounds, default 10) holds an inverse model (sound → command) and a forward model
+    //   (command → expected sound).
+    // - Plan: the cortex's evidence for the word (the source mix's choice); the motor area
+    //   turns it into a command, the tract says it (or nothing, for a garbled command).
+    // - Select: at a question, the basal ganglia decide speak or stay silent, per the mix's
+    //   confidence band. They learn in training, where the page's answer follows: speaking
+    //   right +1, speaking wrong −SPEAK_PENALTY (default 1), silence 0.
+    // - The efference copy is the forward model's prediction, compared with what is heard
+    //   (not a flag): a word heard as predicted is not surprising.
+    let motor_speech = std::env::var("SPEECH").map_or(false, |v| v == "motor");
+    let speak_penalty: i32 = q16(std::env::var("SPEAK_PENALTY").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0)) as i32;
+    let tract = VocalTract::new(vocab.len(), BITS, 32, &mut StdRng::seed_from_u64(seed ^ 0x5eec_0001));
+    let mut motor = MotorArea::new(BITS);
+    if motor_speech {
+        let rounds = std::env::var("SPEECH_BABBLE").ok().and_then(|v| v.parse().ok()).unwrap_or(10);
+        motor.babble(&tract, &enc.codes, rounds, &mut StdRng::seed_from_u64(seed ^ 0xbab1_e000));
+    }
+    let mut speak_bg = BasalGanglia::new(BITS);
+    let speak_code = |ctx: usize, act: usize| {
+        let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(13_000_027) ^ ((ctx * 2 + act) as u64 + 11_000));
+        let all: Vec<usize> = (0..BITS).collect();
+        BitVector::from_bits(&all.choose_multiple(&mut crng, 32).copied().collect::<Vec<_>>(), BITS)
+    };
+    // at test, per mix-confidence band: (questions, spoken, spoken right); in training: (questions, spoken)
+    let mut sp_stats = [[0usize; 3]; 5];
+    let mut sp_train = [0usize; 2];
+    // the forward model's prediction for the word heard at each position (motor speech)
+    let mut eff_pred: Vec<Option<BitVector>> = Vec::new();
     let mut speech = OutputBuffer::new(q16(std::env::var("SPEAK_MIN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0)));
     let mut transcripts: Vec<String> = Vec::new();
     // RECITE=k: recitation. After each test story, the network retells it: a copy is read
@@ -2064,6 +2095,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         inner = vec![false; ids.len()];
         inner_code = vec![None; ids.len()];
         efference = vec![None; ids.len()];
+        eff_pred = vec![None; ids.len()];
         let truth_ids = ids.clone();
         let mut recited: Vec<usize> = Vec::new();
         plan.clear();
@@ -2167,7 +2199,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // L5: the probability the column gave this word (its share of the prediction
             // times the predicting kernel's reliability); a lucky guess is still a surprise
             let mut share = ONE - column.surprise(code);
-            if let (true, Some(meant)) = (efference_on, efference[t]) {
+            if let Some(p) = eff_pred[t].as_ref() {
+                // motor speech: the forward model's prediction of the sound is the copy
+                share = if code.as_words().iter().zip(p.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24 { ONE } else { 0 };
+            } else if let (true, Some(meant)) = (efference_on, efference[t]) {
                 // the efference copy predicted this input: no surprise if it is what was
                 // said, a full one if what was heard differs
                 share = if ids[t] == meant { ONE } else { 0 };
@@ -3138,6 +3173,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     page_marks.insert(t + 1, false);
                     inner.insert(t + 1, true);
                     efference.insert(t + 1, None);
+                    eff_pred.insert(t + 1, None);
                     let fv = fed_vec.take().filter(|_| rollout_loop);
                     if let (Some(v), true) = (fv.as_ref(), testing) {
                         loop_stats[0] += 1;
@@ -3170,6 +3206,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         page_marks.insert(t + 1, false);
                         inner.insert(t + 1, true);
                         efference.insert(t + 1, None);
+                        eff_pred.insert(t + 1, None);
                         inner_code.insert(t + 1, None);
                         if s.answer_at > t {
                             s.answer_at += 1;
@@ -3498,7 +3535,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if speak && !replaying {
                         // the cortex speaks its answer into the output buffer, and hears it
                         // in place of the page's word
-                        let said = speech.speak(enc.decode(&out), c, Some(next), s.held_out as u8);
+                        let said = if motor_speech {
+                            // the basal ganglia release speech or hold it; the motor area says it
+                            let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
+                            let cands = [speak_code(cb, 0), speak_code(cb, 1)];
+                            let go = speak_bg.select(&cands, None::<&mut StdRng>) == Some(1);
+                            sp_stats[cb][0] += 1;
+                            let word = if go {
+                                let (w, p) = motor_say(&motor, &tract, &out);
+                                sp_stats[cb][1] += 1;
+                                sp_stats[cb][2] += (w == Some(next)) as usize;
+                                eff_pred[t + 1] = p;
+                                w
+                            } else {
+                                None
+                            };
+                            speech.speak(word, c, Some(next), s.held_out as u8)
+                        } else {
+                            speech.speak(enc.decode(&out), c, Some(next), s.held_out as u8)
+                        };
                         if s.held_out && speech.score(Some(1)).2 % 80 == 1 {
                             let q_start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                             transcripts.push(format!("{:?} -> said {:?} (page: {})", &s.words[q_start..=t], said.map_or("unknown", |w| vocab[w]), vocab[next]));
@@ -3509,6 +3564,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         inner[t + 1] = true;
                         efference[t + 1] = Some(heard);
                     }
+                }
+                // SPEECH=motor, training: at a question the basal ganglia choose to speak or not;
+                // the page's answer follows and rewards the choice
+                if motor_speech && !testing && !replaying && t + 1 == s.answer_at {
+                    let c = mix_conf.unwrap_or_else(|| column.confidence());
+                    let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
+                    let cands = [speak_code(cb, 0), speak_code(cb, 1)];
+                    let a = speak_bg.select(&cands, Some(&mut rng)).unwrap_or(0);
+                    sp_train[0] += 1;
+                    let r = if a == 1 {
+                        sp_train[1] += 1;
+                        if motor_say(&motor, &tract, &out).0 == Some(next) { ONE as i32 } else { -speak_penalty }
+                    } else {
+                        0
+                    };
+                    speak_bg.reward_candidate(&cands[a], r, &mut rng);
                 }
                 // RECITE: past the cue, the network says the next word and hears it
                 if let (true, Some(cue_len)) = (reciting, recite) {
@@ -3553,6 +3624,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             None => cortex,
                         };
                         let truth = truth_ids[t + 1];
+                        // motor speech: what is meant is said through the motor area and the tract
+                        let said = if motor_speech {
+                            let (w, p) = motor_say(&motor, &tract, &enc.codes[said]);
+                            eff_pred[t + 1] = p;
+                            w.unwrap_or(index["."])
+                        } else {
+                            said
+                        };
                         recite_stats[0] += 1;
                         recite_stats[1] += (said == truth) as usize;
                         recited.push(said);
@@ -4069,6 +4148,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             for x in &recite_sample {
                 eprintln!("  RECITE seed {seed}: {x}");
             }
+        }
+        if motor_speech {
+            let (ki, kf, nb) = motor.stats();
+            let say_right = (0..vocab.len()).filter(|&w| motor_say(&motor, &tract, &enc.codes[w]).0 == Some(w)).count();
+            eprintln!(
+                "  SPEECH seed {seed}: babbled {nb} commands (inverse {ki}, forward {kf} kernels); says {say_right} of {} words right; training questions {}, spoken at {:.1}%",
+                vocab.len(),
+                sp_train[0],
+                100.0 * sp_train[1] as f64 / sp_train[0].max(1) as f64
+            );
+            let bands: Vec<String> = (0..5)
+                .map(|b| {
+                    let [n, sp, r] = sp_stats[b];
+                    format!("band {b}: spoke {:.0}% of {n}, {:.1}% right", 100.0 * sp as f64 / n.max(1) as f64, 100.0 * r as f64 / sp.max(1) as f64)
+                })
+                .collect();
+            let values: Vec<String> = (0..5).map(|b| format!("{:.2}/{:.2}", to_f32(speak_bg.value(&speak_code(b, 0))), to_f32(speak_bg.value(&speak_code(b, 1))))).collect();
+            eprintln!("  SPEECH seed {seed}: at test questions, by the mix's confidence band: {}; value silent/speak per band {}", bands.join(", "), values.join(" "));
         }
         if efference_on || recite.is_some() || speak {
             eprintln!(
@@ -4685,4 +4782,14 @@ fn rel_answer(rel: &RelationStore, codes: &[BitVector], w: usize, sentence: &[(u
         }
     }
     Some(out)
+}
+
+/// Say what the cortex means (a heard-word code) through the motor area and the vocal tract:
+/// the word the tract produced (None for a garbled or missing command), and the forward
+/// model's prediction of its sound (the efference copy).
+fn motor_say(motor: &MotorArea, tract: &VocalTract, meant: &BitVector) -> (Option<usize>, Option<BitVector>) {
+    match motor.plan(meant) {
+        Some(cmd) => (tract.articulate(&cmd), motor.predict(&cmd)),
+        None => (None, None),
+    }
 }

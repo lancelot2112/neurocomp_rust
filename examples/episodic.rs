@@ -720,6 +720,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // COOPERATE=1: what memory says about the sentence's uncertain words, added to the higher
     // area's sentence context (experiment 63)
     let cooperate = std::env::var("COOPERATE").is_ok();
+    // GRADED=1 (with MIX): both stores always answer; the mix weighs each by the column's
+    // confidence band (experiment 64)
+    let graded = std::env::var("GRADED").map_or(false, |v| v != "enrich");
+    // GRADED=enrich: the semantic store always answers into the higher areas' context, each of
+    // its bits getting in with probability 1 − the column's confidence
+    let graded_enrich = std::env::var("GRADED").map_or(false, |v| v == "enrich");
+    let mut graded_stats = [0usize; 1];
     let mut coop_stats = [0usize; 2]; // enrichments, of them in held-out test stories
     let mut bg = BasalGanglia::new(BITS);
     bg.trace_len = std::env::var("BG_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
@@ -2483,10 +2490,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // sentence context for this step. Where the column is sure, nothing is asked.
                 let sentence_plus = {
                     let mut x = sentence.clone();
-                    if cooperate {
+                    if cooperate || graded_enrich {
                         let empty = BitVector::new(BITS, Some(0));
                         let own = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid]));
-                        let unsure = own.map_or(true, |(_, c)| c < Q_HALF);
+                        let conf = own.map_or(0, |(_, c)| c);
+                        let unsure = graded_enrich || conf < Q_HALF;
                         if unsure {
                             let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                             let cue = if hippo_self {
@@ -2494,7 +2502,33 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             } else {
                                 ids[start..=t].iter().min_by_key(|&&w| word_count[w]).copied()
                             };
-                            if let Some(out) = cue.and_then(|w| sem_store.peek(&enc.codes[w])) {
+                            if let Some(mut out) = cue.and_then(|w| sem_store.peek(&enc.codes[w])) {
+                                if graded_enrich {
+                                    // graded: each bit of the store's answer gets in with
+                                    // probability 1 − the column's confidence (a fixed hash per
+                                    // bit and step: a sure column lets almost nothing in)
+                                    let doubt = (ONE - conf.min(ONE)) as u64;
+                                    let words: Vec<u64> = out
+                                        .as_words()
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, &w)| {
+                                            let mut m = 0u64;
+                                            for b in 0..64 {
+                                                if w >> b & 1 == 1 {
+                                                    let mut h = ((i * 64 + b) as u64) ^ ((t as u64) << 32) ^ 0x9E37_79B9_7F4A_7C15;
+                                                    h = (h ^ (h >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                                                    h ^= h >> 31;
+                                                    if (h & 0xFFFF) < doubt {
+                                                        m |= 1 << b;
+                                                    }
+                                                }
+                                            }
+                                            m
+                                        })
+                                        .collect();
+                                    out = BitVector::from_words(words);
+                                }
                                 x.or_mut(&out);
                                 coop_stats[0] += 1;
                                 coop_stats[1] += (testing && s.held_out) as usize;
@@ -2947,7 +2981,30 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     let mw = words_of(&mem_src);
                     if !mw.is_empty() {
-                        proposals.push((1, ctx + mw.len().min(3) as u64, mw));
+                        // GRADED: the hippocampus's answer is weighed by the cortex's uncertainty
+                        // (the column's confidence band), learned per context
+                        // (keys of their own: a context has room for only 8 offsets)
+                        let key = if graded { (1u64 << 62) | (ctx << 4) | (mw.len().min(3) as u64) << 2 | bucket(column.confidence()).min(3) } else { ctx + mw.len().min(3) as u64 };
+                        proposals.push((1, key, mw));
+                    }
+                    // GRADED: the semantic store always answers too, through the cortex: the
+                    // higher area's prediction with the store's content for the sentence's least
+                    // familiar word added to its sentence context (peeked: no side effects),
+                    // weighed by the column's confidence band
+                    if let (true, Some(hin), Some(cue_w)) = (graded, hier_in.as_ref(), sem_cue_w) {
+                        if let Some(o) = sem_store.peek(&enc.codes[cue_w]) {
+                            let mut x = hin.as_words().to_vec();
+                            for (w, &b) in x.iter_mut().zip(o.as_words()) {
+                                *w |= b;
+                            }
+                            if let Some(p) = area.column.l23.peek(&BitVector::from_words(x)) {
+                                let sw = words_of(&p);
+                                if !sw.is_empty() {
+                                    proposals.push((9, (ctx << 2) | bucket(column.confidence()).min(3), sw));
+                                    graded_stats[0] += 1;
+                                }
+                            }
+                        }
                     }
                     if let (Some(td), false) = (td_src.as_ref(), novel) {
                         let tw = words_of(td);
@@ -3609,6 +3666,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
+        }
+        if graded {
+            eprintln!("  GRADED seed {seed}: {} steps with a semantic-store answer in the mix", graded_stats[0]);
         }
         if cooperate {
             eprintln!("  COOPERATE seed {seed}: {} uncertain steps answered from the semantic store ({} in held-out test stories)", coop_stats[0], coop_stats[1]);

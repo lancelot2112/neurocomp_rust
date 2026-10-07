@@ -1387,6 +1387,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // BELIEF_Q: held-out answers (right, asked) for place questions and family questions
     let mut belief_tally = [(0usize, 0usize); 2];
     let (mut mix_dbg, mut bq_diag) = (String::new(), 0usize);
+    let mut belief_names = [(0usize, 0usize); 3]; // place questions per new name: (right, asked)
     // calibration of the column's L5 confidence at test answers: (answers, right) per
     // confidence bucket [0, .5), [.5, .7), [.7, .8), [.8, .9), [.9, 1], plus the summed
     // confidence per bucket (for the expected calibration error)
@@ -3798,9 +3799,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     r.0 += right as usize;
                     r.1 += 1;
                     if s.held_out && belief_q() {
-                        let q = &mut belief_tally[(s.words[s.answer_at - 1] == "a") as usize];
+                        let fam_q = s.words[s.answer_at - 1] == "a";
+                        let q = &mut belief_tally[fam_q as usize];
                         q.0 += right as usize;
                         q.1 += 1;
+                        // place questions per new name (the name stands right before "went")
+                        if let (false, Some(i)) = (fam_q, NEW_NAMES.iter().position(|n| s.words[..s.answer_at].contains(n))) {
+                            belief_names[i].0 += right as usize;
+                            belief_names[i].1 += 1;
+                        }
                     }
                     if s.held_out {
                         let h = &mut held_halves[(s_i - TRAIN >= TEST / 2) as usize];
@@ -4979,7 +4986,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     if belief_q() {
         let pc = |x: (usize, usize)| 100.0 * x.0 as f64 / x.1.max(1) as f64;
-        eprintln!("  BELIEF_Q seed {seed}: new names' place questions {:.1}% of {}, family questions {:.1}% of {}", pc(belief_tally[0]), belief_tally[0].1, pc(belief_tally[1]), belief_tally[1].1);
+        eprintln!(
+            "  BELIEF_Q seed {seed}: new names' place questions {:.1}% of {} ({}), family questions {:.1}% of {}",
+            pc(belief_tally[0]),
+            belief_tally[0].1,
+            NEW_NAMES.iter().zip(belief_names).map(|(n, x)| format!("{n} {:.0}%", pc(x))).collect::<Vec<_>>().join(", "),
+            pc(belief_tally[1]),
+            belief_tally[1].1
+        );
     }
     if dump.is_none() {
         let total: f64 = prof.iter().sum();

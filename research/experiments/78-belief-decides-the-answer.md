@@ -58,6 +58,33 @@ which this path does not do. The difference between graded and posterior there c
 from training: the rules validate different proposals, so the cortex learns from
 different replays.
 
+## Carrying the belief into place questions
+
+Place questions ("tom went to the ___") need the family and then the family's place for
+the season. Per name, lucy (believed wrong by `full` and `vote`) against tom and sam:
+
+| Rule | lucy's place questions (seeds 0 / 1 / 2) | tom and sam |
+|---|---|---|
+| full | 11 / 15 / 3% | 57–65% (seed 2's sam 29%) |
+| vote | 1 / 9 / 5% | 47–64% (seed 2's sam 30%) |
+| graded | 68 / 36 / 55% | 56–70% (seed 1: 6 / 1%, below) |
+| posterior | 68 / 51 / 61% | 58–74% |
+
+- **The belief is already carried:** under a wrong belief lucy gets the smiths' places;
+  under a right one she does as well as the others. The carrier is cooperation: where the
+  column is unsure, the relation store's answer for the sentence's least familiar word
+  (lucy → jones) joins the higher area's context, and the area applies the family's rule.
+- **The ceiling is the season, not the family.** Trained names, whose questions name the
+  family, are right 93–95% just after "winter came" and about 50% two or three stories
+  later (posterior). New names follow the same curve.
+- **Inserting the family as an inner step does not help:** with the rollout on
+  (`COMPLETE=rollout`, posterior), the store supplies the family 260–340 times in held-out
+  stories, but place questions are 60 / 57 / 62% (against 68 / 56 / 65%) and family
+  questions fall to 88–100%.
+- Graded seed 1 is a weaker training draw, not a belief failure: the column alone is 41%
+  right against 54% under posterior on that seed, and the higher area grew 6,415 kernels
+  against 4,888. The rules hand different replays to the cortex, so training diverges.
+
 ## Findings
 1. **Where the believed fact is asked, belief decides the answer:** 98–100% with graded or
    posterior belief, against 29–68% when every source is trusted or counted equally.
@@ -72,12 +99,12 @@ different replays.
 4. **A self-contradicting source is not a many-valued relation.** The old rule exempted
    any key one source gave two values, which is exactly what a liar who lies some of the
    time does; trust could then never be learned from the trained names' facts.
-5. **The place questions still do not use the belief:** "tom went to the" needs the
-   family and then the family's place. That is a two-step composition (family → place
-   rule), the next step for this task.
+5. **Place questions use the belief too** (section above): lucy's place answers follow
+   her believed family, 1–15% when it is wrong, 36–68% when it is right. What limits them
+   is holding the season across stories, the same for every name.
 
 ## Next
-- Carry the believed family into place questions (a relational hop from the name to its
-  family's place).
+- Hold the season across filler stories (about 50% two or three stories after it was
+  announced): the limit on place questions for every name.
 - Proposals and the network's own claims as sources with earned trust.
 - An "unknown" answer when belief is split (a near-tie under the posterior).

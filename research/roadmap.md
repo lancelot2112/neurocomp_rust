@@ -207,7 +207,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
 - **Next:**
   1. ~~independent random streams per subsystem~~ (done, see Infrastructure);
   2. ~~a task where the believed fact decides the answer~~ (done, [78](experiments/78-belief-decides-the-answer.md));
-  3. carry the believed family into place questions (name → family → place);
+  3. ~~carry the believed family into place questions~~ (already carried by cooperation:
+     lucy's place answers 1–15% under a wrong belief, 36–68% under a right one; the limit
+     is holding the season, [78](experiments/78-belief-decides-the-answer.md));
   4. proposals and self-generated claims as sources with earned trust;
   5. "unknown" when belief is split.
 

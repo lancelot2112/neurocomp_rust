@@ -310,6 +310,28 @@ These are not research stages. They keep earlier results trustworthy as the code
     memory 38 / 15 / 22% before, 19 / 14 / 15% after; story boundary 98 / 87 / 97% after
     (page: 86 / 96 / 98%). The old seed 0 was often the lucky one, so figures in earlier
     pages are best read as ranges.
+- **Speed: every system caches its response** (after [77](experiments/77-infer-from-every-statement.md)).
+  Everything runs on the CPU, one thread per run; the suite runs its (entry, seed) jobs in
+  parallel. Stack samples of the full model (motor speech, [71](experiments/71-speech-routing.md),
+  seed 0) showed where a run's time goes: hippocampal recall about 58% of samples, the
+  higher area's prediction about 20%, the column's look-ups (`peek`) about 15%.
+  - **Kernel classes cache their response.** A class keeps the matched kernels for the
+    last 8 inputs it was asked about, valid until its wiring changes (growth, pruning,
+    sleep). The winner and the outputs are still read live from the matched kernels, so
+    a change in a kernel's record needs no invalidation. Output identical; about 1%
+    faster, since most asks within a step are for different inputs.
+  - **Recall reads hot fields only.** A row's serial, strength, last touch, source and
+    place key sit in their own small array, so scoring a posting no longer loads the row,
+    and liveness ((now − touched) / τ < strength) is checked without a division.
+  - **The walk reuses its scoring.** Recall by walk scored the cue, and, finding no
+    bridge, scored the same cue again for a plain recall; it now passes its result on.
+    Postings walked per recall: 26 273 → 13 454.
+  - Together: the run went from 217 to 141 s (training 566 → 369 µs per word, test
+    7.35 → 4.77 ms per word). Every answer is identical on the profiled run.
+  - A GPU is a poor fit: the work is sparse and event-driven (index fan-out, a few
+    matched kernels, early exits), not dense matrix products. The next gains are
+    algorithmic: the cue's common ids still walk long posting lists, and the column's
+    first look-up per step repeats the fan-out its own prediction does a moment later.
 - **Integer only** ([47](experiments/47-integer-only.md)). Every per-step computation is
   bitwise or integer (`Q16` fixed point, `src/fixed.rs`). A unit test fails on any float
   in `src/` outside test code and marked configuration or report lines.

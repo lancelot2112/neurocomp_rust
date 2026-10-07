@@ -532,6 +532,15 @@ impl Hippocampus {
 /// input indices; recall and replay give EC V patterns (`Recall::ec`).
 pub trait EpisodicCircuit {
     fn recall(&self, cue: &[usize]) -> Recall;
+    /// Source memory: the source the next stored events are tagged with (0 the world, 1
+    /// the network itself). Default: untagged.
+    fn set_source(&mut self, _source: u8) {}
+    /// Source memory: the sources recall may return (a bit per source). Default: all.
+    fn set_recall_sources(&self, _mask: u8) {}
+    /// The source a stored row was tagged with.
+    fn row_source(&self, _row: u32) -> Option<u8> {
+        None
+    }
     /// Recall without side effects on the store (no strengthening of what is recalled):
     /// for cues the network made itself, e.g. while retelling. Default: as `recall`.
     fn recall_peek(&self, cue: &[usize]) -> Recall {

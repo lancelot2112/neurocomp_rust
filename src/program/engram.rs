@@ -133,6 +133,9 @@ struct Row {
     touched: Cell<u32>,
     /// The cortex's last reported error on this row (`Q16`; `ONE` = unknown).
     err: Cell<Q16>,
+    /// Where the event came from (source memory): 0 the world (read or heard), 1 the
+    /// network itself (said, retold).
+    source: u8,
 }
 
 pub struct EngramStore {
@@ -154,6 +157,10 @@ pub struct EngramStore {
     /// in the previous one.
     episode_rows: RefCell<Vec<u32>>,
     prev_episode_rows: Vec<u32>,
+    /// The source the next stored events are tagged with, and the sources recall may
+    /// return (a bit per source; all by default).
+    source_now: u8,
+    recall_mask: Cell<u8>,
     place: HashMap<u64, Vec<u32>>,
     live: usize,
     evicted: usize,
@@ -188,6 +195,8 @@ impl EngramStore {
             last_row: Cell::new(None),
             episode_rows: RefCell::new(Vec::new()),
             prev_episode_rows: Vec::new(),
+            source_now: 0,
+            recall_mask: Cell::new(u8::MAX),
             place: HashMap::default(),
             live: 0,
             evicted: 0,
@@ -257,6 +266,9 @@ impl EngramStore {
             if let Some(rows) = self.place.get(&here) {
                 for &s in rows {
                     let Some(r) = self.row(s) else { continue };
+                    if self.recall_mask.get() >> r.source & 1 == 0 {
+                        continue;
+                    }
                     let k = self.slot(s);
                     if score[k] == 0 {
                         touched.push(s);
@@ -278,6 +290,9 @@ impl EngramStore {
             remaining -= w;
             for &s in &self.what[id] {
                 let Some(r) = self.row(s) else { continue };
+                if self.recall_mask.get() >> r.source & 1 == 0 {
+                    continue;
+                }
                 let k = self.slot(s);
                 if score[k] == 0 {
                     touched.push(s);
@@ -378,6 +393,9 @@ impl EngramStore {
             score[k] = 0;
             overlap[k] = 0;
             let (content, all) = (o >> 16, (o >> 16) + (o & 0xFFFF));
+            if self.row(s).map_or(true, |r| self.recall_mask.get() >> r.source & 1 == 0) {
+                continue;
+            }
             if content >= need && all >= self.cfg.min_overlap && best.map_or(true, |(bs, bv, _)| v > bv || (v == bv && s > bs)) {
                 best = Some((s, v, all));
             }
@@ -645,6 +663,18 @@ impl EpisodicCircuit for EngramStore {
         rows.iter().take(max).filter_map(|&t| self.row(t)).map(|r| r.order.iter().map(|&i| i as usize).collect()).collect()
     }
 
+    fn set_source(&mut self, source: u8) {
+        self.source_now = source.min(7);
+    }
+
+    fn set_recall_sources(&self, mask: u8) {
+        self.recall_mask.set(mask);
+    }
+
+    fn row_source(&self, row: u32) -> Option<u8> {
+        self.row(row).map(|r| r.source)
+    }
+
     fn recall_peek(&self, cue: &[usize]) -> Recall {
         if self.cfg.walk { self.recall_walk(cue, false) } else { self.recall_row(cue, false) }
     }
@@ -686,7 +716,10 @@ impl EpisodicCircuit for EngramStore {
         what.sort_unstable();
         what.dedup();
         let ids: Vec<usize> = what.iter().map(|&i| i as usize).collect();
+        // an event merges only with a stored event of the same source
+        let mask = self.recall_mask.replace(1 << self.source_now);
         let (best, own) = self.best(&ids);
+        self.recall_mask.set(mask);
         let novelty = best.map_or(ONE, |(_, v, _)| ONE - ratio(v.min(own), own.max(1)).min(ONE));
         self.novelty_sum.0 += novelty as u64;
         self.novelty_sum.1 += 1;
@@ -738,11 +771,13 @@ impl EpisodicCircuit for EngramStore {
             strength: Cell::new(strength),
             touched: Cell::new(self.now),
             err: Cell::new(ONE),
+            source: self.source_now,
         };
         let s = self.append(row);
         self.last_row.set(Some(s));
         self.episode_rows.borrow_mut().push(s);
-        if unseen.len() >= self.cfg.tag_min && self.tags.len() < 4096 {
+        // the network's own words are not new facts about the world
+        if self.source_now == 0 && unseen.len() >= self.cfg.tag_min && self.tags.len() < 4096 {
             self.facts.push((s, unseen.clone()));
             self.tags.push((vec![s], unseen));
         }
@@ -855,6 +890,29 @@ mod tests {
         m.store(&event(&[1, 50, 51]));
         let r = m.recall(&event(&[1, 50]));
         assert_eq!(r.ec, event(&[1, 50, 51]));
+    }
+
+    #[test]
+    fn source_memory_separates_what_was_read_from_what_was_said() {
+        let mut m = EngramStore::new(EngramConfig::default());
+        m.store(&event(&[1, 2, 3])); // read: "lucy went to the hall"
+        m.set_source(1);
+        m.store(&event(&[1, 2, 4])); // said: "lucy went to the yard"
+        m.store(&event(&[1, 2, 3])); // said, the same as read: a row of its own
+        m.set_source(0);
+        assert_eq!(m.len(), 3, "an event merges only with an event of the same source");
+        // untagged recall may return the network's own words
+        let any = m.recall_peek(&event(&[1, 2, 4]));
+        assert_eq!(any.ec, event(&[1, 2, 4]));
+        assert_eq!(m.row_source(any.ca3[0]), Some(1));
+        // reality monitoring: recall about the world returns only what was read
+        m.set_recall_sources(1);
+        let world = m.recall_peek(&event(&[1, 2, 4]));
+        assert_eq!(world.ec, event(&[1, 2, 3]));
+        assert_eq!(m.row_source(world.ca3[0]), Some(0));
+        // and recall of one's own words returns only those
+        m.set_recall_sources(2);
+        assert_eq!(m.row_source(m.recall_peek(&event(&[1, 2])).ca3[0]), Some(1));
     }
 
     #[test]

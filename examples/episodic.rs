@@ -1482,6 +1482,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // stories are stored in the hippocampus too (experience to retell), as training ones. At each step the planned word is spoken
     // if the column's expectation admits it (its kind fits here), else the cortex's own.
     let recite_plan = std::env::var("RECITE_PLAN").is_ok();
+    // Source memory. SELF_STORE=1: the network's retellings are stored in the hippocampus
+    // too, as events of its own (tagged "self"; what is read is tagged "world").
+    // SOURCE_TAG=1: reality monitoring, recall for reading and answering returns world
+    // events only. Without it, recall may return what the network itself said.
+    let self_store = std::env::var("SELF_STORE").is_ok();
+    let source_tag = std::env::var("SOURCE_TAG").is_ok();
+    if source_tag {
+        if let Some(hc) = &bind_hc {
+            hc.set_recall_sources(1);
+        }
+    }
+    // at test questions: recalls that returned a world event, a self event
+    let mut source_stats = [0usize; 2];
     let mut plan: Vec<usize> = Vec::new();
     let mut plan_stats = [0usize; 2]; // steps with a planned word, planned word spoken
     let efference_on = std::env::var("EFFERENCE").is_ok();
@@ -3006,6 +3019,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             } else {
                                 hc.recall(&set_bits(&cue))
                             };
+                            if testing && !reciting && t + 1 == s.answer_at {
+                                if let Some(src) = r.ca3.last().and_then(|&row| hc.row_source(row as u32)) {
+                                    source_stats[(src > 0) as usize] += 1;
+                                }
+                            }
                             if std::env::var("SELFDIAG").is_ok() && testing && s.held_out && bind_diag < 10 && s.words[..=t].iter().any(|w| NEW_NAMES.contains(w)) {
                                 bind_diag += 1;
                                 let decode = |v: &BitVector| -> Vec<String> {
@@ -3913,8 +3931,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sentence = BitVector::new(BITS, Some(0));
                 if hippo_self && bind && !bind_sentence.is_empty() {
-                    if (!testing || recite_plan) && !replaying {
+                    if ((!testing || recite_plan) && !replaying) || (reciting && self_store) {
                         if let Some(hc) = &mut bind_hc {
+                            hc.set_source(reciting as u8);
                             let ev = event_vec(&bind_sentence, &bind_prev, ctx_offset);
                             let content = event_vec(&bind_sentence, &BitVector::new(BITS, Some(0)), ctx_offset);
                             let mut context = bind_prev.clone();
@@ -3941,6 +3960,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 hc.store_event(&set_bits(&content), &set_bits(&context));
                             }
                             hc.advance_time();
+                            hc.set_source(0);
                         }
                     }
                     for b in &bind_sentence {
@@ -4234,6 +4254,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
+        }
+        if self_store || source_tag {
+            eprintln!(
+                "  SOURCE seed {seed} ({}): at test questions the hippocampus recalled a world event {} times, the network's own words {} times",
+                if source_tag { "recall about the world: world events only" } else { "untagged recall" },
+                source_stats[0],
+                source_stats[1]
+            );
         }
         if let Some(k) = recite {
             eprintln!(

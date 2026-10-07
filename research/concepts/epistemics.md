@@ -24,9 +24,15 @@ inferences.
 4. **Open questions are curiosity:** proposals neither validated nor contradicted are what
    to look for next.
 
+## Swapping the belief rule ([76](../experiments/76-belief-rules.md))
+Belief is one rule in the Bayes module (`BELIEF=full|vote|graded|posterior`). Trusting
+everything (`full`) let a lie heard first become a premise, and eight false inferences
+became knowledge (64 → 50% on that seed); any graded rule rejected them. Proposals are now
+validated by the module: the belief in their fact times their source's credibility.
+
 ## What is still missing
-- Proposals and the network's own claims as sources in the Bayes module, so that their
-  trust, too, is earned (and premise credibility comes from belief, not row counts).
-- A full posterior (log-odds) instead of a trust-weighted vote.
+- Proposals and the network's own claims as sources with earned trust (premise credibility
+  already comes from belief: [76](../experiments/76-belief-rules.md)).
+- Inference from every statement of a fact, not only the first.
 - Deciding a source from content when the tag is lost (reality monitoring proper).
 - Curiosity acting: open proposals steering replay and attention.

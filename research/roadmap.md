@@ -197,11 +197,12 @@ slot codes bound to content in the hippocampus, recalled by slot.
   - inferences held as proposals ([74](experiments/74-proposals-and-premises.md));
   - the Bayes module: source trust, conflicts resolved by it ([75](experiments/75-bayes-module.md)).
   - See [epistemics](concepts/epistemics.md).
+  - belief isolated behind a swappable rule (full / vote / graded / posterior); proposals
+    validated by belief × credibility ([76](experiments/76-belief-rules.md)).
 - **Next:**
-  1. proposals and self-generated claims as sources in the Bayes module;
-  2. premise credibility from belief, not row counts;
-  3. a task where the believed fact decides the answer;
-  4. the posterior form (log-odds).
+  1. inference from every statement of a fact;
+  2. a task where the believed fact decides the answer;
+  3. proposals and self-generated claims as sources with earned trust.
 
 ## 5. A third level and a slower clock
 **Build.**

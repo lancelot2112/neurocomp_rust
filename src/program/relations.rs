@@ -1,11 +1,13 @@
 //! Typed relations, navigable by relation code: a cortical semantic store whose entries are
 //! (entity, relation, direction) → filler, learned from plain sentences.
 //!
-//! - **Relations are learned, not given.** Each word is counted across the facts read. In
-//!   a fact, the words above its largest frequency gap (at least `frame_ratio`) are its
-//!   *frame* (what every fact of the kind shares: "'s father is"); the rest, in reading
-//!   order, are its *fillers* (the entities: "tom", "bob"). A relation is a frame (a set
-//!   of words, in any order); its code is its index.
+//! - **Relations are learned, not given.** A fact's *neighbours* are the facts read of
+//!   the same length that agree with it in all but at most two positions ("lucy is a
+//!   jones" ~ "tom is a smith"). The positions where most neighbours agree are its
+//!   *frame* (what every fact of the kind shares: "_ 's father is _"); the rest, in reading
+//!   order, are its *fillers* (the entities: "tom", "bob"). A relation is a frame: its
+//!   words at their positions; its code is its index. Word frequency does not decide it:
+//!   a family name can be frequent everywhere and still be a filler here.
 //! - **Binding is a permutation.** For fillers i ≠ j of a fact of relation r, the key is
 //!   filler i's code rotated by an offset hashed from (r, i, j), and the value is filler
 //!   j's code. "tom 's father is bob" stores tom ↦(father, 0→1) bob and bob ↦(father,
@@ -25,24 +27,28 @@ use crate::kernel::{GrowthConfig, KernelClass, SimpleKernel};
 
 pub struct RelationStore {
     bits: usize,
-    /// The smallest frequency gap (a ratio) that splits a fact into frame and fillers.
-    pub frame_ratio: u32,
     store: KernelClass<SimpleKernel>,
-    counts: HashMap<usize, u32>,
+    /// Distinct facts read, and their buckets: (length, two positions left out, the other
+    /// words) → facts. Facts in one bucket agree in all but those two positions.
+    facts: Vec<Vec<usize>>,
+    seen: HashMap<Vec<usize>, usize>,
+    buckets: HashMap<(usize, usize, usize, u64), Vec<usize>>,
     /// Facts read since the last consolidation.
     buffer: Vec<Vec<usize>>,
-    /// Learned relations: each a frame (sorted, distinct words).
-    frames: Vec<Vec<usize>>,
+    /// Learned relations: each a frame (its length and its (position, word)s).
+    frames: Vec<(usize, Vec<(usize, usize)>)>,
     /// Per entity: the (relation, from, to) keys stored with it.
     links: HashMap<usize, Vec<(usize, usize, usize)>>,
     replays: usize,
 }
 
+/// At most this many neighbours are compared per fact.
+const MAX_NEIGHBOURS: usize = 256;
+
 impl RelationStore {
-    pub fn new(bits: usize, frame_ratio: u32) -> Self {
+    pub fn new(bits: usize) -> Self {
         Self {
             bits,
-            frame_ratio,
             store: KernelClass::predictive(GrowthConfig {
                 max_kernels: 20_000,
                 frame_words: bits / 64,
@@ -53,7 +59,9 @@ impl RelationStore {
                 generalize: None,
                 generalize_after: 1,
             }),
-            counts: HashMap::default(),
+            facts: Vec::new(),
+            seen: HashMap::default(),
+            buckets: HashMap::default(),
             buffer: Vec::new(),
             frames: Vec::new(),
             links: HashMap::default(),
@@ -61,52 +69,66 @@ impl RelationStore {
         }
     }
 
-    /// Read a fact (word ids in order): count its words and keep it for replay.
+    fn bucket_keys(fact: &[usize]) -> Vec<(usize, usize, usize, u64)> {
+        let n = fact.len();
+        let mut keys = Vec::new();
+        for i in 0..n {
+            for j in i..n {
+                let h = (0..n).filter(|&p| p != i && p != j).fold(0xcbf2_9ce4_8422_2325u64, |h, p| (h ^ ((p as u64) << 32 | fact[p] as u64)).wrapping_mul(0x100_0000_01b3));
+                keys.push((n, i, j, h));
+            }
+        }
+        keys
+    }
+
+    /// Read a fact (word ids in order): keep it for the next replay, and among the facts
+    /// whose shape it is compared with.
     pub fn observe(&mut self, fact: &[usize]) {
-        let mut ws = fact.to_vec();
-        ws.sort_unstable();
-        ws.dedup();
-        for w in ws {
-            *self.counts.entry(w).or_default() += 1;
+        if fact.len() < 3 {
+            return;
+        }
+        if !self.seen.contains_key(fact) {
+            let id = self.facts.len();
+            self.seen.insert(fact.to_vec(), id);
+            for k in Self::bucket_keys(fact) {
+                self.buckets.entry(k).or_default().push(id);
+            }
+            self.facts.push(fact.to_vec());
         }
         self.buffer.push(fact.to_vec());
     }
 
-    /// A fact's (frame, fillers in order), by the word counts so far; None unless it has
-    /// a frame and at least two fillers. The frame is the words above the fact's largest
-    /// gap in frequency (sorted counts, the biggest ratio between neighbours that leaves at
-    /// least two words below it), if that gap is at least `frame_ratio`: frame words recur in every fact of the kind, fillers
-    /// only in the facts about them.
-    pub fn parse(&self, fact: &[usize]) -> Option<(Vec<usize>, Vec<usize>)> {
-        let n = |w: &usize| self.counts.get(w).copied().unwrap_or(0).max(1);
-        let mut c: Vec<u32> = fact.iter().map(n).collect();
-        c.sort_unstable();
-        c.dedup();
-        // the split: the lowest count of the frame (largest ratio, compared in integers)
-        let (mut cut, mut best) = (None, (1u32, 1u32));
-        for p in c.windows(2) {
-            // a relation links at least two fillers: only splits that leave two below
-            let below = fact.iter().filter(|w| n(w) < p[1]).collect::<std::collections::BTreeSet<_>>().len();
-            if below >= 2 && p[1] * best.1 > best.0 * p[0] {
-                best = (p[1], p[0]);
-                cut = Some(p[1]);
+    /// A fact's (frame, fillers in order), by the facts read so far; None unless it has
+    /// at least two neighbours, a frame and at least two fillers. Frame positions are those
+    /// where more than half of its neighbours (same length, all but two positions equal)
+    /// have the same word.
+    pub fn parse(&self, fact: &[usize]) -> Option<((usize, Vec<(usize, usize)>), Vec<usize>)> {
+        let me = self.seen.get(fact).copied();
+        let mut nb: Vec<usize> = Vec::new();
+        for k in Self::bucket_keys(fact) {
+            if let Some(b) = self.buckets.get(&k) {
+                nb.extend(b.iter().copied().filter(|&f| Some(f) != me && self.facts[f].as_slice() != fact));
             }
         }
-        let cut = cut.filter(|_| best.0 >= self.frame_ratio * best.1)?;
+        nb.sort_unstable();
+        nb.dedup();
+        nb.truncate(MAX_NEIGHBOURS);
+        if nb.len() < 2 {
+            return None;
+        }
         let (mut frame, mut fillers) = (Vec::new(), Vec::new());
-        for w in fact {
-            if n(w) >= cut {
-                frame.push(*w);
-            } else if !fillers.contains(w) {
-                fillers.push(*w);
+        for (p, &w) in fact.iter().enumerate() {
+            let agree = nb.iter().filter(|&&f| self.facts[f][p] == w).count();
+            if agree * 2 > nb.len() {
+                frame.push((p, w));
+            } else if !fillers.contains(&w) {
+                fillers.push(w);
             }
         }
-        frame.sort_unstable();
-        frame.dedup();
-        (!frame.is_empty() && fillers.len() >= 2).then_some((frame, fillers))
+        (!frame.is_empty() && fillers.len() >= 2).then_some(((fact.len(), frame), fillers))
     }
 
-    fn relation_of(&mut self, frame: Vec<usize>) -> usize {
+    fn relation_of(&mut self, frame: (usize, Vec<(usize, usize)>)) -> usize {
         match self.frames.iter().position(|f| *f == frame) {
             Some(r) => r,
             None => {
@@ -130,7 +152,7 @@ impl RelationStore {
         k
     }
 
-    /// Sleep: the facts read since the last call are parsed (by the counts now) and
+    /// Sleep: the facts read since the last call are parsed (by the facts read so far) and
     /// replayed `reps` times, shuffled; every ordered pair of fillers is a binding.
     /// Returns the facts that parsed as relations.
     pub fn consolidate<R: Rng>(&mut self, codes: &[BitVector], reps: usize, rng: &mut R) -> usize {
@@ -172,9 +194,9 @@ impl RelationStore {
     /// The relation whose frame shares the most of `words` (fewest other words on a tie).
     pub fn relation_for(&self, words: &[usize]) -> Option<usize> {
         (0..self.frames.len())
-            .map(|r| (self.frames[r].iter().filter(|w| words.contains(w)).count(), r))
+            .map(|r| (self.frames[r].1.iter().filter(|w| words.contains(&w.1)).count(), r))
             .filter(|x| x.0 > 0)
-            .max_by_key(|&(shared, r)| (shared, std::cmp::Reverse(self.frames[r].len())))
+            .max_by_key(|&(shared, r)| (shared, std::cmp::Reverse(self.frames[r].1.len())))
             .map(|x| x.1)
     }
 
@@ -204,9 +226,14 @@ impl RelationStore {
             .unwrap_or_default()
     }
 
-    /// The relations' frames, by relation code.
-    pub fn frames(&self) -> &[Vec<usize>] {
-        &self.frames
+    /// The relations' frames (their words in order), by relation code.
+    pub fn frames(&self) -> Vec<Vec<usize>> {
+        self.frames.iter().map(|f| f.1.iter().map(|x| x.1).collect()).collect()
+    }
+
+    /// A relation's frame as a template: its length and its (position, word)s.
+    pub fn template(&self, r: usize) -> &(usize, Vec<(usize, usize)>) {
+        &self.frames[r]
     }
 
     /// (kernels, replays)
@@ -273,7 +300,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(3);
         let (words, facts, truth) = family();
         let codes = codes(words.len(), &mut rng);
-        let mut s = RelationStore::new(BITS, 2);
+        let mut s = RelationStore::new(BITS);
         for f in &facts {
             s.observe(f);
         }
@@ -282,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn relations_are_learned_from_word_counts() {
+    fn relations_are_learned_from_fact_shapes() {
         let (words, _, s, _) = learned();
         let id = |x: &str| words.iter().position(|w| *w == x).unwrap();
         let names: Vec<Vec<&str>> = s.frames().iter().map(|f| f.iter().map(|&w| words[w]).collect()).collect();

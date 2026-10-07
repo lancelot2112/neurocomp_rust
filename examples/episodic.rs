@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Dedup, EngramConfig, EngramStore, EpisodicCircuit, RelationStore, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1147,6 +1147,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // its bindings; each binding is rotated by its role's offset plus its frame's. The
     // store remembers which frames each cue was stored with, so a word reader unbinds
     // those (frame, role) pairs only.
+    // REL=reps: the relation store (src/program/relations.rs) stands in for the semantic
+    // store's answers. Training sentences are read into it (word counts, buffered facts);
+    // at each sleep the facts are parsed (frame = the positions where most facts of the
+    // same shape agree, fillers the rest) and replayed `reps` times. Asked about a word, it
+    // answers the relation named by the current sentence's words if the word has one,
+    // else everything it knows about the word (`about`): the fillers' codes, plain.
+    let rel_reps: Option<usize> = std::env::var("REL").ok().and_then(|v| v.parse().ok());
+    let mut rel = RelationStore::new(BITS);
+    let mut rel_stats = [0usize; 3]; // facts parsed at sleep, answers given at test, of those for held-out stories
     let sem_frame = sem_typed > 0 && std::env::var("SEM_FRAME").is_ok();
     let mut sem_frames: HashMap<usize, Vec<u64>> = HashMap::default(); // cue word → its frames
     let mut frame_names: HashMap<u64, Vec<(usize, usize)>> = HashMap::default(); // frame → its bindings (report)
@@ -1776,6 +1785,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 sem_store.feedback(cue, &content, &mut rng);
                 sem_replays += 1;
             }
+        }
+        if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
+            rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rng);
         }
         if let (Some(reps), true) = (semantic_reps, !hippo_self && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             let rare = |w: usize| (word_count[w] as u64) * 100 < sentence_count as u64;
@@ -2561,7 +2573,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             } else {
                                 ids[start..=t].iter().min_by_key(|&&w| word_count[w]).copied()
                             };
-                            if let Some(mut out) = cue.and_then(|w| sem_read(&sem_store, &enc.codes, w, slot_in(&bind_sentence_pairs, w), sem_typed, roles.used(), false, &sem_frames)) {
+                            if let Some(mut out) = cue.and_then(|w| sem_read(&sem_store, &enc.codes, w, slot_in(&bind_sentence_pairs, w), sem_typed, roles.used(), false, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs)) {
                                 if graded_enrich {
                                     // graded: each bit of the store's answer gets in with
                                     // probability 1 − the column's confidence (a fixed hash per
@@ -2874,7 +2886,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     };
                     let from_sem = || -> Option<usize> {
                         semantic_reps?;
-                        let out = sem_read(&sem_store, &enc.codes, sem_cue_w?, slot_in(&bind_sentence_pairs, sem_cue_w?), sem_typed, roles.used(), true, &sem_frames)?;
+                        let out = sem_read(&sem_store, &enc.codes, sem_cue_w?, slot_in(&bind_sentence_pairs, sem_cue_w?), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs)?;
                         (0..vocab.len()).filter(|&i| ov(i, &out) >= 24 && ov(i, &expect) >= 24).max_by_key(|&i| ov(i, &out))
                     };
                     let mem_w = bind_answer.filter(|&w| !(testing && bind_lesion) && ov(w, &expect) >= 24);
@@ -2919,7 +2931,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             (g.count_ones() >= 24).then_some(g)
                         };
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
-                        let sem_out = semantic_reps.and(sem_cue_w).and_then(|cw| sem_read(&sem_store, &enc.codes, cw, slot_in(&bind_sentence_pairs, cw), sem_typed, roles.used(), true, &sem_frames));
+                        let sem_out = semantic_reps.and(sem_cue_w).and_then(|cw| sem_read(&sem_store, &enc.codes, cw, slot_in(&bind_sentence_pairs, cw), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs));
                         let fed = [
                             bind_raw.as_ref().filter(|_| !(testing && bind_lesion)).and_then(|v| gate(v)).map(|v| (v, 0usize)),
                             sem_out.as_ref().and_then(|v| gate(v)).map(|v| (v, 1)),
@@ -3099,7 +3111,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // familiar word added to its sentence context (peeked: no side effects),
                     // weighed by the column's confidence band
                     if let (true, Some(hin), Some(cue_w)) = (graded, hier_in.as_ref(), sem_cue_w) {
-                        if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), false, &sem_frames) {
+                        if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), false, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs) {
                             let mut x = hin.as_words().to_vec();
                             for (w, &b) in x.iter_mut().zip(o.as_words()) {
                                 *w |= b;
@@ -3122,7 +3134,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // the semantic store (SEMANTIC_MIX)
                     if let (true, Some(_)) = (semantic_mix, semantic_reps) {
                         if let Some(cue_w) = sem_cue_w {
-                            if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), true, &sem_frames) {
+                            if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| &rel), &bind_sentence_pairs) {
                                 let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                                 if let Some(w) = (0..vocab.len()).filter(|&i| ov(i, &o) >= 24 && ov(i, &expect_prev) >= 24).max_by_key(|&i| ov(i, &o)) {
                                     proposals.push((8, ctx, vec![w]));
@@ -3536,6 +3548,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 bind_sentence.clear();
                 bind_sentence_pairs.clear();
+                if rel_reps.is_some() && !testing && !replaying {
+                    let fact: Vec<usize> = s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect();
+                    rel.observe(&fact.into_iter().rev().collect::<Vec<_>>());
+                }
                 if semantic_reps.is_some() && !testing && !replaying && !hippo_self {
                     sem_buf.push(s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect());
                 }
@@ -3858,6 +3874,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             }
             eprintln!("  STEP seed {seed}: value of looking again / reading on: {}", vals.join(", "));
+        }
+        if rel_reps.is_some() {
+            let (k, n) = rel.stats();
+            let fr: Vec<String> = rel.frames().iter().take(16).map(|f| f.iter().map(|&w| vocab[w]).collect::<Vec<_>>().join(" ")).collect();
+            let names: Vec<String> = NEW_NAMES
+                .iter()
+                .filter_map(|n| index.get(n))
+                .map(|&w| format!("{}: {:?}", vocab[w], rel.about(&enc.codes, w).iter().map(|a| format!("{}>{}", a.0, vocab[a.3])).collect::<Vec<_>>()))
+                .collect();
+            eprintln!("  REL seed {seed}: {} facts parsed, {} relations, {} kernels from {} replays; frames {:?}", rel_stats[0], rel.frames().len(), k, n, fr);
+            eprintln!("  REL seed {seed}: about the new names: {}", names.join("; "));
         }
         if semantic_reps.is_some() {
             eprintln!(
@@ -4266,7 +4293,10 @@ fn slot_in(pairs: &[(usize, usize)], w: usize) -> Option<usize> {
 /// was stored with, when keyed on frames) unbound and the words found in it kept, as
 /// plain codes; typed, not `words`: the role-bound content as is.
 #[allow(clippy::too_many_arguments)]
-fn sem_read(store: &KernelClass<SimpleKernel>, codes: &[BitVector], w: usize, slot: Option<usize>, typed: u8, roles: usize, words: bool, frames: &HashMap<usize, Vec<u64>>) -> Option<BitVector> {
+fn sem_read(store: &KernelClass<SimpleKernel>, codes: &[BitVector], w: usize, slot: Option<usize>, typed: u8, roles: usize, words: bool, frames: &HashMap<usize, Vec<u64>>, rel: Option<&RelationStore>, sentence: &[(usize, usize)]) -> Option<BitVector> {
+    if let Some(rel) = rel {
+        return rel_answer(rel, codes, w, sentence);
+    }
     if typed > 1 && slot.is_none() {
         return None;
     }
@@ -4291,4 +4321,24 @@ fn sem_read(store: &KernelClass<SimpleKernel>, codes: &[BitVector], w: usize, sl
         }
     }
     (bag.count_ones() > 0).then_some(bag)
+}
+
+/// The relation store's answer about word `w`: the relation the sentence's other words
+/// name, if `w` has it, else all it knows about `w`; the answers' codes OR-ed (plain).
+fn rel_answer(rel: &RelationStore, codes: &[BitVector], w: usize, sentence: &[(usize, usize)]) -> Option<BitVector> {
+    let all = rel.about(codes, w);
+    if all.is_empty() {
+        return None;
+    }
+    let query: Vec<usize> = sentence.iter().map(|x| x.0).filter(|&x| x != w).collect();
+    let named = rel.relation_for(&query);
+    let pick: Vec<usize> = match named.filter(|r| all.iter().any(|a| a.0 == *r)) {
+        Some(r) => all.iter().filter(|a| a.0 == r).map(|a| a.3).collect(),
+        None => all.iter().map(|a| a.3).collect(),
+    };
+    let mut out = BitVector::new(codes[0].bit_len(), Some(0));
+    for a in pick {
+        out.or_mut(&codes[a]);
+    }
+    Some(out)
 }

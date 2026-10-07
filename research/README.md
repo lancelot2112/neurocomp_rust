@@ -185,6 +185,7 @@ Concepts
 - [The Hebbian mask rule](concepts/hebbian-mask-rule.md)
 - [Sparse codes and collisions](concepts/sparse-codes-and-collisions.md)
 - [Variable binding: the gap to transformers](concepts/variable-binding.md)
+- [Relational memory: a learned, directed relation graph, and sparse communication with the cortex](concepts/relational-memory.md)
 - [Top-down bias](concepts/top-down-bias.md)
 - [Credit assignment](concepts/credit-assignment.md)
 - [Hippocampal-formation functions: what we have and what's missing](concepts/hippocampal-functions.md)

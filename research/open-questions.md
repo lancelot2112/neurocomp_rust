@@ -182,3 +182,12 @@ gating [23](experiments/23-compaction.md))
    the word layer.
 9. **Closing the Hebbian vs count-vector gap** (75 vs 82.5% POS, about 58 vs 71% semantic):
    larger masks with more moves, or weighting moves by surprise.
+10. **Where should memory speak, and how much?** Every always-on route (graded mixing,
+   graded leak, consulting on every surprising word) lost to asking only where the column
+   is unsure, and a single filler beat a bag ([64](experiments/64-graded-gating.md),
+   [67](experiments/67-relation-store-in-reading.md)). Is the threshold itself learnable
+   (a per-context reliability the basal ganglia set), and does the same hold for
+   cortex-to-cortex messages? ([relational memory](concepts/relational-memory.md))
+11. **Which relations can be composed?** Two-step rules are learned and build on each
+   other one level per night, but transitive relations and differently worded synonyms
+   are not. What test should accept a rule under an open world?

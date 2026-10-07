@@ -45,3 +45,10 @@ finds it in some runs and not in others.
 
 This is the most important open problem for "reading like a transformer"; see
 [open questions](../open-questions.md).
+
+## Update: binding by permutation, learned relations ([66](../experiments/66-typed-relations.md), [67](../experiments/67-relation-store-in-reading.md))
+The "binding by superposition" candidate above is now built for facts: the relation store
+binds an entity to a relation by a permutation of its code, and unbinds by asking with the
+same key. Relations are learned from sentence shape, edges are directed, one-to-many
+answers are read as a union, and compositions (grandfather = father ∘ father) are learned
+at sleep. See [relational memory](relational-memory.md).

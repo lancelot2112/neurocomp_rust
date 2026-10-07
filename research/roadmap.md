@@ -164,6 +164,22 @@ slot codes bound to content in the hippocampus, recalled by slot.
 - The answer does not use them yet in the schema group. Next: familiarity-gated
   arbitration between cortex and hippocampus.
 
+### Relational memory (after [67](experiments/67-relation-store-in-reading.md))
+- **Done:**
+  - a learned, directed relation graph (`RelationStore`) in place of the semantic bag;
+  - relations of relations at sleep;
+  - the best consolidated figure on the season task: 64.4% for new names with the
+    hippocampus lesioned.
+  - See [relational memory](concepts/relational-memory.md).
+- **Sparse communication is the rule that held:** answers sent only where the column is
+  unsure, and only the filler. Graded or always-on alternatives (64) and a learned cue
+  controller (65) were worse and are not defaults.
+- **Next:**
+  1. one-step rules (merge differently worded relations) and transitive relations,
+     judged by contradiction;
+  2. let a frame word be an entity, so the cortex composes lucy → jones → place;
+  3. a cue controller that reacts to the first recall and is rewarded at the answer.
+
 ## 5. A third level and a slower clock
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

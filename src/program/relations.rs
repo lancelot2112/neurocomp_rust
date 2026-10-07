@@ -305,6 +305,19 @@ impl RelationStore {
         decode(codes, &out)
     }
 
+    /// Every answer the store holds for `entity` through relation `r` from `from` to `to`
+    /// (one-to-many relations: all of a country's cities): the union of what every
+    /// matching kernel predicts, read out as the words it holds at least 3/4 of.
+    pub fn ask_all(&self, codes: &[BitVector], entity: usize, r: usize, from: usize, to: usize) -> Vec<usize> {
+        let out = self.store.peek_union(&self.key(&codes[entity], r, from, to), self.bits);
+        (0..codes.len())
+            .filter(|&w| {
+                let o: u32 = codes[w].as_words().iter().zip(out.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
+                o > 0 && o * 4 >= codes[w].count_ones() as u32 * 3
+            })
+            .collect()
+    }
+
     /// Navigate a path of relations, each from the first filler to the second ("tom" →
     /// father → father: tom's grandfather). None where a step has no answer.
     pub fn follow(&self, codes: &[BitVector], entity: usize, path: &[usize]) -> Option<usize> {
@@ -492,6 +505,47 @@ mod tests {
             let ok = (0..lines).filter(|&l| s.follow(&codes, person(l, gens - 1), &vec![father; depth]) == Some(person(l, gens - 1 - depth))).count();
             assert_eq!(ok, lines, "father x{depth}");
         }
+    }
+
+    /// Nothing is about families: a directed graph over abstract tokens. "X r1 Y" and
+    /// "X r2 to Y" are two relations of different shapes; edges are directed (forward and
+    /// inverse answers differ) and one-to-many (a source has several targets).
+    #[test]
+    fn a_generic_directed_graph() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let (r1, r2, to) = (0usize, 1usize, 2usize);
+        let n = 40;
+        let node = |i: usize| 3 + i;
+        let codes = codes(3 + n, &mut rng);
+        let mut s = RelationStore::new(BITS);
+        // r1: node i → node (i * 7 + 3) % n (a function); r2: node i → nodes i+1, i+2 (one-to-many)
+        let f = |i: usize| (i * 7 + 3) % n;
+        for i in 0..n {
+            if f(i) != i {
+                s.observe(&[node(i), r1, node(f(i))]);
+            }
+            for d in [1, 2] {
+                s.observe(&[node(i), r2, to, node((i + d) % n)]);
+            }
+        }
+        s.consolidate(&codes, 20, &mut rng);
+        let a = s.relation_for(&[r1]).unwrap();
+        let b = s.relation_for(&[r2]).unwrap();
+        assert_ne!(a, b);
+        let mut fwd = 0;
+        let mut many = 0;
+        for i in (0..n).filter(|&i| f(i) != i) {
+            fwd += (s.ask(&codes, node(i), a, 0, 1) == Some(node(f(i)))) as usize;
+            let all = s.ask_all(&codes, node(i), b, 0, 1);
+            many += (all.contains(&node((i + 1) % n)) && all.contains(&node((i + 2) % n))) as usize;
+        }
+        let m = (0..n).filter(|&i| f(i) != i).count();
+        assert_eq!(fwd, m, "forward r1");
+        assert!(many * 10 >= m * 9, "one-to-many r2: both targets for {many} of {m}");
+        // direction: the inverse of r1 answers the source, not the target
+        let i = 4;
+        assert_eq!(s.ask(&codes, node(f(i)), a, 1, 0), Some(node(i)));
+        assert_ne!(s.ask(&codes, node(i), a, 0, 1), s.ask(&codes, node(i), a, 1, 0));
     }
 
     #[test]

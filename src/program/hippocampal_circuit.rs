@@ -537,6 +537,10 @@ pub trait EpisodicCircuit {
     fn set_source(&mut self, _source: u8) {}
     /// Source memory: the sources recall may return (a bit per source). Default: all.
     fn set_recall_sources(&self, _mask: u8) {}
+    /// In how many different episodes a stored event was stated (its testimonies).
+    fn testimony(&self, _row: u32) -> u32 {
+        1
+    }
     /// The source a stored row was tagged with.
     fn row_source(&self, _row: u32) -> Option<u8> {
         None
@@ -566,8 +570,9 @@ pub trait EpisodicCircuit {
     /// An offline period starts: replay order may be set now.
     fn begin_sleep(&mut self) {}
     /// Inferred events from the facts stored since the last call (generative replay): each
-    /// (content ids in reading order, context ids, the source row). Default: none.
-    fn infer(&mut self, _max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
+    /// (content ids in reading order, context ids, the source row, the fact row: the event's
+    /// two premises). Default: none.
+    fn infer(&mut self, _max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32)> {
         Vec::new()
     }
     /// The episode played forward from the event `cue` recalls: up to `max` following

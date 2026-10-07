@@ -136,6 +136,9 @@ struct Row {
     /// Where the event came from (source memory): 0 the world (read or heard), 1 the
     /// network itself (said, retold).
     source: u8,
+    /// Testimonies: in how many different episodes the event was stated (a repeat in the
+    /// same episode is not another testimony).
+    testimony: Cell<u16>,
 }
 
 pub struct EngramStore {
@@ -478,8 +481,8 @@ impl EngramStore {
     /// reading order with the word in N's slot replaced by N (or N put first), and F
     /// dropped ("lucy went to the hallway"); and the same keeping F. Returns up to
     /// `max_rows` source rows' events, most recent first, as (content ids in order, context
-    /// ids, source row).
-    pub fn infer_from(&self, fact: u32, new: &[usize], max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
+    /// ids, source row, fact row): the event and its two premises.
+    pub fn infer_from(&self, fact: u32, new: &[usize], max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32)> {
         let ws = self.cfg.word_space.max(1);
         let Some(r) = self.row(fact) else { return Vec::new() };
         let count = |w: usize| self.word_rows(w);
@@ -536,7 +539,7 @@ impl EngramStore {
                 if !placed {
                     seq.insert(0, n_id);
                 }
-                out.push((seq, context.clone(), t.0));
+                out.push((seq, context.clone(), t.0, fact));
             }
         }
         out
@@ -692,6 +695,10 @@ impl EpisodicCircuit for EngramStore {
         self.row(row).map(|r| r.source)
     }
 
+    fn testimony(&self, row: u32) -> u32 {
+        self.row(row).map_or(0, |r| r.testimony.get() as u32)
+    }
+
     fn recall_peek(&self, cue: &[usize]) -> Recall {
         if self.cfg.walk { self.recall_walk(cue, false) } else { self.recall_row(cue, false) }
     }
@@ -748,6 +755,9 @@ impl EpisodicCircuit for EngramStore {
                 if same {
                     r.strength.set(self.strength(r).saturating_add(self.cfg.bump));
                     r.touched.set(self.now);
+                    if !here {
+                        r.testimony.set(r.testimony.get().saturating_add(1));
+                    }
                 }
                 (same, here, place_key(&r.phase))
             };
@@ -789,6 +799,7 @@ impl EpisodicCircuit for EngramStore {
             touched: Cell::new(self.now),
             err: Cell::new(ONE),
             source: self.source_now,
+            testimony: Cell::new(1),
         };
         self.others += (self.source_now != 0) as usize;
         let s = self.append(row);
@@ -826,7 +837,7 @@ impl EpisodicCircuit for EngramStore {
         self.last_row.get()
     }
 
-    fn infer(&mut self, max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32)> {
+    fn infer(&mut self, max_rows: usize) -> Vec<(Vec<usize>, Vec<usize>, u32, u32)> {
         let facts = std::mem::take(&mut self.facts);
         facts.iter().flat_map(|(r, new)| self.infer_from(*r, new, max_rows)).collect()
     }
@@ -1041,7 +1052,7 @@ mod tests {
         m.store(&event(&[tom, is, a, smith, dot]));
         let inferred = m.infer(8);
         // tom took john's slot; smith dropped (and kept, in the second variant)
-        assert!(inferred.iter().any(|(seq, c, _)| seq == &vec![b(tom, 0), b(went, 2), b(to, 3), b(the, 4), b(kitchen, 5), b(dot, 6)] && c == &vec![ctx(autumn)]), "{inferred:?}");
-        assert!(inferred.iter().any(|(seq, _, _)| seq.contains(&b(smith, 1))));
+        assert!(inferred.iter().any(|(seq, c, _, _)| seq == &vec![b(tom, 0), b(went, 2), b(to, 3), b(the, 4), b(kitchen, 5), b(dot, 6)] && c == &vec![ctx(autumn)]), "{inferred:?}");
+        assert!(inferred.iter().any(|(seq, _, _, _)| seq.contains(&b(smith, 1))));
     }
 }

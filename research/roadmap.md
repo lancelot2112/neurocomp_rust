@@ -297,6 +297,17 @@ These are not research stages. They keep earlier results trustworthy as the code
     generalisation (33), slot memory (36), schema advantage (39), stated family (40).
   - **Run it before every commit** that touches `src/` or the harness. Add an entry with
     each new experiment.
+- **Independent random streams per subsystem** (after [77](experiments/77-infer-from-every-statement.md)).
+  Stories, the basal ganglia, sleep (replay order, consolidation, sleep learning), the
+  relation store and altered feedback each draw from their own stream split off the seed;
+  `rng` is left to setup and the cortex's waking learning. Switching a subsystem on, or
+  changing what it does, no longer changes the stories or the rest of the run.
+  - Every regression figure moved (a different draw) and the table was re-recorded.
+  - Seed-0 figures are single draws from a wide spread. Checked on three seeds before and
+    after the change: full hippocampus 60 / 50 / 36% before, 33 / 45 / 47% after; slot
+    memory 38 / 15 / 22% before, 19 / 14 / 15% after; story boundary 98 / 87 / 97% after
+    (page: 86 / 96 / 98%). The old seed 0 was often the lucky one, so figures in earlier
+    pages are best read as ranges.
 - **Integer only** ([47](experiments/47-integer-only.md)). Every per-step computation is
   bitwise or integer (`Q16` fixed point, `src/fixed.rs`). A unit test fails on any float
   in `src/` outside test code and marked configuration or report lines.

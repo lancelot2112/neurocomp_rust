@@ -150,6 +150,7 @@ enum Policy {
     LearnedGate,
 }
 
+#[derive(Clone)]
 struct Story {
     words: Vec<&'static str>,
     answer_at: usize,
@@ -1393,6 +1394,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let speak = std::env::var("SPEAK").is_ok();
     let mut speech = OutputBuffer::new(q16(std::env::var("SPEAK_MIN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0)));
     let mut transcripts: Vec<String> = Vec::new();
+    // RECITE=k: recitation. After each test story, the network retells it: a copy is read
+    // with the first k words given (the cue), and from there each word the network speaks
+    // (the mix's choice, else the column's) is its next input. Nothing learns or is stored
+    // (as a test), nothing is counted in the answer statistics. Scored against the story:
+    // words right in their position, and the story's content words (in under 5% of
+    // sentences: names, places, seasons) said anywhere.
+    // EFFERENCE=1: the efference copy. A word the network spoke is marked as its own when
+    // it comes back: predicted by the copy (no surprise; it does not enter the areas'
+    // windows of surprising words). A mismatch between the copy and what is heard is a full
+    // surprise. SELF_NOISE=p: what is heard is a random other word with probability p
+    // (altered feedback), to test that the mismatch is caught.
+    let recite: Option<usize> = std::env::var("RECITE").ok().and_then(|v| v.parse().ok());
+    let efference_on = std::env::var("EFFERENCE").is_ok();
+    let self_noise: Q16 = q16(std::env::var("SELF_NOISE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0));
+    // recitation: positions scored, right; content words, said
+    let mut recite_stats = [0usize; 4];
+    let mut recite_sample: Vec<String> = Vec::new();
+    // efference: own words heard, of those altered, altered caught; own words that entered a surprise window
+    let mut eff_stats = [0usize; 4];
+    let mut efference: Vec<Option<usize>> = Vec::new();
     let sparse_hc = std::env::var("SPARSE_HC").is_ok();
     let gate_learned = std::env::var("GATE").map_or(false, |v| v == "learned");
     let gate_cost: i32 = q16(std::env::var("GATE_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05)) as i32;
@@ -1990,13 +2011,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // replay stories queued by this sleep (generative replay) are read first, through the
         // same steps as any story, as training: the cortex learns from them; nothing is
         // stored in memory and nothing is counted
-        let mut stories_now: Vec<(Story, bool)> = replay_queue.drain(..).map(|r| (r, true)).collect();
-        stories_now.push((s, false));
-        for (s, replaying) in stories_now {
+        let mut stories_now: Vec<(Story, bool, bool)> = replay_queue.drain(..).map(|r| (r, true, false)).collect();
+        // a retelling of the test story, read after it (RECITE)
+        let retell = (recite.is_some() && testing).then(|| {
+            let mut r = s.clone();
+            r.answer_at = usize::MAX;
+            r
+        });
+        stories_now.push((s, false, false));
+        if let Some(r) = retell {
+            stories_now.push((r, true, true));
+        }
+        for (s, replaying, reciting) in stories_now {
         #[allow(unused_mut)]
         let mut s = s;
-        let testing = testing && !replaying;
-        if replaying {
+        // a retelling: nothing stored or counted (as a replay), nothing learned (as a test)
+        let testing = (testing && !replaying) || reciting;
+        if reciting {
+        } else if replaying {
             replay_words += s.words.len();
         } else if testing {
             test_words += s.words.len();
@@ -2011,6 +2043,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         page_marks = vec![false; ids.len()];
         inner = vec![false; ids.len()];
         inner_code = vec![None; ids.len()];
+        efference = vec![None; ids.len()];
+        let truth_ids = ids.clone();
+        let mut recited: Vec<usize> = Vec::new();
         step_pending.clear();
         // the previous story's bindings become one episode (training stories only)
         if bind {
@@ -2110,7 +2145,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // the actual member still counts as unpredicted. Bitwise mismatch would not.
             // L5: the probability the column gave this word (its share of the prediction
             // times the predicting kernel's reliability); a lucky guess is still a surprise
-            let share = ONE - column.surprise(code);
+            let mut share = ONE - column.surprise(code);
+            if let (true, Some(meant)) = (efference_on, efference[t]) {
+                // the efference copy predicted this input: no surprise if it is what was
+                // said, a full one if what was heard differs
+                share = if ids[t] == meant { ONE } else { 0 };
+            }
+            if efference[t].is_some() {
+                eff_stats[0] += 1;
+                let altered = efference[t] != Some(ids[t]);
+                eff_stats[1] += altered as usize;
+                eff_stats[2] += (altered && share < predicted_share) as usize;
+                eff_stats[3] += (!altered && share < predicted_share) as usize;
+            }
             if sent_words == 0 {
                 first_surprise = to_f32(ONE - share); // report
             }
@@ -3065,6 +3112,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     s.words.insert(t + 1, vocab[w]);
                     page_marks.insert(t + 1, false);
                     inner.insert(t + 1, true);
+                    efference.insert(t + 1, None);
                     let fv = fed_vec.take().filter(|_| rollout_loop);
                     if let (Some(v), true) = (fv.as_ref(), testing) {
                         loop_stats[0] += 1;
@@ -3096,6 +3144,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         s.words.insert(t + 1, vocab[w]);
                         page_marks.insert(t + 1, false);
                         inner.insert(t + 1, true);
+                        efference.insert(t + 1, None);
                         inner_code.insert(t + 1, None);
                         if s.answer_at > t {
                             s.answer_at += 1;
@@ -3433,6 +3482,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         ids[t + 1] = heard;
                         s.words[t + 1] = vocab[heard];
                         inner[t + 1] = true;
+                        efference[t + 1] = Some(heard);
+                    }
+                }
+                // RECITE: past the cue, the network says the next word and hears it
+                if let (true, Some(cue_len)) = (reciting, recite) {
+                    if t + 1 >= cue_len && t + 1 < ids.len() {
+                        let said = enc.decode(&out).unwrap_or(index["."]);
+                        let truth = truth_ids[t + 1];
+                        recite_stats[0] += 1;
+                        recite_stats[1] += (said == truth) as usize;
+                        recited.push(said);
+                        // altered feedback: what is heard may differ from what was said
+                        let heard = if self_noise > 0 && chance(&mut rng, self_noise) { (said + 1 + rng.gen_range(0..vocab.len() - 1)) % vocab.len() } else { said };
+                        ids[t + 1] = heard;
+                        s.words[t + 1] = vocab[heard];
+                        inner[t + 1] = true;
+                        efference[t + 1] = Some(said);
                     }
                 }
                 // the question's recall contained the answer: good credit for that episode
@@ -3740,6 +3806,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 semantic.feedback(&cue, &content, &mut rng);
             }
         }
+        if let (true, Some(cue_len)) = (reciting, recite) {
+            let content = |w: usize| (word_count[w] as u64) * 20 < sentence_count as u64 && vocab[w] != ".";
+            let mut want: Vec<usize> = truth_ids[cue_len.min(truth_ids.len())..].iter().copied().filter(|&w| content(w)).collect();
+            want.sort_unstable();
+            want.dedup();
+            recite_stats[2] += want.len();
+            recite_stats[3] += want.iter().filter(|w| recited.contains(w)).count();
+            if recite_sample.len() < 2 && s.held_out {
+                recite_sample.push(format!(
+                    "story: {} | retold: {} {}",
+                    truth_ids.iter().map(|&w| vocab[w]).collect::<Vec<_>>().join(" "),
+                    truth_ids[..cue_len.min(truth_ids.len())].iter().map(|&w| vocab[w]).collect::<Vec<_>>().join(" "),
+                    recited.iter().map(|&w| vocab[w]).collect::<Vec<_>>().join(" ")
+                ));
+            }
+        }
         prev_replaying = replaying;
         }
     }
@@ -3882,6 +3964,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
+        }
+        if let Some(k) = recite {
+            eprintln!(
+                "  RECITE seed {seed}: cue {k} words; {:.1}% of {} words right in place; content words said {:.1}% of {}",
+                100.0 * recite_stats[1] as f64 / recite_stats[0].max(1) as f64,
+                recite_stats[0],
+                100.0 * recite_stats[3] as f64 / recite_stats[2].max(1) as f64,
+                recite_stats[2]
+            );
+            for x in &recite_sample {
+                eprintln!("  RECITE seed {seed}: {x}");
+            }
+        }
+        if efference_on || recite.is_some() || speak {
+            eprintln!(
+                "  EFFERENCE seed {seed} ({}): {} own words heard; {} altered, {} of those caught as surprising; {} unaltered own words were surprising",
+                if efference_on { "copy on" } else { "copy off" },
+                eff_stats[0],
+                eff_stats[1],
+                eff_stats[2],
+                eff_stats[3]
+            );
         }
         if speak {
             let line = |tag: Option<u8>| {

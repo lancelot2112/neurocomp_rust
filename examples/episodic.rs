@@ -1386,6 +1386,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     // BELIEF_Q: held-out answers (right, asked) for place questions and family questions
     let mut belief_tally = [(0usize, 0usize); 2];
+    let (mut mix_dbg, mut bq_diag) = (String::new(), 0usize);
     // calibration of the column's L5 confidence at test answers: (answers, right) per
     // confidence bucket [0, .5), [.5, .7), [.7, .8), [.8, .9), [.9, 1], plus the summed
     // confidence per bucket (for the expected calibration error)
@@ -3591,7 +3592,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if let Some(cue_w) = sem_cue_w {
                             if let Some(o) = sem_read(&sem_store, &enc.codes, cue_w, slot_in(&bind_sentence_pairs, cue_w), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs) {
                                 let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
-                                if let Some(w) = (0..vocab.len()).filter(|&i| ov(i, &o) >= 24 && ov(i, &expect_prev) >= 24).max_by_key(|&i| ov(i, &o)) {
+                                // of the kind the column expects here (read now: `expect_prev` is
+                                // only kept while the hippocampus is intact)
+                                let expect = column.l23.peek_union(&input, BITS);
+                                // a question that names a relation the store holds for the word
+                                // ("tom is a": family) asks for that relation's answer, of its
+                                // kind by construction, whatever the column expects
+                                let named = rel_reps.is_some() && {
+                                    let q: Vec<usize> = bind_sentence_pairs.iter().map(|x| x.0).filter(|&x| x != cue_w).collect();
+                                    rel.relation_for(&q).is_some_and(|r| rel.about(&enc.codes, cue_w).iter().any(|a| a.0 == r))
+                                };
+                                if let Some(w) = (0..vocab.len()).filter(|&i| ov(i, &o) >= 24 && (named || ov(i, &expect) >= 24)).max_by_key(|&i| ov(i, &o)) {
                                     proposals.push((8, ctx, vec![w]));
                                 }
                             }
@@ -3616,6 +3627,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                     let votes: Vec<(usize, u32)> = proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, mix.weight(*src, *key))).collect::<Vec<_>>()).collect();
+                    if std::env::var("BQDIAG").is_ok() && testing && t + 1 == s.answer_at && s.held_out && s.words[t] == "a" {
+                        mix_dbg = format!("cue {:?} ", sem_cue_w.map(|w| vocab[w])) + &proposals.iter().map(|(src, key, ws)| format!("{src}:{:?}@{:.2}", ws.iter().map(|&w| vocab[w]).collect::<Vec<_>>(), to_f32(mix.weight(*src, *key)))).collect::<Vec<_>>().join(" ");
+                    }
                     if let Some((w, total)) = SourceMix::combine(&votes) {
                         if testing && t + 1 == s.answer_at {
                             let agreed = proposals.len() > 1 && proposals.iter().all(|p| p.2 == vec![w]);
@@ -3689,6 +3703,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if testing && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
+                    if std::env::var("BQDIAG").is_ok() && s.held_out && s.words[t] == "a" && bq_diag < 20 {
+                        bq_diag += 1;
+                        eprintln!("  BQDIAG {} is a {}: said {:?}; mix {}", s.words[t - 2], vocab[next], enc.decode(&out).map(|w| vocab[w]), std::mem::take(&mut mix_dbg));
+                    }
                     if s.held_out && !right && std::env::var("DIAG").is_ok() {
                         // is there a copy kernel for the answer, and how close did it come?
                         let frame = BITS / 64;

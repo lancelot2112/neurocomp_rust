@@ -1043,6 +1043,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // and masks growth by the live window: it lowered accuracy in every test, experiment 61)
     let infer_grow = std::env::var("INFER_LEARN").is_err();
     let mut infer_stats = [0usize; 2]; // inferred events, (prefix → word) pairs taught
+    // PROPOSALS=1: the network's own inferences are proposals, not facts. Each inferred event
+    // ("lucy went to the hallway", in its source story's season) is a proposal, stored in
+    // the hippocampus tagged as one (source 2), with its evidence:
+    // - support: the distinct source episodes it was derived from (convergence);
+    // - confirmed / contradicted: a sentence later read in a story of the same season that
+    //   is the proposal, or differs from it in one word (the same name, another place).
+    // A proposal is validated when confirmed, or supported by PROPOSAL_SUPPORT (default 2)
+    // source episodes, and never contradicted; only validated proposals are replayed to the
+    // cortex (once, `reps` times, when validated). The open ones (neither validated nor
+    // contradicted) are what to investigate next.
+    let proposals_on = std::env::var("PROPOSALS").is_ok();
+    let proposal_support: usize = std::env::var("PROPOSAL_SUPPORT").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    // (season, sentence words) → (source rows, confirmed, contradicted, replayed, a source prefix)
+    let mut proposals: HashMap<(usize, Vec<usize>), (Vec<u32>, u32, u32, bool, Vec<usize>)> = HashMap::default();
     let mut row_state: HashMap<u32, Vec<u32>> = HashMap::default(); // engram row → higher-area state
     // engram row → the words of its story before its sentence (what was read up to it)
     let mut row_prefix: HashMap<u32, Vec<usize>> = HashMap::default();
@@ -1660,7 +1674,40 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // (what was read before the source sentence) then the inferred sentence, and
                 // is read like any story before the next one (`reps` times, in a shuffled order)
                 let mut stories: Vec<Story> = Vec::new();
-                for (seq, _ctx, src) in &events {
+                if proposals_on {
+                    // the inferences become proposals (and hippocampal events tagged as such)
+                    for (seq, ctx, src) in &events {
+                        let Some(prefix) = row_prefix.get(src) else { continue };
+                        let Some(season) = prefix.iter().find_map(|&w| SEASONS.iter().position(|x| *x == vocab[w])) else { continue };
+                        let words: Vec<usize> = seq.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len() && vocab[w] != ".").collect();
+                        let e = proposals.entry((season, words)).or_insert_with(|| {
+                            hc.set_source(2);
+                            hc.store_split(seq, ctx, seq);
+                            hc.set_source(0);
+                            (Vec::new(), 0, 0, false, prefix.clone())
+                        });
+                        if !e.0.contains(src) {
+                            e.0.push(*src);
+                        }
+                    }
+                    // the validated ones, not yet replayed, are replayed now
+                    let mut keys: Vec<(usize, Vec<usize>)> = proposals.keys().cloned().collect();
+                    keys.sort();
+                    for k in keys {
+                        let e = proposals.get_mut(&k).unwrap();
+                        let valid = (e.1 > 0 || e.0.len() >= proposal_support) && e.2 == 0;
+                        if valid && !e.3 {
+                            e.3 = true;
+                            let mut words: Vec<&'static str> = e.4.iter().map(|&w| vocab[w]).collect();
+                            words.extend(k.1.iter().map(|&w| vocab[w]));
+                            words.push(".");
+                            let answer_at = words.len().saturating_sub(2);
+                            stories.push(Story { words, answer_at, held_out: false });
+                            infer_stats[0] += 1;
+                        }
+                    }
+                }
+                for (seq, _ctx, src) in events.iter().filter(|_| !proposals_on) {
                     let Some(prefix) = row_prefix.get(src) else { continue };
                     let mut words: Vec<&'static str> = prefix.iter().map(|&w| vocab[w]).collect();
                     words.extend(seq.iter().map(|&i| i % 4096).filter(|&w| w < vocab.len()).map(|w| vocab[w]));
@@ -3969,6 +4016,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 bind_sentence.clear();
                 bind_sentence_pairs.clear();
+                if proposals_on && !testing && !replaying && !proposals.is_empty() {
+                    // what is read confirms or contradicts the proposals of this season
+                    let sent: Vec<usize> = s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect::<Vec<_>>().into_iter().rev().collect();
+                    if let (Some(season), Some(&first)) = (s.words.iter().find_map(|w| SEASONS.iter().position(|x| x == w)), sent.first()) {
+                        for ((ps, pw), e) in proposals.iter_mut() {
+                            if *ps != season || pw.first() != Some(&first) || pw.len() != sent.len() {
+                                continue;
+                            }
+                            let diff = pw.iter().zip(&sent).filter(|(a, b)| a != b).count();
+                            if diff == 0 {
+                                e.1 += 1;
+                            } else if diff == 1 {
+                                e.2 += 1;
+                            }
+                        }
+                    }
+                }
                 if rel_reps.is_some() && !testing && !replaying {
                     let fact: Vec<usize> = s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect();
                     rel.observe(&fact.into_iter().rev().collect::<Vec<_>>());
@@ -4254,6 +4318,41 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if replay_gen {
             eprintln!("  REPLAY_GEN seed {seed}: {} free-settling replays, {} decoded, {} (input, target) pairs given to sleep generalisation", gen_stats[0], gen_stats[1], gen_stats[2]);
+        }
+        if proposals_on {
+            // truth from the world's rule: the name's family and the season decide the place
+            let truth = |season: usize, w: &[usize]| -> Option<bool> {
+                let name = vocab[*w.first()?];
+                let place = vocab[*w.last()?];
+                let f = match NEW_NAMES.iter().position(|n| *n == name) {
+                    Some(i) => family_of(i, true),
+                    None => family_of(NAMES.iter().position(|n| *n == name)?, false),
+                };
+                PLACES.contains(&place).then(|| PLACES[family_place(f, season)] == place)
+            };
+            let mut rows: [(usize, usize, usize); 5] = [(0, 0, 0); 5]; // (n, true, judged) for all, corroborated, confirmed, contradicted, validated
+            let mut open: Vec<String> = Vec::new();
+            for ((season, w), e) in &proposals {
+                let tr = truth(*season, w);
+                let corroborated = e.0.len() >= proposal_support;
+                let valid = (e.1 > 0 || corroborated) && e.2 == 0;
+                for (k, on) in [true, corroborated, e.1 > 0, e.2 > 0, valid].into_iter().enumerate() {
+                    if on {
+                        rows[k].0 += 1;
+                        rows[k].1 += (tr == Some(true)) as usize;
+                        rows[k].2 += tr.is_some() as usize;
+                    }
+                }
+                if !valid && e.2 == 0 && open.len() < 6 {
+                    open.push(format!("{} {} (support {})", SEASONS[*season], w.iter().map(|&x| vocab[x]).collect::<Vec<_>>().join(" "), e.0.len()));
+                }
+            }
+            let names = ["made", "corroborated", "confirmed by reading", "contradicted by reading", "validated (replayed)"];
+            eprintln!(
+                "  PROPOSALS seed {seed}: {}",
+                (0..5).map(|k| format!("{} {} ({:.0}% true of {} judged)", names[k], rows[k].0, 100.0 * rows[k].1 as f64 / rows[k].2.max(1) as f64, rows[k].2)).collect::<Vec<_>>().join("; ")
+            );
+            eprintln!("  PROPOSALS seed {seed}: open, to investigate: {}", open.join("; "));
         }
         if self_store || source_tag {
             eprintln!(

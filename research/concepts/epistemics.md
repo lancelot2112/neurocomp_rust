@@ -33,6 +33,7 @@ validated by the module: the belief in their fact times their source's credibili
 ## What is still missing
 - Proposals and the network's own claims as sources with earned trust (premise credibility
   already comes from belief: [76](../experiments/76-belief-rules.md)).
-- Inference from every statement of a fact, not only the first.
+- Inference from every statement of a fact is built ([77](../experiments/77-infer-from-every-statement.md)):
+  graded belief then validates only the true inferences.
 - Deciding a source from content when the tag is lost (reality monitoring proper).
 - Curiosity acting: open proposals steering replay and attention.

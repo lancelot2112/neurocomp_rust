@@ -199,8 +199,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
   - See [epistemics](concepts/epistemics.md).
   - belief isolated behind a swappable rule (full / vote / graded / posterior); proposals
     validated by belief × credibility ([76](experiments/76-belief-rules.md)).
+  - inference from every statement of a fact ([77](experiments/77-infer-from-every-statement.md)).
 - **Next:**
-  1. inference from every statement of a fact;
+  1. independent random streams per subsystem, so configurations compare cleanly;
   2. a task where the believed fact decides the answer;
   3. proposals and self-generated claims as sources with earned trust.
 

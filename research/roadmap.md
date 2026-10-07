@@ -327,11 +327,34 @@ These are not research stages. They keep earlier results trustworthy as the code
     bridge, scored the same cue again for a plain recall; it now passes its result on.
     Postings walked per recall: 26 273 → 13 454.
   - Together: the run went from 217 to 141 s (training 566 → 369 µs per word, test
-    7.35 → 4.77 ms per word). Every answer is identical on the profiled run.
+    7.35 → 4.77 ms per word). The three-seed suite: every entry the same.
+  - **Recall stops walking when the answer is settled (MaxScore).** The leader's and
+    runner-up's scores only rise, and the runner-up's final value does not depend on
+    the order rows are scored in. So once even the best an untouched row could still
+    reach (the remaining cue weight plus the place bonus) is below the runner-up, no
+    untouched row can change the answer. Recall then leaves the posting lists and scores
+    only the rows still in reach, by looking each remaining id up in the row, dropping
+    rows as they fall out of reach. Exact (when every touched row is eligible,
+    `min_overlap` ≤ 1). Postings walked per recall: 13 454 → 1 006.
+  - **Kernel classes keep running match counts.** A class keeps its last input's match
+    counts and, while its wiring is unchanged, updates them for the bits that changed
+    instead of fanning every active bit out again (a change bigger than the input
+    recounts from zero). The higher area's input (`[lead | slow state | sentence bag]`)
+    changes by a few bits a word. Look-ups go through the same counts, so the column's
+    own step on an input it was just asked about counts nothing new. Exact.
+    - The per-frame memo of [23](experiments/23-compaction.md), tried on the higher area
+      instead: exact but slower (144 vs 120 s), backed out.
+  - **Runs in parallel.** The harness runs its (policy, seed) runs on `THREADS` threads
+    (default: the machine's cores), each run's printing buffered and printed in run
+    order. Each run depends only on its seed, so the output is identical for any thread
+    count (checked: 1 vs 3 threads, three seeds). The suite already runs its (entry,
+    seed) jobs in parallel. A single run stays on one thread: each word's step depends
+    on the last one's learning, and splitting a step's few hundred microseconds across
+    threads costs more than it saves.
+  - Profiled run, all of it: 217 → 84 s (training 566 → 237 µs per word, test 7.35 →
+    2.77 ms per word), output identical.
   - A GPU is a poor fit: the work is sparse and event-driven (index fan-out, a few
-    matched kernels, early exits), not dense matrix products. The next gains are
-    algorithmic: the cue's common ids still walk long posting lists, and the column's
-    first look-up per step repeats the fan-out its own prediction does a moment later.
+    matched kernels, early exits), not dense matrix products.
 - **Integer only** ([47](experiments/47-integer-only.md)). Every per-step computation is
   bitwise or integer (`Q16` fixed point, `src/fixed.rs`). A unit test fails on any float
   in `src/` outside test code and marked configuration or report lines.

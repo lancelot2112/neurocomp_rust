@@ -333,12 +333,20 @@ slot codes bound to content in the hippocampus, recalled by slot.
   - an output buffer;
   - answering by speaking, with abstention ([69](experiments/69-answering-by-speaking.md));
   - the efference copy and recitation ([70](experiments/70-efference-copy-and-recitation.md));
-  - speech routed as in the brain ([71](experiments/71-speech-routing.md)).
+  - speech routed as in the brain ([71](experiments/71-speech-routing.md));
+  - inner speech in place of the rollout: a phonological loop, recall planning what is said
+    ([88](experiments/88-inner-speech.md); matches the rollout on 6 of 10 entries, not yet a
+    default).
 - **Next:**
   1. ~~a go/no-go that sees novelty and agreement between memory and cortex~~ (done,
      [72](experiments/72-go-no-go-signals.md));
   2. read-back as training for the area chain
      ([plan](concepts/output-and-self-supervision.md)).
+  3. **questions as inner speech:** a tag for an open gap ("?" + the item) held in the loop
+     until the story answers it, so that the answer binds to it; a go/no-go that can learn
+     when to ask, because the payoff comes within the story;
+  4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and
+     a heard slot the column learns to use.
 
 ### Epistemics (after [75](experiments/75-bayes-module.md))
 - **Done:**

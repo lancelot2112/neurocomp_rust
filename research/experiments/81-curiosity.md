@@ -63,7 +63,8 @@ answers were already settled (gain 0.00–0.11).
    lucy into states the answer-or-unknown go/no-go had never practised (belief 6/8, lead
    7/16, after being asked about), and an unpractised state defaults to "unknown": the
    fixed ranking lost tom and lucy on two seeds that way. The learned policy kept them
-   (91–100%).
+   (91–100%) in these first runs; with asking during practice (addendum) it too lost lucy
+   on seed 1 and both on seed 2 (Correction (wiki pass, [errata](../errata.md))).
 5. **Order matters: ask after weighing.** The first version chose its questions before the
    sleep's new facts were weighed, so the new names' conflicts were never known in time to
    be asked about. It now asks after consolidation and weighs the answers in a second pass.

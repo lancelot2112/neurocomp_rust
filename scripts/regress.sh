@@ -6,13 +6,15 @@
 #
 # One seed is one draw from a wide spread (a seed-0 figure moved by 20+ points when the
 # random streams changed, the three-seed mean did not), so the table holds the mean over
-# SEEDS seeds and the margin applies to the mean. Every (entry, seed) is its own job, so
+# SEEDS seeds and the margin applies to the mean. Five seeds by default: kernel growth is
+# path-dependent (a change at 0.2% of training steps moved one seed by 22 points,
+# experiment 85), and three-seed means could not separate effects of 5–10 points. Every (entry, seed) is its own job, so
 # seeds run in parallel.
 #
 #   scripts/regress.sh            run all, fail if any mean drops more than MARGIN points
 #   scripts/regress.sh --record   run all and write the means into the table
 #   ONLY=saccades scripts/regress.sh      run only the named entries (comma-separated)
-#   SEEDS=3 MARGIN=3 JOBS=4               seeds per entry; allowed drop of the mean in
+#   SEEDS=5 MARGIN=3 JOBS=4               seeds per entry; allowed drop of the mean in
 #                                         points; parallel jobs (default: cores)
 #   QUICK=1 scripts/regress.sh            seed 0 only, reported without pass or fail (one
 #                                         seed is not comparable with the recorded mean)
@@ -21,7 +23,7 @@ cd "$(dirname "$0")/.."
 TABLE=scripts/regress.tsv
 MARGIN=${MARGIN:-3}
 JOBS=${JOBS:-$(nproc)}
-SEEDS=${SEEDS:-3}
+SEEDS=${SEEDS:-5}
 QUICK=${QUICK:-0}
 (( QUICK )) && SEEDS=1
 RECORD=0

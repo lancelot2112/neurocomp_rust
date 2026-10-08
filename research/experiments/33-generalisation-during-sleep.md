@@ -69,7 +69,7 @@ candidates that failed the replay test.
 ## Findings
 1. **General rules can be formed offline and tested before they are kept.** From replay
    alone, new names score as well as known ones (63–78% against 66–78%). The name rule
-   loses nothing (62–70% against 57–73%; 65.3 against 65.0 on average), and habit
+   loses nothing (62–70% against 57–73%; 65.7 against 65.3 on average), and habit
    matches or beats the default (81–85%).
 2. **At normal size and speed.** A few hundred rules per run do what tens of thousands of
    waking copies did: 3,100–4,400 kernels and 96–120 µs/word, the default model's size

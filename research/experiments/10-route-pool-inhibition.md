@@ -63,7 +63,7 @@ baseline was re-run as well (below). See [bugs and fixes](../bugs-and-fixes.md).
 | 4 channel slots + open discovery | 75.0% (100/49/90/100/36) | 70.2% (100/56/92/100/2) | 44.5% (32/55/59/44/33) | 44.4% (27–60) |
 | pool + **context** gate (table) | **100%** (all runs) | **100%** (all runs) | 54.4% (49–58) | 54.8% (52–59) |
 | pool + **context + value** gate (table) | 31.5% (16–52) | 47.1% (34–52) | **100%** (all runs) | **100%** (all runs) |
-| pool + **kernel gate** | 0% (1 seed; 5-seed run pending) | KERNEL_SHORT_3 | KERNEL_LONG_2 | KERNEL_LONG_3 |
+| pool + **kernel gate** | 0% (1 seed) | not run | not run | not run |
 
 ## Findings
 1. **Inhibition beats slots.** With the context gate, every discovered route stays
@@ -83,9 +83,11 @@ baseline was re-run as well (below). See [bugs and fixes](../bugs-and-fixes.md).
    (name, place) pairs, never a binding route such as (3,+4). Its RIGHT/WRONG kernels
    generalize over the route-code + context + value pattern, so a route that is
    "usually useful" for predicting *something* wins over the one that copies the answer.
-   It is also very slow (hours per seed). Results for the other columns and 5 seeds
-   pending.
-KERNEL_FINDING
+   It is also very slow (hours per seed).
+
+> **Correction (wiki pass, [errata](../errata.md)):** the remaining kernel-gate runs were never completed; the gate
+> was abandoned for the episodic memory of [11](11-episodic-memory.md) and the gates of
+> [16](16-thalamic-gate-memory-channel.md) and [20](20-l6-corticothalamic-gating.md).
 
 ## Next
 - Experiment 11: an autoassociative (episodic) memory that binds facts in one shot and

@@ -97,7 +97,8 @@ Most other entries lose 1–7 points.
    rarely flips the next word, so most consultations score "no difference" and the gate sits
    near indifference. What the frame is worth is spread over many steps: the area's own state
    across a story, and what the column learns from it. Skipping stops both, and the
-   relation and hippocampus entries lose 10–47 points.
+   relation and hippocampus entries lose about 7–21 points (sleep generalisation,
+   neither, loses 47; an earlier version of this line counted it with them).
 3. **A cost per consultation collapses the gate** (any cost above 0 makes "no difference"
    worse than skipping, which is most steps): the price of compute cannot be learned from a
    one-step reward when the benefit arrives later.

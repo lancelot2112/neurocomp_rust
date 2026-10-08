@@ -322,8 +322,8 @@ column needs help (surprised, or unsure of the next word). It helps some tasks a
 memory 16 → 41%) and kills others (story boundary 0%): when top-down helps must be learned
 per context (a go/no-go charged for compute), not set by a rule. A learned go/no-go,
 rewarded by what blanking the frame changes in the next prediction, skips 70–90% of steps
-and keeps the context tasks, but loses 10–47 points on the relation and hippocampus
-entries: one step's counterfactual undervalues a frame whose worth arrives later.
+and keeps the context tasks, but loses about 7–21 points on the relation and
+hippocampus entries (and 47 on sleep generalisation): one step's counterfactual undervalues a frame whose worth arrives later.
 Eligibility traces credited mostly by the answer, with a margin before skipping, beat
 always consulting on 14 of 25 entries but save only ~10% and still collapse on single
 seeds, because the gate also decides what the area and column learn. Next: learn on every

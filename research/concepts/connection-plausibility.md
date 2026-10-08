@@ -24,7 +24,7 @@ ranking) are not connections and are listed in the
 | Connection | Model | Brain | Verdict |
 |---|---|---|---|
 | Column → higher area (feedforward) | The sentence's words and a slow state of its surprising words go up; the area learns only on the column's misses | Superficial-layer (L2/3) feedforward to L4 of the next area carries prediction error (Bastos et al. 2012); L5 also drives higher-order thalamus → next area (transthalamic) | Plausible |
-| Predicted and surprising words both up (`HIER_UP=both`) | Surprising words are told apart by a rotated code | Two kinds of burst are reported: a minicolumn firing broadly on unpredicted input, and an L5 cell bursting when apical (top-down) and basal (bottom-up) input coincide (Larkum 2013), i.e. on a predicted, attended input; L5 bursts are what drive higher-order thalamus. Which group is tagged is only a label: either way both reach the area, distinguishable | Plausible as information; the tagged group should be the coincidence (predicted) one if it is meant as L5 bursts |
+| Predicted and surprising words both up (`HIER_UP=both`) | Surprising words are told apart by a rotated code | Two kinds of burst are reported: a minicolumn firing broadly on unpredicted input, and an L5 cell bursting when apical (top-down) and basal (bottom-up) input coincide (Larkum 2013), i.e. on a predicted, attended input; L5 bursts are what drive higher-order thalamus. Which group is tagged is only a label: either way both reach the area, distinguishable | Plausible as information, but **it failed**: the rotated burst code stops the area copying those words, as `ROUTE_BIND` does (memory entries fell 20–50 points). Off. The default input already carries both, told apart: every word of the sentence in one slot, the surprising ones also in the slow state |
 | Higher area → column (feedback) | The top-down frame is a slot of the column's input. Every kernel also reads the current word, so the frame only conditions a prediction; it never drives one alone | Feedback terminates mainly outside L4, on apical tufts in L1 and in L5/L6 (Rockland & Pandya 1979; Felleman & Van Essen 1991): modulatory, not driving | Functionally plausible (contextual, never driving); the "L4 slot" is a label to change to apical (L1) input |
 | Areas vote in the thalamic mix (`SourceMix`) | Each source's proposed word weighed by its record per context | Pulvinar scales cortical streams by reliability (Saalmann et al. 2012); precision weighting | Approximate (a table of counts per context) |
 | Areas grow by need ([84](../experiments/84-areas-grow-by-need.md)) | A bud learns in shadow; promoted on a sign test, else pruned | Adult cortex recruits uncommitted cortex, not new areas (Dehaene & Cohen 2007); silent synapses unsilenced by use | Approximate (recruitment, not creation) |
@@ -59,7 +59,7 @@ the test only through what replay taught the cortex.
 | Replay → cortex (consolidation) | At sleep, stored events replayed through the cortex, novelty-tagged first, then cue-free from random CA3 starts, interleaved with familiar ones | Sharp-wave ripple replay, coordinated with cortical spindles, trains neocortex slowly and interleaved (McClelland et al. 1995) | Plausible in kind; replay enters the column as if read (the driver slot), where real replay reaches cortex through EC |
 | Replay priority | Novel events tagged at encoding are replayed first (`REPLAY_TAGGED`); then strength × the cortex's error on the event, measured while it was last replayed (the cortex's response against the replayed content) and returned to the hippocampus | Replay favours surprising and poorly learned experience (Mattar & Daw 2018); the cortex drives hippocampal replay and gets it back in a sleep dialogue (Sirota et al. 2003; Buzsáki 2015) | Plausible: one pass, the error carried back through EC |
 | Generative replay (`INFER_REPLAY`) | The hippocampus composes events never experienced ("lucy is a jones" + a jones event → "lucy went to the hallway") and the higher area learns them | Replay of never-experienced sequences and structural inference in replay (Gupta et al. 2010; Liu et al. 2019) | Plausible |
-| Cortex → cortex under uncertainty (`COOPERATE`) | Where the column is unsure, the semantic store's content for the least familiar word joins the higher area's context | Cortico-cortical retrieval of semantic knowledge, prefrontal-guided | Plausible (the store itself is cortical) |
+| Cortex → cortex under uncertainty (`COOPERATE`) | Where the column is unsure, the semantic (since [67](../experiments/67-relation-store-in-reading.md): relation) store's content for the least familiar word joins the higher area's context | Cortico-cortical retrieval of semantic knowledge, prefrontal-guided | Plausible (the store itself is cortical) |
 
 No hippocampal pathway uses a second run of anything. The shortcuts left:
 1. ~~Hippocampal output as EC feedback~~: `HC_ROUTE` (above).
@@ -67,6 +67,48 @@ No hippocampal pathway uses a second run of anything. The shortcuts left:
    replay causes, so the column re-reading the event is a fair abstraction of it.
 3. ~~Replay priority~~: plausible as built (above; the first audit read it wrongly).
 4. Sentence boundaries from surprise, as story boundaries already are.
+
+## Coupling: who learns from which error
+
+The rule the anatomy gives: **each learner learns from its own error, but what it tells
+the rest of the network is the integrated prediction.** The first `LEARNING=three` runs
+broke the second half (every downstream signal read the slow L2/3 alone, wrong almost
+everywhere at first, so the higher area learned from nearly every word and stopped
+supplying context); `CorticalColumn::set_output` restores it.
+
+| Learner | Teacher | Compared with whose prediction | In the model |
+|---|---|---|---|
+| Cerebellum | Climbing fibres from the inferior olive; the olive is inhibited by the cerebellum's own deep nuclei, so the error is actual − the cerebellum's prediction | Its own | `Cerebellum::learn`: its own kernels' error |
+| Cortex (slow) | Local prediction error in each area, and hippocampal replay at sleep | Its own, slowly | `column.learn`: L2/3's own winner, stochastic growth |
+| Hippocampus | Novelty: CA1's mismatch between EC input and CA3 recall, dopamine and acetylcholine | What the cortex as a whole failed to predict, as it reaches EC | The column's output after integration (`set_output`) |
+| Higher area | Prediction error from the lower area's superficial layers | The lower area's error after it integrated all its inputs (cerebellar and hippocampal ones arriving through the thalamus) | The same |
+| Basal ganglia | Dopamine reward-prediction error | The outcome of what the network did or said | The column's L5 outcome, integrated |
+
+**Within one word (~250 ms):**
+1. **Feedforward sweep.** The word drives L4; a copy of the cortex's activity goes to the
+   cerebellum (L5 → pontine nuclei → mossy fibres), whose prediction is ready within tens
+   of milliseconds.
+2. **Hippocampus.** Cued by the cortical representation through EC; recalls within a theta
+   cycle; returns through CA1 → subiculum → EC as context.
+3. **Thalamus.** The cerebellum's output (deep nuclei → motor and associative thalamus),
+   the higher area's (pulvinar, and direct feedback onto apical dendrites) arrive as
+   context, each with a gain set by the reticular nucleus and L6.
+4. **Cortex predicts; L5 integrates.** L2/3 reads all of it; the L5 output is the
+   network's prediction.
+5. **The next word's surprise** is computed against that integrated output, and is what
+   goes up to the higher area, to the hippocampus (novelty) and to dopamine (reward).
+
+**Two consequences.**
+- **Fast to slow transfer.** The cerebellum's prediction is an input the cortex reads, so
+  the slow cortex can learn to use it and, over time, to predict without it: a fast
+  process acquires, a slow one retains (two-rate models of adaptation, Smith et al. 2006).
+  Hippocampal replay does the same for episodes.
+- **A memory that answers in training removes the surprise that would teach the rest.**
+  With the hippocampus routed into the column while reading (`HC_ROUTE`), answers it
+  supplies are no longer surprising, so the higher area and the cerebellum never learn
+  them, and with the hippocampus lesioned at test nothing knows them (motor speech 64.8 →
+  19.6%). Replay, which trains the cortex whatever the waking surprise, is what should carry
+  them over: the consolidation problem.
 
 ## Learning systems
 | System | Model | Brain | Verdict |
@@ -80,7 +122,7 @@ No hippocampal pathway uses a second run of anything. The shortcuts left:
 
 | Signal | Model | Verdict |
 |---|---|---|
-| The learned top-down gate's reward ([83](../experiments/83-compute-only-where-needed.md)), the counterfactual frame gate ([85](../experiments/85-top-down-as-a-trusted-witness.md)) | The column asked again with the frame blanked | Not plausible as built; both are options, not defaults. The same-pass record replaces it if they are kept |
+| The learned top-down gate's first reward ([83](../experiments/83-compute-only-where-needed.md), addendum 1), the counterfactual frame gate ([85](../experiments/85-top-down-as-a-trusted-witness.md)) | The column asked again with the frame blanked | Not plausible as built; both are options, not defaults. 83's eligibility-trace version (addendum 2) uses no second run. The same-pass record replaces the rest if they are kept |
 | The bud's shadow vote ([84](../experiments/84-areas-grow-by-need.md)) | The mix's sum with and without one source's vote | Approximate: a comparison of two summed inputs, which a downstream cell can do |
 | Eligibility traces in the basal ganglia | Recent choices' bits stay eligible for a later reward | Plausible (Frémaux & Gerstner 2016) |
 | Teaching signal | Each kernel corrected by the actual next word | Cerebellum-like climbing-fibre error; plausible for a predictor |

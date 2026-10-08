@@ -85,6 +85,15 @@ pub struct RelationStore {
     pub learned_frames: bool,
     /// Facts whose learned frame positions matched the counted ones, of those compared.
     frame_agreement: (usize, usize),
+    /// Fact completion (`completion`): the binding map is the completion net `frame_net`,
+    /// a kernel class completing a blank from the rest of the fact ("bob 's father is _"),
+    /// instead of a store keyed by the entity's code rotated by a hashed relation offset.
+    /// Relations (frames) still index the claims, the rules and the questions.
+    pub completion: bool,
+    /// The completion net: a predictive kernel class like the cortex's (one frame per word,
+    /// grown deeper word by word, and also where same-depth kernels disagree), without
+    /// near-miss generalisation (a fact's entity must stay in its context).
+    complete_net: KernelClass<SimpleKernel>,
 }
 
 /// A step through the store: (relation, from position, to position).
@@ -145,6 +154,114 @@ impl RelationStore {
             }),
             learned_frames: false,
             frame_agreement: (0, 0),
+            completion: cfg!(test) && std::env::var("REL_TEST_COMPLETE").is_ok(),
+            complete_net: {
+                let mut c = KernelClass::predictive(GrowthConfig {
+                    max_kernels: 20_000,
+                    frame_words: bits / 64,
+                    max_frames: 9,
+                    sample_bits: 16,
+                    match_fraction: 0.8,
+                    surprise_fraction: 0.5,
+                    generalize: None,
+                    generalize_after: 1,
+                });
+                c.set_grow_on_ambiguity(true);
+                c
+            },
+        }
+    }
+
+    /// The filler positions of relation `r`'s template (completion), in order.
+    fn slots(&self, r: usize) -> Vec<usize> {
+        let (n, fixed) = &self.frames[r];
+        (0..*n).filter(|p| fixed.iter().all(|f| f.0 != *p)).collect()
+    }
+
+    /// Relation `r` with `entity` in slot `from` and slot `to` blank, as the completion
+    /// net's input (completion).
+    /// How many frames of `context` an answer must have read: the entity's and every word
+    /// of the question up to the farthest (empty frames for other slots need not be read).
+    fn context_need(&self, r: usize, from: usize, to: usize) -> usize {
+        let slots = self.slots(r);
+        let (Some(&pf), Some(&pt)) = (slots.get(from), slots.get(to)) else { return 1 };
+        let (n, fixed) = &self.frames[r];
+        let mut others: Vec<usize> = (0..*n).filter(|&q| q != pf && q != pt).collect();
+        others.sort_by_key(|&q| (q.abs_diff(pt), q));
+        1 + others.iter().rposition(|q| fixed.iter().any(|f| f.0 == *q)).map_or(0, |i| i + 1)
+    }
+
+    fn context(&self, codes: &[BitVector], entity: usize, r: usize, from: usize, to: usize) -> Option<BitVector> {
+        let slots = self.slots(r);
+        let (&pf, &pt) = (slots.get(from)?, slots.get(to)?);
+        let (n, fixed) = &self.frames[r];
+        let mut fact = vec![usize::MAX; *n];
+        for &(p, w) in fixed {
+            fact[p] = w;
+        }
+        // one frame per word, as the column's input: first the entity (at its position),
+        // then the fact's other words nearest the blank first (an empty frame for another
+        // slot), then the blank's position. A kernel keys on the entity and grows word by word
+        // into the context until the answer is settled: "ed 's father is _" needs "father"
+        let mut ent = codes[entity].clone();
+        ent.rotl_mut(self.position_offset(*n, pf));
+        let mut words = ent.as_words().to_vec();
+        let mut others: Vec<usize> = (0..*n).filter(|&q| q != pf && q != pt).collect();
+        others.sort_by_key(|&q| (q.abs_diff(pt), q));
+        for q in others {
+            match fact[q] {
+                usize::MAX => words.extend(std::iter::repeat(0).take(self.bits / 64)),
+                w => words.extend_from_slice(codes[w].as_words()),
+            }
+        }
+        // last, the blank's position in the fact (its own frame: mixed into the entity's, a
+        // kernel sampling mostly its bits would match every entity)
+        words.extend_from_slice(self.blank_input(codes, &vec![usize::MAX; *n], pt).as_words());
+        Some(BitVector::from_words(words))
+    }
+
+    /// The completion net's input for position `p` of `fact` (`usize::MAX`: blank).
+    fn blank_input(&self, codes: &[BitVector], fact: &[usize], p: usize) -> BitVector {
+        let n = fact.len();
+        let mut x = BitVector::new(self.bits, Some(0));
+        for (q, &w) in fact.iter().enumerate() {
+            if q != p && w != usize::MAX {
+                let mut c = codes[w].clone();
+                c.rotl_mut(self.position_offset(n, q));
+                x.or_mut(&c);
+            }
+        }
+        let mut h = (n as u64) << 32 ^ p as u64 ^ 0x2545_F491_4F6C_DD1D;
+        for _ in 0..32 {
+            h ^= h << 13;
+            h ^= h >> 7;
+            h ^= h << 17;
+            x.bit_set(h as usize % self.bits);
+        }
+        x
+    }
+
+    /// Completion: replay believed bindings into the completion net.
+    fn replay_completion<R: Rng>(&mut self, codes: &[BitVector], items: &[((usize, usize, usize, usize), usize)], reps: usize, rng: &mut R) {
+        let pairs: Vec<(BitVector, usize, usize)> = items.iter().filter_map(|&(k, v)| self.context(codes, k.1, k.0, k.2, k.3).map(|x| (x, v, self.context_need(k.0, k.2, k.3)))).collect();
+        let mut order: Vec<usize> = (0..pairs.len()).collect();
+        for _ in 0..reps {
+            for i in (1..order.len()).rev() {
+                order.swap(i, rng.gen_range(0..=i));
+            }
+            for &i in &order {
+                let (x, v, need) = &pairs[i];
+                let mut out = BitVector::new(self.bits, Some(0));
+                self.complete_net.process_predictive(x, &mut out);
+                self.complete_net.feedback(x, &codes[*v], rng);
+                // the fact is remembered in its whole context: if no kernel that reads the
+                // whole question predicts it, one is grown (answers come from such kernels)
+                let known = self.complete_net.peek_deep(x, *need).is_some_and(|o| decode(codes, &o) == Some(*v));
+                if !known {
+                    self.complete_net.grow(x, &codes[*v], *need, rng);
+                }
+                self.replays += 1;
+            }
         }
     }
 
@@ -416,10 +533,11 @@ impl RelationStore {
         self.bayes.resolve();
         let mut seen_keys: std::collections::BTreeSet<(usize, usize, usize, usize)> = Default::default();
         pairs.clear();
+        let mut items: Vec<((usize, usize, usize, usize), usize)> = Vec::new();
         for (k, v) in batch_claims {
             let w = self.bayes.believed(&k).unwrap_or(v);
             if seen_keys.insert(k) || w == v {
-                pairs.push((self.key(&codes[k.1], k.0, k.2, k.3), k.1, codes[w].clone()));
+                items.push((k, w));
             }
         }
         // a conflict whose verdict changed with the trust is replayed too
@@ -427,15 +545,23 @@ impl RelationStore {
         for k in contested {
             if seen_keys.insert(k) {
                 if let Some(w) = self.bayes.believed(&k) {
-                    pairs.push((self.key(&codes[k.1], k.0, k.2, k.3), k.1, codes[w].clone()));
+                    items.push((k, w));
                 }
             }
         }
-        self.replay(&pairs, reps, rng);
+        if self.completion {
+            self.replay_completion(codes, &items, reps, rng);
+        } else {
+            for &(k, w) in &items {
+                pairs.push((self.key(&codes[k.1], k.0, k.2, k.3), k.1, codes[w].clone()));
+            }
+            self.replay(&pairs, reps, rng);
+        }
         // relations of relations: learned from what the store now answers, then the facts
         // they infer are replayed too
         self.learn_rules(codes);
         let mut inferred: Vec<(BitVector, usize, BitVector)> = Vec::new();
+        let mut inferred_items: Vec<((usize, usize, usize, usize), usize)> = Vec::new();
         for rule in self.rules.clone() {
             let ents: Vec<usize> = self.links.iter().filter(|(_, l)| l.contains(&rule.first)).map(|(&e, _)| e).collect();
             for x in ents {
@@ -447,11 +573,16 @@ impl RelationStore {
                     continue;
                 }
                 inferred.push((self.key(&codes[x], rule.relation, 0, 1), x, codes[z].clone()));
+                inferred_items.push(((rule.relation, x, 0, 1), z));
                 self.links.entry(x).or_default().push((rule.relation, 0, 1));
                 self.inferred += 1;
             }
         }
-        self.replay(&inferred, reps, rng);
+        if self.completion {
+            self.replay_completion(codes, &inferred_items, reps, rng);
+        } else {
+            self.replay(&inferred, reps, rng);
+        }
         parsed
     }
 
@@ -541,6 +672,11 @@ impl RelationStore {
     /// The store's answer, as a code, for `entity` through relation `r` from filler
     /// position `from` to `to`.
     pub fn ask_code(&self, codes: &[BitVector], entity: usize, r: usize, from: usize, to: usize) -> Option<BitVector> {
+        if self.completion {
+            // an answer must have read the whole question: a kernel keyed on the entity alone
+            // knows one of its relations, not necessarily this one
+            return self.complete_net.peek_deep(&self.context(codes, entity, r, from, to)?, self.context_need(r, from, to));
+        }
         self.store.peek(&self.key(&codes[entity], r, from, to))
     }
 
@@ -554,7 +690,14 @@ impl RelationStore {
     /// (one-to-many relations: all of a country's cities): the union of what every
     /// matching kernel predicts, read out as the words it holds at least 3/4 of.
     pub fn ask_all(&self, codes: &[BitVector], entity: usize, r: usize, from: usize, to: usize) -> Vec<usize> {
-        let out = self.store.peek_union(&self.key(&codes[entity], r, from, to), self.bits);
+        let out = if self.completion {
+            match self.context(codes, entity, r, from, to) {
+                Some(x) => self.complete_net.peek_union_deep(&x, self.bits, self.context_need(r, from, to)),
+                None => return Vec::new(),
+            }
+        } else {
+            self.store.peek_union(&self.key(&codes[entity], r, from, to), self.bits)
+        };
         (0..codes.len())
             .filter(|&w| {
                 let o: u32 = codes[w].as_words().iter().zip(out.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
@@ -589,7 +732,7 @@ impl RelationStore {
 
     /// (kernels, replays)
     pub fn stats(&self) -> (usize, usize) {
-        (self.store.len(), self.replays)
+        (if self.completion { self.complete_net.len() } else { self.store.len() }, self.replays)
     }
 }
 
@@ -742,8 +885,8 @@ mod tests {
         let gf = s.relation_for(&[2]).unwrap();
         let ggf = s.relation_for(&[3]).unwrap();
         let right = |r: usize, held: &[(usize, usize)]| held.iter().filter(|&&(x, z)| s.ask(&codes, x, r, 0, 1) == Some(z)).count();
-        assert_eq!(right(gf, &held_gf), held_gf.len(), "rules {:?}", s.rules());
-        assert_eq!(right(ggf, &held_ggf), held_ggf.len(), "rules {:?}", s.rules());
+        assert_eq!(right(gf, &held_gf), held_gf.len(), "grandfathers right of held; inferred {}; rules {:?}", s.inferred(), &s.rules()[..s.rules().len().min(4)]);
+        assert_eq!(right(ggf, &held_ggf), held_ggf.len(), "great-grandfathers; inferred {}; rules {:?}", s.inferred(), &s.rules()[..s.rules().len().min(4)]);
         // and plain chains of fathers, as deep as the lines go
         let father = s.relation_for(&[1]).unwrap();
         for depth in 1..gens {
@@ -909,4 +1052,5 @@ mod tests {
         assert_eq!(s.follow(&codes, id("hal"), &[father, father, father, father]), None);
     }
 }
+
 

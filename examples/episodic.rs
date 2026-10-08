@@ -1323,6 +1323,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // only (from an earlier filler to a later one) from each first answer: lucy → jones →
     // the places joneses went.
     rel.lift = std::env::var("REL_LIFT").is_ok();
+    // REL_COMPLETE=1: the relation store answers by fact completion (a kernel class that
+    // completes "tom is a _" from the rest of the fact, one frame per word) instead of a
+    // store keyed by the entity's code rotated by a hashed relation offset
+    rel.completion = std::env::var("REL_COMPLETE").is_ok();
     // trust per source per relation (default; a narrator honest about places can still lie
     // about families). TRUST_TOPIC=0: one trust per source
     rel.set_trust_by_relation(std::env::var("TRUST_TOPIC").map_or(true, |v| v != "0"));

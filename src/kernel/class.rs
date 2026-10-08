@@ -155,6 +155,8 @@ struct PredictiveState {
     sticky_mask: Option<BitVector>,
     /// Credit-guided growth (see `grow`).
     copy_growth: bool,
+    /// Ambiguity-driven growth (see `set_grow_on_ambiguity`).
+    grow_on_ambiguity: bool,
     /// Bad credit releases tags: a tagged bit that was active when its kernel fired and
     /// the target did not contain the bit it copies loses its tag (then prunes normally).
     sticky_blame: bool,
@@ -560,6 +562,7 @@ impl KernelClass<SimpleKernel> {
             sticky_mask: None,
             sticky_blame: false,
             copy_growth: false,
+            grow_on_ambiguity: false,
             trust_floor: None,
             growth_trust: None,
             last_hits: Vec::new(),
@@ -808,6 +811,39 @@ impl KernelClass<SimpleKernel> {
             let c = st.peek_cache.borrow();
             (c.lookups, c.hits)
         })
+    }
+
+    /// As `peek`, among the matching kernels whose context reaches at least `depth` frames
+    /// only (an answer that read the whole question, not part of it).
+    pub fn peek_deep(&self, input: &BitVector, depth: usize) -> Option<BitVector> {
+        let matched = self.matching(input)?;
+        matched
+            .iter()
+            .filter(|&&(k, _)| self.active_kernels[k as usize].context_frames >= depth)
+            .map(|&(k, c)| {
+                let kern = &self.active_kernels[k as usize];
+                ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
+            })
+            .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|(_, k)| self.active_kernels[k].output_vector())
+    }
+
+    /// As `peek_union`, among the matching kernels whose context reaches at least `depth`
+    /// frames only.
+    pub fn peek_union_deep(&self, input: &BitVector, bits: usize, depth: usize) -> BitVector {
+        let mut out = BitVector::new(bits, Some(0));
+        let Some(matched) = self.matching(input) else { return out };
+        for &(k, _) in matched.iter() {
+            let kern = &self.active_kernels[k as usize];
+            if kern.context_frames >= depth {
+                for &b in &kern.output_set {
+                    if (b as usize) < bits {
+                        out.bit_set(b as usize);
+                    }
+                }
+            }
+        }
+        out
     }
 
     /// The union of what every matching kernel predicts for `input` (the column's possible
@@ -1632,6 +1668,16 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Ambiguity-driven growth: when the winner was right but another kernel matching at its
+    /// depth predicted something else, grow a kernel one frame deeper too. Without it a
+    /// deeper kernel grows only on a wrong winner, so two shallow kernels that each are
+    /// right half the time ("ed → bob", "ed → bea": ed's father and mother) can stay tied.
+    pub fn set_grow_on_ambiguity(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.grow_on_ambiguity = on;
+        }
+    }
+
     /// Credit-guided growth: a new kernel samples, in any frame that contains the target's
     /// bits, only those bits (it is born as a copy kernel for the whole word).
     pub fn set_copy_growth(&mut self, on: bool) {
@@ -1752,6 +1798,10 @@ impl KernelClass<SimpleKernel> {
                 misses.push(m);
             }
         }
+        // ambiguity: the winner was right, but another kernel matching at its depth predicted
+        // something else (the context there does not settle the answer)
+        let ambiguous = self.predictive.as_ref().is_some_and(|st| st.grow_on_ambiguity)
+            && winner.is_some_and(|w| misses.iter().any(|&m| m != w && self.active_kernels[m].context_frames == self.active_kernels[w].context_frames));
         if let Some(st) = self.predictive.as_mut() {
             st.last_target_prob = expected.map_or(0, |e| e.1.q16());
             if let Some(f) = st.fast.as_mut() {
@@ -1777,6 +1827,14 @@ impl KernelClass<SimpleKernel> {
         };
         let q = self.predictive.as_ref().map(|st| st.q).unwrap_or_else(|| CfgQ::of(&cfg));
         if (unpredicted as u64) << 16 <= q.surprise as u64 * target_bits as u64 {
+            // right, but by a kernel that disagrees with another at its depth: grow one frame
+            // deeper (see `set_grow_on_ambiguity`), unless a deeper kernel already has it
+            if let (true, Some(w)) = (ambiguous, winner) {
+                let depth = self.active_kernels[w].context_frames;
+                if depth < cfg.max_frames && !depth_has_target[depth + 1] && frame_has_bits(input, depth, cfg.frame_words) {
+                    self.grow(input, target, depth + 1, rng);
+                }
+            }
             return;
         }
 

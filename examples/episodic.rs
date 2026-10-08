@@ -134,6 +134,9 @@ const ROUTE_ROT: usize = 997;
 const HC_CHANNEL: usize = 48;
 /// The slow cortex's source id in the mix (SLOW_CORTEX).
 const SLOW_SRC: u8 = 12;
+/// The cerebellum's source id in the mix and its thalamic channel (LEARNING=three).
+const CB_SRC: u8 = 13;
+const CB_CHANNEL: usize = 49;
 /// Persist: anchor facts only appear in the first anchor_stories() training stories (env).
 fn anchor_stories() -> usize {
     std::env::var("ANCHOR_STORIES").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
@@ -933,6 +936,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let rarity_ratio: Q16 = if std::env::var("RARITY").map_or(false, |v| v == "all") { u32::MAX } else { ONE * 3 / 2 };
     let min_overlap = 8; // floor for the recall threshold
 
+    // LEARNING=three: three learning systems. The column's L2/3 becomes the slow cortex (a
+    // miss grows a kernel only with probability SLOW_P, 1/16, with near-miss generalisation
+    // SLOW_GEN, 0.5); the fast one-shot rule it used moves to a `Cerebellum`, which reads a
+    // copy of the column's input (cortex → pons → mossy fibres) and whose prediction returns
+    // through the thalamus (deep nuclei → thalamus → cortex) as a routed channel before the
+    // cortex predicts (with ROUTE), and votes in the mix. The hippocampus is the third.
+    let three = std::env::var("LEARNING").map_or(false, |v| v == "three");
+    let slow_p: Q16 = q16(std::env::var("SLOW_P").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0 / 16.0));
+    let slow_gen: f32 = std::env::var("SLOW_GEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+    let make_l23 = |generalize: Option<f32>| -> KernelClass<SimpleKernel> {
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
         max_kernels: 100_000,
         frame_words: BITS / 64,
@@ -944,7 +957,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         surprise_fraction: 0.5,
         // GENERALIZE=f: drop silent inputs of near-matching kernels that would have been
         // right (synapse-level credit), after GENERALIZE_AFTER misses; off by default
-        generalize: std::env::var("GENERALIZE").ok().and_then(|v| v.parse().ok()),
+        generalize: generalize.or_else(|| std::env::var("GENERALIZE").ok().and_then(|v| v.parse().ok())),
         generalize_after: std::env::var("GENERALIZE_AFTER").ok().and_then(|v| v.parse().ok()).unwrap_or(1),
     });
 
@@ -990,6 +1003,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let min: u16 = std::env::var("UNC_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
         class.set_growth_gate(Some((k, min)));
     }
+    class
+    };
+    let mut class = make_l23(three.then_some(slow_gen));
+    if three {
+        class.set_growth_probability(Some(slow_p));
+    }
+    let mut cerebellum: Option<neurocomp::program::Cerebellum> = three.then(|| neurocomp::program::Cerebellum::new(BITS, make_l23(None)));
+    let mut cb_rng = StdRng::seed_from_u64(seed.wrapping_add(5151));
+    let mut cb_input: Option<BitVector> = None; // the mossy-fibre input of this step, for learning
+    let mut cb_word: Option<usize> = None;
+    let mut cb_conf: Q16 = 0;
+    let mut cb_stats = [0usize; 2]; // test answers: proposed, right
     // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /
     // confidence / surprise, L6 context (`th`, whose match rules the thalamus gates)
     let mut column = CorticalColumn::new(BITS, class, th);
@@ -1000,7 +1025,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // learned once it recurs, with near-miss generalisation (SLOW_GEN, 0.5), from waking and
     // replay alike (complementary learning systems: the hippocampus fast and detailed, the
     // cortex slow and statistical). It votes in the thalamic mix with its own record.
-    let slow_p: Q16 = q16(std::env::var("SLOW_P").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0 / 16.0));
     let mut slow: Option<KernelClass<SimpleKernel>> = std::env::var("SLOW_CORTEX").is_ok().then(|| {
         let mut c = KernelClass::predictive(GrowthConfig {
             max_kernels: 100_000,
@@ -4114,7 +4138,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 // HC_ROUTE: the recall, decoded by CA1, returns as entorhinal feedback
-                let input = match (hc_route, bind_raw.as_ref().filter(|_| !(testing && bind_lesion)), route_cur.take()) {
+                let input = match (hc_route, bind_raw.as_ref().filter(|_| !(testing && bind_lesion)), route_cur.clone()) {
                     (true, Some(raw), Some((word, mut ch, slots))) => {
                         let ov = |i: usize| enc.codes[i].as_words().iter().zip(raw.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                         let mut cands: Vec<(u32, usize)> = (0..vocab.len()).map(|i| (ov(i), i)).filter(|x| x.0 >= 24).collect();
@@ -4134,14 +4158,43 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let shares: Vec<u64> = ch.iter().map(|(c, _)| if route_noscale { ONE as u64 } else { (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64) }).collect();
                             let row = route_row(&word, &ch, &shares, &route_order, slots, None);
                             if let Some(st) = route_step.as_mut() {
-                                st.1 = ch;
+                                st.1 = ch.clone();
                             }
+                            route_cur = Some((word, ch, slots));
                             hc_routed += 1;
                             BitVector::from_words(row)
                         }
                     }
                     _ => input,
                 };
+                // LEARNING=three: the cerebellum predicts from a copy of the cortex's input, and
+                // its prediction returns through the thalamus as a channel
+                let input = match cerebellum.as_mut() {
+                    Some(cb) => {
+                        let p = cb.predict(&input).clone();
+                        cb_word = enc.decode(&p);
+                        cb_conf = cb.confidence();
+                        cb_input = Some(input.clone());
+                        match (route_on && p.count_ones() > 0, route_cur.take()) {
+                            (true, Some((word, mut ch, slots))) => {
+                                if !route_order.contains(&CB_CHANNEL) {
+                                    route_order.push(CB_CHANNEL);
+                                }
+                                ch.push((CB_CHANNEL, p));
+                                let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                                let shares: Vec<u64> = ch.iter().map(|(c, _)| if route_noscale { ONE as u64 } else { (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64) }).collect();
+                                let row = route_row(&word, &ch, &shares, &route_order, slots, None);
+                                if let Some(st) = route_step.as_mut() {
+                                    st.1 = ch;
+                                }
+                                BitVector::from_words(row)
+                            }
+                            _ => input,
+                        }
+                    }
+                    None => input,
+                };
+                route_cur = None;
                 let mut out = BitVector::new(BITS, Some(0));
                 out.or_mut(column.predict(&input));
                 // the slow cortex's prediction (SLOW_CORTEX)
@@ -4209,6 +4262,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     } else if let Some(w) = own {
                         proposals.push((0, ctx + bucket(column.confidence()), vec![w]));
+                    }
+                    if let (Some(w), true) = (cb_word, cerebellum.is_some()) {
+                        proposals.push((CB_SRC, ctx + bucket(cb_conf), vec![w]));
+                        if testing && t + 1 == s.answer_at {
+                            cb_stats[0] += 1;
+                            cb_stats[1] += (w == next) as usize;
+                        }
                     }
                     if let (Some(w), true) = (slow_word, slow.is_some()) {
                         proposals.push((SLOW_SRC, ctx + bucket(slow_conf), vec![w]));
@@ -4809,6 +4869,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if let Some(sc) = slow.as_mut() {
                             sc.feedback(&input, &enc.codes[next], &mut slow_rng);
                         }
+                        // the climbing fibre: the cerebellum learns what came next, fast
+                        if let (Some(cb), Some(x)) = (cerebellum.as_mut(), cb_input.take()) {
+                            cb.learn(&x, &enc.codes[next], &mut cb_rng);
+                        }
                     }
                     // the top-down go/no-go's reward (HIER_SURPRISE=learned): consulting is worth
                     // what the frame changed, against the column's own prediction without it
@@ -5322,6 +5386,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             } else {
                 eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
             }
+        }
+        if let Some(cb) = cerebellum.as_ref() {
+            eprintln!("  LEARNING seed {seed}: slow cortex {} kernels, cerebellum {} kernels; at test answers the cerebellum proposed a word at {} and was right at {} ({:.1}%)", column.l23.live(), cb.live(), cb_stats[0], cb_stats[1], 100.0 * cb_stats[1] as f64 / cb_stats[0].max(1) as f64);
         }
         if let Some(sc) = slow.as_ref() {
             eprintln!("  SLOWCORTEX seed {seed}: {} kernels (the column {}); at test answers it proposed a word at {} and was right at {} ({:.1}%)", sc.live(), column.l23.live(), slow_stats[0], slow_stats[1], 100.0 * slow_stats[1] as f64 / slow_stats[0].max(1) as f64);
@@ -6399,6 +6466,7 @@ fn route_extra_slots() -> usize {
         if std::env::var("ROUTE").is_err() {
             return 0;
         }
-        std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(std::env::var("HC_ROUTE").is_ok() as usize)
+        let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(false, |v| v == "three") as usize;
+        std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     })
 }

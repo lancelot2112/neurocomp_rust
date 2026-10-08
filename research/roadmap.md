@@ -237,7 +237,7 @@ slot codes bound to content in the hippocampus, recalled by slot.
   (integer bookkeeping over claims) are discrete algorithms over word ids. To make them the
   network's own representations:
   1. **frames from code overlap:** induce frames from the overlap of sentence codes, with
-     the role area's slot cells ([31](experiments/31-role-transfer.md)) marking which
+     the role area's slot cells ([31](experiments/31-role-cells-and-transfer.md)) marking which
      positions vary, instead of neighbour counting; a relation is then a learned cell;
   2. binding offsets from that cell's code instead of a hash;
   3. claims and trust in bit-sliced counters (as the basal ganglia hold values), so belief

@@ -1548,6 +1548,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // states, rewarded by the information each answer brought
     let ask_random = std::env::var("ASK_POLICY").map_or(false, |v| v == "random");
     let ask_learned = std::env::var("ASK_POLICY").map_or(false, |v| v == "learned");
+    // HC_SURPRISE=1: within a sentence the hippocampus's recall (CA3's settled state) is
+    // reused while the column needs no help: a surprising word (or a sentence's first), or a
+    // column unsure of the next word (its own prediction, without memory or top-down, under
+    // half reliable), recalls again. HIER_SURPRISE=1: the higher areas predict and learn only
+    // then too; otherwise they send an empty top-down frame (a stale one, computed for another
+    // next word, misleads: gating on the last word's surprise alone lost the answers, which
+    // follow predictable words: "X went to the _").
+    let hc_surprise = std::env::var("HC_SURPRISE").is_ok();
+    let hier_surprise = std::env::var("HIER_SURPRISE").is_ok();
+    let mut step_surprised = true;
+    let mut hc_cached: Option<neurocomp::program::Recall> = None;
+    let mut step_needs_help = true;
+    let mut gated_steps = [0usize; 4]; // (recalls reused, recalls made, area steps reused, area steps run)
     let ask_rounds: usize = std::env::var("ASK_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     // =cost: the network's own policy with a cost. Each question uses energy, the compute its
     // answer took to weigh (relation-store replays, per COST_UNIT replays a full reserve),
@@ -2747,6 +2760,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 first_surprise = to_f32(ONE - share); // report
             }
             sent_surprise += to_f32(ONE - share); // report
+            step_surprised = share < predicted_share || sent_words == 0;
             sent_words += 1;
             if share < predicted_share {
                 surprising.or_mut(code);
@@ -3305,19 +3319,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     x
                 };
+                // does the column need help with the next word? (HC_SURPRISE, HIER_SURPRISE)
+                if hc_surprise || hier_surprise {
+                    let empty = BitVector::new(BITS, Some(0));
+                    let sure = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid])).is_some_and(|(_, c)| c >= Q_HALF);
+                    step_needs_help = step_surprised || !sure;
+                }
                 if hier {
                     // the chain, top down: each upper area predicts from its window and the
                     // prediction of the area above it
+                    let hier_skip = hier_surprise && !step_needs_help;
+                    gated_steps[2 + !hier_skip as usize] += hier_surprise as usize;
                     let mut above: Option<BitVector> = None;
                     for i in (0..upper.len()).rev() {
                         let hin_u = upper[i].input_with(&sentence_plus, &surprising, if chain_mix { None } else { above.as_ref() });
-                        let p = upper[i].predict(&hin_u);
+                        let p = if hier_skip { BitVector::new(BITS, Some(0)) } else { upper[i].predict(&hin_u) };
                         upper_pred[i] = (p.count_ones() > 0).then(|| p.clone());
                         if testing && t + 1 == s.answer_at {
                             upper_has_answer[i] += (p.as_words().iter().zip(enc.codes[ids[t + 1]].as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24) as usize;
                         }
                         above = Some(p);
-                        upper_in[i] = Some(hin_u);
+                        upper_in[i] = (!hier_skip).then_some(hin_u);
                     }
                     let hin = if let Some(mode) = role_mode.as_deref() {
                         // the column's expectation for the next slot (peek: no top-down, no state)
@@ -3333,7 +3355,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     } else {
                         area.input_with(&sentence_plus, &surprising, if chain_mix { None } else { above.as_ref() })
                     };
-                    let td = area.predict(&hin);
+                    let td = if hier_skip { BitVector::new(BITS, Some(0)) } else { area.predict(&hin) };
                     if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
                         let names = |bv: &BitVector| -> Vec<&str> {
                             (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
@@ -3374,7 +3396,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     } else {
                         words.extend_from_slice(frame.as_words());
                     }
-                    hier_in = Some(hin);
+                    hier_in = (!hier_skip).then_some(hin);
                 }
                 words.extend_from_slice(column.previous().as_words()); // L6: the previous input
                 if testing && t + 1 == s.answer_at {
@@ -3431,7 +3453,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // the full circuit: the story's bindings so far are the cue (on its
                             // own: this sentence's bindings with the story so far as context)
                             let cue = if hippo_self { event_vec(&bind_sentence, &bind_prev, ctx_offset) } else { cue };
-                            let r = if sparse_bind {
+                            let reuse = hc_surprise && !step_needs_help && hc_cached.is_some();
+                            let r = if reuse {
+                                gated_steps[0] += 1;
+                                hc_cached.clone().unwrap_or_default()
+                            } else if sparse_bind {
                                 // the sparse cue: this sentence's bindings, and the story's earlier ones as context
                                 let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
                                 let mut idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
@@ -3486,6 +3512,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             } else {
                                 hc.recall(&set_bits(&cue))
                             };
+                            if hc_surprise && !reuse {
+                                gated_steps[1] += 1;
+                                hc_cached = Some(r.clone());
+                            }
                             if testing && !reciting && t + 1 == s.answer_at {
                                 if let Some(src) = r.ca3.last().and_then(|&row| hc.row_source(row as u32)) {
                                     source_stats[(src > 0) as usize] += 1;
@@ -5350,6 +5380,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             NEW_NAMES.iter().zip(belief_names).map(|(n, x)| format!("{n} {:.0}%", pc(x))).collect::<Vec<_>>().join(", "),
             pc(belief_tally[1]),
             belief_tally[1].1
+        );
+    }
+    if hc_surprise || hier_surprise {
+        eprintln!(
+            "  GATED seed {seed}: hippocampal recalls reused {} of {}; higher-area steps reused {} of {}",
+            gated_steps[0],
+            gated_steps[0] + gated_steps[1],
+            gated_steps[2],
+            gated_steps[2] + gated_steps[3]
         );
     }
     if dump.is_none() {

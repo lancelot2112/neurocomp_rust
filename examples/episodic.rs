@@ -1740,6 +1740,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // uncertainty). Memory's word no longer votes in the thalamic mix, and the rollout no
     // longer inserts it as the next input or feeds its readout back.
     let hc_ec = !route_on && std::env::var("HC_EC").is_ok();
+    // INNER_SLOT=1 (with COMPLETE=speech*, without ROUTE): inner speech is heard through its
+    // own input, a slot of the column's row (as auditory cortex beside the visual word), not
+    // in the page word's slot: at an inner step the word slot is empty and the said vector
+    // is in the heard slot, so the column learns separately how far to go by its own speech.
+    let inner_slot = !route_on && std::env::var("INNER_SLOT").is_ok();
     let mut hc_ec_stats = [0u64; 3]; // steps with feedback, Σ share passed (Q16), test steps with feedback
     let mut route_cur: Option<(BitVector, Vec<(usize, BitVector)>, usize)> = None; // this step's row parts
     // The record (default): each training step, for every slot, the column's prediction
@@ -3261,7 +3266,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             prof[5] += prof_t.elapsed().as_secs_f64();
             prof_t = std::time::Instant::now();
             if t + 1 < ids.len() {
-                let mut words = code.as_words().to_vec();
+                // INNER_SLOT: an inner step has no page word; what was said arrives in the
+                // heard slot instead
+                let mut words = if inner_slot && inner[t] { vec![0u64; BITS / 64] } else { code.as_words().to_vec() };
                 match policy {
                     // (with HIER the top-down frame takes the empty frame's place: growth
                     // deepens one frame at a time and would stop at an always-empty frame)
@@ -3766,6 +3773,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(frame.as_words());
                     }
                     hier_in = (!hier_skip).then_some(hin);
+                }
+                if inner_slot {
+                    // the heard slot (auditory input, the phonological store): one's own speech
+                    // at an inner step, else silence
+                    if inner[t] {
+                        words.extend_from_slice(code.as_words());
+                    } else {
+                        words.extend(std::iter::repeat(0).take(BITS / 64));
+                    }
                 }
                 if hc_ec {
                     // the entorhinal feedback slot, filled once the hippocampus has recalled
@@ -6643,8 +6659,8 @@ fn route_extra_slots() -> usize {
     static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *N.get_or_init(|| {
         if std::env::var("ROUTE").is_err() {
-            // HC_EC: the entorhinal feedback slot
-            return std::env::var("HC_EC").is_ok() as usize;
+            // HC_EC: the entorhinal feedback slot; INNER_SLOT: the heard slot
+            return std::env::var("HC_EC").is_ok() as usize + std::env::var("INNER_SLOT").is_ok() as usize;
         }
         let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(false, |v| v == "three") as usize;
         std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(default)

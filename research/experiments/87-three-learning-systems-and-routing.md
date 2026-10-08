@@ -78,6 +78,48 @@ engram walk 69.4 / 59.0 → 61.2 / 54.8.
 5. None becomes a default. With five seeds, effects of 5+ points on these entries are now
    readable; per-seed spreads are still wide (cooperate 11–53% under three systems).
 
+## Addendum: recall at test repaired (five seeds)
+
+The diagnosis of the collapse (task 27) found that consolidation itself worked (replay
+reached the semantic store and the higher area) but recall at test did not: the rollout read
+the slow L2/3 alone, whose expectation was nearly always empty, so it never started (0
+completions). Two fixes: the rollout reads the integrated expectation (the slow cortex's and
+the cerebellum's candidates), and recall starts where the page contradicts the integrated
+**winning** prediction, the union of candidates only filtering what may be offered
+(commits 4b29863, 850fa0d). `LEARNING=three SLOW_P=0.25`, five seeds, held-out:
+
+| Entry | Recorded | Three, before | Three, recall fixed |
+|---|---|---|---|
+| story boundary / saccades | 94.8 / 96.4 | 98.4 / 98.0 | 98.4 / 98.0 |
+| role transfer | 67.2 | 73.4 | 73.4 |
+| schema advantage | 61.3 | 69.8 | **74.3** |
+| learned stepping | 54.5 | 64.4 | 50.1 |
+| superposed evidence | 57.2 | 65.2 | 54.1 |
+| engram walk | 66.8 | 76.2 | 43.2 |
+| slot memory | 19.3 | 10.6 | 11.5 |
+| family stated / consolidated | 38.0 / 52.0 | 23.1 / 20.2 | 41.2 / 40.6 |
+| semantic store | 63.1 | 17.9 | 36.4 |
+| full hippocampus | 38.0 | 37.2 | 36.2 |
+| hippocampus teaches cortex | 60.9 | 18.1 | 44.8 |
+| index hippocampus | 66.0 | 18.2 | 31.4 |
+| engram store | 67.4 | 22.0 | 39.0 |
+| engram walk only | 87.0 | 73.8 | 84.6 |
+| inference replay / read | 59.4 / 45.6 | 38.2 / 22.8 | 52.2 / 23.6 |
+| cooperate | 54.0 | 35.6 | 43.2 |
+| relations / speak / motor speech | 62.8 / 63.1 / 62.9 | 62.6–62.9 | 60.0 / 59.8 / 60.2 |
+| belief decides | 82.4 | 82.1 | **85.2** |
+
+- **The consolidation entries recover about half their loss** (family consolidated 20 → 41,
+  hippocampus teaches cortex 18 → 45, engram store 22 → 39), still 10–35 points under the
+  default. The slow cortex stays small (66–80 kernels; 0% alone at test), so the facts come
+  back through the cerebellum and memory, not the cortex: consolidation proper is still
+  missing.
+- **Recall that fires everywhere costs the context entries.** Under three systems the
+  integrated winner is definite at most steps, so the rollout inserts 5,000–6,000 words per
+  test (none before the fix), and learned stepping (−14), superposed evidence
+  (−11) and the engram walk (−33) lose what they gained when recall was silent. The trigger,
+  a hand-written rule, is the problem; the next step replaces it (experiment 88, inner speech).
+
 ## Next
 - Consolidation for the slow cortex: more replay, interleaved, and replay that runs through
   the cerebellum-to-cortex path (the fast learner teaching the slow one), measured on the

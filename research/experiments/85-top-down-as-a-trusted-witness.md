@@ -67,8 +67,74 @@ Saccades, role transfer, inference read, engram walk and belief are within 4 poi
    [83](83-compute-only-where-needed.md), kept by the thalamus per context rather than
    learned by a go/no-go.
 
+## Addendum: trust in the frame's use, and scaled frames
+
+**Code.** `HIER_TRUST_GATE=cf`:
+- **The record.** On every training step the column's prediction with the full frame and
+  with none are compared (one extra look-up). Where they differ, the thalamus records a fix
+  (right only with the frame) or a break (right only without), per (previous word, current
+  word, the area's confidence band). Steps where the frame made no difference are not
+  evidence.
+- **Scaling, not switching.** The frame enters L4 as a fixed subset of its bits (by a hash
+  of the bit position, so the column sees a consistent partial frame), the share
+  2 × (fixes + 1) / (fixes + breaks + 2) up to all of it. With no record it passes whole, and
+  it weakens only where breaks outnumber fixes. The record is always taken on the full
+  frame, so a weakened frame can earn its way back.
+- The area predicts, learns and votes every step, as before. `TRUSTGATE` report: mean share
+  passed and steps scaled down. `HIER_CF_NOSCALE=1` keeps the look-ups and records but
+  passes every frame whole (a control).
+
+Also tried, `HIER_UP=surprise`: **only surprisal goes up.** The higher area's sentence frame
+holds only the sentence's surprising words and the current word, not the words the column
+predicted (its slow state already held only surprising words, and it already learned only
+on the column's misses).
+
+**Results.**
+
+Only surprisal up (seed 0, held-out, against ungated): slot memory 19.4 → 78.6, every other
+probe lower: motor speech 64.8 → 46.6, belief 83.4 → 62.4, inference replay 62.2 → 43.2,
+cooperation 60.4 → 47.0, story boundary 98.4 → 86.4.
+
+The counterfactual gate, three-seed suite (held-out, recorded → gated): the frame is
+scaled down on few steps on most entries (mean share passed 99.9%; hippocampus teaches
+cortex, seed 0: 175 training steps and 4 test steps), and heavily on the context tasks
+(mean share 65–88%: story boundary, saccades, role transfer, sleep generalisation).
+
+| Entry | Recorded | Gated |
+|---|---|---|
+| story boundary, saccades | 94.1, 96.6 | 94.7, 96.5 |
+| role transfer, sleep generalisation | 60.6, 74.5 | 60.7, 73.8 |
+| relations, speak, motor speech | 63.5 | **67.3** |
+| slot memory | 16.3 | **28.3** |
+| inference replay, inference read | 53.4, 44.2 | **59.5, 52.9** |
+| family stated | 38.1 | **45.0** |
+| belief decides, cooperate, engram walk only | 81.7, 56.8, 84.0 | 80.4, 58.9, 85.3 |
+| hippocampus teaches cortex, index hippocampus | 61.9, 66.3 | **53.0, 57.5** |
+| full hippocampus, schema advantage | 41.4, 65.7 | **35.5, 58.3** |
+
+The control: with the same look-ups and records but nothing scaled
+(`HIER_CF_NOSCALE=1`), hippocampus teaches cortex (seed 0) is identical to the ungated run
+(60.6 / 67.4%); with 175 training steps scaled, it is 66.0 / 45.0%.
+
+**Findings.**
+1. **Trust in the frame's use is the right measure; trust in its word was not.** Judged by
+   whether it changes the column's prediction for the better, the frame is rarely harmful:
+   it passes whole almost everywhere, and the context tasks, where it is scaled to 65–88%,
+   stay at parity (unlike 85's witness gate, which passed a quarter of frames).
+2. **Small interventions move single runs a lot.** Scaling the frame at 0.2% of training
+   steps moved one seed by 22 points: kernel growth is path-dependent, so any change early
+   in training reshapes what is learned after it. The gated suite's gains (relation entries
+   +4, slot memory +12, inference +6–9) and losses (hippocampus entries −6 to −9) are of
+   the size this alone can produce on three seeds. The gate is roughly neutral; telling
+   small real effects from this needs more seeds (or paired comparisons over many).
+3. **The area needs the predicted words too.** Sending up only surprisal helps where the
+   area's frame was noise (slot memory) and costs 12–21 points elsewhere. What the column
+   predicted still says what the sentence is about; the area's slow state and its learning
+   target are already surprisal-only, and that part stays.
+4. Neither becomes a default.
+
 ## Next
-- Gate the frame by its counterfactual record (prediction with the frame against without
-  it, one extra look-up) per context, keeping the area learning on every step.
-- Scale rather than switch: pass part of the frame (a sampled share of its bits) in
-  proportion to trust, so the column still sees a weaker frame where trust is low.
+- More seeds for decisions near the noise: the regression suite at 3 seeds cannot separate
+  ±5-point effects on the memory entries.
+- Learned input routing (roadmap, section 2): every source a relay bound to its source and
+  scaled by this counterfactual record, instead of fixed slots.

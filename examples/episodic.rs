@@ -1615,6 +1615,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // taken on the full frame, so a weakened frame can earn its way back.
     let hier_trust_gate = std::env::var("HIER_TRUST_GATE").ok();
     let hier_up_surprise = std::env::var("HIER_UP").map_or(false, |v| v == "surprise");
+    let mut cf_scaled = [0usize; 2]; // steps whose frame was scaled down
     let mut cf_share_sum = [0u64; 2]; // Σ share passed (Q16), training and test
     let mut td_full: Option<BitVector> = None; // this step's unscaled top-down frame (cf)
     let mut trust_passed = [[0usize; 2]; 2]; // (training, test) × (withheld, passed)
@@ -3549,6 +3550,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let key = (p * (vocab.len() + 1) + ids[t]) as u64 * 64;
                             let bucket = |c: Q16| CONF_BANDS.iter().filter(|&&e| c >= e).count() as u64;
                             let share = (2 * mix.rate(TRUST_CF, key + bucket(area.column.confidence())) as u64).min(ONE as u64);
+                            let share = if std::env::var("HIER_CF_NOSCALE").is_ok() { ONE as u64 } else { share };
+                            cf_scaled[testing as usize] += (share < ONE as u64) as usize;
                             cf_share_sum[testing as usize] += share;
                             trust_passed[testing as usize][1] += 1;
                             td_full = (!testing).then(|| td.clone());
@@ -5086,7 +5089,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             let share = |a: [usize; 2]| 100.0 * a[1] as f64 / (a[0] + a[1]).max(1) as f64;
             if hier_trust_gate.as_deref() == Some("cf") {
                 let mean = |i: usize| 100.0 * cf_share_sum[i] as f64 / (trust_passed[i][1].max(1) as f64 * ONE as f64);
-                eprintln!("  TRUSTGATE seed {seed}: mean share of the top-down frame passed {:.0}% in training, {:.0}% at test", mean(0), mean(1));
+                eprintln!("  TRUSTGATE seed {seed}: mean share of the top-down frame passed {:.1}% in training, {:.1}% at test; scaled down at {} training and {} test steps", mean(0), mean(1), cf_scaled[0], cf_scaled[1]);
             } else {
                 eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
             }

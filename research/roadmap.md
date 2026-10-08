@@ -133,6 +133,49 @@ held-out ones on the memory entries (a fast learner memorises).
 **Test.** Held-out (new names) at least as good as now, seen pairs no better than held-out
 by much; the suite at parity; smaller spread across seeds.
 
+### A workspace and a brake (proposed)
+**Why.** Most arbitration between the systems is unconscious and goes by reliability,
+which the thalamic mix already does. What is missing is what the brain adds when that
+arbitration is uncertain, conflicted or wrong:
+- **No shared picture.** Each module keeps its own state; no single winning interpretation
+  is broadcast back to all of them as the context they share and learn from.
+- **No salience filter.** Routing gains turn down unhelpful channels, but nothing decides
+  what deserves the whole network's attention.
+- **No brake.** Speech has an efference copy, so the network notices its own words, but
+  nothing cancels an answer already under way when a conflict is detected.
+
+This may also bear on the crutch problem ([connection audit](concepts/connection-plausibility.md#coupling-who-learns-from-which-error)):
+a recalled answer that is broadcast becomes what every system learns from, instead of
+silently removing the surprise that would have taught them.
+
+**Build.**
+- **Ignition.** When the mix's evidence for one interpretation clears a threshold (learned
+  per context, as the answer-or-unknown go/no-go is), it is broadcast as one shared frame
+  to the column, the higher areas, the hippocampus's cue and the basal ganglia, and held
+  for a few words. Below it, nothing is broadcast and the systems run on their own.
+- **Salience.** What may ignite is gated by surprise and by the record of each source
+  (the routing shares), so frequent, predicted content never takes the workspace.
+- **Brake.** When the sources disagree strongly, or the efference copy shows a mismatch, a
+  stop (learned like the go/no-go, but fast) cancels the answer being spoken; the network
+  says "unknown" or re-reads instead.
+- **Gain.** Expected uncertainty (acetylcholine-like) and unexpected change
+  (noradrenaline-like) scale the learning rate and the channels' shares, instead of fixed
+  constants.
+
+**Brain.** The global workspace: prefrontal and parietal networks with long-range links
+and thalamic coordination, whose sudden sustained "ignition" correlates with conscious
+access (Baars 1988; Dehaene & Changeux 2011). The salience network (anterior insula,
+dorsal anterior cingulate) and the thalamic reticular nucleus select and suppress.
+Prefrontal cortex holds the goal and biases every area toward it (Miller & Cohen 2001).
+The stop circuit, right inferior frontal gyrus to the subthalamic nucleus (the basal
+ganglia's hyperdirect pathway), halts an action under way within about 200 ms, triggered
+by conflict signals from the anterior cingulate (Aron et al. 2014; Botvinick et al. 2001).
+Neuromodulators set gain and learning rate (Yu & Dayan 2005).
+
+**Test.** Fewer confident errors (answers given and wrong); the crutch effect smaller
+(an entry trained with the hippocampus routed in, tested with it lesioned); held-out
+accuracy at least as good; the brake's stops mostly on answers that would have been wrong.
+
 ## 3. Thinking in steps
 **Why.** Two-hop chains one recall into another, but the chain is fixed by hand. Reasoning
 is a sequence of internal steps whose number depends on the question.

@@ -52,6 +52,14 @@ is believed: the lead over the runner-up is what tells a conflict trust settles 
 it cannot. With it, graded belief abstains as well as the posterior; full and vote learn
 that every conflict looks the same to them and abstain on all of them.
 
+## Curiosity ([81](../experiments/81-curiosity.md))
+`Curiosity` holds the open questions and learns, per state of uncertainty, how much a
+search there gains (the rise in the answer's lead: the intrinsic reward, as dopamine
+signals the value of information). The network can rank questions by it, or pick them by
+its own basal-ganglia policy with no ranking rule. Asking a teacher (a source like any
+other) settles what "unknown" left open; asking also teaches who errs, which moves trust
+beyond the question asked.
+
 ## What is still missing
 - Proposals and the network's own claims as sources with earned trust (premise credibility
   already comes from belief: [76](../experiments/76-belief-rules.md)).
@@ -63,4 +71,5 @@ that every conflict looks the same to them and abstain on all of them.
   next: the threshold learned as a go/no-go, and an "unknown" prompting a search for
   evidence.
 - Deciding a source from content when the tag is lost (reality monitoring proper).
-- Curiosity acting: open proposals steering replay and attention.
+- Curiosity acting beyond asking: open questions steering replay and attention
+  ([81](../experiments/81-curiosity.md) asks a teacher).

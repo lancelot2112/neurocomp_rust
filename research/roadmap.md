@@ -209,6 +209,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
     ([79](experiments/79-unknown-when-belief-is-split.md)).
   - answer or "unknown" learned as a basal-ganglia go/no-go from practice quizzes, per
     belief × lead over the runner-up ([80](experiments/80-learned-answer-or-unknown.md)).
+  - curiosity: open questions ranked by value of information, or picked by the network's
+    own basal-ganglia policy rewarded by the information gained; asking a teacher settles
+    the undecidable name ([81](experiments/81-curiosity.md)).
 - **Next:**
   1. ~~independent random streams per subsystem~~ (done, see Infrastructure);
   2. ~~a task where the believed fact decides the answer~~ (done, [78](experiments/78-belief-decides-the-answer.md));
@@ -221,7 +224,10 @@ slot codes bound to content in the hippocampus, recalled by slot.
   6. ~~learn the answer-or-abstain threshold as a go/no-go~~ (done: from practice, per
      belief × lead; graded and posterior answer tom and lucy and abstain on sam,
      [80](experiments/80-learned-answer-or-unknown.md));
-  7. seek evidence on an "unknown": a curiosity module (in progress);
+  7. ~~seek evidence on an "unknown": a curiosity module~~ (built: asking a teacher,
+     by a fixed ranking or the network's own learned policy; a question asked is settled,
+     [81](experiments/81-curiosity.md)); next: more experience for the learned policy, a
+     go/no-go that generalises to unpractised states, replay and attention as searches;
   8. frames that survive a lopsided filler (found in 80).
 
 ## 5. A third level and a slower clock

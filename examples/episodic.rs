@@ -125,6 +125,11 @@ const TRUST_AREA: u8 = 40;
 const TRUST_COLUMN: u8 = 41;
 /// The frame's counterfactual record (HIER_TRUST_GATE=cf).
 const TRUST_CF: u8 = 42;
+/// The routing records (ROUTE): channel c's counterfactual record is source ROUTE_SRC + c.
+const ROUTE_SRC: u8 = 100;
+/// The burst code's rotation (HIER_UP=both) and the per-source binding step (ROUTE).
+const BURST_ROT: usize = 4099;
+const ROUTE_ROT: usize = 997;
 /// Persist: anchor facts only appear in the first anchor_stories() training stories (env).
 fn anchor_stories() -> usize {
     std::env::var("ANCHOR_STORIES").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
@@ -1615,6 +1620,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // taken on the full frame, so a weakened frame can earn its way back.
     let hier_trust_gate = std::env::var("HIER_TRUST_GATE").ok();
     let hier_up_surprise = std::env::var("HIER_UP").map_or(false, |v| v == "surprise");
+    // HIER_UP=both: predicted and unpredicted words both go up, told apart. The sentence
+    // frame holds the predicted words as they are and the surprising ones as a burst code
+    // (the same word, rotated), as a burst on a pyramidal cell carries more than a single
+    // spike does
+    let hier_up_both = std::env::var("HIER_UP").map_or(false, |v| v == "both");
+    // ROUTE=1: learned input routing. The column's L4 row is no longer laid out by hand.
+    // The current word drives slot 0; every other frame of the row (memory, relays, the
+    // top-down frame, the previous input) and each promoted higher area's prediction is a
+    // channel. Each channel is bound to its source (rotated by a fixed per-source offset),
+    // passes a share of its bits set by its counterfactual record (as HIER_TRUST_GATE=cf),
+    // and is placed in a slot by the thalamus: every ROUTE_EVERY (250) training stories the
+    // channels are ranked by fixes − breaks, the most useful first (kernels read slots in
+    // order). The row keeps its width: channels beyond its slots are ORed into the last one.
+    // The record: each training step one channel in turn is removed (one extra look-up).
+    let route_on = std::env::var("ROUTE").is_ok();
+    let route_every: usize = std::env::var("ROUTE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(250);
+    let mut route_order: Vec<usize> = Vec::new(); // channel ids, best slot first
+    let mut route_score: HashMap<usize, (u64, u64)> = HashMap::default(); // (fixes, breaks) per channel
+    let mut route_step: Option<(BitVector, Vec<(usize, BitVector)>, usize)> = None; // (word, channels, slots)
+    let mut route_turn = 0usize;
+    let mut route_log: Vec<String> = Vec::new();
     let mut cf_scaled = [0usize; 2]; // steps whose frame was scaled down
     let mut cf_share_sum = [0u64; 2]; // Σ share passed (Q16), training and test
     let mut td_full: Option<BitVector> = None; // this step's unscaled top-down frame (cf)
@@ -2756,6 +2782,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 hc.end_sequence();
             }
         }
+        // ROUTE: the thalamus re-ranks the channels into slots, most useful first
+        if route_on && !testing && !replaying && s_i > 0 && s_i % route_every == 0 && !route_order.is_empty() {
+            let score = |c: &usize| route_score.get(c).map_or(0i64, |&(f, b)| f as i64 - b as i64);
+            let before = route_order.clone();
+            // with hysteresis: a channel moves up past its neighbour only when its net help
+            // is more than twice the neighbour's (a swap moves every kernel's reading)
+            for _ in 0..route_order.len() {
+                for i in 0..route_order.len().saturating_sub(1) {
+                    let (a, b) = (score(&route_order[i]), score(&route_order[i + 1]));
+                    if b > 0 && b > 2 * a.max(0) {
+                        route_order.swap(i, i + 1);
+                    }
+                }
+            }
+            if route_order != before {
+                route_log.push(format!("story {s_i}: {:?}", route_order.iter().map(|c| (*c, score(c))).collect::<Vec<_>>()));
+            }
+        }
         // HIER_GROW: promote, prune or keep the bud
         if hier && bud_live && !testing && !replaying && s_i > 0 && s_i % grow_every == 0 {
             let (fixes, breaks) = bud_tally;
@@ -2942,7 +2986,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // the column's own confidence about the next word (peek, no top-down)
                 let peek_l4 = (sacc_conf || sacc_cortex).then(|| {
                     let empty = BitVector::new(BITS, Some(0));
-                    column.assemble(code, &vec![empty; l4_mid])
+                    l4_row(&column, code, &vec![empty; l4_mid], route_on.then_some(&route_order[..]))
                 });
                 let bucket = match (sacc_conf || sacc_cortex, peek_l4.as_ref().and_then(|x| column.l23.peek_scored(x))) {
                     (false, _) => 0,
@@ -3048,7 +3092,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 u.note_word(c);
                             }
                         }
-                        let l4 = column.assemble(c, &mids);
+                        let l4 = l4_row(&column, c, &mids, route_on.then_some(&route_order[..]));
                         column.predict(&l4);
                     }
                     area.end_sentence(&re_surprising);
@@ -3376,12 +3420,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let mut x = surprising.clone();
                         x.or_mut(code);
                         x
+                    } else if hier_up_both {
+                        let mut quiet = surprising.clone();
+                        quiet.not_mut();
+                        quiet.and_mut(&sentence);
+                        let mut burst = surprising.clone();
+                        burst.rotl_mut(BURST_ROT);
+                        quiet.or_mut(&burst);
+                        quiet
                     } else {
                         sentence.clone()
                     };
                     if cooperate || graded_enrich || sparse_hc {
                         let empty = BitVector::new(BITS, Some(0));
-                        let own = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid]));
+                        let own = column.l23.peek_scored(&l4_row(&column, code, &vec![empty; l4_mid], route_on.then_some(&route_order[..])));
                         let conf = own.map_or(0, |(_, c)| c);
                         own_conf_step = conf;
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
@@ -3453,7 +3505,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // does the column need help with the next word? (HC_SURPRISE, HIER_SURPRISE)
                 if hc_surprise || hier_surprise || hier_learned {
                     let empty = BitVector::new(BITS, Some(0));
-                    let own = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid])).map_or(0, |(_, c)| c);
+                    let own = column.l23.peek_scored(&l4_row(&column, code, &vec![empty; l4_mid], route_on.then_some(&route_order[..]))).map_or(0, |(_, c)| c);
                     step_needs_help = step_surprised || own < Q_HALF;
                     if hier_learned && hier {
                         let band = CONF_BANDS.iter().filter(|&&e| own >= e).count();
@@ -3498,7 +3550,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let hin = if let Some(mode) = role_mode.as_deref() {
                         // the column's expectation for the next slot (peek: no top-down, no state)
                         let empty = BitVector::new(BITS, Some(0));
-                        let expect = column.l23.peek_union(&column.assemble(code, &vec![empty.clone(); l4_mid]), BITS);
+                        let expect = column.l23.peek_union(&l4_row(&column, code, &vec![empty.clone(); l4_mid], route_on.then_some(&route_order[..])), BITS);
                         let lead = if mode == "raw" {
                             expect
                         } else {
@@ -3632,6 +3684,35 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // PROF: [0] L4 assembly: recall, relays, gates
                 prof[0] += prof_t.elapsed().as_secs_f64();
                 prof_t = std::time::Instant::now();
+                let words = if route_on && t + 1 < ids.len() {
+                    let fw = BITS / 64;
+                    let nf = words.len() / fw;
+                    let word = BitVector::from_words(words[..fw].to_vec());
+                    // channels: the hand row's frames 1.. (their index is their source), then
+                    // each promoted higher area (not the bud)
+                    let mut ch: Vec<(usize, BitVector)> = (1..nf).map(|f| (f, BitVector::from_words(words[f * fw..(f + 1) * fw].to_vec()))).collect();
+                    for (i, p) in upper_pred.iter().enumerate() {
+                        if bud_live && i + 1 == upper.len() {
+                            continue;
+                        }
+                        if let Some(p) = p {
+                            ch.push((32 + i, p.clone()));
+                        }
+                    }
+                    for (c, _) in &ch {
+                        if !route_order.contains(c) {
+                            route_order.push(*c);
+                        }
+                    }
+                    let slots = nf - 1;
+                    let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                    let shares: Vec<u64> = ch.iter().map(|(c, _)| (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64)).collect();
+                    let row = route_row(&word, &ch, &shares, &route_order, slots, None);
+                    route_step = (!testing && !inner[t + 1]).then(|| (word, ch, slots));
+                    row
+                } else {
+                    words
+                };
                 let input = BitVector::from_words(words);
                 l4_mid = (input.as_words().len() / (BITS / 64)).saturating_sub(2);
                 if bind && !(testing && bind_lesion) {
@@ -4628,6 +4709,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // what the frame changed, against the column's own prediction without it
                     // (one look-up): right where it would be wrong 1, wrong where it would be
                     // right 0, no difference one half less the compute; skipping, one half
+                    // the routing record (ROUTE): one channel in turn, passed whole against removed
+                    if let Some((word, ch, slots)) = route_step.take() {
+                        if page && !ch.is_empty() {
+                            let j = route_turn % ch.len();
+                            route_turn += 1;
+                            let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                            let mut shares: Vec<u64> = ch.iter().map(|(c, _)| (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64)).collect();
+                            shares[j] = ONE as u64;
+                            let right = |skip: Option<usize>| {
+                                let row = route_row(&word, &ch, &shares, &route_order, slots, skip);
+                                column.l23.peek(&BitVector::from_words(row)).and_then(|o| enc.decode(&o)) == Some(next)
+                            };
+                            let (with, without) = (right(None), right(Some(j)));
+                            if with != without {
+                                let c = ch[j].0;
+                                mix.record(ROUTE_SRC + c as u8, key, with);
+                                let e = route_score.entry(c).or_insert((0, 0));
+                                if with { e.0 += 1 } else { e.1 += 1 }
+                            }
+                        }
+                    }
                     // the frame's counterfactual record (HIER_TRUST_GATE=cf): full frame against none
                     if let (Some(full), Some((at, n))) = (td_full.take(), td_span) {
                         if page {
@@ -5093,6 +5195,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             } else {
                 eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
             }
+        }
+        if route_on {
+            let score: Vec<String> = route_order.iter().map(|c| { let (f, b) = route_score.get(c).copied().unwrap_or((0, 0)); format!("{c}: +{f} −{b}") }).collect();
+            eprintln!("  ROUTE seed {seed}: final order (channel: fixes, breaks) [{}]; re-routings: {}", score.join(", "), if route_log.is_empty() { "none".to_string() } else { route_log.join("; ") });
         }
         if hier_grow {
             eprintln!(
@@ -6090,4 +6196,57 @@ fn validate_proposals(
         }
     }
     stories
+}
+
+/// The routed L4 row (ROUTE): `[word | slot 1 | … | slot k]`. Each channel (source id, content)
+/// is bound to its source (rotated by a per-source offset), passes the share of its bits
+/// given (a fixed subset by bit position), and goes to the slot its place in `order` gives
+/// it; channels past the last slot are ORed into it. `skip` leaves one channel out.
+fn route_row(word: &BitVector, channels: &[(usize, BitVector)], shares: &[u64], order: &[usize], slots: usize, skip: Option<usize>) -> Vec<u64> {
+    let fw = word.as_words().len();
+    let mut row = vec![0u64; fw * (1 + slots)];
+    row[..fw].copy_from_slice(word.as_words());
+    if slots == 0 {
+        return row;
+    }
+    for (j, (c, content)) in channels.iter().enumerate() {
+        if skip == Some(j) || content.count_ones() == 0 {
+            continue;
+        }
+        let mut v = content.clone();
+        v.rotl_mut(((*c + 1) * ROUTE_ROT) % (fw * 64));
+        let share = shares[j];
+        let slot = order.iter().position(|x| x == c).unwrap_or(order.len()).min(slots - 1);
+        let dst = &mut row[fw * (1 + slot)..fw * (2 + slot)];
+        for (wi, (d, w)) in dst.iter_mut().zip(v.as_words()).enumerate() {
+            let mut w = *w;
+            if share < ONE as u64 {
+                let mut keep = 0u64;
+                for b in 0..64 {
+                    let h = ((wi * 64 + b) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
+                    if h < share {
+                        keep |= 1 << b;
+                    }
+                }
+                w &= keep;
+            }
+            *d |= w;
+        }
+    }
+    row
+}
+
+/// The column's L4 row from a current word and its middle frames: the hand layout
+/// (`assemble`), or under ROUTE the routed one, each frame and the previous input a channel
+/// (source = its index in the hand layout) passed whole.
+fn l4_row(column: &CorticalColumn, current: &BitVector, frames: &[BitVector], route: Option<&[usize]>) -> BitVector {
+    match route {
+        None => column.assemble(current, frames),
+        Some(order) => {
+            let mut ch: Vec<(usize, BitVector)> = frames.iter().enumerate().map(|(i, f)| (i + 1, f.clone())).collect();
+            ch.push((frames.len() + 1, column.previous()));
+            let shares = vec![ONE as u64; ch.len()];
+            BitVector::from_words(route_row(current, &ch, &shares, order, frames.len() + 1, None))
+        }
+    }
 }

@@ -238,10 +238,12 @@ slot codes bound to content in the hippocampus, recalled by slot.
   binding offsets (a hash), rule learning (counting compositions) and the Bayes module
   (integer bookkeeping over claims) are discrete algorithms over word ids. To make them the
   network's own representations:
-  1. **frames from code overlap:** induce frames from the overlap of sentence codes, with
-     the role area's slot cells ([31](experiments/31-role-cells-and-transfer.md)) marking which
-     positions vary, instead of neighbour counting; a relation is then a learned cell;
-  2. binding offsets from that cell's code instead of a hash;
+  1. ~~frames from code overlap~~ (tried: predictability alone cannot tell a relation word
+     from a value, [82](experiments/82-fact-completion.md));
+  2. ~~binding offsets from a hash~~ → **fact completion** (done, `REL_COMPLETE`: a general
+     kernel class completes the fact; as good or better, 3–4× the cost, not yet default,
+     [82](experiments/82-fact-completion.md)); next: key claims, rules and topics by the
+     question with its blank, and drop the frames;
   3. claims and trust in bit-sliced counters (as the basal ganglia hold values), so belief
      is per-bit arithmetic over codes (approximate, where the integer posterior is exact).
 - **The goal is continuous learning.** Experiments switch learning off at test so a run
@@ -250,6 +252,11 @@ slot codes bound to content in the hippocampus, recalled by slot.
   keep updating from whatever it reads, asks and is told.
 
 ## 5. A third level and a slower clock
+**Tried ([83](experiments/83-compute-only-where-needed.md)):** the higher area only where the
+column needs help (surprised, or unsure of the next word). It helps some tasks a lot (slot
+memory 16 → 41%) and kills others (story boundary 0%): when top-down helps must be learned
+per context (a go/no-go charged for compute), not set by a rule.
+
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes
   its cost and gives each level a different timescale.

@@ -1,5 +1,11 @@
 # 12 · Dentate gyrus expansion and a Hebbian CA3 store
 
+> **Correction (wiki pass, [errata](../errata.md)):** the early "matches the list memory, 99.3%" comparison was across
+> builds and is withdrawn below; in one build, after the predictor fixes, CA3 scores
+> 99.4/99.5/100/100% and the list memory 100%. Finding 2 ("pattern separation matters as
+> load grows", 93.5 vs 96.1) is reversed by this page's own bit version (90.3 vs 89.1):
+> withdrawn. The findings are numbered 1–4, 1–4, 6–8, 13 for historical reasons.
+
 **Question.** The list memory of [11](11-episodic-memory.md) is an idealization: one slot
 per episode, exact recency. Can the classic hippocampal circuit do the same job:
 dentate-gyrus pattern separation, Hebbian CA3 storage in shared weights, and recurrent

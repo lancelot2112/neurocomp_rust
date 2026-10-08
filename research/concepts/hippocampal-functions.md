@@ -4,6 +4,18 @@ The episodic memory in [11](../experiments/11-episodic-memory.md) covers only pa
 what the hippocampus and entorhinal cortex (EC) do. This page maps each function to its
 counterpart (or absence) in this codebase.
 
+> **Status (wiki pass, 2026-10-08).** Written early (after 11–14). Since then the
+> hippocampus gained slot binding ([36](../experiments/36-slot-binding-memory.md)), the
+> full EC–DG–CA3–CA1 circuit ([46](../experiments/46-full-hippocampus.md)), a sparse
+> binding space ([49](../experiments/49-sparse-binding-space.md)), the index and engram
+> stores ([55](../experiments/55-index-memory.md), [56](../experiments/56-engram-store.md)),
+> the walk ([59](../experiments/59-engram-walk.md)), generative replay
+> ([62](../experiments/62-replay-as-reading.md)) and source tags
+> ([73](../experiments/73-source-memory.md)). For the current state see the
+> [overview](../OVERVIEW.md#the-network-today); for each pathway's biology, the
+> [connection audit](connection-plausibility.md#the-hippocampus). The "what we have"
+> column below is historical.
+
 | Function | Biology | Here | Gap / how to add |
 |---|---|---|---|
 | **Pattern separation (expansion)** | Dentate gyrus: EC inputs fan out to many more, very sparsely active granule cells, so similar inputs get distinct codes ([Marr 1971; Treves & Rolls 1994; Yassa & Stark 2011](../related-work.md#hippocampus-and-entorhinal-cortex)) | By hand: sparse random word codes (8192 bits / 32 active; see [sparse codes](sparse-codes-and-collisions.md)). An episode is the OR of its words. | Learned expansion of *combinations*: random projection of the episode into a large space + winner-take-few, so overlapping episodes ("mary … kitchen" / "mary … garden") get distinct conjunctive codes. Test: recall accuracy as stored facts per name grow. |

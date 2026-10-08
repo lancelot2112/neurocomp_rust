@@ -404,7 +404,9 @@ Held-out, seeds 0 / 1 / 2 (varied: seed 0, 100% throughout):
 | + mixing | – | – | 100 / 100 / 100% | 99.8 / 99.8 / 100% | 93 / 84 / 80% |
 | + mixing keyed by candidate word too | – | 80 / 80 / 81% | 100 / 97 / 97% (with hierarchy) | 86–100% | 43–92% |
 
-1. **Mixing helps where it should and nowhere hurts.** It changes the column's answer
+1. **Mixing helps where it should and rarely hurts** (Correction (wiki pass, [errata](../errata.md)): the
+   table has small drops, habit seed 1 82 → 80, topic seed 2 95 → 94, early-placement
+   topic seed 2 59 → 51; the 3–5 point gains are within three-seed noise). It changes the column's answer
    only where the column is weak. On habit + memory seed 0 it changed 16% of answers,
    77% of those to the right one (+10 points). Elsewhere it agrees with the column at
    nearly every answer, so topic, give, two-hop and varied are unchanged. Habit + memory

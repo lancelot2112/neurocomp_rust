@@ -84,7 +84,7 @@ Seeds 1 and 2 learned the same structure (11–12 cells), plus a cell for verbs 
 2. **But a role frame next to the identity frames does not give transfer.** The new name
    is surprising, so it also enters the higher area's slow state, and kernels key on
    bits sampled from that frame. A role code added alongside cannot stop the identity bits
-   from being keyed (12–40% on new names, noisy).
+   from being keyed (2–48% on new names: 40/2/12 with cells, 48/5/22 raw; noisy).
 3. **Learned generalisation does.**
    - When a kernel's prediction is confirmed although some of its inputs were absent,
      it prunes those inputs (the near-miss rule of [12](12-dentate-gyrus-ca3.md)).

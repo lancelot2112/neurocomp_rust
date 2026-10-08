@@ -120,6 +120,9 @@ const DISTRACTORS: &[&[&str]] = &[&["the", "cat", "slept", "."], &["the", "dog",
 /// Persist task: names whose places are fixed and stated only early in training.
 const ANCHOR_NAMES: &[&str] = &["bill", "fred", "julie"];
 const TRAIN: usize = 3000;
+/// The frame gate's own records in the mix (HIER_TRUST_GATE): the higher area, the column.
+const TRUST_AREA: u8 = 40;
+const TRUST_COLUMN: u8 = 41;
 /// Persist: anchor facts only appear in the first anchor_stories() training stories (env).
 fn anchor_stories() -> usize {
     std::env::var("ANCHOR_STORIES").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
@@ -1594,6 +1597,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the setting that keeps the tasks.
     let hier_learned = std::env::var("HIER_SURPRISE").map_or(false, |v| v == "learned");
     let hier_surprise = std::env::var("HIER_SURPRISE").is_ok() && !hier_learned;
+    // HIER_TRUST_GATE=1: the top-down frame reaches the column's L4 only as a trusted
+    // witness: where the thalamus's record of the higher area (how often its proposed word
+    // was right, kept per previous word, current word and the area's confidence band, from
+    // every training word) is at least one half. An area never heard in a context passes, so
+    // the record can form; the gate opens and closes as the area grows more or less
+    // reliable. The area itself still predicts, learns and votes in the mix every step.
+    // HIER_TRUST_GATE=column: pass where the area's record is at least the column's own.
+    let hier_trust_gate = std::env::var("HIER_TRUST_GATE").ok();
+    let mut trust_passed = [[0usize; 2]; 2]; // (training, test) × (withheld, passed)
     let hier_learn_always = std::env::var("HIER_LEARN_ALWAYS").map(|v| v == "1").unwrap_or(false);
     let hier_cost: Q16 = q16(std::env::var("HIER_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05));
     let mut hier_bg = BasalGanglia::new(512);
@@ -3509,7 +3521,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         topdown_passed_at_answer += (passed && has) as usize;
                     }
                     hier_gate_step = (hier_gate_on && has && passed).then(|| code.clone());
-                    let frame = if passed { td } else { BitVector::new(BITS, Some(0)) };
+                    let trusted = match (hier_trust_gate.as_deref(), has) {
+                        (Some(mode), true) => {
+                            let p = if t > 0 { ids[t - 1] } else { vocab.len() };
+                            let key = (p * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                            let bucket = |c: Q16| CONF_BANDS.iter().filter(|&&e| c >= e).count() as u64;
+                            let area_rate = mix.rate(TRUST_AREA, key + bucket(area.column.confidence()));
+                            let ok = if mode == "column" { area_rate >= mix.rate(TRUST_COLUMN, key + bucket(column.confidence())) } else { area_rate >= ONE / 2 };
+                            trust_passed[testing as usize][ok as usize] += 1;
+                            ok
+                        }
+                        _ => true,
+                    };
+                    let frame = if passed && trusted { td } else { BitVector::new(BITS, Some(0)) };
                     let fw = frame.as_words().len();
                     if hier_early {
                         let at = BITS / 64; // right after the current word
@@ -4088,6 +4112,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         for (src, key, ws) in &proposals {
                             for &w in ws {
                                 mix.record(*src, *key, w == next);
+                            }
+                        }
+                        // the frame gate's record (HIER_TRUST_GATE): the same outcomes, under a
+                        // context known before the frame is placed (no familiarity band)
+                        if hier_trust_gate.is_some() {
+                            let key = (prev * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                            if let Some(td) = td_src.as_ref() {
+                                let tw = words_of(td);
+                                if !tw.is_empty() {
+                                    mix.record(TRUST_AREA, key + bucket(area.column.confidence()), tw.contains(&next));
+                                }
+                            }
+                            if let Some(w) = own {
+                                mix.record(TRUST_COLUMN, key + bucket(column.confidence()), w == next);
                             }
                         }
                     }
@@ -4976,6 +5014,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .map(|(i, (u, h))| format!("area {} (window {} sentences) {} kernels, held the answer at {:.1}%", i + 3, u.span(), u.column.l23.live(), 100.0 * *h as f64 / TEST as f64))
                 .collect();
             eprintln!("  CHAIN seed {seed}: {}", parts.join("; "));
+        }
+        if hier_trust_gate.is_some() {
+            let share = |a: [usize; 2]| 100.0 * a[1] as f64 / (a[0] + a[1]).max(1) as f64;
+            eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
         }
         if hier_grow {
             eprintln!(

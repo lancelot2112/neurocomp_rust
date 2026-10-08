@@ -1197,34 +1197,15 @@ pub struct NetDef {
     pub code: Vec<NetOp>,
 }
 
-/// A clock event from the environment the network lives in.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum On {
-    /// A sentence ended.
-    Sentence,
-    /// A story (an episode) ended.
-    Story,
-    /// Every `n` stories read while learning.
-    Stories(usize),
-    /// Learning stops (the test begins).
-    TestStart,
-}
-
-/// What the network does at an event.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Do {
-    /// Clear activity (`Module::reset`), keeping what was learned.
-    Reset,
-    /// Offline consolidation (`Module::sleep`).
-    Sleep,
-}
-
-/// The update loop on top of the structure: every word, the network ticks once (with
-/// slow learning on while learning); at each clock event, the rules that match fire in
-/// order.
+/// The update loop: what the network does besides ticking once per word.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Schedule {
-    pub rules: Vec<(On, Do)>,
+    /// Clear activity at the end of each sentence.
+    pub reset_at_sentence: bool,
+    /// Clear activity at the end of each story (what was learned is kept).
+    pub reset_at_story: bool,
+    /// Sleep (offline consolidation) every this many stories while learning; 0 = never.
+    pub sleep_every: usize,
 }
 
 /// A library of definitions; later ones may place earlier ones (`Sub`). The last is the

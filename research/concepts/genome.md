@@ -20,15 +20,14 @@ answers. This is the roadmap's "grown, not designed" item and rule 5 of the
   kernels, memo, the uncertainty growth gate, slow-learning probability, sticky synapses,
   copy growth, growth trust, trust floor, replay length: what the harness set from
   environment variables. `Prim::PredictWith` places a predictor with a spec.
-- **The update loop.** `Schedule`: rules `(On, Do)`. Every word, the network ticks once
-  (slow learning on while learning). The environment announces clock events (`On`: a
-  sentence ended, a story ended, every n stories, the test began) and the matching rules
-  fire (`Do`: reset activity, sleep). Learning signals travel on wires (a predictor's
-  teaching port), so the loop needs no outside call to learn.
+- **The update loop.** Every word, the network ticks once, with slow learning on until
+  the test. Besides that, the genome's `Schedule` says three things: clear activity at the
+  end of a sentence, clear it at the end of a story, sleep every n stories. Learning
+  signals travel on wires (a predictor's teaching port), so nothing outside calls "learn".
 
-[`src/program/reader.rs`](../../src/program/reader.rs): `Reader` runs a genome. It feeds
-one input per step, returns the prediction, and announces events; the genome decides what
-they do. It knows nothing about the task.
+[`src/program/reader.rs`](../../src/program/reader.rs): `Reader` runs a genome in four
+calls: `read(word)` (one tick; returns the prediction), `end_sentence()`, `end_story()`,
+`start_test()`. It knows nothing about the task.
 
 [`examples/episodic.rs`](../../examples/episodic.rs): `GENOME=column` runs the same
 stories through a genome instead of the hand-built network and prints the same report, so
@@ -48,7 +47,7 @@ parity with the harness setting it replaces before going on.
 | Step | System | Primitives to add | Parity target |
 |---|---|---|---|
 | 1 | Column | `PredictWith`, `KernelSpec`, `Zero`, `Schedule`, `Reader` (done) | nomemory column (done) |
-| 2 | Higher area | **event hooks** on modules (a module can respond to clock events); `Bag` (OR of the sentence so far, cleared at a sentence end); `Window(n)` (OR of the last n sentences' contents, advanced at a sentence end); `Surprised` (word-level: did the prediction miss the input, as a flag); `Gate` exists (teach only on the column's residual) | `HIER=1`, one area, no mix |
+| 2 | Higher area | a sentence-end input port (the world's clock as a wire, so modules respond by wiring, not by hooks); `Bag` (OR of the sentence so far, cleared at a sentence end); `Window(n)` (OR of the last n sentences' contents, advanced at a sentence end); `Surprised` (word-level: did the prediction miss the input, as a flag); `Gate` exists (teach only on the column's residual) | `HIER=1`, one area, no mix |
 | 3 | Thalamic mix | `Mix(n)`: n proposal ports and a context port; each source's record per context; outputs the combined word and its confidence; taught by the next input | `MIX=1` |
 | 4 | Routing | `Share`: a channel scaled by its record (same-pass credit from depth-limited predictions) | `ROUTE=1` |
 | 5 | Hippocampus | `Engram` (store, recall by cue, walk, replay at sleep, source tags) wrapping the engram store; `Roles` (role cells); `Decode` (CA1: recall → word codes); a `Replay` action in the schedule | `HIPPO=engram`, `BIND=1`, `HC_EC=1` |

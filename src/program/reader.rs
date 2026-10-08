@@ -1,110 +1,97 @@
-//! Running a genome: the initial configuration it builds, and its update loop.
+//! Running a genome.
 //!
-//! A `Genome` describes a network (its definitions; the last is the whole architecture)
-//! and a `Schedule` (what the network does at each clock event). The `Reader` is the
-//! environment's side: it feeds the network one input per step, reads its prediction,
-//! and announces the clock events (a sentence ended, a story ended, learning stopped);
-//! the genome's schedule decides what each event does. Nothing about the task is in the
-//! reader: what is read and what is asked comes from outside.
+//! The genome builds the network (its last definition) and says what happens besides
+//! ticking (its `Schedule`). The reader is the world's side: it hands the network one
+//! word at a time and says when a sentence or a story ends and when the test begins.
 
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
 use crate::bitvec::BitVector;
-use crate::program::modules::{Ctx, Do, Genome, Module, Network, On, Schedule};
+use crate::program::modules::{Ctx, Genome, Module, Network, Schedule};
 
 pub struct Reader {
     pub net: Network,
     schedule: Schedule,
     rng: StdRng,
-    /// Whether slow learning is on (it is off at test).
+    /// Slow learning is on until the test.
     pub learning: bool,
     stories: usize,
 }
 
 impl Reader {
-    /// Build the genome's architecture (its last definition) with its schedule.
     pub fn new(genome: &Genome, seed: u64) -> Self {
         Self { net: genome.build_top(), schedule: genome.schedule.clone(), rng: StdRng::seed_from_u64(seed), learning: true, stories: 0 }
     }
 
-    /// One step: the network reads `x` on its input port 0 (other ports unconnected) and
-    /// ticks once. Returns its output port 0 (its prediction of the next input).
-    pub fn step(&mut self, x: &BitVector) -> &BitVector {
-        let mut ins: Vec<&BitVector> = vec![x];
+    /// Read one word: the network ticks once. Returns its prediction of the next word
+    /// (output port 0).
+    pub fn read(&mut self, word: &BitVector) -> &BitVector {
         let empty = BitVector::EMPTY;
-        while ins.len() < self.net.n_inputs() {
-            ins.push(&empty);
-        }
-        let mut ctx = Ctx { rng: &mut self.rng, learn: self.learning };
-        self.net.tick(&ins, &mut ctx);
+        let mut ins = vec![word];
+        ins.resize(self.net.n_inputs().max(1), &empty);
+        self.net.tick(&ins, &mut Ctx { rng: &mut self.rng, learn: self.learning });
         self.net.output(0)
     }
 
-    /// A clock event: apply the schedule's matching rules, in order.
-    pub fn event(&mut self, ev: On) {
-        if ev == On::TestStart {
-            self.learning = false;
+    pub fn end_sentence(&mut self) {
+        if self.schedule.reset_at_sentence {
+            self.net.reset();
         }
-        let mut fire = vec![ev];
-        if ev == On::Story && self.learning {
+    }
+
+    pub fn end_story(&mut self) {
+        if self.schedule.reset_at_story {
+            self.net.reset();
+        }
+        if self.learning {
             self.stories += 1;
-            for &(on, _) in &self.schedule.rules {
-                if let On::Stories(n) = on {
-                    if n > 0 && self.stories % n == 0 && !fire.contains(&on) {
-                        fire.push(on);
-                    }
-                }
-            }
-        }
-        let actions: Vec<Do> = self.schedule.rules.iter().filter(|(on, _)| fire.contains(on)).map(|&(_, d)| d).collect();
-        for d in actions {
-            match d {
-                Do::Reset => self.net.reset(),
-                Do::Sleep => self.net.sleep(),
+            if self.schedule.sleep_every > 0 && self.stories % self.schedule.sleep_every == 0 {
+                self.net.sleep();
             }
         }
     }
 
-    /// Kernels held by the whole network.
-    pub fn kernels(&self) -> usize {
-        self.net.kernels()
+    /// Slow learning stops (only fast inhibition runs from here on).
+    pub fn start_test(&mut self) {
+        self.learning = false;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program::modules::{column_code, NetOp};
+    use crate::program::modules::{column_code, NetOp, Prim};
 
     fn code(bits: usize, i: usize) -> BitVector {
         BitVector::from_bits(&(0..8).map(|j| (i * 8 + j) % bits).collect::<Vec<_>>(), bits)
     }
 
     #[test]
-    fn a_column_genome_learns_a_sequence_and_its_schedule_resets_it() {
+    fn a_column_genome_learns_a_sequence() {
         let bits = 256;
         let mut g = Genome::default();
         g.define("column", 1, column_code(bits, 8));
-        g.schedule.rules.push((On::Story, Do::Reset));
+        g.schedule.reset_at_story = true;
         let mut r = Reader::new(&g, 1);
-        // the story 0 1 2 3, read five times
         for _ in 0..5 {
             for i in 0..4 {
-                r.step(&code(bits, i));
+                r.read(&code(bits, i));
             }
-            r.event(On::Story);
+            r.end_story();
         }
-        r.event(On::TestStart);
-        r.step(&code(bits, 0));
-        let p = r.step(&code(bits, 1)).clone();
+        r.start_test();
+        r.read(&code(bits, 0));
+        let p = r.read(&code(bits, 1)).clone();
         let hit = p.as_words().iter().zip(code(bits, 2).as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
         assert!(hit >= 6, "after 1 comes 2");
-        assert!(!r.learning);
-        // an empty slot keeps a frame reserved
-        let mut g2 = Genome::default();
-        g2.define("row", 1, vec![NetOp::In(0), NetOp::Zero, NetOp::In(0), NetOp::Place(crate::program::modules::Prim::Concat(3)), NetOp::Out]);
-        let mut r2 = Reader::new(&g2, 1);
-        assert_eq!(r2.step(&code(bits, 0)).bit_len(), 3 * bits);
+    }
+
+    #[test]
+    fn an_empty_slot_reserves_a_frame() {
+        let bits = 256;
+        let mut g = Genome::default();
+        g.define("row", 1, vec![NetOp::In(0), NetOp::Zero, NetOp::In(0), NetOp::Place(Prim::Concat(3)), NetOp::Out]);
+        assert_eq!(Reader::new(&g, 1).read(&code(bits, 0)).bit_len(), 3 * bits);
     }
 }

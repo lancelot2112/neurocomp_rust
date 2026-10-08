@@ -6576,7 +6576,6 @@ fn kernel_spec_from_env() -> neurocomp::program::modules::KernelSpec {
 /// column genome lays out the hand row (`[word | empty slots | previous]`) so it can be
 /// compared with the harness's own column (POLICIES=nomemory, no HIER, no MIX).
 fn column_genome(slots: usize) -> neurocomp::program::Genome {
-    use neurocomp::program::modules::{Do, On};
     use neurocomp::program::{NetOp::*, Prim};
     let mut code = vec![In(0)];
     code.extend(std::iter::repeat(Zero).take(slots));
@@ -6585,15 +6584,12 @@ fn column_genome(slots: usize) -> neurocomp::program::Genome {
     code.extend([Swap, Out, Out]);
     let mut g = neurocomp::program::Genome::default();
     g.define("column", 1, code);
-    g.schedule.rules.push((On::Story, Do::Reset));
-    if let Some(n) = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok()) {
-        g.schedule.rules.push((On::Stories(n), Do::Sleep));
-    }
+    g.schedule.reset_at_story = true;
+    g.schedule.sleep_every = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     g
 }
 
 fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
-    use neurocomp::program::modules::On;
     let mut rng = StdRng::seed_from_u64(seed);
     let vocab = task_vocab(task);
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
@@ -6609,7 +6605,7 @@ fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;
         if s_i == TRAIN {
-            reader.event(On::TestStart);
+            reader.start_test();
         }
         let held_out = testing && s_i % 2 == 1;
         let s = match task {
@@ -6627,7 +6623,7 @@ fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
         };
         let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
         for t in 0..ids.len() {
-            let p = reader.step(&enc.codes[ids[t]]).clone();
+            let p = reader.read(&enc.codes[ids[t]]).clone();
             if testing && t + 1 == s.answer_at {
                 let right = enc.decode(&p) == Some(ids[t + 1]);
                 let r = if s.held_out { &mut held } else { &mut seen };
@@ -6635,12 +6631,12 @@ fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
                 r.1 += 1;
             }
             if s.words[t] == "." {
-                reader.event(On::Sentence);
+                reader.end_sentence();
             }
         }
-        reader.event(On::Story);
+        reader.end_story();
     }
-    eprintln!("  GENOME seed {seed}: {} kernels\n{}", reader.kernels(), neurocomp::program::Module::describe(&reader.net, 2).trim_end());
+    eprintln!("  GENOME seed {seed}: {} kernels\n{}", neurocomp::program::Module::kernels(&reader.net), neurocomp::program::Module::describe(&reader.net, 2).trim_end());
     let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
     Outcome { seen: pct(seen), held_out: pct(held), recall: 0.0, places: 0.0 }
 }

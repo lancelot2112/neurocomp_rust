@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1464,6 +1464,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the column's own.
     let complete = std::env::var("COMPLETE").ok();
     let rollout = complete.as_deref().map_or(false, |m| m.starts_with("rollout"));
+    // COMPLETE=speech (speech-test: only at test): inner speech in place of the rollout.
+    // The network says its integrated prediction (the mix's word, else the column's
+    // output: the vector it would speak) into a phonological loop, and hears it as its next
+    // input, marked as its own (the efference copy; nothing learns from it as the world's).
+    // When: where the page contradicts what it predicted (a surprise), and then while it
+    // still does, up to 4 times a sentence, never at the answer. INNER_GATE=learned: the
+    // basal ganglia decide speak or read on at each such surprise, per (confidence band,
+    // already speaking, novel sentence), rewarded at the answer less STEP_COST a step.
+    // What is said is not chosen among sources: memory, the semantic store and the higher
+    // area act only through the prediction they shaped.
+    let inner_speech = complete.as_deref().map_or(false, |m| m.starts_with("speech"));
+    let inner_learned = std::env::var("INNER_GATE").map_or(false, |v| v == "learned");
+    let mut phono = PhonologicalLoop::new();
+    let mut inner_stats = [0usize; 3]; // test: surprises where it could speak, spoken, spoken in held-out stories
     let mut completed_sentence = false;
     let mut rolled = 0usize; // internal steps inserted in this sentence
     // held-out answers by the surname the rollout supplied: (right, total) for none, the
@@ -4543,7 +4557,61 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         *role_words.entry(c).or_default().entry(next).or_default() += 1;
                     }
                 }
-                if step_learned && t + 1 == s.answer_at {
+                // inner speech: surprised by the page, the network says its prediction to
+                // itself and hears it before reading on
+                if inner_speech && !replaying && !reciting && rolled < 4 && (testing || complete.as_deref() == Some("speech")) && t + 1 != s.answer_at && s.words[t + 1] != "." {
+                    let said = enc.decode(&out).filter(|&w| w != next && vocab[w] != ".");
+                    if let Some(w) = said {
+                        let go = if inner_learned {
+                            let c = mix_conf.unwrap_or_else(|| column.confidence());
+                            let cb = if c < Q_HALF { 0 } else if c < Q_08 { 1 } else { 2 };
+                            let ctx = 1000 + cb + 3 * (rolled > 0) as usize + 6 * (fam_band < 4) as usize;
+                            let cands = [step_code(ctx, 0), step_code(ctx, 1)];
+                            let explore = if !testing || step_test_learn { Some(&mut bg_rng) } else { None };
+                            let choice = step_bg.select(&cands, explore).unwrap_or(1);
+                            if !testing || step_test_learn {
+                                step_pending.push((cands[choice].clone(), choice == 0));
+                            }
+                            choice == 0
+                        } else {
+                            true
+                        };
+                        if testing {
+                            inner_stats[0] += 1;
+                        }
+                        if go {
+                            phono.say(&out);
+                            let heard = phono.hear();
+                            if testing {
+                                inner_stats[1] += 1;
+                                inner_stats[2] += s.held_out as usize;
+                                let k = if s.held_out { 2 } else { 1 };
+                                complete_stats[k] += 1;
+                                if k == 2 {
+                                    let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                                    *complete_words.entry(format!("{} -> {}", s.words[start..=t].join(" "), vocab[w])).or_default() += 1;
+                                }
+                            } else {
+                                complete_stats[0] += 1;
+                            }
+                            ids.insert(t + 1, w);
+                            s.words.insert(t + 1, vocab[w]);
+                            page_marks.insert(t + 1, false);
+                            inner.insert(t + 1, true);
+                            efference.insert(t + 1, Some(w));
+                            eff_pred.insert(t + 1, None);
+                            inner_code.insert(t + 1, heard);
+                            if s.answer_at > t {
+                                s.answer_at += 1;
+                            }
+                            rolled += 1;
+                            if let (true, Some(i)) = (SURNAMES.contains(&vocab[w]), NEW_NAMES.iter().position(|n| s.words[..=t].contains(n))) {
+                                rolled_surname = Some(vocab[w] == SURNAMES[family_of(i, true)]);
+                            }
+                        }
+                    }
+                }
+                if (step_learned || inner_learned) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     for (code, stepped) in step_pending.drain(..) {
                         step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut bg_rng);
@@ -5856,6 +5924,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 complete_stats[2],
                 cw.iter().filter(|x| NEW_NAMES.iter().any(|n| x.0.contains(n))).take(16).collect::<Vec<_>>()
             );
+        }
+        if inner_speech {
+            eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
         }
         if consolidate.is_some() {
             eprintln!("  CONSOLIDATE seed {seed}: {} replays of novel episodes to the higher area", replayed);

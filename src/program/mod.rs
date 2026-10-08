@@ -52,7 +52,7 @@ pub mod relations;
 pub use relations::RelationStore;
 
 pub mod speech;
-pub use speech::{OutputBuffer, Spoken};
+pub use speech::{OutputBuffer, PhonologicalLoop, Spoken};
 
 pub mod motor;
 pub use motor::{MotorArea, VocalTract};

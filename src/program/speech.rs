@@ -11,7 +11,12 @@
 //!   page kept for scoring), each spoken word is compared with it: right, wrong, or
 //!   withheld. These outcomes are what an abstention gate or the speaking areas learn
 //!   from, and what the report scores.
+//! - **Inner speech.** [`PhonologicalLoop`]: the same act directed at oneself. The network
+//!   writes a vector in the code it reads (its integrated prediction) and hears it as its
+//!   next input; the copy it keeps of what it said (the efference copy) marks what comes
+//!   back as its own.
 
+use crate::bitvec::BitVector;
 use crate::fixed::Q16;
 #[cfg(test)]
 use crate::fixed::ONE;
@@ -87,9 +92,56 @@ impl OutputBuffer {
     }
 }
 
+/// Inner speech: a buffer holding one utterance in the input code until it is heard.
+/// Saying writes the vector; hearing takes it (once) as the next input. The efference copy
+/// stays, so what was heard can be checked against what was said.
+#[derive(Default)]
+pub struct PhonologicalLoop {
+    held: Option<BitVector>,
+    copy: Option<BitVector>,
+    /// Utterances so far.
+    pub said: usize,
+}
+
+impl PhonologicalLoop {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Say `v` to oneself: it is heard at the next step.
+    pub fn say(&mut self, v: &BitVector) {
+        self.held = Some(v.clone());
+        self.copy = Some(v.clone());
+        self.said += 1;
+    }
+
+    /// Hear what was said (once); None when nothing was.
+    pub fn hear(&mut self) -> Option<BitVector> {
+        self.held.take()
+    }
+
+    /// Is `heard` what was last said (every bit of the copy present)?
+    pub fn own(&self, heard: &BitVector) -> bool {
+        self.copy.as_ref().map_or(false, |c| c.count_ones() > 0 && c.as_words().iter().zip(heard.as_words()).all(|(a, b)| a & b == *a))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn inner_speech_is_heard_once_and_known_as_own() {
+        let mut l = PhonologicalLoop::new();
+        assert!(l.hear().is_none());
+        let v = BitVector::from_bits(&[1, 5, 9], 64);
+        l.say(&v);
+        let h = l.hear().unwrap();
+        assert_eq!(h.as_words(), v.as_words());
+        assert!(l.hear().is_none());
+        assert!(l.own(&h));
+        assert!(!l.own(&BitVector::from_bits(&[1, 5], 64)));
+    }
 
     #[test]
     fn speaks_abstains_and_scores() {

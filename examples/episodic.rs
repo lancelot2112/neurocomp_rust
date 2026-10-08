@@ -1005,7 +1005,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     }
     class
     };
-    let mut class = make_l23(three.then_some(slow_gen));
+    let mut class = make_l23(three.then_some(slow_gen).filter(|&f| f > 0.0));
     if three {
         class.set_growth_probability(Some(slow_p));
     }
@@ -1033,7 +1033,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             sample_bits: 16,
             match_fraction: 0.8,
             surprise_fraction: 0.5,
-            generalize: Some(std::env::var("SLOW_GEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5)),
+            generalize: Some(std::env::var("SLOW_GEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5)).filter(|&f: &f32| f > 0.0),
             generalize_after: 1,
         });
         c.set_surprise_gate(true);

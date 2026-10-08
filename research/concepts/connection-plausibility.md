@@ -68,6 +68,48 @@ No hippocampal pathway uses a second run of anything. The shortcuts left:
 3. ~~Replay priority~~: plausible as built (above; the first audit read it wrongly).
 4. Sentence boundaries from surprise, as story boundaries already are.
 
+## Coupling: who learns from which error
+
+The rule the anatomy gives: **each learner learns from its own error, but what it tells
+the rest of the network is the integrated prediction.** The first `LEARNING=three` runs
+broke the second half (every downstream signal read the slow L2/3 alone, wrong almost
+everywhere at first, so the higher area learned from nearly every word and stopped
+supplying context); `CorticalColumn::set_output` restores it.
+
+| Learner | Teacher | Compared with whose prediction | In the model |
+|---|---|---|---|
+| Cerebellum | Climbing fibres from the inferior olive; the olive is inhibited by the cerebellum's own deep nuclei, so the error is actual − the cerebellum's prediction | Its own | `Cerebellum::learn`: its own kernels' error |
+| Cortex (slow) | Local prediction error in each area, and hippocampal replay at sleep | Its own, slowly | `column.learn`: L2/3's own winner, stochastic growth |
+| Hippocampus | Novelty: CA1's mismatch between EC input and CA3 recall, dopamine and acetylcholine | What the cortex as a whole failed to predict, as it reaches EC | The column's output after integration (`set_output`) |
+| Higher area | Prediction error from the lower area's superficial layers | The lower area's error after it integrated all its inputs (cerebellar and hippocampal ones arriving through the thalamus) | The same |
+| Basal ganglia | Dopamine reward-prediction error | The outcome of what the network did or said | The column's L5 outcome, integrated |
+
+**Within one word (~250 ms):**
+1. **Feedforward sweep.** The word drives L4; a copy of the cortex's activity goes to the
+   cerebellum (L5 → pontine nuclei → mossy fibres), whose prediction is ready within tens
+   of milliseconds.
+2. **Hippocampus.** Cued by the cortical representation through EC; recalls within a theta
+   cycle; returns through CA1 → subiculum → EC as context.
+3. **Thalamus.** The cerebellum's output (deep nuclei → motor and associative thalamus),
+   the higher area's (pulvinar, and direct feedback onto apical dendrites) arrive as
+   context, each with a gain set by the reticular nucleus and L6.
+4. **Cortex predicts; L5 integrates.** L2/3 reads all of it; the L5 output is the
+   network's prediction.
+5. **The next word's surprise** is computed against that integrated output, and is what
+   goes up to the higher area, to the hippocampus (novelty) and to dopamine (reward).
+
+**Two consequences.**
+- **Fast to slow transfer.** The cerebellum's prediction is an input the cortex reads, so
+  the slow cortex can learn to use it and, over time, to predict without it: a fast
+  process acquires, a slow one retains (two-rate models of adaptation, Smith et al. 2006).
+  Hippocampal replay does the same for episodes.
+- **A memory that answers in training removes the surprise that would teach the rest.**
+  With the hippocampus routed into the column while reading (`HC_ROUTE`), answers it
+  supplies are no longer surprising, so the higher area and the cerebellum never learn
+  them, and with the hippocampus lesioned at test nothing knows them (motor speech 64.8 →
+  19.6%). Replay, which trains the cortex whatever the waking surprise, is what should carry
+  them over: the consolidation problem.
+
 ## Learning systems
 | System | Model | Brain | Verdict |
 |---|---|---|---|

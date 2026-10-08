@@ -1591,6 +1591,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // HIER_ANSWER_WEIGHT=w: a story's answer counts w times an ordinary word (the world's
     // reward is the answer; the other words are the column's own check on itself)
     let hier_answer_weight: u64 = std::env::var("HIER_ANSWER_WEIGHT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    // HIER_MARGIN=m: skip only where skipping's value exceeds consulting's by more than m
+    let hier_margin: Q16 = q16(std::env::var("HIER_MARGIN").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0));
     let hier_decay: Q16 = q16(std::env::var("HIER_DECAY").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
     // (code, consulted, Σ weight·outcome, Σ weight, current weight, steps seen)
     let mut hier_trace: std::collections::VecDeque<(BitVector, bool, u64, u64, Q16, usize)> = std::collections::VecDeque::new();
@@ -3372,7 +3374,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         // while learning the area is always consulted (it and the column keep
                         // learning as before) and the gate learns, from the counterfactual,
                         // where the frame helps; answering, the gate decides
-                        let i = if learn && hier_learn_always { 0 } else { hier_bg.select(&cands, if learn { Some(&mut bg_rng) } else { None }).unwrap_or(0) };
+                        let i = if learn && hier_learn_always {
+                            0
+                        } else if hier_margin > 0 {
+                            // skip only where skipping is clearly worth more (HIER_MARGIN)
+                            let i = (hier_bg.value(&cands[1]) > hier_bg.value(&cands[0]) + hier_margin) as usize;
+                            let i = if learn && chance(&mut bg_rng, hier_bg.explore) { bg_rng.gen_range(0..2) } else { i };
+                            hier_bg.select(&cands[i..=i], None::<&mut StdRng>);
+                            i
+                        } else {
+                            hier_bg.select(&cands, if learn { Some(&mut bg_rng) } else { None }).unwrap_or(0)
+                        };
                         hier_consult = i == 0;
                         hier_choices[testing as usize][hier_consult as usize] += 1;
                         hier_pending = learn.then(|| cands[i].clone());

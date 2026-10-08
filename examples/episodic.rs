@@ -1581,6 +1581,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         BitVector::from_bits(&bits, 512)
     };
     let mut hier_pending: Option<BitVector> = None; // the chosen action's code, until its reward
+    // HIER_TRACE=n: credit over time. Each choice stays eligible for n page steps and is
+    // rewarded by the column's accuracy over them (its own step's prediction and the next
+    // n − 1), each step weighted HIER_DECAY (default one half) per step of distance, instead
+    // of the one-step counterfactual. Consulting and skipping are valued alike, as the
+    // accuracy that followed them in that context; nothing is charged unless HIER_COST is set
+    // (taken off a consultation's credit).
+    let hier_trace_len: usize = std::env::var("HIER_TRACE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    // HIER_ANSWER_WEIGHT=w: a story's answer counts w times an ordinary word (the world's
+    // reward is the answer; the other words are the column's own check on itself)
+    let hier_answer_weight: u64 = std::env::var("HIER_ANSWER_WEIGHT").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let hier_decay: Q16 = q16(std::env::var("HIER_DECAY").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
+    // (code, consulted, Σ weight·outcome, Σ weight, current weight, steps seen)
+    let mut hier_trace: std::collections::VecDeque<(BitVector, bool, u64, u64, Q16, usize)> = std::collections::VecDeque::new();
     let mut hier_choices = [[0usize; 2]; 2]; // (training, test) × (skipped, consulted)
     let mut hier_consult = true;
     let mut td_span: Option<(usize, usize)> = None; // where this step's top-down frame sits in the input
@@ -4436,6 +4449,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // what the frame changed, against the column's own prediction without it
                     // (one look-up): right where it would be wrong 1, wrong where it would be
                     // right 0, no difference one half less the compute; skipping, one half
+                    if hier_trace_len > 0 && page {
+                        // credit over time: this step's outcome, to every eligible choice
+                        if let Some(c) = hier_pending.take() {
+                            hier_trace.push_back((c, hier_consult, 0, 0, ONE, 0));
+                        }
+                        let right = (enc.decode(&out) == Some(next)) as u64;
+                        let w = if t + 1 == s.answer_at { hier_answer_weight } else { 1 };
+                        for e in hier_trace.iter_mut() {
+                            e.2 += e.4 as u64 * right * w;
+                            e.3 += e.4 as u64 * w;
+                            e.4 = ((e.4 as u64 * hier_decay as u64) >> 16) as Q16;
+                            e.5 += 1;
+                        }
+                        while hier_trace.front().map_or(false, |e| e.5 >= hier_trace_len) {
+                            let (c, consulted, sum, weight, _, _) = hier_trace.pop_front().unwrap();
+                            let credit = ((sum << 16) / weight.max(1)) as i32 - if consulted { hier_cost as i32 } else { 0 };
+                            hier_bg.reward_candidate(&c, credit.max(0), &mut bg_rng);
+                        }
+                    }
                     if let Some(c) = hier_pending.take() {
                         let r = if hier_consult {
                             let with = enc.decode(&out) == Some(next);

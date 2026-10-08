@@ -1476,6 +1476,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // area act only through the prediction they shaped.
     let inner_speech = complete.as_deref().map_or(false, |m| m.starts_with("speech"));
     let inner_learned = std::env::var("INNER_GATE").map_or(false, |v| v == "learned");
+    let inner_when_definite = std::env::var("INNER_WHEN").map_or(false, |v| v == "definite");
     let mut phono = PhonologicalLoop::new();
     let mut inner_stats = [0usize; 3]; // test: surprises where it could speak, spoken, spoken in held-out stories
     let mut completed_sentence = false;
@@ -4576,7 +4577,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // inner speech: surprised by the page, the network says its prediction to
                 // itself and hears it before reading on
                 if inner_speech && !replaying && !reciting && rolled < 4 && (testing || complete.as_deref() == Some("speech")) && t + 1 != s.answer_at && s.words[t + 1] != "." {
-                    let said = enc.decode(&out).filter(|&w| w != next && vocab[w] != ".");
+                    // INNER_WHEN=definite: only where the column's own expectation holds one
+                    // word (as the rollout's trigger), or while already speaking
+                    let definite = !inner_when_definite || rolled > 0 || {
+                        let ex = column.l23.peek_union(&input, BITS);
+                        (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(ex.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).count() == 1
+                    };
+                    let said = enc.decode(&out).filter(|&w| definite && w != next && vocab[w] != ".");
                     if let Some(w) = said {
                         let go = if inner_learned {
                             let c = mix_conf.unwrap_or_else(|| column.confidence());

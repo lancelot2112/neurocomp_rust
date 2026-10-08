@@ -1522,8 +1522,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // module picks the questions by their learned value of information; =random: any n
     // people the module has claims about.
     let ask: usize = std::env::var("ASK").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    // =learned: the network's own policy, a basal-ganglia selector over the questions'
+    // states, rewarded by the information each answer brought
     let ask_random = std::env::var("ASK_POLICY").map_or(false, |v| v == "random");
-    let mut curiosity: Curiosity<usize> = Curiosity::new(64);
+    let ask_learned = std::env::var("ASK_POLICY").map_or(false, |v| v == "learned");
+    let mut curiosity: Curiosity<usize> = Curiosity::new(8, 8);
     let mut ask_rng = StdRng::seed_from_u64(seed ^ 0xA5C0_0001);
     let mut asked_log: Vec<(usize, usize)> = Vec::new(); // (person asked about, at which sleep)
     let mut sleeps_seen = 0usize;
@@ -1546,7 +1549,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 truth.push(f);
                 let tellers: Vec<(usize, usize)> = match j % 3 {
                     0 => vec![(0, f), (k - 1, 1 - f)],
-                    1 => vec![(0, f), (1, 1 - f)],
+                    // which honest narrator errs alternates, so neither earns less trust
+                    1 => if (j / 3) % 2 == 0 { vec![(0, f), (1, 1 - f)] } else { vec![(1, f), (0, 1 - f)] },
                     _ => vec![(prng.gen_range(0..k - 1), f)],
                 };
                 let mut at = prng.gen_range(100..TRAIN - phase - 200);
@@ -2225,20 +2229,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
-            // curiosity: the open questions (people whose family the module has claims
-            // about), ranked by the value of information; the chosen ones are asked of the
-            // teacher, whose answers are weighed with this sleep's facts
-            let mut asked: Vec<(usize, usize, u32)> = Vec::new(); // (person, context, lead before)
+            rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rel_rng);
+            // curiosity: once this sleep's facts are weighed, the open questions (people whose
+            // family the module has claims about) are ranked by the value of information; the
+            // chosen ones are asked of the teacher, and its answers weighed in a second pass
             if let (true, Some(k), Some(isa)) = (ask > 0, narrators, rel.relation_for(&[index["is"], index["a"]])) {
+                let mut asked: Vec<(usize, usize, u32)> = Vec::new(); // (person, context, lead before)
                 let people: Vec<usize> = NAMES.iter().chain(NEW_NAMES).chain(PRACTICE_NAMES).filter_map(|n| index.get(n).copied()).collect();
                 let mut open: Vec<usize> = Vec::new();
                 for &w in &people {
-                    if let Some((_, ctx)) = decisiveness(&rel, w, isa) {
-                        curiosity.note(w, ctx);
+                    if let (Some((_, ctx)), Some((_, _, lead))) = (decisiveness(&rel, w, isa), lead_of(&rel, w, isa)) {
+                        curiosity.note(w, ctx, ONE - lead.min(ONE));
                         open.push(w);
                     }
                 }
-                let chosen: Vec<usize> = if ask_random { open.choose_multiple(&mut ask_rng, ask).copied().collect() } else { curiosity.pick(ask) };
+                let chosen: Vec<usize> = if ask_random {
+                    open.choose_multiple(&mut ask_rng, ask).copied().collect()
+                } else if ask_learned {
+                    curiosity.pick_learned(ask, &mut ask_rng)
+                } else {
+                    curiosity.pick(ask)
+                };
                 for w in chosen {
                     let (Some(f), Some((_, ctx))) = (true_family(vocab[w], &practice_truth), decisiveness(&rel, w, isa)) else { continue };
                     let before = lead_of(&rel, w, isa).map_or(0, |x| x.2);
@@ -2246,16 +2257,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     asked.push((w, ctx, before));
                     asked_log.push((w, sleeps_seen));
                 }
-            }
-            sleeps_seen += 1;
-            rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rel_rng);
-            // the information each question gained: the rise in its answer's lead
-            if let Some(isa) = rel.relation_for(&[index["is"], index["a"]]) {
+                if !asked.is_empty() {
+                    rel.consolidate(&enc.codes, reps, &mut rel_rng);
+                }
+                // the information each question gained: the rise in its answer's lead
                 for &(w, ctx, before) in &asked {
                     let after = lead_of(&rel, w, isa).map_or(0, |x| x.2);
-                    curiosity.learn(ctx, after.saturating_sub(before));
+                    curiosity.learn(ctx, after.saturating_sub(before), &mut ask_rng);
                 }
             }
+            sleeps_seen += 1;
             // the practice quiz: each practice name the module has claims about is asked its
             // family; the go/no-go answers (the believed family) or says "unknown", and the
             // world then reveals the truth
@@ -5192,7 +5203,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             by_kind[kind(w)] += 1;
         }
         let new_asked: Vec<String> = asked_log.iter().filter(|x| kind(x.0) == 0).map(|&(w, sl)| format!("{} (sleep {sl})", vocab[w])).collect();
-        let ctxs: Vec<String> = curiosity.learned().iter().map(|&(c, n, g)| format!("belief {}/8 lead {}/16: {} asked, gain {:.2}", c / 8, c % 8, n, to_f32(g))).collect();
+        let ctxs: Vec<String> = curiosity.learned().iter().map(|&(c, n, g)| format!("belief {}/8 lead {}/16: {} asked, gain {:.2}, policy value {:.2}", c / 8, c % 8, n, to_f32(g), to_f32(curiosity.learned_value(c)))).collect();
         eprintln!(
             "  CURIOSITY seed {seed}: {} questions asked ({} about new names, {} practice, {} trained names), mean gain {:.2}, {} open at the end; new names asked: {}; learned value by context: {}",
             searches,

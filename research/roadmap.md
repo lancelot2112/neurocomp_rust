@@ -306,7 +306,9 @@ what is not on the page (a gist, or a book read days ago), but looking back is t
 first resort. Next: confidence-driven regressions, a spatial index of the page, and
 skipping.
 
-**Growing areas by need (proposed).** Instead of fixing the number of areas, grow
+**Built ([84](experiments/84-areas-grow-by-need.md)):** from one area, story boundary grows exactly three (windows 4, 16, 64 sentences) and prunes the fourth, 85–96% against 8–17% at one; other tasks over-grow (2–4 areas, no gain), so promotion should also weigh compute or answers.
+
+**Growing areas by need (the proposal).** Instead of fixing the number of areas, grow
 one where the top area cannot contain its surprise:
 - **A bud.** The top area keeps a candidate area above it, with a window 4× longer. The
   bud runs only on the top area's residual (event-driven, so it is cheap) and votes in the

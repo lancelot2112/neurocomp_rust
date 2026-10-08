@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -364,11 +364,29 @@ fn belief_band(b: Q16) -> usize {
 /// context (the band of its belief, in eighths, × the band of its lead over the runner-up,
 /// in sixteenths up to 7/16): how strongly it is believed, and how decisively.
 fn decisiveness(rel: &RelationStore, w: usize, r: usize) -> Option<(usize, usize)> {
+    let (v, top, lead) = lead_of(rel, w, r)?;
+    Some((v, belief_band(top) * 8 + ((lead as u64 * 16) >> 16).min(7) as usize))
+}
+
+/// The believed value of (w, relation r), its belief, and its lead over the runner-up
+/// (`Q16`).
+fn lead_of(rel: &RelationStore, w: usize, r: usize) -> Option<(usize, u32, u32)> {
     let v = rel.bayes.believed(&(r, w, 0, 1))?;
     let top = rel.belief(w, r, 0, 1, v);
     let second = rel.claims(w, r, 0, 1).iter().filter(|c| c.0 != v).map(|c| c.2).max().unwrap_or(0);
-    let lead = ((top.saturating_sub(second) as u64 * 16) >> 16).min(7) as usize;
-    Some((v, belief_band(top) * 8 + lead))
+    Some((v, top, top.saturating_sub(second)))
+}
+
+/// A person's true family (for the teacher and the practice quiz): trained names, new
+/// names, practice names.
+fn true_family(name: &str, practice_truth: &[usize]) -> Option<usize> {
+    if let Some(m) = NAMES.iter().position(|n| *n == name) {
+        return Some(family_of(m, false));
+    }
+    if let Some(i) = NEW_NAMES.iter().position(|n| *n == name) {
+        return Some(family_of(i, true));
+    }
+    PRACTICE_NAMES.iter().position(|n| *n == name).and_then(|j| practice_truth.get(j).copied())
 }
 
 /// BELIEF_Q=1: test questions that ask a new name's family (see `season_story_with`).
@@ -1498,6 +1516,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut quiz_rng = StdRng::seed_from_u64(seed ^ 0x5157_4954);
     let mut quiz_stats = [[0usize; 3]; 64]; // per context: (quizzes, answered, answered right)
     let quiz_reps: usize = std::env::var("QUIZ_REPS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+    // ASK=n (with NARRATORS): at each sleep the network may ask a teacher n questions ("who
+    // is sam?"); the teacher answers with the true family, as a source of its own whose
+    // trust is earned like any narrator's. ASK_POLICY=curious (default): the curiosity
+    // module picks the questions by their learned value of information; =random: any n
+    // people the module has claims about.
+    let ask: usize = std::env::var("ASK").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+    let ask_random = std::env::var("ASK_POLICY").map_or(false, |v| v == "random");
+    let mut curiosity: Curiosity<usize> = Curiosity::new(64);
+    let mut ask_rng = StdRng::seed_from_u64(seed ^ 0xA5C0_0001);
+    let mut asked_log: Vec<(usize, usize)> = Vec::new(); // (person asked about, at which sleep)
+    let mut sleeps_seen = 0usize;
     // PRACTICE: each practice name has a true family and one of three kinds of statement:
     // 0, the first honest narrator (truth) against the liar (a lie); 1, the first honest
     // narrator (truth) against the second (wrong, once: undecidable); 2, one honest
@@ -2196,7 +2225,37 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
+            // curiosity: the open questions (people whose family the module has claims
+            // about), ranked by the value of information; the chosen ones are asked of the
+            // teacher, whose answers are weighed with this sleep's facts
+            let mut asked: Vec<(usize, usize, u32)> = Vec::new(); // (person, context, lead before)
+            if let (true, Some(k), Some(isa)) = (ask > 0, narrators, rel.relation_for(&[index["is"], index["a"]])) {
+                let people: Vec<usize> = NAMES.iter().chain(NEW_NAMES).chain(PRACTICE_NAMES).filter_map(|n| index.get(n).copied()).collect();
+                let mut open: Vec<usize> = Vec::new();
+                for &w in &people {
+                    if let Some((_, ctx)) = decisiveness(&rel, w, isa) {
+                        curiosity.note(w, ctx);
+                        open.push(w);
+                    }
+                }
+                let chosen: Vec<usize> = if ask_random { open.choose_multiple(&mut ask_rng, ask).copied().collect() } else { curiosity.pick(ask) };
+                for w in chosen {
+                    let (Some(f), Some((_, ctx))) = (true_family(vocab[w], &practice_truth), decisiveness(&rel, w, isa)) else { continue };
+                    let before = lead_of(&rel, w, isa).map_or(0, |x| x.2);
+                    rel.observe_from(&[w, index["is"], index["a"], index[SURNAMES[f]]], k as u16 + 1);
+                    asked.push((w, ctx, before));
+                    asked_log.push((w, sleeps_seen));
+                }
+            }
+            sleeps_seen += 1;
             rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rel_rng);
+            // the information each question gained: the rise in its answer's lead
+            if let Some(isa) = rel.relation_for(&[index["is"], index["a"]]) {
+                for &(w, ctx, before) in &asked {
+                    let after = lead_of(&rel, w, isa).map_or(0, |x| x.2);
+                    curiosity.learn(ctx, after.saturating_sub(before));
+                }
+            }
             // the practice quiz: each practice name the module has claims about is asked its
             // family; the go/no-go answers (the believed family) or says "unknown", and the
             // world then reveals the truth
@@ -5124,6 +5183,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 100.0 * cn as f64 / n as f64
             );
         }
+    }
+    if ask > 0 {
+        let (open, searches, mean) = curiosity.stats();
+        let kind = |w: usize| if NEW_NAMES.contains(&vocab[w]) { 0 } else if PRACTICE_NAMES.contains(&vocab[w]) { 1 } else { 2 };
+        let mut by_kind = [0usize; 3];
+        for &(w, _) in &asked_log {
+            by_kind[kind(w)] += 1;
+        }
+        let new_asked: Vec<String> = asked_log.iter().filter(|x| kind(x.0) == 0).map(|&(w, sl)| format!("{} (sleep {sl})", vocab[w])).collect();
+        let ctxs: Vec<String> = curiosity.learned().iter().map(|&(c, n, g)| format!("belief {}/8 lead {}/16: {} asked, gain {:.2}", c / 8, c % 8, n, to_f32(g))).collect();
+        eprintln!(
+            "  CURIOSITY seed {seed}: {} questions asked ({} about new names, {} practice, {} trained names), mean gain {:.2}, {} open at the end; new names asked: {}; learned value by context: {}",
+            searches,
+            by_kind[0],
+            by_kind[1],
+            by_kind[2],
+            to_f32(mean),
+            open,
+            new_asked.join(", "),
+            ctxs.join("; ")
+        );
     }
     if belief_q() && narrators.is_some() {
         let parts: Vec<String> = NEW_NAMES

@@ -36,6 +36,8 @@ pub use engram::{Dedup, EngramConfig, EngramStore};
 
 pub mod bayes;
 pub use bayes::{Bayes, BeliefRule};
+pub mod curiosity;
+pub use curiosity::Curiosity;
 
 pub mod relations;
 pub use relations::RelationStore;

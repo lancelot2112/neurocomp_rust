@@ -207,6 +207,8 @@ slot codes bound to content in the hippocampus, recalled by slot.
   - "unknown" when belief is split: the posterior abstains on every question about a name
     two equally trusted sources dispute, and never where trust settles the conflict
     ([79](experiments/79-unknown-when-belief-is-split.md)).
+  - answer or "unknown" learned as a basal-ganglia go/no-go from practice quizzes, per
+    belief × lead over the runner-up ([80](experiments/80-learned-answer-or-unknown.md)).
 - **Next:**
   1. ~~independent random streams per subsystem~~ (done, see Infrastructure);
   2. ~~a task where the believed fact decides the answer~~ (done, [78](experiments/78-belief-decides-the-answer.md));
@@ -216,8 +218,11 @@ slot codes bound to content in the hippocampus, recalled by slot.
   4. proposals and self-generated claims as sources with earned trust;
   5. ~~"unknown" when belief is split~~ (done: the posterior abstains exactly on the
      undecidable conflict, [79](experiments/79-unknown-when-belief-is-split.md));
-  6. learn the answer-or-abstain threshold as a go/no-go, and seek evidence on an
-     "unknown".
+  6. ~~learn the answer-or-abstain threshold as a go/no-go~~ (done: from practice, per
+     belief × lead; graded and posterior answer tom and lucy and abstain on sam,
+     [80](experiments/80-learned-answer-or-unknown.md));
+  7. seek evidence on an "unknown": a curiosity module (in progress);
+  8. frames that survive a lopsided filler (found in 80).
 
 ## 5. A third level and a slower clock
 **Build.**

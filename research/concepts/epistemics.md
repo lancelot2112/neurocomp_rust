@@ -45,6 +45,13 @@ against a distrusted one. Graded belief always puts one side of a two-way confli
 over half (it answers the undecidable name, wrong); a vote puts every 1:1 conflict at one
 half (it abstains on everything).
 
+## Learning when to answer ([80](../experiments/80-learned-answer-or-unknown.md))
+Answer or "unknown" is a basal-ganglia go/no-go, learned from practice quizzes (right: 1,
+wrong: 0, "unknown": one half). Its context is how strongly and how decisively the value
+is believed: the lead over the runner-up is what tells a conflict trust settles from one
+it cannot. With it, graded belief abstains as well as the posterior; full and vote learn
+that every conflict looks the same to them and abstain on all of them.
+
 ## What is still missing
 - Proposals and the network's own claims as sources with earned trust (premise credibility
   already comes from belief: [76](../experiments/76-belief-rules.md)).

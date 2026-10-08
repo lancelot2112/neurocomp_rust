@@ -255,7 +255,12 @@ slot codes bound to content in the hippocampus, recalled by slot.
 **Tried ([83](experiments/83-compute-only-where-needed.md)):** the higher area only where the
 column needs help (surprised, or unsure of the next word). It helps some tasks a lot (slot
 memory 16 → 41%) and kills others (story boundary 0%): when top-down helps must be learned
-per context (a go/no-go charged for compute), not set by a rule.
+per context (a go/no-go charged for compute), not set by a rule. A learned go/no-go,
+rewarded by what blanking the frame changes in the next prediction, skips 70–90% of steps
+and keeps the context tasks, but loses 10–47 points on the relation and hippocampus
+entries: one step's counterfactual undervalues a frame whose worth arrives later. Next:
+credit over time (eligibility traces), and keep the area's context running while its
+prediction is skipped.
 
 **Build.**
 - Run the higher area only on the column's surprises, or once per sentence. This removes

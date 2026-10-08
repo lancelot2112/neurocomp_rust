@@ -228,7 +228,20 @@ slot codes bound to content in the hippocampus, recalled by slot.
      by a fixed ranking or the network's own learned policy; a question asked is settled,
      [81](experiments/81-curiosity.md)); next: more experience for the learned policy, a
      go/no-go that generalises to unpractised states, replay and attention as searches;
-  8. frames that survive a lopsided filler (found in 80).
+  8. ~~frames that survive a lopsided filler~~ (done: a position where a known filler
+     recurs is a slot, unit test; relation-store entries within margin).
+- **The relation store's learned parts, and what is still an algorithm over word ids.**
+  The binding map (entity, relation → value) is a predictive kernel class over rotated
+  bit codes. Frame induction (neighbour counting), relation codes (an index into a list),
+  binding offsets (a hash), rule learning (counting compositions) and the Bayes module
+  (integer bookkeeping over claims) are discrete algorithms over word ids. To make them the
+  network's own representations:
+  1. **frames from code overlap:** induce frames from the overlap of sentence codes, with
+     the role area's slot cells ([31](experiments/31-role-transfer.md)) marking which
+     positions vary, instead of neighbour counting; a relation is then a learned cell;
+  2. binding offsets from that cell's code instead of a hash;
+  3. claims and trust in bit-sliced counters (as the basal ganglia hold values), so belief
+     is per-bit arithmetic over codes (approximate, where the integer posterior is exact).
 - **The goal is continuous learning.** Experiments switch learning off at test so a run
   is measured cleanly, and that stays for now. The network itself is meant to learn all the
   time, with no train/test split: belief, trust, the go/no-go and the curiosity policy

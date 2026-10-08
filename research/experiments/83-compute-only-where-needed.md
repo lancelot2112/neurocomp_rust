@@ -149,7 +149,6 @@ n = 4, w = 16 → the same with margin 1/16):
 | belief decides | 81.7 | 59.8 | 77.7 | 79.5 |
 | higher area consulted (test) | 100% | 5–58% | 32–100% (about half) | 74–100% (about 90%) |
 
-The other entries are within 2 points.
 
 **Findings.**
 1. **Credit over time fixes what the one-step reward broke,** once the answer is weighted:
@@ -158,7 +157,9 @@ The other entries are within 2 points.
    answer is what tells the gate where the frame matters.
 2. **With a margin it beats always consulting on 14 entries of 25** (role transfer +17,
    slot memory +53, family consolidated +11, inference replay +12, engram walk only +8,
-   cooperation +5, relation entries +3); 6 lose 2–12 points.
+   cooperation +5, relation entries +3); 7 lose 2–19 points (saccades −19, inference read
+   and sleep generalisation −10, schema advantage −7, engram store and full hippocampus −3,
+   belief −2).
 3. **But it saves little:** about 10% of the area's steps. Without the margin it saves
    about half and collapses on single seeds (saccades 0 / 0, role transfer 0, story
    boundary 23): one context the answer depends on tips to "skip" on nearly equal values.

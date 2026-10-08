@@ -1701,6 +1701,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // they arrive as one more channel before the column predicts: context, never the driver,
     // its gain learned like any channel's. The slot memory's word no longer votes in the mix.
     let hc_route = route_on && std::env::var("HC_ROUTE").is_ok();
+    // HC_EC=1 (without ROUTE): the plausible hippocampal path. Its only output is entorhinal
+    // feedback (CA1 → subiculum → deep EC → association cortex): within a word's step, the
+    // column's feedforward sweep gives its expectation and its confidence; the hippocampus
+    // recalls (cued as before); CA1 decodes the recall into word codes (up to three, best
+    // overlap first); they reach the column as context in their own slot, never as the
+    // driver. Their gain is the cortex's uncertainty: the share of the feedback's bits that
+    // pass is 1 − the confidence of the feedforward sweep's prediction (memory counts where
+    // the cortex is unsure, as prefrontal control retrieves when monitoring finds
+    // uncertainty). Memory's word no longer votes in the thalamic mix, and the rollout no
+    // longer inserts it as the next input or feeds its readout back.
+    let hc_ec = !route_on && std::env::var("HC_EC").is_ok();
+    let mut hc_ec_stats = [0u64; 3]; // steps with feedback, Σ share passed (Q16), test steps with feedback
     let mut route_cur: Option<(BitVector, Vec<(usize, BitVector)>, usize)> = None; // this step's row parts
     // The record (default): each training step, for every slot, the column's prediction
     // against its prediction from the kernels that do not read that slot or any later one
@@ -3727,6 +3739,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     hier_in = (!hier_skip).then_some(hin);
                 }
+                if hc_ec {
+                    // the entorhinal feedback slot, filled once the hippocampus has recalled
+                    words.extend(std::iter::repeat(0).take(BITS / 64));
+                }
                 words.extend_from_slice(column.previous().as_words()); // L6: the previous input
                 if testing && t + 1 == s.answer_at {
                     // memory diagnostic: does any recalled frame contain the answer word?
@@ -4041,7 +4057,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
                         let sem_out = semantic_reps.and(sem_cue_w).and_then(|cw| sem_read(&sem_store, &enc.codes, cw, slot_in(&bind_sentence_pairs, cw), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs));
                         let fed = [
-                            bind_raw.as_ref().filter(|_| !(testing && bind_lesion)).and_then(|v| gate(v)).map(|v| (v, 0usize)),
+                            bind_raw.as_ref().filter(|_| !(testing && bind_lesion) && !hc_ec).and_then(|v| gate(v)).map(|v| (v, 0usize)),
                             sem_out.as_ref().and_then(|v| gate(v)).map(|v| (v, 1)),
                             td_src.as_ref().filter(|_| rollout_area).and_then(|v| gate(v)).map(|v| (v, 2)),
                             column.l23.peek(&input).as_ref().and_then(|v| gate(v)).map(|v| (v, 3)),
@@ -4125,7 +4141,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         rolled_surname = Some(vocab[w] == SURNAMES[family_of(i, true)]);
                     }
                 }
-                if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer, completed_sentence, testing && bind_lesion) {
+                if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer.filter(|_| !hc_ec), completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                     let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], w, c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
@@ -4150,6 +4166,43 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         completed_sentence = true;
                     }
                 }
+                // HC_EC: the recall, decoded by CA1, returns as entorhinal feedback in its slot,
+                // passed in proportion to the feedforward sweep's uncertainty
+                let input = match (hc_ec, bind_raw.as_ref().filter(|_| !(testing && bind_lesion))) {
+                    (true, Some(raw)) => {
+                        let ov = |i: usize| enc.codes[i].as_words().iter().zip(raw.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+                        let mut cands: Vec<(u32, usize)> = (0..vocab.len()).map(|i| (ov(i), i)).filter(|x| x.0 >= 24).collect();
+                        cands.sort_by(|a, b| b.cmp(a));
+                        let mut ec = BitVector::new(BITS, Some(0));
+                        for &(_, i) in cands.iter().take(3) {
+                            ec.or_mut(&enc.codes[i]);
+                        }
+                        if ec.count_ones() == 0 {
+                            input
+                        } else {
+                            let conf = column.l23.peek_scored(&input).map_or(0, |(_, c)| c) as u64;
+                            let share = (ONE as u64).saturating_sub(conf);
+                            let fw = BITS / 64;
+                            let mut w = input.as_words().to_vec();
+                            let at = w.len() - 2 * fw; // the slot before the previous input
+                            for (wi, (d, x)) in w[at..at + fw].iter_mut().zip(ec.as_words()).enumerate() {
+                                let mut keep = 0u64;
+                                for b in 0..64 {
+                                    let h = ((wi * 64 + b) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
+                                    if h < share {
+                                        keep |= 1 << b;
+                                    }
+                                }
+                                *d = x & keep;
+                            }
+                            hc_ec_stats[0] += 1;
+                            hc_ec_stats[1] += share;
+                            hc_ec_stats[2] += testing as u64;
+                            BitVector::from_words(w)
+                        }
+                    }
+                    _ => input,
+                };
                 // HC_ROUTE: the recall, decoded by CA1, returns as entorhinal feedback
                 let input = match (hc_route, bind_raw.as_ref().filter(|_| !(testing && bind_lesion)), route_cur.clone()) {
                     (true, Some(raw), Some((word, mut ch, slots))) => {
@@ -4354,7 +4407,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // sparse in time: the column is sure here, the hippocampus's answer is not sent
                             hc_withheld += (testing && !replaying) as usize;
                         } else {
-                            if !hc_route {
+                            if !hc_route && !hc_ec {
                                 proposals.push((6, ctx + bind_strength, vec![w]));
                             }
                         }
@@ -5401,6 +5454,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             } else {
                 eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
             }
+        }
+        if hc_ec {
+            eprintln!("  HC_EC seed {seed}: entorhinal feedback at {} steps ({} at test), mean share passed {:.0}%", hc_ec_stats[0], hc_ec_stats[2], 100.0 * hc_ec_stats[1] as f64 / (hc_ec_stats[0].max(1) as f64 * ONE as f64));
         }
         if let Some(cb) = cerebellum.as_ref() {
             eprintln!("  LEARNING seed {seed}: slow cortex {} kernels, cerebellum {} kernels; at test answers the cerebellum proposed a word at {} and was right at {} ({:.1}%)", column.l23.live(), cb.live(), cb_stats[0], cb_stats[1], 100.0 * cb_stats[1] as f64 / cb_stats[0].max(1) as f64);
@@ -6479,7 +6535,8 @@ fn route_extra_slots() -> usize {
     static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *N.get_or_init(|| {
         if std::env::var("ROUTE").is_err() {
-            return 0;
+            // HC_EC: the entorhinal feedback slot
+            return std::env::var("HC_EC").is_ok() as usize;
         }
         let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(false, |v| v == "three") as usize;
         std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(default)

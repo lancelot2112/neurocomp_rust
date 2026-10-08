@@ -176,6 +176,42 @@ Neuromodulators set gain and learning rate (Yu & Dayan 2005).
 (an entry trained with the hippocampus routed in, tested with it lesioned); held-out
 accuracy at least as good; the brake's stops mostly on answers that would have been wrong.
 
+### Grown, not designed (proposed)
+**Why.** The reading network is wired by hand: a harness of about 6,500 lines and 267
+settings, a list of settings per task ([audit](concepts/connection-plausibility.md#evolution-and-development-how-the-architecture-arises)).
+The genome grammar of [51](experiments/51-networks-of-kernels.md)–[52](experiments/52-associate-and-hippocampus-genome.md)
+can express the column and the hippocampus exactly, but builds nothing the suite runs.
+
+**Build.**
+- Express the suite's systems as genomes: column, higher area, hippocampus, cerebellum,
+  thalamic routing, basal-ganglia go/no-go, each a definition built from base kernels.
+- One genome for the reading network, the same for every task; what differs between tasks
+  is only the data. Growth (areas by need, kernels on surprise, routing in a critical
+  period) does the rest.
+- Then search: mutate genomes, score them on the suite, keep what improves it, as
+  evolution would. The hand-written modules (truth discovery, the relation parser, the
+  curiosity ranking) become targets a searched circuit must match.
+
+**Test.** One genome scoring within noise of the hand-tuned settings on every entry.
+
+### Relations from structure, not a parser (proposed)
+**Why.** The relation store finds a fact's relation by counting neighbours over exact
+positions and composes rules by counting paths: hand-written algorithms over kernels
+([audit](concepts/connection-plausibility.md#relations-how-the-network-learns-who-is-what-to-whom)).
+The hippocampus already does the plausible thing: role codes bound to content.
+
+**Build.**
+- Key facts by the role cells' codes (structure) instead of the parser's frames, and
+  answer by completion (the kernel class of [82](experiments/82-fact-completion.md),
+  made cheaper) instead of lookup.
+- Compose by walking structure (the engram walk) and by generative replay, with the
+  rule-counting kept only as the specification the learned version is checked against.
+- Trust learned as each source's record (as the thalamic mix learns each internal
+  source's), with the truth-discovery algorithm as the specification.
+
+**Test.** The relation and belief entries at parity with the parser; the family-tree
+compositions (grandfather = father ∘ father) learned.
+
 ## 3. Thinking in steps
 **Why.** Two-hop chains one recall into another, but the chain is fixed by hand. Reasoning
 is a sequence of internal steps whose number depends on the question.

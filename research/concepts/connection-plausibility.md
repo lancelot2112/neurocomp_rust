@@ -62,7 +62,13 @@ the test only through what replay taught the cortex.
 | Cortex → cortex under uncertainty (`COOPERATE`) | Where the column is unsure, the semantic (since [67](../experiments/67-relation-store-in-reading.md): relation) store's content for the least familiar word joins the higher area's context | Cortico-cortical retrieval of semantic knowledge, prefrontal-guided | Plausible (the store itself is cortical) |
 
 No hippocampal pathway uses a second run of anything. The shortcuts left:
-1. ~~Hippocampal output as EC feedback~~: `HC_ROUTE` (above).
+1. ~~Hippocampal output as EC feedback~~: **`HC_EC=1`** (without `ROUTE`) is the plausible
+   path. Entorhinal feedback is the only output: CA1-decoded recall in its own context
+   slot, never the driver; its gain is the cortex's uncertainty (the share of its bits
+   that pass is 1 − the confidence of the feedforward sweep's prediction, as retrieval is
+   called on when monitoring finds uncertainty); no vote in the thalamic mix, no rollout
+   insertion. (`HC_ROUTE`, with routing, gives it a thalamic share instead, which is the
+   wrong gain mechanism.)
 2. Replay entering through the driver slot rather than EC: cortical reactivation is what
    replay causes, so the column re-reading the event is a fair abstraction of it.
 3. ~~Replay priority~~: plausible as built (above; the first audit read it wrongly).
@@ -127,6 +133,38 @@ supplying context); `CorticalColumn::set_output` restores it.
 | Eligibility traces in the basal ganglia | Recent choices' bits stay eligible for a later reward | Plausible (Frémaux & Gerstner 2016) |
 | Teaching signal | Each kernel corrected by the actual next word | Cerebellum-like climbing-fibre error; plausible for a predictor |
 
+## Evolution and development: how the architecture arises
+
+A brain is not wired by hand: a genome specifies a few cell types, their local circuits
+and rules for connecting them; development grows the connections, prunes them by activity
+and fixes them after critical periods; learning tunes them within a life. The model:
+
+| Aspect | Model | Brain | Verdict |
+|---|---|---|---|
+| What specifies the architecture | A hand-written harness (`examples/episodic.rs`, about 6,500 lines, 267 settings) wires the systems together; each suite entry is a list of settings | A genome of cell types and wiring rules, the same few circuits repeated (the cortical column everywhere) | **Not plausible**: designed per task |
+| A grammar of circuits ([51](../experiments/51-networks-of-kernels.md), [52](../experiments/52-associate-and-hippocampus-genome.md)) | `Genome` / `NetOp`: a stack language building networks of base kernels, recursively; the column and the hippocampus are genomes bit-identical to the hand-built ones; any mutation builds a valid network | Repeated canonical circuits, specified compactly and composed | Plausible, but **not used**: the reading network is not built from it, and no search over genomes has run |
+| Base kernels | One learning rule (predictive kernels) plus a few operators (bit ops, delay, concatenation, hashed expansion) | A few cell types and plasticity rules reused everywhere | Plausible |
+| How many areas | Grown by need: a shadow bud, promoted on evidence, else pruned ([84](../experiments/84-areas-grow-by-need.md)) | Recruitment of uncommitted cortex; expansion of a region with use | Approximate (recruitment, not creation), and an option, not the default |
+| Where inputs land | Hand layout by default; learned order within a critical period, fixed after (`ROUTE`) | Activity-dependent wiring in development, fixed after critical periods; gains plastic for life | Plausible as the option; the default is designed |
+| Kernels | Grown on surprise, pruned and merged at sleep | Synaptogenesis and pruning by activity, sleep-dependent downscaling | Plausible |
+| Hand-written modules | The Bayes module's truth discovery, the relation store's parser and rule counting, curiosity's ranking, the frame finder | Functions that would have to emerge from circuits | **Not plausible as mechanisms**; each is a specification of what a circuit should learn |
+
+## Relations: how the network learns who is what to whom
+
+| Aspect | Model | Brain | Verdict |
+|---|---|---|---|
+| Binding a word to its role | Role cells (competitive Hebbian) give a slot; the hippocampus stores word ⊗ slot by a fixed rotation and unbinds by the inverse ([36](../experiments/36-slot-binding-memory.md), [49](../experiments/49-sparse-binding-space.md)) | Entorhinal structure codes (grid-like) bound to content in the hippocampus: the Tolman-Eichenbaum machine (Whittington et al. 2020) | Plausible |
+| Finding the relation in a sentence | The relation store counts a fact's neighbours (facts of the same length agreeing in all but two positions); positions where most agree are its "frame", the rest fillers; a recurring entity is a filler whatever its share ([66](../experiments/66-typed-relations.md)–[68](../experiments/68-lifted-frames-and-sparse-gating.md)) | Learned from structure: sequence position and role codes, statistical learning in temporal and prefrontal cortex | **Not plausible**: a hand-written parser over exact positions |
+| Fact completion (`REL_COMPLETE`, [82](../experiments/82-fact-completion.md)) | A general kernel class completes the blank ("tom is a _") from the other words, each frame its own input | Pattern completion over learned representations | Plausible; an option (four times the cost), and claims and rules are still keyed by the parser's frames |
+| Composing relations | Two-step paths counted at sleep; a path right for three quarters of the facts becomes a rule (grandfather = father ∘ father), whose inferences are replayed | Relational inference by recombining structure codes (path integration in TEM; transitive inference in hippocampus and prefrontal cortex); generative replay of never-experienced sequences (Liu et al. 2019) | Approximate: replay of inferences is plausible; the counting and the three-quarters rule are hand-written |
+| Trust in sources | Truth discovery: a value's belief is the summed trust of its sources, a source's trust the share of belief its claims win, per topic ([75](../experiments/75-bayes-module.md)–[81](../experiments/81-curiosity.md)) | Source monitoring (prefrontal), learned reliability of informants (from childhood), precision weighting | Approximate: the computation is a specification; the brain learns reliability by similar statistics, but not by this algorithm |
+
+**The plausible direction for relations** is the one the hippocampus already uses: role
+and structure codes bound to content, completion by a general kernel class instead of a
+parser, and composition by walking structure (the engram walk, [59](../experiments/59-engram-walk.md))
+and by generative replay. The relation store's parser, rule counting and truth discovery
+are then targets for learned circuits to match, not mechanisms to keep.
+
 ## Rules kept from here on
 1. **No second runs.** A credit signal must come from activity present in the same pass
    (shallower and deeper kernels, a source's vote against the sum) or from a later outcome
@@ -138,3 +176,6 @@ supplying context); `CorticalColumn::set_output` restores it.
 4. **Codes stay topographic between areas.** A word keeps its code along a pathway, so it
    can be copied; where a binding is needed (the relation store's positions) it is fixed
    wiring, never computed per item.
+5. **New mechanisms are built from base kernels and wiring**, so they could be expressed
+   in the genome grammar; a hand-written algorithm is acceptable only as a specification
+   that a learned circuit is later tested against.

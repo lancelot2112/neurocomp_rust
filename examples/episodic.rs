@@ -1555,6 +1555,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let question_act = std::env::var("QUESTION_ACT").ok();
     let question_learned = question_act.as_deref() == Some("learned");
     let mut open_q: Option<usize> = None;
+    // Per-restatement credit (QUESTION_ACT=learned): each restatement's stored event is
+    // tagged with the choice that made it. At the answer, the event the hippocampus recalls
+    // is the one that was used, and its choice alone gets the answer's outcome (+1 right, −1
+    // wrong); restatements not recalled get only STEP_COST, choosing not to restate 0. The
+    // ask keeps the story's reward. (QUESTION_CREDIT=story: every choice gets the story's
+    // reward, as before.)
+    let q_credit_story = std::env::var("QUESTION_CREDIT").map_or(false, |v| v == "story");
+    let mut restate_pending: Vec<(BitVector, bool, Option<u32>)> = Vec::new(); // (choice, restated, its event's row)
+    let mut restate_open: Option<usize> = None; // the restatement whose event is not stored yet
+    let mut answer_rows: Vec<u32> = Vec::new(); // the events recalled for the answer
+    let mut q_credit = [0usize; 3]; // test, held out: restatements, recalled for the answer, recalled and right
     let mut q_choice: HashMap<String, usize> = HashMap::default(); // test, held out: restatements by sentence start and k
     let mut restated = 0usize;
     let mut q_stats = [0usize; 4]; // test, held-out stories: questions asked, restatements, restatements naming the stranger's sentence ("the person"), answers right after a restatement
@@ -1983,7 +1994,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let step_test_learn = std::env::var("STEP_TEST_LEARN").is_ok();
     let step_cost: i32 = q16(std::env::var("STEP_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05)) as i32;
     let mut step_bg = BasalGanglia::new(BITS);
-    if question_learned {
+    if question_learned && std::env::var("QUESTION_BASELINE").is_ok() {
         // one reward at the answer credits several acts in the story: learn from the reward
         // against its running average, not against the chosen act's value (which locks in
         // whichever act is tried first while rewards are mostly positive)
@@ -2972,6 +2983,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         rolled_surname = None;
         open_q = None;
         restated = 0;
+        restate_pending.clear();
+        restate_open = None;
+        answer_rows.clear();
         page_marks = vec![false; ids.len()];
         inner = vec![false; ids.len()];
         inner_code = vec![None; ids.len()];
@@ -4042,6 +4056,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             } else {
                                 hc.recall(&set_bits(&cue))
                             };
+                            if t + 1 == s.answer_at {
+                                answer_rows = r.ca1.clone();
+                            }
                             if hc_surprise && !reuse {
                                 gated_steps[1] += 1;
                                 hc_cached = Some(r.clone());
@@ -4762,7 +4779,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let cands = [step_code(ctx, 0), step_code(ctx, 1), step_code(ctx, 2)];
                                 let k = step_bg.select(&cands, if explore { Some(&mut bg_rng) } else { None }).unwrap_or(0);
                                 if !testing {
-                                    step_pending.push((cands[k].clone(), k > 0));
+                                    if q_credit_story {
+                                        step_pending.push((cands[k].clone(), k > 0));
+                                    } else {
+                                        restate_pending.push((cands[k].clone(), false, None));
+                                    }
                                 }
                                 k
                             } else {
@@ -4801,6 +4822,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 }
                                 s.answer_at += said.len();
                                 restated += 1;
+                                // this restatement's event is tagged when it is stored
+                                if question_learned && !testing && !q_credit_story {
+                                    if let Some(last) = restate_pending.last_mut() {
+                                        last.1 = true;
+                                        restate_open = Some(restate_pending.len() - 1);
+                                    }
+                                } else {
+                                    restate_pending.push((BitVector::new(BITS, Some(0)), true, None));
+                                    restate_open = Some(restate_pending.len() - 1);
+                                }
                             }
                         }
                         None if t + 1 < s.answer_at => {
@@ -4823,6 +4854,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                         }
                         _ => {}
+                    }
+                }
+                if question_act.is_some() && t + 1 == s.answer_at {
+                    let right = enc.decode(&out) == Some(next);
+                    for (code, acted, row) in restate_pending.drain(..) {
+                        let used = acted && row.map_or(false, |r| answer_rows.contains(&r));
+                        if testing && s.held_out && acted {
+                            q_credit[0] += 1;
+                            q_credit[1] += used as usize;
+                            q_credit[2] += (used && right) as usize;
+                        }
+                        if question_learned && !testing {
+                            let r = if used { if right { ONE as i32 } else { -(ONE as i32) } } else { 0 } - if acted { step_cost } else { 0 };
+                            step_bg.reward_candidate(&code, r, &mut bg_rng);
+                        }
                     }
                 }
                 if (step_learned || inner_learned || question_learned) && t + 1 == s.answer_at {
@@ -5471,6 +5517,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
                                 let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)).collect();
                                 hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
+                                if let (Some(i), Some(r), true) = (restate_open, hc.last_row(), inner[t]) {
+                                    restate_pending[i].2 = Some(r);
+                                    restate_open = None;
+                                }
                                 if let Some(r) = hc.last_row() {
                                     row_narrator.insert(r, narrator + 1);
                                 }
@@ -6142,7 +6192,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if question_act.is_some() {
             let mut qc: Vec<_> = q_choice.iter().collect();
             qc.sort_by(|a, b| b.1.cmp(a.1));
-            eprintln!("  QUESTION seed {seed}: in held-out test stories, {} questions asked, {} restatements ({} of the stranger's fact); by sentence start: {:?}", q_stats[0], q_stats[1], q_stats[2], qc.iter().take(12).collect::<Vec<_>>());
+            eprintln!("  QUESTION seed {seed}: in held-out test stories, {} questions asked, {} restatements ({} of the stranger's fact; {} recalled for the answer, {} of those right); by sentence start: {:?}", q_stats[0], q_stats[1], q_stats[2], q_credit[1], q_credit[2], qc.iter().take(12).collect::<Vec<_>>());
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);

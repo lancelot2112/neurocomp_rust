@@ -4588,7 +4588,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let definite = !inner_when_definite || rolled > 0 || (0..vocab.len()).filter(|&i| fits(i)).count() == 1;
                     // INNER_SAY=recall: recall plans the utterance. The slot memory's word is
                     // said if it is of the kind the column expects here, else the prediction
-                    let recalled = bind_answer.filter(|&w| inner_say_recall && !hc_ec && !(testing && bind_lesion) && fits(w));
+                    // (the hippocampus's slot memory first, else the semantic store's word)
+                    let recalled = bind_answer.filter(|&w| inner_say_recall && !hc_ec && !(testing && bind_lesion) && fits(w)).or_else(|| {
+                        if !inner_say_recall {
+                            return None;
+                        }
+                        semantic_reps?;
+                        let cw = sem_cue_w?;
+                        let o = sem_read(&sem_store, &enc.codes, cw, slot_in(&bind_sentence_pairs, cw), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs)?;
+                        let ovo = |i: usize| enc.codes[i].as_words().iter().zip(o.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+                        (0..vocab.len()).filter(|&i| ovo(i) >= 24 && fits(i)).max_by_key(|&i| ovo(i))
+                    });
                     let said_vec = recalled.map(|w| enc.codes[w].clone()).unwrap_or_else(|| out.clone());
                     let said = enc.decode(&said_vec).filter(|&w| definite && w != next && vocab[w] != ".");
                     if std::env::var("INNERDIAG").is_ok() && testing && s.held_out && NEW_NAMES.iter().any(|n| s.words[..=t].contains(n)) && inner_diag < 40 {

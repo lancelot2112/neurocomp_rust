@@ -458,9 +458,28 @@ fn question() -> bool {
     std::env::var("QUESTION").is_ok()
 }
 
+/// QUESTION_POOL=n: training strangers are drawn from n made-up names instead of the 18
+/// practice names, so each is met only a few times (a stranger is someone new, as the test's
+/// new names are; a practice name met in ~80 stories with random families has a crowded
+/// memory that a restated fact cannot stand out in).
+fn question_pool() -> &'static [&'static str] {
+    static POOL: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let n: usize = std::env::var("QUESTION_POOL").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        (0..n).map(|i| &*Box::leak(format!("stranger{i}").into_boxed_str())).collect()
+    })
+}
+
 fn question_story(rng: &mut StdRng, held_out: bool) -> Story {
     let season = rng.gen_range(0..SEASONS.len());
-    let stranger = if held_out { NEW_NAMES[rng.gen_range(0..NEW_NAMES.len())] } else { PRACTICE_NAMES[rng.gen_range(0..PRACTICE_NAMES.len())] };
+    let pool = question_pool();
+    let stranger = if held_out {
+        NEW_NAMES[rng.gen_range(0..NEW_NAMES.len())]
+    } else if !pool.is_empty() {
+        pool[rng.gen_range(0..pool.len())]
+    } else {
+        PRACTICE_NAMES[rng.gen_range(0..PRACTICE_NAMES.len())]
+    };
     let f = rng.gen_range(0..SURNAMES.len());
     let known = loop {
         let m = rng.gen_range(0..NAMES.len());
@@ -796,6 +815,9 @@ fn task_vocab(task: Task) -> Vec<&'static str> {
     }
     if task == Task::Season && (practice() || question()) {
         vocab.extend(PRACTICE_NAMES);
+        if question() {
+            vocab.extend(question_pool());
+        }
     }
     if task == Task::Season && family() {
         vocab.extend(SURNAMES);
@@ -1533,6 +1555,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let question_act = std::env::var("QUESTION_ACT").ok();
     let question_learned = question_act.as_deref() == Some("learned");
     let mut open_q: Option<usize> = None;
+    let mut q_choice: HashMap<String, usize> = HashMap::default(); // test, held out: restatements by sentence start and k
     let mut restated = 0usize;
     let mut q_stats = [0usize; 4]; // test, held-out stories: questions asked, restatements, restatements naming the stranger's sentence ("the person"), answers right after a restatement
     let mut inner_diag = 0usize;
@@ -4747,7 +4770,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 // QUESTION_CONTROL=1: the restatement names another stranger,
                                 // not the open item (repetition without binding)
                                 let subject = if std::env::var("QUESTION_CONTROL").is_ok() {
-                                    let pool: Vec<usize> = NEW_NAMES.iter().chain(PRACTICE_NAMES).map(|w| index[w]).filter(|&w| w != tag).collect();
+                                    let pool: Vec<usize> = NEW_NAMES.iter().chain(PRACTICE_NAMES).chain(question_pool()).map(|w| index[w]).filter(|&w| w != tag).collect();
                                     pool[(s_i + t) % pool.len()]
                                 } else {
                                     tag
@@ -4756,6 +4779,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 said.extend_from_slice(&sent[k..]);
                                 said.push(full_stop);
                                 if testing && s.held_out {
+                                    *q_choice.entry(format!("{} {} -> k{}", vocab[sent[0]], vocab[sent[1]], k)).or_default() += 1;
                                     q_stats[1] += 1;
                                     q_stats[2] += (vocab[sent[0]] == "the" && vocab[sent[1]] == "person") as usize;
                                 }
@@ -6110,7 +6134,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             );
         }
         if question_act.is_some() {
-            eprintln!("  QUESTION seed {seed}: in held-out test stories, {} questions asked, {} restatements ({} of the stranger's fact)", q_stats[0], q_stats[1], q_stats[2]);
+            let mut qc: Vec<_> = q_choice.iter().collect();
+            qc.sort_by(|a, b| b.1.cmp(a.1));
+            eprintln!("  QUESTION seed {seed}: in held-out test stories, {} questions asked, {} restatements ({} of the stranger's fact); by sentence start: {:?}", q_stats[0], q_stats[1], q_stats[2], qc.iter().take(12).collect::<Vec<_>>());
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);

@@ -123,6 +123,8 @@ const TRAIN: usize = 3000;
 /// The frame gate's own records in the mix (HIER_TRUST_GATE): the higher area, the column.
 const TRUST_AREA: u8 = 40;
 const TRUST_COLUMN: u8 = 41;
+/// The frame's counterfactual record (HIER_TRUST_GATE=cf).
+const TRUST_CF: u8 = 42;
 /// Persist: anchor facts only appear in the first anchor_stories() training stories (env).
 fn anchor_stories() -> usize {
     std::env::var("ANCHOR_STORIES").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
@@ -1604,7 +1606,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the record can form; the gate opens and closes as the area grows more or less
     // reliable. The area itself still predicts, learns and votes in the mix every step.
     // HIER_TRUST_GATE=column: pass where the area's record is at least the column's own.
+    // HIER_TRUST_GATE=cf: the frame's counterfactual record instead. On every training step
+    // the column's prediction with the full frame and with none are compared (one extra
+    // look-up); where they differ, a fix (right only with it) or a break (right only
+    // without), kept per the same context. The frame enters L4 scaled: a fixed subset of its
+    // bits, the share 2 × (fixes + 1) / (fixes + breaks + 2) up to all of it, so a frame with no
+    // record passes whole and weakens as its breaks outnumber its fixes. The record is always
+    // taken on the full frame, so a weakened frame can earn its way back.
     let hier_trust_gate = std::env::var("HIER_TRUST_GATE").ok();
+    let hier_up_surprise = std::env::var("HIER_UP").map_or(false, |v| v == "surprise");
+    let mut cf_share_sum = [0u64; 2]; // Σ share passed (Q16), training and test
+    let mut td_full: Option<BitVector> = None; // this step's unscaled top-down frame (cf)
     let mut trust_passed = [[0usize; 2]; 2]; // (training, test) × (withheld, passed)
     let hier_learn_always = std::env::var("HIER_LEARN_ALWAYS").map(|v| v == "1").unwrap_or(false);
     let hier_cost: Q16 = q16(std::env::var("HIER_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05));
@@ -3356,7 +3368,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // sentence context for this step. Where the column is sure, nothing is asked.
                 let mut own_conf_step: Q16 = ONE;
                 let sentence_plus = {
-                    let mut x = sentence.clone();
+                    // HIER_UP=surprise: only surprisal goes up; the sentence frame holds the
+                    // sentence's surprising words and the current word (where the area is),
+                    // not the words the column predicted
+                    let mut x = if hier_up_surprise {
+                        let mut x = surprising.clone();
+                        x.or_mut(code);
+                        x
+                    } else {
+                        sentence.clone()
+                    };
                     if cooperate || graded_enrich || sparse_hc {
                         let empty = BitVector::new(BITS, Some(0));
                         let own = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid]));
@@ -3521,7 +3542,33 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         topdown_passed_at_answer += (passed && has) as usize;
                     }
                     hier_gate_step = (hier_gate_on && has && passed).then(|| code.clone());
+                    let mut scaled: Option<BitVector> = None;
                     let trusted = match (hier_trust_gate.as_deref(), has) {
+                        (Some("cf"), true) => {
+                            let p = if t > 0 { ids[t - 1] } else { vocab.len() };
+                            let key = (p * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                            let bucket = |c: Q16| CONF_BANDS.iter().filter(|&&e| c >= e).count() as u64;
+                            let share = (2 * mix.rate(TRUST_CF, key + bucket(area.column.confidence())) as u64).min(ONE as u64);
+                            cf_share_sum[testing as usize] += share;
+                            trust_passed[testing as usize][1] += 1;
+                            td_full = (!testing).then(|| td.clone());
+                            if share < ONE as u64 {
+                                // a fixed subset of bit positions (by a hash of the position)
+                                let mut words = td.as_words().to_vec();
+                                for (wi, w) in words.iter_mut().enumerate() {
+                                    let mut keep = 0u64;
+                                    for b in 0..64 {
+                                        let h = ((wi * 64 + b) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
+                                        if h < share {
+                                            keep |= 1 << b;
+                                        }
+                                    }
+                                    *w &= keep;
+                                }
+                                scaled = Some(BitVector::from_words(words));
+                            }
+                            true
+                        }
                         (Some(mode), true) => {
                             let p = if t > 0 { ids[t - 1] } else { vocab.len() };
                             let key = (p * (vocab.len() + 1) + ids[t]) as u64 * 64;
@@ -3533,7 +3580,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         _ => true,
                     };
-                    let frame = if passed && trusted { td } else { BitVector::new(BITS, Some(0)) };
+                    let frame = if passed && trusted { scaled.unwrap_or(td) } else { BitVector::new(BITS, Some(0)) };
                     let fw = frame.as_words().len();
                     if hier_early {
                         let at = BITS / 64; // right after the current word
@@ -4578,6 +4625,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // what the frame changed, against the column's own prediction without it
                     // (one look-up): right where it would be wrong 1, wrong where it would be
                     // right 0, no difference one half less the compute; skipping, one half
+                    // the frame's counterfactual record (HIER_TRUST_GATE=cf): full frame against none
+                    if let (Some(full), Some((at, n))) = (td_full.take(), td_span) {
+                        if page {
+                            let with_frame = |f: Option<&BitVector>| {
+                                let mut w = input.as_words().to_vec();
+                                match f {
+                                    Some(f) => w[at..at + n].copy_from_slice(f.as_words()),
+                                    None => w[at..at + n].iter_mut().for_each(|x| *x = 0),
+                                }
+                                column.l23.peek(&BitVector::from_words(w)).and_then(|o| enc.decode(&o)) == Some(next)
+                            };
+                            let (with, without) = (with_frame(Some(&full)), with_frame(None));
+                            if with != without {
+                                let p = if t > 0 { ids[t - 1] } else { vocab.len() };
+                                let key = (p * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                                let bucket = CONF_BANDS.iter().filter(|&&e| area.column.confidence() >= e).count() as u64;
+                                mix.record(TRUST_CF, key + bucket, with);
+                            }
+                        }
+                    }
                     if hier_trace_len > 0 && page {
                         // credit over time: this step's outcome, to every eligible choice
                         if let Some(c) = hier_pending.take() {
@@ -5017,7 +5084,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if hier_trust_gate.is_some() {
             let share = |a: [usize; 2]| 100.0 * a[1] as f64 / (a[0] + a[1]).max(1) as f64;
-            eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
+            if hier_trust_gate.as_deref() == Some("cf") {
+                let mean = |i: usize| 100.0 * cf_share_sum[i] as f64 / (trust_passed[i][1].max(1) as f64 * ONE as f64);
+                eprintln!("  TRUSTGATE seed {seed}: mean share of the top-down frame passed {:.0}% in training, {:.0}% at test", mean(0), mean(1));
+            } else {
+                eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
+            }
         }
         if hier_grow {
             eprintln!(

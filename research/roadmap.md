@@ -68,6 +68,42 @@ context and per-question confidence.
 - Next: make sources independent, by voting only with frames the column's winner did not
   read, so agreement is not counted twice.
 
+### Learned input routing: no fixed slots (proposed)
+**Why.** Each cortical kernel reads its input as a row of fixed-width slots, and the
+column's row is laid out by hand: [current word | memory | top-down | previous input]. What
+is learned is only which slots a kernel reads (it grows one slot deeper when surprised).
+Which source sits in which slot, and that a source gets a slot at all, is set in the
+harness. The gates on the top-down channel ([83](experiments/83-compute-only-where-needed.md),
+[85](experiments/85-top-down-as-a-trusted-witness.md)) only scale what goes into a slot
+someone else placed. And a new area grown by need ([84](experiments/84-areas-grow-by-need.md))
+cannot reach the column's input at all; it can only vote in the mix.
+
+**Build.**
+- **Sources as relays, not slots.** Every input to the column (the current word, memory,
+  each higher area, the relation store, the previous input) is a relay channel into L4. A
+  new source, such as a promoted area, is one more channel, with no change to the column.
+- **Superposed and bound, not positioned.** Each channel's content is bound to its source
+  by a fixed per-source rotation (as the relation store binds a word to its position) and
+  the channels are ORed into one input of fixed width. A kernel samples bits, so it keys on
+  "this word, from this source" wherever it came from, and the input does not widen as
+  sources are added.
+- **Thalamic gain per channel and context.** The thalamus sets each channel's share (a
+  fixed subset of its bits, as in 85's scaling), learned from its counterfactual record:
+  the column's prediction with the channel against without it. The L6 gating of
+  [20](experiments/20-l6-corticothalamic-gating.md)–[21](experiments/21-several-routes.md)
+  and the route pool of [10](experiments/10-route-pool-inhibition.md) did this for memory
+  routes; here it covers every input.
+- **Risk.** Superposition raises density: many channels ORed together blur. Gains that
+  close unhelpful channels keep it sparse; a cap on active bits (k-winners) is the fallback.
+
+**Brain.** L4 receives converging thalamic relays, and the higher-order thalamus (pulvinar)
+routes and scales cortical signals between areas by context (Saalmann et al. 2012), so what
+an area reads is set by thalamic gain rather than by fixed wiring alone.
+
+**Test.** The suite at parity with the fixed layout; a promoted area (84) reaching the
+column with no change to its input width; story boundary growing from one area with its
+new areas read by the column, not only voting.
+
 ## 3. Thinking in steps
 **Why.** Two-hop chains one recall into another, but the chain is fixed by hand. Reasoning
 is a sequence of internal steps whose number depends on the question.

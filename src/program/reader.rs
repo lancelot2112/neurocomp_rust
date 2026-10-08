@@ -25,6 +25,11 @@ pub struct Reader {
 impl Reader {
     pub fn new(genome: &Genome, seed: u64) -> Self {
         let (net, schedule) = genome.build_top_and_schedule();
+        Self::from_network(net, schedule, seed)
+    }
+
+    /// Run a network built elsewhere (e.g. from a gene list) with its update loop.
+    pub fn from_network(net: Network, schedule: Schedule, seed: u64) -> Self {
         Self { net, schedule, rng: StdRng::seed_from_u64(seed), learning: true, stories: 0, sentence_ended: false }
     }
 

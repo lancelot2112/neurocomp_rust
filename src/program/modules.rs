@@ -99,14 +99,17 @@ pub struct Predictor {
     last_input: Option<BitVector>,
     outs: [BitVector; 3],
     /// Expose a third output: the winning kernel's reliability (`scalar`).
-    confidence_port: bool,
+    pub(crate) confidence_port: bool,
     /// Take no part in sleep.
-    no_sleep: bool,
+    pub(crate) no_sleep: bool,
+    /// Its own random stream (else the network's shared one): with one stream per module,
+    /// adding or removing a module does not shift every other module's draws.
+    pub own_rng: Option<rand::rngs::StdRng>,
 }
 
 impl Predictor {
     pub fn new(bits: usize, class: KernelClass<SimpleKernel>) -> Self {
-        Self { class, bits, last_input: None, outs: [zeros(bits), zeros(bits), scalar(0)], confidence_port: false, no_sleep: false }
+        Self { class, bits, last_input: None, outs: [zeros(bits), zeros(bits), scalar(0)], confidence_port: false, no_sleep: false, own_rng: None }
     }
 }
 
@@ -140,7 +143,10 @@ impl Module for Predictor {
             }
             if let Some(last) = &self.last_input {
                 if ctx.learn {
-                    self.class.feedback(last, teach, &mut *ctx.rng);
+                    match self.own_rng.as_mut() {
+                        Some(r) => self.class.feedback(last, teach, r),
+                        None => self.class.feedback(last, teach, &mut *ctx.rng),
+                    }
                 } else {
                     self.class.fast_inhibit(teach);
                 }
@@ -1447,13 +1453,13 @@ impl Kind {
 
 /// The genes a definition has set so far.
 #[derive(Clone, Debug, Default, PartialEq)]
-struct Genes {
-    spec: KernelSpec,
-    schedule: Schedule,
+pub(crate) struct Genes {
+    pub(crate) spec: KernelSpec,
+    pub(crate) schedule: Schedule,
 }
 
 impl Genes {
-    fn set(&mut self, g: Gene, v: i64) {
+    pub(crate) fn set(&mut self, g: Gene, v: i64) {
         let q = |v: i64| v.clamp(0, ONE as i64) as Q16;
         // a Q16 fraction as a ratio the kernel class compares by cross-multiplication
         let r = |v: i64| (((v.clamp(0, ONE as i64) as u64 * 1000) >> 16) as u16, 1000u16);
@@ -1483,7 +1489,7 @@ impl Genes {
     }
 
     /// Build a `Make` kernel from the numbers it pops.
-    fn make(&self, k: Kind, nums: &mut Vec<i64>) -> Box<dyn Module> {
+    pub(crate) fn make(&self, k: Kind, nums: &mut Vec<i64>) -> Box<dyn Module> {
         let mut pop = |n: usize| -> Vec<i64> {
             let mut v: Vec<i64> = (0..n).map(|_| nums.pop().unwrap_or(0)).collect();
             v.reverse();

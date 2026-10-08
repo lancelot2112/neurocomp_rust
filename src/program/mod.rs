@@ -7,6 +7,9 @@ pub use neurocomp::*;
 pub mod cortex;
 pub use cortex::{AreaContext, ContextBuffer, CorticalColumn, HigherArea, RoleArea, RouteScores};
 
+pub mod genes;
+pub use genes::GeneList;
+
 pub mod reader;
 pub use reader::Reader;
 

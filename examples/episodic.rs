@@ -6564,9 +6564,47 @@ fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut story_rng = stream(1);
     let season_len: usize = std::env::var("SEASON_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
     let path = std::env::var("GENOME").expect("GENOME=<file>");
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("GENOME {path}: {e}"));
-    let genome = neurocomp::program::Genome::parse(&text).unwrap_or_else(|e| panic!("GENOME {path}: {e}"));
-    let mut reader = neurocomp::program::Reader::new(&genome, seed ^ 0x67e9_0e5e);
+    let mut text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("GENOME {path}: {e}"));
+    // MUTATE_STACK=<op>:<k>: the k-th single mutation of the stack text (number, delete,
+    // insert, swap); MUTATE=<op>:<k>: of the gene list (nudge, rewire, add, duplicate,
+    // toggle). GENES=1: run through the gene list (implied by MUTATE).
+    let mutant = |v: &str| -> (String, u64) {
+        let (op, k) = v.split_once(':').unwrap_or((v, "0"));
+        (op.to_string(), k.parse().unwrap_or(0))
+    };
+    if let Ok(v) = std::env::var("MUTATE_STACK") {
+        let (op, k) = mutant(&v);
+        let (t, d) = neurocomp::program::genes::mutate_stack_text(&text, &op, &mut StdRng::seed_from_u64(k));
+        eprintln!("  MUTANT seed {seed}: stack {d}");
+        text = t;
+    }
+    let fail = |e: String| -> Outcome {
+        eprintln!("  MUTANT seed {seed}: the genome does not build: {e}");
+        Outcome { seen: 0.0, held_out: 0.0, recall: 0.0, places: 0.0 }
+    };
+    let genome = match neurocomp::program::Genome::parse(&text) {
+        Ok(g) => g,
+        Err(e) => return fail(e),
+    };
+    let genes = std::env::var("GENES").is_ok() || std::env::var("MUTATE").is_ok();
+    let mut reader = if genes {
+        let mut list = match neurocomp::program::GeneList::from_genome(&genome) {
+            Ok(l) => l,
+            Err(e) => return fail(e),
+        };
+        if let Ok(v) = std::env::var("MUTATE") {
+            let (op, k) = mutant(&v);
+            let d = list.mutate(&op, &mut StdRng::seed_from_u64(k));
+            eprintln!("  MUTANT seed {seed}: genes {d}");
+        }
+        let (net, schedule) = list.build(seed ^ 0x67e9_0e5e);
+        neurocomp::program::Reader::from_network(net, schedule, seed ^ 0x67e9_0e5e)
+    } else {
+        neurocomp::program::Reader::new(&genome, seed ^ 0x67e9_0e5e)
+    };
+    if neurocomp::program::Module::n_outputs(&reader.net) == 0 {
+        return fail("no output".into());
+    }
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     for s_i in 0..TRAIN + TEST {
         let testing = s_i >= TRAIN;

@@ -530,10 +530,11 @@ impl GeneList {
     }
 
     /// The input ports a new connection may join: bit signals, not a clock or a
-    /// confidence, and not a predictor's teaching port (the teacher's path is fixed, as a
-    /// climbing fibre's is: extra bits there become part of what is learned).
+    /// confidence, not a predictor's teaching port (the teacher's path is fixed, as a
+    /// climbing fibre's is: extra bits there become part of what is learned), and not a
+    /// comparator's (what is compared with a prediction decides what counts as surprising).
     fn open_ports(&self) -> Vec<(usize, usize)> {
-        self.bit_ports().into_iter().filter(|&(i, k)| !(self.genes[i].kind == Kind::Predict && k == 1)).collect()
+        self.bit_ports().into_iter().filter(|&(i, k)| !(self.genes[i].kind == Kind::Predict && k == 1) && self.genes[i].kind != Kind::Surprise).collect()
     }
 
     /// The bit-signal input ports (not a clock or a confidence).

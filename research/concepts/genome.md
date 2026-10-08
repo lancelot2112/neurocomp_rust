@@ -68,7 +68,9 @@ The stack text is the readable surface; evolution works on the **gene list**
 permanent ids, wiring by id, explicit loops, parameters on each gene, one random stream per
 predictor. Single mutations: nudged numbers move the score little (under 5 points in 18 of
 20), added or duplicated genes are exactly neutral, but rewiring or switching off a used
-gene is drastic; graded wiring (a gain per connection) is the next step.
+gene is drastic; with graded wiring (a gain per connection: connect at 0, strengthen and
+weaken by 1/16) rewiring becomes gradual, once teaching and comparator inputs are fixed
+wiring.
 
 ## Migration plan: what each harness part needs
 

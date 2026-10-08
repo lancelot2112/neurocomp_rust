@@ -63,9 +63,52 @@ Two nudges and two rewirings drew the same mutation twice (the samples are small
    gives each predictor its own random stream: with canonical kernels, growth here draws
    almost nothing at random.
 
+## Addendum: graded wiring
+
+**Code.** Every input of a gene is a set of connections, each with a **gain**: the share of
+its source's bits that pass (a fixed subset of bit positions per gain, as a synapse's
+strength sets how much of a pathway gets through), several combined by a `Blend` kernel. A
+connection at full gain is a plain wire (a compiled genome is unchanged); one at gain 0 is
+not built (exactly neutral). New operators: `connect` (a source at gain 0), `strengthen` (a
+source at 1/16, the first step after it), `weaken` (a connection loses 1/16), and `nudge`
+now also moves gains. The gene list prints partial connections, e.g.
+`[g8:0@prev + g4:0*3/16]`.
+
+**Results** (as above; base 86.7%):
+
+| Operator | Mutants | Within 5 points | Exactly 0 | Worse by 20+ |
+|---|---|---|---|---|
+| connect (gain 0) | 8 | 8 | **8** | 0 |
+| weaken (16/16 → 15/16) | 8 | **8** (−2.0 to +0.3) | 1 | 0 |
+| strengthen (0 → 1/16), first version | 8 | 3 | 2 | 4 (−51 to −87) |
+| strengthen, after the two fixes below | 12 | **10** (−3.1 to +4.7) | 1 | 1 (−70) |
+| rewire, abrupt (for comparison) | 4 | 0 | 0 | 3 (−41 to −81) |
+
+The large drops of the first version had two causes, neither the gain itself:
+- **Width.** A new source wider than the input it joined (the area's two-frame input into
+  the column's one-frame top-down slot) reshaped the whole row. **Fix:** a blended input
+  keeps its main connection's width; other sources are cut to it.
+- **Teaching ports.** Extra bits on a predictor's teaching input become part of what it
+  learns to predict. **Fix:** teaching ports take no new connections (the teacher's path is
+  fixed, as a climbing fibre's is); they can still be weakened.
+
+After the fixes, the two drops left (−10 and −70) both fed the surprise comparator's
+compared input: extra bits there change what counts as surprising. Comparator inputs now
+take no new connections either (this last fix is not separately remeasured).
+
+**Findings.**
+1. **Rewiring can now be gradual:** connect at 0 (neutral), strengthen by 1/16 steps
+   (small: 10 of 12 within 5 points), weaken the old connection by 1/16 steps (small: 8 of
+   8 within 2 points). The abrupt rewire cost 41–81 points in one step.
+2. **Some wiring must be fixed for evolution to be smooth:** what a learner is taught by and
+   what a comparator compares. That matches the brain, where teaching and error pathways
+   (climbing fibres, the comparator inputs of CA1) are specific, not diffuse.
+3. **Flags are still jumps:** `copy_growth` 0 → 1 cost 35 points in one nudge. A switch
+   could become a probability (applied a growing share of the time).
+
 ## Next
-- Graded wiring: a gain gene on every input (adding a connection at gain 0, nudging gains),
-  and toggle as a gain step.
+- Flags as probabilities.
+- ~~Graded wiring~~ (addendum).
 - Larger samples and more tasks; then a first search (mutate, score over several seeds,
   keep the better) from `hierarchy.gen`.
 - Higher areas and grown areas as definitions placed by `sub:` (a gene that is a whole

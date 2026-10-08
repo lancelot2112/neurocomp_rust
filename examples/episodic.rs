@@ -1511,8 +1511,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // answering right is worth 1, answering wrong 0, "unknown" one half, so answering wins
     // a band once its answers there are right more often than not
     let unknown_learned = std::env::var("BELIEF_UNKNOWN").map_or(false, |v| v == "learned");
-    let mut unknown_bg = BasalGanglia::new(1024);
-    let unknown_code = |ctx: usize, answer: bool| BitVector::from_bits(&((ctx * 2 + answer as usize) * 8..(ctx * 2 + answer as usize) * 8 + 8).collect::<Vec<_>>(), 1024);
+    // each choice (answer, unknown) is coded by its belief band's bits joined with its lead
+    // band's, so a state never practised borrows the value of the states that share either
+    // band with it (instead of defaulting to "unknown")
+    let mut unknown_bg = BasalGanglia::new(256);
+    let unknown_code = |ctx: usize, answer: bool| {
+        let base = answer as usize * 128;
+        let (b, l) = (ctx / 8, ctx % 8);
+        let mut bits: Vec<usize> = (base + b * 8..base + b * 8 + 8).collect();
+        bits.extend(base + 64 + l * 8..base + 64 + l * 8 + 8);
+        BitVector::from_bits(&bits, 256)
+    };
     let mut quiz_rng = StdRng::seed_from_u64(seed ^ 0x5157_4954);
     let mut quiz_stats = [[0usize; 3]; 64]; // per context: (quizzes, answered, answered right)
     let quiz_reps: usize = std::env::var("QUIZ_REPS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);

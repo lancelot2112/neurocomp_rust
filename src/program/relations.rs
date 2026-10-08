@@ -168,7 +168,9 @@ impl RelationStore {
     }
 
     /// The frame positions of a fact and whether each is strong (at least 3/4 of its
-    /// neighbours agree there); None with fewer than two neighbours.
+    /// neighbours agree there); None with fewer than two neighbours. A position is frame when
+    /// more than half the neighbours agree on it and no word that is a filler elsewhere recurs
+    /// there instead.
     fn frame_positions(&self, fact: &[usize]) -> Option<Vec<(usize, bool)>> {
         let me = self.seen.get(fact).copied();
         let mut nb: Vec<usize> = Vec::new();
@@ -187,7 +189,15 @@ impl RelationStore {
             (0..fact.len())
                 .filter_map(|p| {
                     let agree = nb.iter().filter(|&&f| self.facts[f][p] == fact[p]).count();
-                    (agree * 2 > nb.len()).then_some((p, agree * 4 >= nb.len() * 3))
+                    // a position where another word recurs among the neighbours (in at least
+                    // two of them, and an eighth) and that word is a filler elsewhere is a slot,
+                    // however lopsided the counts: "X is a smith" with mostly smiths around it
+                    // still varies over families. Words that alternate but are never fillers
+                    // ("father", "mother") name different relations and stay frame.
+                    let mut others: Vec<usize> = nb.iter().map(|&f| self.facts[f][p]).filter(|&w| w != fact[p]).collect();
+                    others.sort_unstable();
+                    let recurs = others.chunk_by(|a, b| a == b).any(|c| c.len() >= 2 && c.len() * 8 >= nb.len() && self.entities.contains(&c[0]));
+                    (agree * 2 > nb.len() && !recurs).then_some((p, agree * 4 >= nb.len() * 3))
                 })
                 .collect(),
         )
@@ -706,6 +716,29 @@ mod tests {
     /// fourth states all of them and lies in 3 of 4. Trust is learned from the conflicts,
     /// and the believed fact is the true one, also where only one honest narrator and the
     /// liar spoke (a tie a vote cannot break).
+    #[test]
+    fn a_lopsided_filler_is_still_a_filler() {
+        // first night: two smiths, two joneses (both families are fillers); second night:
+        // nine more smiths and one jones. Smith is most of the family position then, but
+        // jones, a filler, recurs there, so the family stays a filler
+        let mut rng = StdRng::seed_from_u64(5);
+        let n = 18;
+        let codes: Vec<BitVector> = (0..n).map(|i| BitVector::from_bits(&((i * 32)..(i * 32 + 32)).collect::<Vec<_>>(), 1024)).collect();
+        let (is, a, smith, jones) = (0, 1, 2, 3);
+        let mut s = RelationStore::new(1024);
+        for p in 0..4 {
+            s.observe(&[4 + p, is, a, if p % 2 == 0 { smith } else { jones }]);
+        }
+        assert_eq!(s.consolidate(&codes, 3, &mut rng), 4);
+        for p in 4..14 {
+            s.observe(&[4 + p, is, a, if p < 13 { smith } else { jones }]);
+        }
+        assert_eq!(s.consolidate(&codes, 3, &mut rng), 10, "every fact of the lopsided night parses");
+        let r = s.relation_for(&[is, a]).expect("the is-a relation");
+        assert_eq!(s.ask(&codes, 4 + 5, r, 0, 1), Some(smith));
+        assert_eq!(s.ask(&codes, 4 + 13, r, 0, 1), Some(jones));
+    }
+
     #[test]
     fn trust_resolves_conflicts_between_sources() {
         let mut rng = StdRng::seed_from_u64(4);

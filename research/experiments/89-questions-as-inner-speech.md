@@ -1,5 +1,12 @@
 # 89 · Questions as inner speech: holding a gap open and binding its answer
 
+> **Correction (after the first write-up).** The hand-set ask opened its question on the
+> story's first unfamiliar word, which was the *season* ("autumn came ."), not the stranger.
+> The restatements were "autumn is a jones", not "lucy is a jones", so the 68 → 91% below
+> is not binding to the stranger. With the ask aimed at the stranger, restating does
+> nothing (68.8%). See [the correction section](#correction-what-the-gain-was) for the
+> runs; Findings 1–2 below are withdrawn.
+
 **Question.** [88](88-inner-speech.md) used inner speech to insert detail where recall has
 it. The other use is to mark what is *not* known: a question held open until the story
 answers it, so that the answer binds to the right thing when it arrives. Does holding a gap
@@ -63,11 +70,11 @@ The learned acts, seeds 0 and 1, held-out (what it restated at test):
 | fresh pool, reward baseline | 47.8 / 78.2 | erratic: one seed stopped restating the stranger's fact |
 
 ## Findings
-1. **Holding a gap open and saying its answer with it binds the fact.** The hand-set act
+1. *(Withdrawn, see the correction.)* **Holding a gap open and saying its answer with it binds the fact.** The hand-set act
    lifts held-out answers from 68 to 91% at five seeds. The control shows the gain is the
    binding, not the repetition. The same restatement under someone else's name drops
    answers to 29%: the fact is then bound to the wrong person, and the network uses it.
-2. **It helps most where memory is crowded.** Practice names met in many earlier stories with
+2. *(Withdrawn, see the correction.)* **It helps most where memory is crowded.** Practice names met in many earlier stories with
    other families go from 25 to 61%: the restated event stands out against old episodes
    that disagree.
 3. **The learned act gets part of the way.** With fresh strangers in training, which is the
@@ -81,7 +88,44 @@ The learned acts, seeds 0 and 1, held-out (what it restated at test):
 
 Nothing becomes a default; the suite is unchanged.
 
+## Correction: what the gain was
+
+A credit rule built next (each restatement's stored event tagged with its act, the act
+rewarded if its event is recalled for the answer) found **no** restated event recalled at
+any answer. A diagnostic (`QDIAG`) showed the open question was the season word. Two fixes:
+- a less familiar word takes over the open question (the most novel item holds it);
+- the hand-set reference asks about the stranger itself, an oracle used only to measure the
+  act's worth, never as the mechanism.
+
+The subject of the same restatement was then varied (`QUESTION_SUBJECT=season`,
+`QUESTION_CONTROL`), at five seeds with `QUESTION_POOL=300`:
+
+| The restatement's subject | Held-out | Per seed | Familiar names |
+|---|---|---|---|
+| no restatement | 68.2 | 69.2/65.8/67.6/67.8/70.4 | 24.6 |
+| the stranger ("lucy is a smith") | **68.8** | 70.6/68.2/67.8/67.2/70.4 | 22.9 |
+| the season ("winter came is a smith") | **87.5** | 93.8/90.4/93.6/71.2/88.4 | 61.7 |
+| another name | 37.9 | 27.0/30.2/29.2/32.2/70.8 | 23.4 |
+
+1. **Binding the fact to the stranger does not reach the answer.** Its event is stored, but
+   at "lucy went to the" the hippocampus recalls it at 2 of 285 answers. The rollout never
+   brings "is a smith" back after the name (0 completions in held-out stories). Nothing
+   carries the bound fact into the question.
+2. **The gain came from placing the season next to the stranger's family.** The answer
+   follows a (season, family) rule, and the season is stated only at the story's start. A
+   restatement that names the season beside the right family gives the cortex both near the
+   question. This is recency in the cortex, not hippocampal binding. It is also an accident
+   of the task's rule, not a general mechanism.
+3. **Naming another person hurts (38%).** That name's own memories are then recalled with a
+   family that conflicts with the stranger's.
+4. The learned acts above were trained with the season-subject behaviour, so their figures
+   say nothing about binding either.
+
 ## Next
+- **Make the bound fact reachable.** At the question, the open item ("lucy") should cue
+  recall of its restated event and say the fact back ("lucy [is a smith] went to the"):
+  recall-planned inner speech ([88](88-inner-speech.md)) cued by the open question. Only
+  once that works can a credit rule tell good restatements from bad.
 - **Credit closer to the act.** A restatement could be judged when it happens, not at the
   answer. If it contradicts a binding the story already holds ("kim is a jones" right after
   "john is a jones" put jones on john), the hippocampus's mismatch (CA1) is an immediate

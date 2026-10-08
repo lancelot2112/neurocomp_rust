@@ -343,9 +343,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
   2. read-back as training for the area chain
      ([plan](concepts/output-and-self-supervision.md)).
   3. **questions as inner speech:** (built, [89](experiments/89-questions-as-inner-speech.md):
-     hand-set 68 → 91%); next, credit for each restatement from the hippocampus's mismatch
-     when it contradicts a binding the story holds, so the learned act stops binding facts
-     to the wrong person;
+     restating a fact under the open item stores the binding, but nothing brings it back at
+     the question, so it gains nothing); next, the open item cues recall at the question and
+     the fact is said back (recall-planned inner speech), then per-restatement credit;
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and
      a heard slot the column learns to use.
 

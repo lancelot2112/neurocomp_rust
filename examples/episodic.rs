@@ -1556,7 +1556,34 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // next word, misleads: gating on the last word's surprise alone lost the answers, which
     // follow predictable words: "X went to the _").
     let hc_surprise = std::env::var("HC_SURPRISE").is_ok();
-    let hier_surprise = std::env::var("HIER_SURPRISE").is_ok();
+    // HIER_SURPRISE=learned: whether to consult the higher areas is the network's own choice: a basal-ganglia go/no-go per context (the column's own confidence
+    // band, whether the last word surprised it, the current word; the code shares bits across
+    // words and across bands). Consulting is rewarded by what the frame changed against the column's own prediction without it (one
+    // look-up): right where it would be wrong 1, wrong where it would be right 0, no
+    // difference one half less HIER_COST. Skipping is worth one half. Skipping sends an empty
+    // frame. The gate also decides while learning (with exploration); HIER_LEARN_ALWAYS=1
+    // consults on every learning step instead, which leaves the column untrained on empty
+    // frames (story boundary 0% at test). At HIER_COST 0.05 the gate rarely consults; 0 is
+    // the setting that keeps the tasks.
+    let hier_learned = std::env::var("HIER_SURPRISE").map_or(false, |v| v == "learned");
+    let hier_surprise = std::env::var("HIER_SURPRISE").is_ok() && !hier_learned;
+    let hier_learn_always = std::env::var("HIER_LEARN_ALWAYS").map(|v| v == "1").unwrap_or(false);
+    let hier_cost: Q16 = q16(std::env::var("HIER_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05));
+    let mut hier_bg = BasalGanglia::new(512);
+    let hier_code = |word: usize, band: usize, surprised: bool, consult: bool| {
+        let base = consult as usize * 256;
+        let ctx = (band.min(4) * 2 + surprised as usize) * 8;
+        let mut h = (word as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        h ^= h >> 31;
+        let wb = 96 + (h % 20) as usize * 8;
+        let mut bits: Vec<usize> = (base + ctx..base + ctx + 8).collect();
+        bits.extend(base + wb..base + wb + 8);
+        BitVector::from_bits(&bits, 512)
+    };
+    let mut hier_pending: Option<BitVector> = None; // the chosen action's code, until its reward
+    let mut hier_choices = [[0usize; 2]; 2]; // (training, test) × (skipped, consulted)
+    let mut hier_consult = true;
+    let mut td_span: Option<(usize, usize)> = None; // where this step's top-down frame sits in the input
     let mut step_surprised = true;
     let mut hc_cached: Option<neurocomp::program::Recall> = None;
     let mut step_needs_help = true;
@@ -3320,15 +3347,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     x
                 };
                 // does the column need help with the next word? (HC_SURPRISE, HIER_SURPRISE)
-                if hc_surprise || hier_surprise {
+                if hc_surprise || hier_surprise || hier_learned {
                     let empty = BitVector::new(BITS, Some(0));
-                    let sure = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid])).is_some_and(|(_, c)| c >= Q_HALF);
-                    step_needs_help = step_surprised || !sure;
+                    let own = column.l23.peek_scored(&column.assemble(code, &vec![empty; l4_mid])).map_or(0, |(_, c)| c);
+                    step_needs_help = step_surprised || own < Q_HALF;
+                    if hier_learned && hier {
+                        let band = CONF_BANDS.iter().filter(|&&e| own >= e).count();
+                        // consult first: a tie (nothing learned yet) consults, as before the gate
+                        let cands = [hier_code(ids[t], band, step_surprised, true), hier_code(ids[t], band, step_surprised, false)];
+                        let learn = !testing && !replaying && !inner[t + 1];
+                        // while learning the area is always consulted (it and the column keep
+                        // learning as before) and the gate learns, from the counterfactual,
+                        // where the frame helps; answering, the gate decides
+                        let i = if learn && hier_learn_always { 0 } else { hier_bg.select(&cands, if learn { Some(&mut bg_rng) } else { None }).unwrap_or(0) };
+                        hier_consult = i == 0;
+                        hier_choices[testing as usize][hier_consult as usize] += 1;
+                        hier_pending = learn.then(|| cands[i].clone());
+                    }
                 }
                 if hier {
                     // the chain, top down: each upper area predicts from its window and the
                     // prediction of the area above it
-                    let hier_skip = hier_surprise && !step_needs_help;
+                    let hier_skip = (hier_surprise && !step_needs_help) || (hier_learned && !hier_consult);
                     gated_steps[2 + !hier_skip as usize] += hier_surprise as usize;
                     let mut above: Option<BitVector> = None;
                     for i in (0..upper.len()).rev() {
@@ -3390,10 +3430,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     hier_gate_step = (hier_gate_on && has && passed).then(|| code.clone());
                     let frame = if passed { td } else { BitVector::new(BITS, Some(0)) };
+                    let fw = frame.as_words().len();
                     if hier_early {
                         let at = BITS / 64; // right after the current word
+                        td_span = Some((at, fw));
                         words.splice(at..at, frame.as_words().iter().copied());
                     } else {
+                        td_span = Some((words.len(), fw));
                         words.extend_from_slice(frame.as_words());
                     }
                     hier_in = (!hier_skip).then_some(hin);
@@ -4389,6 +4432,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if page {
                         column.learn(&input, &enc.codes[next], &mut rng);
                     }
+                    // the top-down go/no-go's reward (HIER_SURPRISE=learned): consulting is worth
+                    // what the frame changed, against the column's own prediction without it
+                    // (one look-up): right where it would be wrong 1, wrong where it would be
+                    // right 0, no difference one half less the compute; skipping, one half
+                    if let Some(c) = hier_pending.take() {
+                        let r = if hier_consult {
+                            let with = enc.decode(&out) == Some(next);
+                            let without = td_span.map_or(with, |(at, n)| {
+                                let mut w = input.as_words().to_vec();
+                                w[at..at + n].iter_mut().for_each(|x| *x = 0);
+                                column.l23.peek(&BitVector::from_words(w)).and_then(|o| enc.decode(&o)) == Some(next)
+                            });
+                            match (with, without) {
+                                (true, false) => ONE as i32,
+                                (false, true) => 0,
+                                _ => (ONE / 2) as i32 - hier_cost as i32,
+                            }
+                        } else {
+                            (ONE / 2) as i32
+                        };
+                        hier_bg.reward_candidate(&c, r.max(0), &mut bg_rng);
+                    }
                     // predictive coding: the higher area learns the lower column's residual,
                     // the words it failed to predict (HIER_RESIDUAL=0: every word)
                     if let Some(ctx) = hier_gate_step.take() {
@@ -5381,6 +5446,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             pc(belief_tally[1]),
             belief_tally[1].1
         );
+    }
+    if hier_learned {
+        let pc = |x: [usize; 2]| 100.0 * x[1] as f64 / (x[0] + x[1]).max(1) as f64;
+        eprintln!("  HIERGATE seed {seed}: higher area consulted at {:.0}% of training steps, {:.0}% of test steps", pc(hier_choices[0]), pc(hier_choices[1]));
     }
     if hc_surprise || hier_surprise {
         eprintln!(

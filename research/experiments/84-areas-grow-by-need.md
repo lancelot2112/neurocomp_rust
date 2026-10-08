@@ -69,5 +69,5 @@ Areas grown (seeds 0 / 1 / 2): story boundary (starting at 3) 3 / 3 / 3; full hi
 - Promote on what an area is worth, not only on whether it helps: charge each area its
   compute, or require the help to show on answers, so the relation entries stay at one area.
 - An area that stops helping should be pruned too (demotion), not only buds.
-- Gate the top-down frame into L4 by the thalamus's record of the area's reliability, as
-  the mix already weighs its vote (a trusted witness).
+- ~~Gate the top-down frame into L4 by the thalamus's record of the area's reliability~~
+  (tried: [85](85-top-down-as-a-trusted-witness.md); it shuts out useful context).

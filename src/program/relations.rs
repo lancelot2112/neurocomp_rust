@@ -75,6 +75,16 @@ pub struct RelationStore {
     pub lift: bool,
     inferred: usize,
     replays: usize,
+    /// Learned frames (`learned_frames`): a predictive kernel class, the same as the
+    /// cortex's, that predicts the word at a fact's position from the rest of the fact.
+    frame_net: KernelClass<SimpleKernel>,
+    /// Read facts with the learned frames instead of the neighbour count (experimental,
+    /// off: predictability alone cannot tell a relation word from a value; "father" and
+    /// "mother" alternate in "X 's _ is Y" as "smith" and "jones" do in "X is a _"). The
+    /// count still runs beside it, as the benchmark (`frame_agreement`).
+    pub learned_frames: bool,
+    /// Facts whose learned frame positions matched the counted ones, of those compared.
+    frame_agreement: (usize, usize),
 }
 
 /// A step through the store: (relation, from position, to position).
@@ -121,7 +131,87 @@ impl RelationStore {
             lift: false,
             inferred: 0,
             replays: 0,
+            frame_net: KernelClass::predictive(GrowthConfig {
+                max_kernels: 20_000,
+                frame_words: bits / 64,
+                max_frames: 1,
+                sample_bits: 16,
+                match_fraction: 0.8,
+                surprise_fraction: 0.5,
+                // near misses that still predicted right drop the bits that were absent,
+                // so a kernel grown on "tom is a ?" comes to key on "is a ?" alone
+                generalize: Some(0.5),
+                generalize_after: 1,
+            }),
+            learned_frames: false,
+            frame_agreement: (0, 0),
         }
+    }
+
+    /// The rotation for position `p` of a fact of length `n`.
+    fn position_offset(&self, n: usize, p: usize) -> usize {
+        let mut h = (n as u64) << 20 ^ (p as u64) << 4 ^ 0xD6E8_FEB8_6659_FD93;
+        h = (h ^ (h >> 29)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        h ^= h >> 32;
+        1 + (h as usize) % (self.bits - 1)
+    }
+
+    /// The frame predictor's input for position `p` of `fact`: the other positions' words,
+    /// each rotated by its position, and a query mark for position `p`.
+    fn frame_input(&self, codes: &[BitVector], fact: &[usize], p: usize) -> BitVector {
+        let n = fact.len();
+        let mut x = BitVector::new(self.bits, Some(0));
+        for (q, &w) in fact.iter().enumerate() {
+            if q != p {
+                let mut c = codes[w].clone();
+                c.rotl_mut(self.position_offset(n, q));
+                x.or_mut(&c);
+            }
+        }
+        // the query mark: a fixed sparse code for (n, p)
+        let mut h = (n as u64) << 32 ^ p as u64 ^ 0x2545_F491_4F6C_DD1D;
+        for _ in 0..32 {
+            h ^= h << 13;
+            h ^= h >> 7;
+            h ^= h << 17;
+            x.bit_set(h as usize % self.bits);
+        }
+        x
+    }
+
+    /// Teach the frame predictor a fact: each position predicted from the rest.
+    fn train_frame<R: Rng>(&mut self, codes: &[BitVector], fact: &[usize], rng: &mut R) {
+        for p in 0..fact.len() {
+            let x = self.frame_input(codes, fact, p);
+            let mut out = BitVector::new(self.bits, Some(0));
+            self.frame_net.process_predictive(&x, &mut out);
+            self.frame_net.feedback(&x, &codes[fact[p]], rng);
+        }
+    }
+
+    /// The frame positions by the learned predictor: a position is frame when what the
+    /// rest of the fact predicts there is exactly the word it holds (predictable: "is" in
+    /// "tom _ a smith"); a slot when it predicts several words, another word, or nothing
+    /// ("smith or jones" in "tom is a _").
+    fn learned_positions(&self, codes: &[BitVector], fact: &[usize]) -> Vec<(usize, bool)> {
+        (0..fact.len())
+            .filter(|&p| {
+                let u = self.frame_net.peek_union(&self.frame_input(codes, fact, p), self.bits);
+                let held: Vec<usize> = (0..codes.len())
+                    .filter(|&w| {
+                        let o: u32 = codes[w].as_words().iter().zip(u.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
+                        o > 0 && o * 4 >= codes[w].count_ones() as u32 * 3
+                    })
+                    .collect();
+                held == [fact[p]]
+            })
+            .map(|p| (p, true))
+            .collect()
+    }
+
+    /// (facts whose learned frame matched the counted frame, facts compared).
+    pub fn frame_agreement(&self) -> (usize, usize) {
+        self.frame_agreement
     }
 
     fn bucket_keys(fact: &[usize]) -> Vec<(usize, usize, usize, u64)> {
@@ -256,8 +346,28 @@ impl RelationStore {
         });
         let mut pairs: Vec<(BitVector, usize, BitVector)> = Vec::new(); // (key, entity, value)
         let mut parsed = 0;
-        // the first reading of each fact (its frame: positions where most neighbours agree)
-        let fps: Vec<(Vec<usize>, Vec<(usize, bool)>)> = facts.iter().filter_map(|f| self.frame_positions(f).map(|fp| (f.clone(), fp))).collect();
+        // the first reading of each fact (its frame: positions where most neighbours agree,
+        // or, learned, the positions the rest of the fact predicts)
+        let fps: Vec<(Vec<usize>, Vec<(usize, bool)>)> = if self.learned_frames {
+            for f in &facts {
+                self.train_frame(codes, f, rng);
+            }
+            facts
+                .iter()
+                .map(|f| {
+                    let learned = self.learned_positions(codes, f);
+                    if let Some(counted) = self.frame_positions(f) {
+                        let a = &mut self.frame_agreement;
+                        a.1 += 1;
+                        a.0 += (counted.iter().map(|x| x.0).collect::<Vec<_>>() == learned.iter().map(|x| x.0).collect::<Vec<_>>()) as usize;
+                    }
+                    (f.clone(), learned)
+                })
+                .filter(|(_, fp)| !fp.is_empty())
+                .collect()
+        } else {
+            facts.iter().filter_map(|f| self.frame_positions(f).map(|fp| (f.clone(), fp))).collect()
+        };
         let mut all: Vec<((usize, Vec<(usize, usize)>), Vec<usize>, Vec<u16>)> = Vec::new();
         for (fact, fp) in &fps {
             if let Some((frame, fillers)) = Self::reading(fact, &fp.iter().map(|x| x.0).collect::<Vec<_>>()) {
@@ -799,3 +909,4 @@ mod tests {
         assert_eq!(s.follow(&codes, id("hal"), &[father, father, father, father]), None);
     }
 }
+

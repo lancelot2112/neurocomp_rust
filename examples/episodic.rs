@@ -4727,7 +4727,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let cb = if c < Q_HALF { 0 } else if c < Q_08 { 1 } else { 2 };
                     let explore = !testing;
                     match open_q {
-                        Some(tag) if !sent.contains(&tag) && sent.len() >= 3 && restated < 2 && t + 1 < s.answer_at => {
+                        Some(tag) if !sent.contains(&tag) && sent.len() >= 3 && restated < 8 && t + 1 < s.answer_at => {
                             let k = if question_learned {
                                 let ctx = 4000 + sent[0] * (vocab.len() + 1) + sent[1];
                                 let cands = [step_code(ctx, 0), step_code(ctx, 1), step_code(ctx, 2)];

@@ -41,6 +41,33 @@ ranking) are not connections and are listed in the
 | | **Now: from the same pass.** The kernels that do not read a slot are active alongside those that do; their best prediction is the prediction without it (`peek_shallow`) | A cell's basal drive alone against its apically supported firing; cells without a given input active in the same pass | Plausible |
 | Which slot a channel takes | **First version: re-ranked every 250 stories, all run long** | Laminar targets are set in development and fixed after; gain stays plastic | **Not plausible.** Replaced: re-ranked only in a critical period (first 1,000 training stories), then fixed; shares keep adapting |
 
+## The hippocampus
+
+What the suite runs (the relation and speech entries, for example: `HIPPO=engram`,
+`HIPPO_SELF`, `BIND`, `SPARSE_BIND`, `ENGRAM_WALK`, `INFER_REPLAY`, `CONSOLIDATE`). Note
+that most suite entries lesion the hippocampus at test (`BIND_LESION`): its answers reach
+the test only through what replay taught the cortex.
+
+| Connection | Model | Brain | Verdict |
+|---|---|---|---|
+| Cortex → EC → DG / CA3 (encoding) | Each sentence's words bound to their slots (role cells, a structure code) and stored as one event, with the story's earlier bindings as context; DG and EC III → CA1 by a fixed hash projection | Lateral EC carries content, medial EC structure; DG and CA3 form conjunctive codes through broad, fixed projections (Whittington et al. 2020) | Plausible |
+| Word ⊗ slot binding | Rotation by the slot's offset, unbound by the inverse rotation at readout | Conjunctive cells; CA1 decodes CA3's code back into EC's format | Plausible (fixed wiring both ways, so a recalled word comes back in its own code and can be copied) |
+| CA3 recurrence, the big loop | Pattern completion; the engram walk steps through a rare binding to its partner ([59](../experiments/59-engram-walk.md)) | CA3 recurrent collaterals; EC → DG → CA3 → CA1 → EC re-entry | Plausible |
+| When to store | One event per sentence ("." ends it); novel events tagged | Events cut at prediction-error peaks; novelty (CA1 mismatch, dopamine, acetylcholine) gates encoding | Approximate: the boundary is given, not found (experiment 27 found story boundaries from surprise, but sentences are still cut by hand) |
+| Familiarity and rarity (`BIND_FAM`, `BIND_RARE`) | Episode counts per binding in log2 bands | A familiarity signal (perirhinal cortex) that falls with repetition | Approximate (a count table) |
+| Hippocampus → cortex at reading | The slot readout's word votes in the thalamic mix, weighed by its record per familiarity band; only where the column is unsure (`SPARSE_HC`). Other settings put recalled content in a column input slot | CA1 → subiculum → deep EC → association cortex, landing much as feedback does (outside L4); also to thalamus (anterior nuclei, nucleus reuniens) | Approximate: right in kind (memory as a weighed, context-like source, consulted under uncertainty), but it enters as a vote or an L4 slot rather than as EC feedback |
+| Replay → cortex (consolidation) | At sleep, stored events replayed through the cortex, novelty-tagged first, then cue-free from random CA3 starts, interleaved with familiar ones | Sharp-wave ripple replay, coordinated with cortical spindles, trains neocortex slowly and interleaved (McClelland et al. 1995) | Plausible in kind; replay enters the column as if read (the driver slot), where real replay reaches cortex through EC |
+| Replay priority | Strength × the cortex's current error on the event | Replay favours rewarded and surprising experience (Mattar & Daw 2018) | Approximate: the hippocampus reads the cortex's error directly; a tag set at encoding (the prediction error when the event happened) would be the plausible version |
+| Generative replay (`INFER_REPLAY`) | The hippocampus composes events never experienced ("lucy is a jones" + a jones event → "lucy went to the hallway") and the higher area learns them | Replay of never-experienced sequences and structural inference in replay (Gupta et al. 2010; Liu et al. 2019) | Plausible |
+| Cortex → cortex under uncertainty (`COOPERATE`) | Where the column is unsure, the semantic store's content for the least familiar word joins the higher area's context | Cortico-cortical retrieval of semantic knowledge, prefrontal-guided | Plausible (the store itself is cortical) |
+
+No hippocampal pathway uses a second run of anything. The shortcuts to replace, in order:
+1. Hippocampal output as EC feedback into the cortex (context, outside the driver slot),
+   not a vote or an L4 slot; with routing, one more channel whose gain is learned.
+2. Replay entering through EC rather than the driver slot.
+3. Replay priority from a prediction-error tag set at encoding.
+4. Sentence boundaries from surprise, as story boundaries already are.
+
 ## Other credit signals
 
 | Signal | Model | Verdict |

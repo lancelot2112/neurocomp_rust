@@ -14,7 +14,10 @@
 //! - numbers that follow from the wiring are not genes: a `concat`'s slots are its
 //!   inputs, a predictor's frames its input's width;
 //! - each predictor draws from **its own random stream**, seeded by its id, so a new gene
-//!   does not shift every other module's draws.
+//!   does not shift every other module's draws;
+//! - wiring is **graded**: an input is a set of connections, each with a gain (the share of
+//!   its source's bits that pass). A new connection enters at gain 0 (neutral) and grows by
+//!   steps of 1/16; one at full gain is a plain wire, so a compiled genome is unchanged.
 //!
 //! `GeneList::from_genome` compiles the stack text (behaviour unchanged but for the random
 //! streams); `mutate` applies one local change; `build` makes the network.
@@ -35,11 +38,29 @@ pub enum Source {
     Gene(u32, usize),
 }
 
+/// One connection into an input.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Input {
-    pub src: Option<Source>,
+pub struct Conn {
+    pub src: Source,
     /// Read the source's value from the step before (a loop).
     pub prev: bool,
+    /// The share of the source's bits that pass (`Q16`; 65536 = all, 0 = none).
+    pub gain: u32,
+}
+
+/// An input port: the connections into it (none: unconnected).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct Input {
+    pub conns: Vec<Conn>,
+}
+
+const FULL: u32 = 65536;
+const STEP: u32 = 4096; // 1/16
+
+impl Input {
+    fn wire(src: Option<Source>, prev: bool) -> Input {
+        Input { conns: src.map(|s| Conn { src: s, prev, gain: FULL }).into_iter().collect() }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -171,12 +192,12 @@ impl GeneList {
                         .iter()
                         .enumerate()
                         .map(|(port, a)| match a {
-                            Some(Sig::Real(s)) => Input { src: Some(*s), prev: false },
+                            Some(Sig::Real(s)) => Input::wire(Some(*s), false),
                             Some(Sig::Pending(f)) => {
                                 pending.push((gi, port, *f));
-                                Input { src: None, prev: true }
+                                Input::default()
                             }
-                            None => Input { src: None, prev: false },
+                            None => Input::default(),
                         })
                         .collect();
                     genes.push(GeneNode { id, kind: *kind, params, inputs, enabled: true });
@@ -239,18 +260,20 @@ impl GeneList {
             None
         };
         for (gi, port, f) in pending {
-            genes[gi].inputs[port].src = resolve(Some(Sig::Pending(f)));
+            genes[gi].inputs[port] = Input::wire(resolve(Some(Sig::Pending(f))), true);
         }
         // a source at or after its reader in the stack's order was read from the step before
         let pos: BTreeMap<u32, usize> = genes.iter().enumerate().map(|(i, g)| (g.id, i)).collect();
         for i in 0..genes.len() {
             for inp in genes[i].inputs.iter_mut() {
-                if let Some(Source::Gene(j, _)) = inp.src {
-                    inp.prev = pos[&j] >= i;
+                for c in inp.conns.iter_mut() {
+                    if let Source::Gene(j, _) = c.src {
+                        c.prev = pos[&j] >= i;
+                    }
                 }
             }
         }
-        let outputs = outs.into_iter().map(|o| Input { src: resolve(o), prev: false }).collect();
+        let outputs = outs.into_iter().map(|o| Input::wire(resolve(o), false)).collect();
         let next_id = genes.len() as u32 + 1;
         Ok(GeneList { inputs: def.inputs, genes, outputs, schedule, next_id })
     }
@@ -259,33 +282,38 @@ impl GeneList {
         self.genes.iter().position(|g| g.id == id)
     }
 
-    /// The tick order: same-step inputs before their readers (a topological sort), ties in
-    /// list order. A same-step cycle (possible after rewiring) is read from the step before.
-    fn order(&self) -> (Vec<usize>, Vec<Vec<bool>>) {
+    /// The tick order: same-step sources before their readers (a topological sort over
+    /// connections with gain), ties in list order. A same-step cycle (possible after a
+    /// mutation) is read from the step before. Returns the order and, per gene, input and
+    /// connection, whether it reads the step before.
+    fn order(&self) -> (Vec<usize>, Vec<Vec<Vec<bool>>>) {
         let n = self.genes.len();
-        let mut prev: Vec<Vec<bool>> = self.genes.iter().map(|g| g.inputs.iter().map(|i| i.prev).collect()).collect();
+        let mut prev: Vec<Vec<Vec<bool>>> = self.genes.iter().map(|g| g.inputs.iter().map(|i| i.conns.iter().map(|c| c.prev).collect()).collect()).collect();
+        let live = |i: usize, k: usize, c: usize| self.genes[i].inputs[k].conns[c].gain > 0;
         let mut placed = vec![false; n];
         let mut order = Vec::with_capacity(n);
         while order.len() < n {
-            let ready = (0..n).find(|&i| {
-                !placed[i]
-                    && self.genes[i].inputs.iter().zip(&prev[i]).all(|(inp, &p)| match inp.src {
-                        Some(Source::Gene(j, _)) if !p => self.index_of(j).map_or(true, |k| placed[k] || !self.genes[k].enabled),
-                        _ => true,
+            let waits = |i: usize, prev: &Vec<Vec<Vec<bool>>>, placed: &Vec<bool>| -> bool {
+                self.genes[i].inputs.iter().enumerate().any(|(k, inp)| {
+                    inp.conns.iter().enumerate().any(|(c, conn)| match conn.src {
+                        Source::Gene(j, _) if !prev[i][k][c] && live(i, k, c) => self.index_of(j).map_or(false, |x| !placed[x] && self.genes[x].enabled),
+                        _ => false,
                     })
-            });
-            match ready {
+                })
+            };
+            match (0..n).find(|&i| !placed[i] && !waits(i, &prev, &placed)) {
                 Some(i) => {
                     placed[i] = true;
                     order.push(i);
                 }
                 None => {
-                    // a cycle: the first unplaced gene reads its unplaced inputs from the step before
                     let i = (0..n).find(|&i| !placed[i]).unwrap();
-                    for (k, inp) in self.genes[i].inputs.iter().enumerate() {
-                        if let Some(Source::Gene(j, _)) = inp.src {
-                            if self.index_of(j).map_or(false, |x| !placed[x]) {
-                                prev[i][k] = true;
+                    for k in 0..self.genes[i].inputs.len() {
+                        for c in 0..self.genes[i].inputs[k].conns.len() {
+                            if let Source::Gene(j, _) = self.genes[i].inputs[k].conns[c].src {
+                                if self.index_of(j).map_or(false, |x| !placed[x]) {
+                                    prev[i][k][c] = true;
+                                }
                             }
                         }
                     }
@@ -301,19 +329,18 @@ impl GeneList {
         let mut net = Network::new("genes", self.inputs);
         let (order, prev) = self.order();
         let word_bits = self.genes.iter().filter_map(|g| g.params.get("bits")).copied().max().unwrap_or(64).max(64) as usize;
-        // static widths (bits) of every output, in tick order
+        let enabled = |j: u32| self.index_of(j).map_or(false, |x| self.genes[x].enabled);
         let mut width: BTreeMap<(u32, usize), usize> = BTreeMap::new();
-        let in_width = |i: usize| if i == 0 { word_bits } else { 64 };
         let mut child_of: BTreeMap<u32, usize> = BTreeMap::new();
+        // wires to genes not placed yet, made at the end (read from the step before)
+        let mut late: Vec<(usize, usize, u32, usize)> = Vec::new();
         for &gi in &order {
             let g = &self.genes[gi];
-            let w_in = |k: usize| -> usize {
-                match g.inputs.get(k).and_then(|x| x.src) {
-                    Some(Source::In(i)) => in_width(i),
-                    Some(Source::Gene(j, p)) => width.get(&(j, p)).copied().unwrap_or(word_bits),
-                    None => word_bits,
-                }
+            let conn_width = |c: &Conn| match c.src {
+                Source::In(i) => if i == 0 { word_bits } else { 64 },
+                Source::Gene(j, p) => width.get(&(j, p)).copied().unwrap_or(word_bits),
             };
+            let w_in = |k: usize| -> usize { g.inputs.get(k).and_then(|x| x.conns.iter().filter(|c| c.gain > 0).map(conn_width).max()).unwrap_or(word_bits) };
             let w0 = w_in(0);
             match g.kind {
                 Kind::Predict => {
@@ -330,7 +357,6 @@ impl GeneList {
                     width.insert((g.id, 0), w0);
                 }
             }
-            // the module
             let module: Box<dyn crate::program::modules::Module> = match g.kind {
                 Kind::Predict => {
                     let mut genes = Genes::default();
@@ -358,53 +384,77 @@ impl GeneList {
                     Genes::default().make(k, &mut nums)
                 }
             };
-            // its wires; a loop from an earlier gene goes through a delay placed just before it
+            if !g.enabled {
+                child_of.insert(g.id, net.place(Box::<crate::program::modules::Delay>::default(), &[]));
+                continue;
+            }
+            // one connection's source: the input port, an earlier gene (through a delay when
+            // it is read from the step before), or a later gene (wired at the end)
             let mut srcs: Vec<Option<NetSrc>> = Vec::new();
+            let mut late_here: Vec<(usize, u32, usize)> = Vec::new(); // (port, gene, out port)
             for (k, inp) in g.inputs.iter().enumerate() {
-                let s = match inp.src {
-                    None => None,
-                    Some(Source::In(i)) => Some(NetSrc::In(i)),
-                    Some(Source::Gene(j, p)) => match (self.index_of(j), child_of.get(&j)) {
-                        (Some(x), _) if !self.genes[x].enabled => None,
-                        (None, _) => None,
-                        (Some(_), Some(&c)) if prev[gi][k] => {
-                            let d = net.place(Box::<crate::program::modules::Delay>::default(), &[Some(NetSrc::Child(c, p))]);
-                            Some(NetSrc::Child(d, 0))
+                let live: Vec<(usize, &Conn)> = inp.conns.iter().enumerate().filter(|(_, c)| c.gain > 0 && match c.src {
+                    Source::Gene(j, _) => enabled(j),
+                    Source::In(_) => true,
+                }).collect();
+                let mut resolve = |net: &mut Network, c: usize, conn: &Conn| -> Result<NetSrc, (u32, usize)> {
+                    match conn.src {
+                        Source::In(i) => Ok(NetSrc::In(i)),
+                        Source::Gene(j, p) => match child_of.get(&j) {
+                            Some(&cj) if prev[gi][k][c] => Ok(NetSrc::Child(net.place(Box::<crate::program::modules::Delay>::default(), &[Some(NetSrc::Child(cj, p))]), 0)),
+                            Some(&cj) => Ok(NetSrc::Child(cj, p)),
+                            None => Err((j, p)),
+                        },
+                    }
+                };
+                let s = match live.as_slice() {
+                    [] => None,
+                    [(c, conn)] if conn.gain >= FULL => match resolve(&mut net, *c, conn) {
+                        Ok(s) => Some(s),
+                        Err((j, p)) => {
+                            late_here.push((k, j, p));
+                            None
                         }
-                        (Some(_), Some(&c)) => Some(NetSrc::Child(c, p)),
-                        // a loop from a gene not placed yet: read later, so the step before
-                        (Some(_), None) => None,
                     },
+                    many => {
+                        let gains: Vec<u32> = many.iter().map(|(_, c)| c.gain.min(FULL)).collect();
+                        let mut ins: Vec<Option<NetSrc>> = Vec::new();
+                        let mut later: Vec<(usize, u32, usize)> = Vec::new();
+                        for (port, (c, conn)) in many.iter().enumerate() {
+                            match resolve(&mut net, *c, conn) {
+                                Ok(s) => ins.push(Some(s)),
+                                Err((j, p)) => {
+                                    ins.push(None);
+                                    later.push((port, j, p));
+                                }
+                            }
+                        }
+                        let b = net.place(Box::new(crate::program::modules::Blend::new(gains)), &ins);
+                        for (port, j, p) in later {
+                            late.push((b, port, j, p));
+                        }
+                        Some(NetSrc::Child(b, 0))
+                    }
                 };
                 srcs.push(s);
             }
-            let c = if g.enabled { net.place(module, &srcs) } else { net.place(Box::<crate::program::modules::Delay>::default(), &[]) };
+            let c = net.place(module, &srcs);
+            for (k, j, p) in late_here {
+                late.push((c, k, j, p));
+            }
             child_of.insert(g.id, c);
         }
-        // loops to genes placed after their reader: wire now (the network reads them from
-        // the step before)
-        for &gi in &order {
-            let g = &self.genes[gi];
-            if !g.enabled {
-                continue;
-            }
-            let c = child_of[&g.id];
-            for (k, inp) in g.inputs.iter().enumerate() {
-                if let Some(Source::Gene(j, p)) = inp.src {
-                    if let (Some(&cj), Some(x)) = (child_of.get(&j), self.index_of(j)) {
-                        if cj > c && self.genes[x].enabled {
-                            net.connect(c, k, NetSrc::Child(cj, p));
-                        }
-                    }
-                }
+        for (c, k, j, p) in late {
+            if let Some(&cj) = child_of.get(&j) {
+                net.connect(c, k, NetSrc::Child(cj, p));
             }
         }
         for o in &self.outputs {
-            net.export(match o.src {
-                Some(Source::In(i)) => Some(NetSrc::In(i)),
-                Some(Source::Gene(j, p)) => child_of.get(&j).filter(|_| self.index_of(j).map_or(false, |x| self.genes[x].enabled)).map(|&c| NetSrc::Child(c, p)),
-                None => None,
+            let s = o.conns.first().and_then(|c| match c.src {
+                Source::In(i) => Some(NetSrc::In(i)),
+                Source::Gene(j, p) => child_of.get(&j).filter(|_| enabled(j)).map(|&c| NetSrc::Child(c, p)),
             });
+            net.export(s);
         }
         let mut genes = Genes::default();
         for (k, &v) in &self.schedule {
@@ -415,28 +465,35 @@ impl GeneList {
         (net, genes.schedule)
     }
 
-    /// One line per gene.
+    /// One line per gene; a connection below full gain shows it in sixteenths.
     pub fn to_text(&self) -> String {
         let mut s = format!("inputs {}\n", self.inputs);
-        let src = |i: &Input| match i.src {
-            Some(Source::In(p)) => format!("in:{p}"),
-            Some(Source::Gene(j, p)) => format!("g{j}:{p}{}", if i.prev { "@prev" } else { "" }),
-            None => "zero".into(),
+        let conn = |c: &Conn| {
+            let src = match c.src {
+                Source::In(p) => format!("in:{p}"),
+                Source::Gene(j, p) => format!("g{j}:{p}"),
+            };
+            format!("{src}{}{}", if c.prev { "@prev" } else { "" }, if c.gain < FULL { format!("*{}/16", c.gain / STEP) } else { String::new() })
+        };
+        let input = |i: &Input| match i.conns.len() {
+            0 => "zero".to_string(),
+            1 => conn(&i.conns[0]),
+            _ => format!("[{}]", i.conns.iter().map(conn).collect::<Vec<_>>().join(" + ")),
         };
         for g in &self.genes {
-            let ins: Vec<String> = g.inputs.iter().map(src).collect();
+            let ins: Vec<String> = g.inputs.iter().map(input).collect();
             let ps: Vec<String> = g.params.iter().map(|(k, v)| format!("{k}={v}")).collect();
             s += &format!("{}g{} = {}({}) {}\n", if g.enabled { "" } else { "# off: " }, g.id, kind_name(g.kind), ins.join(", "), ps.join(" "));
         }
         for o in &self.outputs {
-            s += &format!("out {}\n", src(o));
+            s += &format!("out {}\n", input(o));
         }
         let sch: Vec<String> = self.schedule.iter().map(|(k, v)| format!("{k}={v}")).collect();
         s += &format!("schedule {}\n", sch.join(" "));
         s
     }
 
-    /// Whether gene `a`'s output reaches gene `b` within one step (same-step wires only).
+    /// Whether gene `a`'s output reaches gene `b` within one step (same-step connections).
     fn reaches(&self, a: u32, b: u32) -> bool {
         let mut seen = vec![a];
         let mut i = 0;
@@ -447,7 +504,8 @@ impl GeneList {
                 return true;
             }
             for g in &self.genes {
-                if g.inputs.iter().any(|inp| !inp.prev && inp.src == Some(Source::Gene(x, 0)) || !inp.prev && matches!(inp.src, Some(Source::Gene(y, _)) if y == x)) && !seen.contains(&g.id) {
+                let reads = g.inputs.iter().any(|inp| inp.conns.iter().any(|c| !c.prev && matches!(c.src, Source::Gene(y, _) if y == x)));
+                if reads && !seen.contains(&g.id) {
                     seen.push(g.id);
                 }
             }
@@ -455,7 +513,7 @@ impl GeneList {
         false
     }
 
-    /// Bit-signal outputs a rewired input may read: the word and every gene's non-scalar
+    /// Bit-signal outputs a connection may read: the word and every gene's non-scalar
     /// outputs.
     fn bit_sources(&self) -> Vec<Source> {
         let mut v = vec![Source::In(0)];
@@ -468,36 +526,92 @@ impl GeneList {
         v
     }
 
-    /// Apply one local mutation. Operators: `nudge` one number; `rewire` one input; `add` a
-    /// gene that nothing reads yet (silent); `duplicate` a gene (the copy is silent);
-    /// `toggle` a gene on or off. Returns a description.
+    /// The bit-signal input ports (not a clock or a confidence).
+    fn bit_ports(&self) -> Vec<(usize, usize)> {
+        self.genes
+            .iter()
+            .enumerate()
+            .flat_map(|(i, g)| {
+                let ports: Vec<usize> = match g.kind {
+                    Kind::Bag | Kind::Window => vec![0],
+                    Kind::Surprise => vec![0, 1],
+                    _ => (0..g.inputs.len()).collect(),
+                };
+                ports.into_iter().map(move |k| (i, k))
+            })
+            .collect()
+    }
+
+    /// A new connection into `(gene, input)` from a random source not already there.
+    fn new_conn(&mut self, gi: usize, k: usize, gain: u32, rng: &mut StdRng) -> Option<String> {
+        let id = self.genes[gi].id;
+        let have: Vec<Source> = self.genes[gi].inputs[k].conns.iter().map(|c| c.src).collect();
+        let cands: Vec<Source> = self.bit_sources().into_iter().filter(|s| !have.contains(s) && !matches!(s, Source::Gene(j, _) if *j == id)).collect();
+        if cands.is_empty() {
+            return None;
+        }
+        let src = cands[rng.gen_range(0..cands.len())];
+        let prev = match src {
+            Source::Gene(j, _) => self.reaches(id, j),
+            Source::In(_) => false,
+        };
+        self.genes[gi].inputs[k].conns.push(Conn { src, prev, gain });
+        Some(format!("g{id} input {k} <- {src:?}{} at {}/16", if prev { " (step before)" } else { "" }, gain / STEP))
+    }
+
+    /// Apply one local mutation. Operators:
+    /// - `nudge`: one number (× or ÷ 2^(1/4), a fraction ± 1/16, a flag flipped) or one
+    ///   connection's gain (± 1/16);
+    /// - `connect`: a new connection at gain 0 (neutral); `strengthen`: a new one at 1/16
+    ///   (the step after);
+    /// - `weaken`: a connection with gain loses 1/16;
+    /// - `add`: a gene nothing reads yet; `duplicate`: a silent copy of a gene;
+    /// - `rewire` (one input replaced by another source at full gain) and `toggle` (a gene
+    ///   off or on): the abrupt forms, kept for comparison.
+    ///
+    /// Returns a description.
     pub fn mutate(&mut self, op: &str, rng: &mut StdRng) -> String {
         match op {
             "nudge" => {
-                let mut slots: Vec<(Option<usize>, String)> = Vec::new();
+                // (gene or schedule, key) for numbers; (gene, input, conn) for gains
+                let mut nums: Vec<(Option<usize>, String)> = Vec::new();
                 for (i, g) in self.genes.iter().enumerate() {
                     for k in g.params.keys() {
                         if scale_of(k) != Scale::Fixed {
-                            slots.push((Some(i), k.clone()));
+                            nums.push((Some(i), k.clone()));
                         }
                     }
                 }
                 for k in self.schedule.keys() {
-                    slots.push((None, k.clone()));
+                    nums.push((None, k.clone()));
                 }
-                if slots.is_empty() {
+                let gains: Vec<(usize, usize, usize)> = self
+                    .bit_ports()
+                    .into_iter()
+                    .flat_map(|(i, k)| (0..self.genes[i].inputs[k].conns.len()).map(move |c| (i, k, c)))
+                    .collect();
+                let total = nums.len() + gains.len();
+                if total == 0 {
                     return "nudge: nothing to nudge".into();
                 }
-                let (gi, key) = slots[rng.gen_range(0..slots.len())].clone();
+                let r = rng.gen_range(0..total);
+                let up = rng.gen_bool(0.5);
+                if r >= nums.len() {
+                    let (i, k, c) = gains[r - nums.len()];
+                    let id = self.genes[i].id;
+                    let conn = &mut self.genes[i].inputs[k].conns[c];
+                    let v = conn.gain;
+                    conn.gain = if up { (v + STEP).min(FULL) } else { v.saturating_sub(STEP) };
+                    return format!("nudge g{id} input {k} gain from {:?}: {}/16 -> {}/16", conn.src, v / STEP, conn.gain / STEP);
+                }
+                let (gi, key) = nums[r].clone();
                 let map = match gi {
                     Some(i) => &mut self.genes[i].params,
                     None => &mut self.schedule,
                 };
                 let v = map[&key];
-                let up = rng.gen_bool(0.5);
                 let nv = match scale_of(&key) {
                     Scale::Log => {
-                        // × or ÷ 2^(1/4), by at least 1
                         let x = if up { (v * 1189 + 500) / 1000 } else { (v * 1000 + 594) / 1189 };
                         if x == v { if up { v + 1 } else { (v - 1).max(0) } } else { x.max(0) }
                     }
@@ -508,34 +622,45 @@ impl GeneList {
                 map.insert(key.clone(), nv);
                 format!("nudge {} {key}: {v} -> {nv}", gi.map_or("schedule".to_string(), |i| format!("g{}", self.genes[i].id)))
             }
-            "rewire" => {
-                let slots: Vec<(usize, usize)> = self
-                    .genes
-                    .iter()
-                    .enumerate()
-                    .flat_map(|(i, g)| {
-                        let bit_ports: Vec<usize> = match g.kind {
-                            Kind::Bag | Kind::Window => vec![0],
-                            Kind::Surprise => vec![0, 1],
-                            _ => (0..g.inputs.len()).collect(),
-                        };
-                        bit_ports.into_iter().map(move |k| (i, k))
-                    })
+            "connect" | "strengthen" => {
+                let ports = self.bit_ports();
+                if ports.is_empty() {
+                    return format!("{op}: no input");
+                }
+                let (gi, k) = ports[rng.gen_range(0..ports.len())];
+                let gain = if op == "connect" { 0 } else { STEP };
+                self.new_conn(gi, k, gain, rng).map_or(format!("{op}: no new source"), |d| format!("{op} {d}"))
+            }
+            "weaken" => {
+                let used: Vec<(usize, usize, usize)> = self
+                    .bit_ports()
+                    .into_iter()
+                    .flat_map(|(i, k)| (0..self.genes[i].inputs[k].conns.len()).map(move |c| (i, k, c)))
+                    .filter(|&(i, k, c)| self.genes[i].inputs[k].conns[c].gain > 0)
                     .collect();
-                if slots.is_empty() {
+                if used.is_empty() {
+                    return "weaken: no connection".into();
+                }
+                let (i, k, c) = used[rng.gen_range(0..used.len())];
+                let id = self.genes[i].id;
+                let conn = &mut self.genes[i].inputs[k].conns[c];
+                let v = conn.gain;
+                conn.gain = v.saturating_sub(STEP);
+                format!("weaken g{id} input {k} from {:?}: {}/16 -> {}/16", conn.src, v / STEP, conn.gain / STEP)
+            }
+            "rewire" => {
+                let ports = self.bit_ports();
+                if ports.is_empty() {
                     return "rewire: no input".into();
                 }
-                let (gi, k) = slots[rng.gen_range(0..slots.len())];
-                let id = self.genes[gi].id;
-                let cands: Vec<Source> = self.bit_sources().into_iter().filter(|s| *s != Source::Gene(id, 0) && *s != Source::Gene(id, 1)).collect();
-                let s = cands[rng.gen_range(0..cands.len())];
-                let prev = match s {
-                    Source::Gene(j, _) => self.reaches(id, j),
-                    Source::In(_) => false,
-                };
-                let old = self.genes[gi].inputs[k];
-                self.genes[gi].inputs[k] = Input { src: Some(s), prev };
-                format!("rewire g{id} input {k}: {:?} -> {:?}{}", old.src, s, if prev { " (from the step before)" } else { "" })
+                let (gi, k) = ports[rng.gen_range(0..ports.len())];
+                let old = self.genes[gi].inputs[k].clone();
+                self.genes[gi].inputs[k].conns.clear();
+                let d = self.new_conn(gi, k, FULL, rng);
+                if d.is_none() {
+                    self.genes[gi].inputs[k] = old;
+                }
+                format!("rewire (abrupt) {}", d.unwrap_or_default())
             }
             "add" | "duplicate" => {
                 let new = if op == "duplicate" && !self.genes.is_empty() {
@@ -546,24 +671,25 @@ impl GeneList {
                     let kinds = [Kind::Bag, Kind::Window, Kind::Surprise, Kind::Delay, Kind::Predict, Kind::Or];
                     let kind = kinds[rng.gen_range(0..kinds.len())];
                     let srcs = self.bit_sources();
-                    let mut pick = || Input { src: Some(srcs[rng.gen_range(0..srcs.len())]), prev: false };
+                    let mut pick = || Input::wire(Some(srcs[rng.gen_range(0..srcs.len())]), false);
+                    let clock = Input::wire(Some(Source::In(1)), false);
                     let mut params = BTreeMap::new();
                     let inputs = match kind {
-                        Kind::Bag => vec![pick(), Input { src: Some(Source::In(1)), prev: false }],
+                        Kind::Bag => vec![pick(), clock],
                         Kind::Window => {
                             params.insert("span".into(), 4);
                             params.insert("keep".into(), 1);
-                            vec![pick(), Input { src: Some(Source::In(1)), prev: false }]
+                            vec![pick(), clock]
                         }
                         Kind::Surprise => {
                             params.insert("threshold".into(), 32768);
-                            vec![pick(), pick(), Input { src: None, prev: false }]
+                            vec![pick(), pick(), Input::default()]
                         }
                         Kind::Predict => {
                             if let Some(p) = self.genes.iter().find(|g| g.kind == Kind::Predict) {
                                 params = p.params.clone();
                             }
-                            vec![pick(), Input { src: Some(Source::In(0)), prev: false }]
+                            vec![pick(), Input::wire(Some(Source::In(0)), false)]
                         }
                         Kind::Delay => vec![pick()],
                         _ => vec![pick(), pick()],
@@ -581,7 +707,7 @@ impl GeneList {
                 }
                 let i = rng.gen_range(0..self.genes.len());
                 self.genes[i].enabled = !self.genes[i].enabled;
-                format!("toggle g{} {}", self.genes[i].id, if self.genes[i].enabled { "on" } else { "off" })
+                format!("toggle (abrupt) g{} {}", self.genes[i].id, if self.genes[i].enabled { "on" } else { "off" })
             }
             _ => format!("unknown operator {op}"),
         }
@@ -662,6 +788,7 @@ mod tests {
         for _ in 0..4 {
             grown.mutate("add", &mut rng);
             grown.mutate("duplicate", &mut rng);
+            grown.mutate("connect", &mut rng);
         }
         let words: Vec<BitVector> = (0..6).map(|i| BitVector::from_bits(&(0..32).map(|j| (i * 97 + j * 13) % 8192).collect::<Vec<_>>(), 8192)).collect();
         let run = |list: &GeneList| -> Vec<BitVector> {
@@ -677,6 +804,6 @@ mod tests {
             outs
         };
         let (a, b) = (run(&base), run(&grown));
-        assert!(a.iter().zip(&b).all(|(x, y)| x.as_words() == y.as_words()), "genes nothing reads change nothing");
+        assert!(a.iter().zip(&b).all(|(x, y)| x.as_words() == y.as_words()), "genes nothing reads, and connections at gain 0, change nothing");
     }
 }

@@ -524,6 +524,68 @@ impl Module for Surprise {
     }
 }
 
+/// Graded wiring: several sources into one input, each passing a share of its bits (its
+/// gain, `Q16`; the same fixed subset of bit positions for a given gain, as a synapse's
+/// strength sets how much of a pathway gets through), ORed together.
+pub struct Blend {
+    pub gains: Vec<Q16>,
+    out: BitVector,
+}
+
+impl Blend {
+    pub fn new(gains: Vec<Q16>) -> Self {
+        Self { gains, out: BitVector::EMPTY }
+    }
+}
+
+/// Keep the bits of `x` at positions whose hash falls under `gain` (`Q16`; `ONE` keeps all).
+pub fn pass_share(x: &BitVector, gain: Q16) -> BitVector {
+    if gain >= ONE {
+        return x.clone();
+    }
+    let mut w = x.as_words().to_vec();
+    for (wi, d) in w.iter_mut().enumerate() {
+        let mut keep = 0u64;
+        for b in 0..64 {
+            let h = ((wi * 64 + b) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
+            if h < gain as u64 {
+                keep |= 1 << b;
+            }
+        }
+        *d &= keep;
+    }
+    BitVector::from_words(w)
+}
+
+impl Module for Blend {
+    fn name(&self) -> String {
+        let g: Vec<String> = self.gains.iter().map(|&g| format!("{}/16", (g as u64 * 16 + ONE as u64 / 2) / ONE as u64)).collect();
+        format!("Blend({})", g.join(", "))
+    }
+    fn n_inputs(&self) -> usize {
+        self.gains.len()
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let width = inputs.iter().map(|x| x.as_words().len()).max().unwrap_or(0);
+        let mut words = vec![0u64; width];
+        for (x, &g) in inputs.iter().zip(&self.gains) {
+            for (d, s) in words.iter_mut().zip(pass_share(x, g).as_words()) {
+                *d |= s;
+            }
+        }
+        self.out = BitVector::from_words(words);
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = BitVector::EMPTY;
+    }
+}
+
 /// A mode switch: passes input 0 while input 1 has any bit, else nothing (a
 /// neuromodulatory gate, e.g. acetylcholine switching the hippocampus into encoding).
 pub struct Gate {

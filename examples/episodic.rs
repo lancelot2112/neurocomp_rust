@@ -4600,7 +4600,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         (0..vocab.len()).filter(|&i| ovo(i) >= 24 && fits(i)).max_by_key(|&i| ovo(i))
                     });
                     let said_vec = recalled.map(|w| enc.codes[w].clone()).unwrap_or_else(|| out.clone());
-                    let said = enc.decode(&said_vec).filter(|&w| definite && w != next && vocab[w] != ".");
+                    // what is said must be of the kind the column expects here (the expectation
+                    // gates the loop, as the thalamic gate did the rollout's offers)
+                    let said = enc.decode(&said_vec).filter(|&w| definite && fits(w) && w != next && vocab[w] != ".");
                     if std::env::var("INNERDIAG").is_ok() && testing && s.held_out && NEW_NAMES.iter().any(|n| s.words[..=t].contains(n)) && inner_diag < 40 {
                         inner_diag += 1;
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);

@@ -446,6 +446,45 @@ fn new_wording() -> bool {
     std::env::var("SEASON_NEW_WORDING").is_ok()
 }
 
+/// QUESTION=1 (with FAMILY, FAMILY_STATED): stories where a fact about a stranger arrives
+/// without the stranger's name, so answering needs it bound to them within the story:
+/// "winter came . kim came . the dog ran away . the person is a smith . mary is a jones . it
+/// rained . kim went to the <place by the smith rule> ." The stranger's family is random
+/// per story (only this story can tell it), and a known person of the other family is
+/// stated too (the story holds both surnames). Strangers: practice names in training (a
+/// share QUESTION_P of stories, default 0.5) and at unheld test stories, new names in
+/// held-out ones.
+fn question() -> bool {
+    std::env::var("QUESTION").is_ok()
+}
+
+fn question_story(rng: &mut StdRng, held_out: bool) -> Story {
+    let season = rng.gen_range(0..SEASONS.len());
+    let stranger = if held_out { NEW_NAMES[rng.gen_range(0..NEW_NAMES.len())] } else { PRACTICE_NAMES[rng.gen_range(0..PRACTICE_NAMES.len())] };
+    let f = rng.gen_range(0..SURNAMES.len());
+    let known = loop {
+        let m = rng.gen_range(0..NAMES.len());
+        if family_of(m, false) != f {
+            break m;
+        }
+    };
+    let mut words: Vec<&'static str> = vec![SEASONS[season], "came", "."];
+    words.extend([stranger, "came", "."]);
+    let mut facts: Vec<Vec<&'static str>> = vec![vec!["the", "person", "is", "a", SURNAMES[f], "."], vec![NAMES[known], "is", "a", SURNAMES[1 - f], "."]];
+    if rng.gen_bool(0.5) {
+        facts.swap(0, 1);
+    }
+    for fact in facts {
+        words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+        words.extend(fact);
+    }
+    words.extend(DISTRACTORS.choose(rng).unwrap().iter().copied());
+    words.extend([stranger, "went", "to", "the"]);
+    let answer_at = words.len();
+    words.extend([PLACES[family_place(f, season)], "."]);
+    Story { words, answer_at, held_out }
+}
+
 fn season_story(rng: &mut StdRng, distance: usize, held_out: bool) -> Story {
     season_story_with(rng, distance, held_out, None, None)
 }
@@ -752,10 +791,10 @@ fn task_vocab(task: Task) -> Vec<&'static str> {
     if task == Task::Season && new_wording() {
         vocab.extend(["walked", "into"]);
     }
-    if task == Task::Season && (new_names() || std::env::var("SCHEMA_K").is_ok()) {
+    if task == Task::Season && (new_names() || std::env::var("SCHEMA_K").is_ok() || question()) {
         vocab.extend(NEW_NAMES);
     }
-    if task == Task::Season && practice() {
+    if task == Task::Season && (practice() || question()) {
         vocab.extend(PRACTICE_NAMES);
     }
     if task == Task::Season && family() {
@@ -1479,6 +1518,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let inner_when_definite = std::env::var("INNER_WHEN").map_or(false, |v| v == "definite");
     let inner_say_recall = std::env::var("INNER_SAY").map_or(false, |v| v == "recall");
     let mut phono = PhonologicalLoop::new();
+    // QUESTION_ACT (with QUESTION): questions as inner speech, in two acts.
+    // - Ask: at a sentence's end, its least familiar word may become an open question, held
+    //   in the loop for the rest of the story.
+    // - Restate: at a later sentence's end, while a question is open, the network may say
+    //   that sentence again with the open item in place of its first k words (k = 1 or 2):
+    //   "the person is a smith ." → "kim is a smith ." The restatement is read as inner
+    //   steps, and the hippocampus stores it as an event, so the fact is bound to the item.
+    // QUESTION_ACT=learned: the basal ganglia choose both (ask or not, per the word's
+    // familiarity band and the column's confidence band; restate with k = 0, 1 or 2, per the
+    // sentence's first two words), rewarded at the story's answer less STEP_COST an act.
+    // QUESTION_ACT=1: a hand-set reference: ask below familiarity band 4, restate a sentence
+    // that starts with "the", up to its "is".
+    let question_act = std::env::var("QUESTION_ACT").ok();
+    let question_learned = question_act.as_deref() == Some("learned");
+    let mut open_q: Option<usize> = None;
+    let mut restated = 0usize;
+    let mut q_stats = [0usize; 4]; // test, held-out stories: questions asked, restatements, restatements naming the stranger's sentence ("the person"), answers right after a restatement
     let mut inner_diag = 0usize;
     let mut inner_stats = [0usize; 3]; // test: surprises where it could speak, spoken, spoken in held-out stories
     let mut completed_sentence = false;
@@ -2767,7 +2823,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         } else if task == Task::Season {
             season_distance = story_rng.gen_range(0..season_len);
             let at = schema_at.get(&s_i).copied();
-            if family_stated() {
+            let q_share: f64 = std::env::var("QUESTION_P").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
+            if question() && (testing || story_rng.gen_bool(q_share)) {
+                question_story(&mut story_rng, testing && s_i % 2 == 1)
+            } else if family_stated() {
                 season_story_with(&mut story_rng, season_distance, testing && s_i % 2 == 1, None, at.map(|a| a.0))
             } else {
                 season_story_with(&mut story_rng, season_distance, testing && s_i % 2 == 1, at, None)
@@ -2882,6 +2941,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         completed_sentence = false;
         rolled = 0;
         rolled_surname = None;
+        open_q = None;
+        restated = 0;
         page_marks = vec![false; ids.len()];
         inner = vec![false; ids.len()];
         inner_code = vec![None; ids.len()];
@@ -4658,7 +4719,75 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
-                if (step_learned || inner_learned) && t + 1 == s.answer_at {
+                // the question act, at a sentence's end
+                if let (Some(_), true, false) = (question_act.as_deref(), s.words[t] == ".", replaying) {
+                    let start = s.words[..t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                    let sent: Vec<usize> = ids[start..t].to_vec();
+                    let c = column.confidence();
+                    let cb = if c < Q_HALF { 0 } else if c < Q_08 { 1 } else { 2 };
+                    let explore = !testing;
+                    match open_q {
+                        Some(tag) if !sent.contains(&tag) && sent.len() >= 3 && restated < 2 && t + 1 < s.answer_at => {
+                            let k = if question_learned {
+                                let ctx = 4000 + sent[0] * (vocab.len() + 1) + sent[1];
+                                let cands = [step_code(ctx, 0), step_code(ctx, 1), step_code(ctx, 2)];
+                                let k = step_bg.select(&cands, if explore { Some(&mut bg_rng) } else { None }).unwrap_or(0);
+                                if !testing {
+                                    step_pending.push((cands[k].clone(), k > 0));
+                                }
+                                k
+                            } else {
+                                let is = index["is"];
+                                match sent.iter().position(|&w| w == is) {
+                                    Some(p) if vocab[sent[0]] == "the" && p <= 2 => p,
+                                    _ => 0,
+                                }
+                            };
+                            if k > 0 && k < sent.len() - 1 {
+                                let mut said = vec![tag];
+                                said.extend_from_slice(&sent[k..]);
+                                said.push(full_stop);
+                                if testing && s.held_out {
+                                    q_stats[1] += 1;
+                                    q_stats[2] += (vocab[sent[0]] == "the" && vocab[sent[1]] == "person") as usize;
+                                }
+                                for (j, &w) in said.iter().enumerate() {
+                                    let at = t + 1 + j;
+                                    ids.insert(at, w);
+                                    s.words.insert(at, vocab[w]);
+                                    page_marks.insert(at, false);
+                                    inner.insert(at, true);
+                                    efference.insert(at, Some(w));
+                                    eff_pred.insert(at, None);
+                                    inner_code.insert(at, None);
+                                }
+                                s.answer_at += said.len();
+                                restated += 1;
+                            }
+                        }
+                        None if t + 1 < s.answer_at => {
+                            if let Some(tag) = sem_cue_w.filter(|w| sent.contains(w)) {
+                                let ask = if question_learned {
+                                    let ctx = 3000 + fam_band.min(7) as usize * 3 + cb;
+                                    let cands = [step_code(ctx, 0), step_code(ctx, 1)];
+                                    let a = step_bg.select(&cands, if explore { Some(&mut bg_rng) } else { None }).unwrap_or(0);
+                                    if !testing {
+                                        step_pending.push((cands[a].clone(), a == 1));
+                                    }
+                                    a == 1
+                                } else {
+                                    fam_band < 4
+                                };
+                                if ask {
+                                    open_q = Some(tag);
+                                    q_stats[0] += (testing && s.held_out) as usize;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                if (step_learned || inner_learned || question_learned) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     for (code, stepped) in step_pending.drain(..) {
                         step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut bg_rng);
@@ -5286,7 +5415,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sentence = BitVector::new(BITS, Some(0));
                 if hippo_self && bind && !bind_sentence.is_empty() {
-                    if ((!testing || recite_plan) && !replaying) || (reciting && self_store) {
+                    if ((!testing || recite_plan || self::question()) && !replaying) || (reciting && self_store) {
                         if let Some(hc) = &mut bind_hc {
                             hc.set_source(reciting as u8);
                             let ev = event_vec(&bind_sentence, &bind_prev, ctx_offset);
@@ -5971,6 +6100,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 complete_stats[2],
                 cw.iter().filter(|x| NEW_NAMES.iter().any(|n| x.0.contains(n))).take(16).collect::<Vec<_>>()
             );
+        }
+        if question_act.is_some() {
+            eprintln!("  QUESTION seed {seed}: in held-out test stories, {} questions asked, {} restatements ({} of the stranger's fact)", q_stats[0], q_stats[1], q_stats[2]);
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);

@@ -529,12 +529,16 @@ impl Module for Surprise {
 /// strength sets how much of a pathway gets through), ORed together.
 pub struct Blend {
     pub gains: Vec<Q16>,
+    /// The output's width in words (that of the input's main connection): a source of
+    /// another width is cut or padded to it, so adding a connection never reshapes the
+    /// input it joins.
+    pub words: usize,
     out: BitVector,
 }
 
 impl Blend {
-    pub fn new(gains: Vec<Q16>) -> Self {
-        Self { gains, out: BitVector::EMPTY }
+    pub fn new(gains: Vec<Q16>, words: usize) -> Self {
+        Self { gains, words, out: BitVector::EMPTY }
     }
 }
 
@@ -569,8 +573,7 @@ impl Module for Blend {
         1
     }
     fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
-        let width = inputs.iter().map(|x| x.as_words().len()).max().unwrap_or(0);
-        let mut words = vec![0u64; width];
+        let mut words = vec![0u64; self.words];
         for (x, &g) in inputs.iter().zip(&self.gains) {
             for (d, s) in words.iter_mut().zip(pass_share(x, g).as_words()) {
                 *d |= s;

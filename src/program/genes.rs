@@ -340,7 +340,10 @@ impl GeneList {
                 Source::In(i) => if i == 0 { word_bits } else { 64 },
                 Source::Gene(j, p) => width.get(&(j, p)).copied().unwrap_or(word_bits),
             };
-            let w_in = |k: usize| -> usize { g.inputs.get(k).and_then(|x| x.conns.iter().filter(|c| c.gain > 0).map(conn_width).max()).unwrap_or(word_bits) };
+            // an input's width is its main (strongest, then first) connection's
+            let main = |inp: &Input| -> Option<Conn> { inp.conns.iter().filter(|c| c.gain > 0).fold(None, |m: Option<&Conn>, c| if m.map_or(true, |m| c.gain > m.gain) { Some(c) } else { m }).copied() };
+            let in_widths: Vec<usize> = (0..g.inputs.len().max(1)).map(|k| g.inputs.get(k).and_then(main).map(|c| conn_width(&c)).unwrap_or(word_bits)).collect();
+            let w_in = |k: usize| -> usize { in_widths.get(k).copied().unwrap_or(word_bits) };
             let w0 = w_in(0);
             match g.kind {
                 Kind::Predict => {
@@ -429,7 +432,7 @@ impl GeneList {
                                 }
                             }
                         }
-                        let b = net.place(Box::new(crate::program::modules::Blend::new(gains)), &ins);
+                        let b = net.place(Box::new(crate::program::modules::Blend::new(gains, w_in(k).div_ceil(64))), &ins);
                         for (port, j, p) in later {
                             late.push((b, port, j, p));
                         }
@@ -524,6 +527,13 @@ impl GeneList {
             }
         }
         v
+    }
+
+    /// The input ports a new connection may join: bit signals, not a clock or a
+    /// confidence, and not a predictor's teaching port (the teacher's path is fixed, as a
+    /// climbing fibre's is: extra bits there become part of what is learned).
+    fn open_ports(&self) -> Vec<(usize, usize)> {
+        self.bit_ports().into_iter().filter(|&(i, k)| !(self.genes[i].kind == Kind::Predict && k == 1)).collect()
     }
 
     /// The bit-signal input ports (not a clock or a confidence).
@@ -623,7 +633,7 @@ impl GeneList {
                 format!("nudge {} {key}: {v} -> {nv}", gi.map_or("schedule".to_string(), |i| format!("g{}", self.genes[i].id)))
             }
             "connect" | "strengthen" => {
-                let ports = self.bit_ports();
+                let ports = self.open_ports();
                 if ports.is_empty() {
                     return format!("{op}: no input");
                 }

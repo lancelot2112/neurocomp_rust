@@ -105,9 +105,72 @@ Most other entries lose 1–7 points.
    test leaves the column untrained on empty frames: story boundary 0%.
 5. Not a default; the option stays off.
 
+## Addendum 2: credit over time
+
+**Code.** [`examples/episodic.rs`](../../examples/episodic.rs), with `HIER_SURPRISE=learned`:
+- `HIER_TRACE=n`: **eligibility traces.** Each consult-or-skip choice stays eligible for n
+  page steps and is credited with the column's accuracy over them (its own step and the
+  next n − 1), each step weighted `HIER_DECAY` (one half) per step of distance. Consulting
+  and skipping are valued alike, as the accuracy that followed them in that context.
+- `HIER_ANSWER_WEIGHT=w`: a story's answer counts w times an ordinary word. The world's
+  reward is the answer; the other words are the column's check on itself.
+- `HIER_MARGIN=m`: skip only where skipping's learned value beats consulting's by more
+  than m (while learning, with the usual exploration).
+
+**Seed 0 probes** (held-out; no cost): accuracy over the next words alone (n = 4 or 8)
+consulted about half the steps, and its values sat so close together that the greedy test
+choice was arbitrary per context: story boundary 0% at n = 4, motor speech 0% at n = 8.
+Weighting the answer (w = 16, n = 4) brought motor speech to 65.2%, story boundary to
+93.8%, and slot memory to 70.6%; that is the setting below.
+
+**Three-seed suite** (held-out; recorded → one-step counterfactual (addendum 1) → trace,
+n = 4, w = 16 → the same with margin 1/16):
+
+| Entry | Recorded | Counterfactual | Trace | Trace + margin |
+|---|---|---|---|---|
+| story boundary | 94.1 | 83.1 | 64.5 (93.8 / 76.4 / 23.2) | **92.8** |
+| saccades | 96.6 | 86.1 | 31.4 (0 / 0 / 94.2) | 77.3 (92.6 / **44.4** / 94.8) |
+| role transfer | 60.6 | 45.7 | 46.5 (0 / 55.0 / 84.4) | **77.5** |
+| sleep generalisation | 74.5 | 27.2 | 66.3 | 64.1 |
+| slot memory | 16.3 | 52.0 | **76.9** | **69.7** |
+| schema advantage | 65.7 | 43.6 | 60.1 | 59.1 |
+| family stated | 38.1 | 31.1 | **45.1** | 41.3 |
+| family consolidated | 53.9 | 50.7 | **61.9** | **64.9** |
+| learned stepping | 54.7 | 53.0 | 57.1 | 58.2 |
+| full hippocampus | 41.4 | 36.9 | **46.1** | 38.3 |
+| hippocampus teaches cortex | 61.9 | 43.1 | 54.5 | 61.7 |
+| index hippocampus | 66.3 | 59.5 | 61.6 | 66.1 |
+| engram store | 66.8 | 58.1 | 63.9 | 63.5 |
+| engram walk only | 84.0 | 92.1 | **91.9** | **91.8** |
+| inference replay | 53.4 | 63.1 | 50.5 | **65.1** |
+| inference read | 44.2 | 43.7 | 49.5 | 34.3 (**0** / 37.6 / 65.4) |
+| cooperate | 56.8 | 44.1 | 59.9 | **62.1** |
+| relations, speak, motor speech | 63.5 | 42.7 | 58.9 | **66.6** |
+| belief decides | 81.7 | 59.8 | 77.7 | 79.5 |
+| higher area consulted (test) | 100% | 5–58% | 32–100% (about half) | 74–100% (about 90%) |
+
+The other entries are within 2 points.
+
+**Findings.**
+1. **Credit over time fixes what the one-step reward broke,** once the answer is weighted:
+   the relation entries 42.7 → 58.9 → 66.6 (recorded 63.5), belief 59.8 → 79.5, sleep
+   generalisation 27 → 64–66. Accuracy over the next words alone is too flat a signal; the
+   answer is what tells the gate where the frame matters.
+2. **With a margin it beats always consulting on 14 entries of 25** (role transfer +17,
+   slot memory +53, family consolidated +11, inference replay +12, engram walk only +8,
+   cooperation +5, relation entries +3); 6 lose 2–12 points.
+3. **But it saves little:** about 10% of the area's steps. Without the margin it saves
+   about half and collapses on single seeds (saccades 0 / 0, role transfer 0, story
+   boundary 23): one context the answer depends on tips to "skip" on nearly equal values.
+4. **Skipping while learning still costs:** with the margin, saccades seed 1 fell to 44% and
+   inference read seed 0 to 0% while consulting 87–100% at test; the area and the column
+   had learned from fewer frames. What helps is often less top-down during training
+   (slot memory, role transfer), not less compute at test.
+5. Not a default; the options stay off.
+
 ## Next
-- Credit over time for the top-down gate: reward a consultation by the answers that follow
-  (eligibility traces in the basal ganglia), not by the next word alone.
+- Separate learning from answering: let the area learn on every training step (or a fixed
+  share) and gate only its use, so the gate's choice does not also decide what is learned.
 - Keep the area's state running cheaply when not consulted (step its context, skip its
   prediction), so skipping does not lose the story.
 - Only then a cost for compute, as the curiosity module charges questions.

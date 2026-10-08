@@ -1514,9 +1514,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // answering right is worth 1, answering wrong 0, "unknown" one half, so answering wins
     // a band once its answers there are right more often than not
     let unknown_learned = std::env::var("BELIEF_UNKNOWN").map_or(false, |v| v == "learned");
-    // each choice (answer, unknown) is coded by its belief band's bits joined with its lead
-    // band's, so a state never practised borrows the value of the states that share either
-    // band with it (instead of defaulting to "unknown")
     let mut unknown_bg = BasalGanglia::new(256);
     // one block per (state, choice) (default). GONOGO_CODES=shared: belief band's bits joined
     // with the lead band's, so unpractised states borrow from their neighbours; tried and

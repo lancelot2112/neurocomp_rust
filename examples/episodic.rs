@@ -1477,6 +1477,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let inner_speech = complete.as_deref().map_or(false, |m| m.starts_with("speech"));
     let inner_learned = std::env::var("INNER_GATE").map_or(false, |v| v == "learned");
     let inner_when_definite = std::env::var("INNER_WHEN").map_or(false, |v| v == "definite");
+    let inner_say_recall = std::env::var("INNER_SAY").map_or(false, |v| v == "recall");
     let mut phono = PhonologicalLoop::new();
     let mut inner_stats = [0usize; 3]; // test: surprises where it could speak, spoken, spoken in held-out stories
     let mut completed_sentence = false;
@@ -1746,6 +1747,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // in the page word's slot: at an inner step the word slot is empty and the said vector
     // is in the heard slot, so the column learns separately how far to go by its own speech.
     let inner_slot = !route_on && std::env::var("INNER_SLOT").is_ok();
+    let inner_echo = std::env::var("INNER_SLOT").map_or(false, |v| v == "echo");
     let mut hc_ec_stats = [0u64; 3]; // steps with feedback, Σ share passed (Q16), test steps with feedback
     let mut route_cur: Option<(BitVector, Vec<(usize, BitVector)>, usize)> = None; // this step's row parts
     // The record (default): each training step, for every slot, the column's prediction
@@ -3777,8 +3779,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if inner_slot {
                     // the heard slot (auditory input, the phonological store): one's own speech
-                    // at an inner step, else silence
-                    if inner[t] {
+                    // at an inner step, else silence; INNER_SLOT=echo: subvocalisation, the
+                    // page's word is heard there too as it is read
+                    if inner[t] || inner_echo {
                         words.extend_from_slice(code.as_words());
                     } else {
                         words.extend(std::iter::repeat(0).take(BITS / 64));
@@ -4579,11 +4582,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if inner_speech && !replaying && !reciting && rolled < 4 && (testing || complete.as_deref() == Some("speech")) && t + 1 != s.answer_at && s.words[t + 1] != "." {
                     // INNER_WHEN=definite: only where the column's own expectation holds one
                     // word (as the rollout's trigger), or while already speaking
-                    let definite = !inner_when_definite || rolled > 0 || {
-                        let ex = column.l23.peek_union(&input, BITS);
-                        (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(ex.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).count() == 1
-                    };
-                    let said = enc.decode(&out).filter(|&w| definite && w != next && vocab[w] != ".");
+                    let ex = column.l23.peek_union(&input, BITS);
+                    let fits = |w: usize| enc.codes[w].as_words().iter().zip(ex.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24;
+                    let definite = !inner_when_definite || rolled > 0 || (0..vocab.len()).filter(|&i| fits(i)).count() == 1;
+                    // INNER_SAY=recall: recall plans the utterance. The slot memory's word is
+                    // said if it is of the kind the column expects here, else the prediction
+                    let recalled = bind_answer.filter(|&w| inner_say_recall && !hc_ec && !(testing && bind_lesion) && fits(w));
+                    let said_vec = recalled.map(|w| enc.codes[w].clone()).unwrap_or_else(|| out.clone());
+                    let said = enc.decode(&said_vec).filter(|&w| definite && w != next && vocab[w] != ".");
                     if let Some(w) = said {
                         let go = if inner_learned {
                             let c = mix_conf.unwrap_or_else(|| column.confidence());
@@ -4603,7 +4609,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             inner_stats[0] += 1;
                         }
                         if go {
-                            phono.say(&out);
+                            phono.say(&said_vec);
                             let heard = phono.hear();
                             if testing {
                                 inner_stats[1] += 1;

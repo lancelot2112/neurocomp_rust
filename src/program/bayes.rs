@@ -54,8 +54,14 @@ impl BeliefRule {
 
 pub struct Bayes<K> {
     claims: HashMap<K, Vec<(usize, u16)>>,
-    trust: HashMap<u16, u32>,
+    /// Trust per (source, topic), and per source over all its topics (weighed by its
+    /// contested claims in each).
+    trust: HashMap<(u16, u64), u32>,
+    overall: HashMap<u16, u32>,
     pub rule: BeliefRule,
+    /// The topic of a key (None: one topic). With topics, a source's trust is estimated per
+    /// topic: a narrator can be reliable about places and not about families.
+    pub topic: Option<fn(&K) -> u64>,
 }
 
 impl<K: Hash + Eq + Clone> Default for Bayes<K> {
@@ -66,7 +72,7 @@ impl<K: Hash + Eq + Clone> Default for Bayes<K> {
 
 impl<K: Hash + Eq + Clone> Bayes<K> {
     pub fn new() -> Self {
-        Self { claims: HashMap::default(), trust: HashMap::default(), rule: BeliefRule::Graded }
+        Self { claims: HashMap::default(), trust: HashMap::default(), overall: HashMap::default(), rule: BeliefRule::Graded, topic: None }
     }
 
     /// `source` claims `value` for `key`. Returns false if it had already.
@@ -81,30 +87,43 @@ impl<K: Hash + Eq + Clone> Bayes<K> {
 
     /// Estimate the sources' trust from every contested key (see the module doc).
     pub fn resolve(&mut self) {
-        let keys: Vec<&Vec<(usize, u16)>> = self.claims.values().filter(|c| c.len() >= 2 && !many_valued(c)).collect();
-        let mut trust: HashMap<u16, u32> = HashMap::default();
-        for c in &keys {
+        let topic = self.topic;
+        let of = |k: &K| topic.map_or(0, |f| f(k));
+        let keys: Vec<(u64, &Vec<(usize, u16)>)> = self.claims.iter().filter(|(_, c)| c.len() >= 2 && !many_valued(c)).map(|(k, c)| (of(k), c)).collect();
+        let mut trust: HashMap<(u16, u64), u32> = HashMap::default();
+        let mut counts: HashMap<(u16, u64), u64> = HashMap::default();
+        for (t, c) in &keys {
             for &(_, s) in c.iter() {
-                trust.insert(s, ONE / 2);
+                trust.insert((s, *t), ONE / 2);
+                *counts.entry((s, *t)).or_default() += 1;
             }
         }
         let learn = matches!(self.rule, BeliefRule::Graded | BeliefRule::Posterior);
         for _ in 0..if learn { 8 } else { 0 } {
-            let mut credit: HashMap<u16, (u64, u64)> = HashMap::default();
-            for c in &keys {
-                let total: u64 = c.iter().map(|x| trust[&x.1] as u64).sum::<u64>().max(1);
+            let mut credit: HashMap<(u16, u64), (u64, u64)> = HashMap::default();
+            for (t, c) in &keys {
+                let total: u64 = c.iter().map(|x| trust[&(x.1, *t)] as u64).sum::<u64>().max(1);
                 for &(v, s) in c.iter() {
-                    let belief: u64 = c.iter().filter(|x| x.0 == v).map(|x| trust[&x.1] as u64).sum();
-                    let e = credit.entry(s).or_default();
+                    let belief: u64 = c.iter().filter(|x| x.0 == v).map(|x| trust[&(x.1, *t)] as u64).sum();
+                    let e = credit.entry((s, *t)).or_default();
                     e.0 += (belief << 16) / total;
                     e.1 += 1;
                 }
             }
-            for (s, (sum, n)) in credit {
+            for (st, (sum, n)) in credit {
                 // prior: one claim won, one lost
-                trust.insert(s, ((sum + ONE as u64 / 2) / (n + 1)) as u32);
+                trust.insert(st, ((sum + ONE as u64 / 2) / (n + 1)) as u32);
             }
         }
+        // per source over its topics, weighed by its contested claims in each
+        let mut sums: HashMap<u16, (u64, u64)> = HashMap::default();
+        for (&(s, t), &v) in &trust {
+            let n = counts[&(s, t)];
+            let e = sums.entry(s).or_default();
+            e.0 += v as u64 * n;
+            e.1 += n;
+        }
+        self.overall = sums.into_iter().map(|(s, (v, n))| (s, (v / n.max(1)) as u32)).collect();
         self.trust = trust;
     }
 
@@ -137,14 +156,16 @@ impl<K: Hash + Eq + Clone> Bayes<K> {
             BeliefRule::Full => ONE,
             BeliefRule::Vote => ((c.iter().filter(|x| x.0 == value).count() as u64 * ONE as u64) / c.len() as u64) as u32,
             BeliefRule::Graded => {
-                let t = |s: u16| self.trust(s) as u64;
+                let tp = self.topic.map_or(0, |f| f(key));
+                let t = |s: u16| self.trust_in(s, tp) as u64;
                 let total: u64 = c.iter().map(|x| t(x.1)).sum::<u64>().max(1);
                 ((c.iter().filter(|x| x.0 == value).map(|x| t(x.1)).sum::<u64>() << 16) / total) as u32
             }
             BeliefRule::Posterior => {
                 // each claim's source right with probability t: multiplied through by
                 // Π (1 − t), value u's odds become Π_{s says u} t · Π_{s says other} (1 − t)
-                let t = |s: u16| self.trust(s).clamp(1, ONE - 1) as u64;
+                let tp = self.topic.map_or(0, |f| f(key));
+                let t = |s: u16| self.trust_in(s, tp).clamp(1, ONE - 1) as u64;
                 let mut values: Vec<usize> = c.iter().map(|x| x.0).collect();
                 values.sort_unstable();
                 values.dedup();
@@ -164,9 +185,14 @@ impl<K: Hash + Eq + Clone> Bayes<K> {
         }
     }
 
-    /// A source's trust (`Q16`; half for a source never contested).
+    /// A source's trust over all its topics (`Q16`; half for a source never contested).
     pub fn trust(&self, source: u16) -> u32 {
-        self.trust.get(&source).copied().unwrap_or(ONE / 2)
+        self.overall.get(&source).copied().unwrap_or(ONE / 2)
+    }
+
+    /// A source's trust on one topic (`Q16`; half where it was never contested).
+    pub fn trust_in(&self, source: u16, topic: u64) -> u32 {
+        self.trust.get(&(source, topic)).copied().unwrap_or(ONE / 2)
     }
 
     /// The claims on `key`: (value, source, the value's belief).
@@ -285,6 +311,43 @@ mod tests {
         assert!(b.trust(3) < b.trust(1), "trust {} vs {}", b.trust(3), b.trust(1));
         assert_eq!(b.believed(&99), Some(6));
         assert_eq!(b.contested().len(), 11);
+    }
+
+    #[test]
+    fn a_source_reliable_on_one_topic_and_not_another() {
+        // keys (topic, n): on topic 0 (places) source 3 agrees with sources 1 and 2; on
+        // topic 1 (families) it contradicts them
+        let mut b: Bayes<(u32, u32)> = Bayes::new();
+        b.rule = BeliefRule::Posterior;
+        b.topic = Some(|k: &(u32, u32)| k.0 as u64);
+        for n in 0..30 {
+            b.claim((0, n), 1, 1);
+            b.claim((0, n), 1, 2);
+            b.claim((0, n), 1, 3);
+        }
+        for n in 0..10 {
+            b.claim((1, n), 1, 1);
+            b.claim((1, n), 1, 2);
+            b.claim((1, n), 2, 3);
+        }
+        // a 1:1 family conflict between source 1 and source 3
+        b.claim((1, 99), 6, 1);
+        b.claim((1, 99), 5, 3);
+        b.resolve();
+        assert!(b.trust_in(3, 1) < b.trust_in(1, 1), "families: {} vs {}", b.trust_in(3, 1), b.trust_in(1, 1));
+        assert_eq!(b.believed(&(1, 99)), Some(6));
+        let lead = b.belief(&(1, 99), 6) - b.belief(&(1, 99), 5);
+        // one topic: its honesty about places hides its lies about families
+        let mut one: Bayes<(u32, u32)> = Bayes::new();
+        one.rule = BeliefRule::Posterior;
+        for (k, c) in &b.claims {
+            for &(v, s) in c {
+                one.claim(*k, v, s);
+            }
+        }
+        one.resolve();
+        let one_lead = one.belief(&(1, 99), 6).saturating_sub(one.belief(&(1, 99), 5));
+        assert!(lead > one_lead, "per topic {lead} vs one topic {one_lead}");
     }
 
     #[test]

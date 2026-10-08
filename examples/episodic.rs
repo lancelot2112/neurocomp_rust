@@ -1323,6 +1323,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // only (from an earlier filler to a later one) from each first answer: lucy → jones →
     // the places joneses went.
     rel.lift = std::env::var("REL_LIFT").is_ok();
+    // trust per source per relation (default; a narrator honest about places can still lie
+    // about families). TRUST_TOPIC=0: one trust per source
+    rel.set_trust_by_relation(std::env::var("TRUST_TOPIC").map_or(true, |v| v != "0"));
     // BELIEF=full|vote|graded|posterior: the Bayes module's belief rule (default graded);
     // TRUST=vote is the same as BELIEF=vote
     rel.bayes.rule = BeliefRule::named(&std::env::var("BELIEF").unwrap_or_else(|_| if std::env::var("TRUST").map_or(false, |v| v == "vote") { "vote".into() } else { "graded".into() }));
@@ -1515,7 +1518,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // band's, so a state never practised borrows the value of the states that share either
     // band with it (instead of defaulting to "unknown")
     let mut unknown_bg = BasalGanglia::new(256);
+    // one block per (state, choice) (default). GONOGO_CODES=shared: belief band's bits joined
+    // with the lead band's, so unpractised states borrow from their neighbours; tried and
+    // backed out as default: the belief band shared with a settleable state leaked "answer"
+    // into the undecidable one (sam answered wrong on two seeds of three)
+    let gonogo_separate = std::env::var("GONOGO_CODES").map_or(true, |v| v != "shared");
     let unknown_code = |ctx: usize, answer: bool| {
+        if gonogo_separate {
+            let at = (ctx * 2 + answer as usize) * 2;
+            return BitVector::from_bits(&(at..at + 2).collect::<Vec<_>>(), 256);
+        }
         let base = answer as usize * 128;
         let (b, l) = (ctx / 8, ctx % 8);
         let mut bits: Vec<usize> = (base + b * 8..base + b * 8 + 8).collect();
@@ -5026,7 +5038,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 eprintln!(
                     "  TRUST seed {seed}: {} lies told; trust per narrator: {}; claims about the new names: {}",
                     lies_told,
-                    (1..=k as u16).map(|n| format!("{n}{} {:.2}", if n as usize == k { " (liar)" } else { "" }, to_f32(rel.trust(n)))).collect::<Vec<_>>().join(", "),
+                    (1..=k as u16).map(|n| format!("{n}{} {:.2} (on families {:.2})", if n as usize == k { " (liar)" } else { "" }, to_f32(rel.trust(n)), to_f32(isa.map_or(0, |r| rel.bayes.trust_in(n, r as u64))))).collect::<Vec<_>>().join(", "),
                     beliefs.join("; ")
                 );
                 // the believed family of each new name, the relation store's answer, and the

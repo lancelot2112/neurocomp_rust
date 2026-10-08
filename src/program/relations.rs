@@ -389,6 +389,11 @@ impl RelationStore {
     }
 
     /// A source's trust (`Q16`; half for a source never contested).
+    /// Trust per relation (`Bayes::topic`): a source is trusted per relation, not over all.
+    pub fn set_trust_by_relation(&mut self, on: bool) {
+        self.bayes.topic = if on { Some(|k: &(usize, usize, usize, usize)| k.0 as u64) } else { None };
+    }
+
     pub fn trust(&self, source: u16) -> u32 {
         self.bayes.trust(source)
     }

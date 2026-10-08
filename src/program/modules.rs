@@ -529,16 +529,18 @@ impl Module for Surprise {
 /// strength sets how much of a pathway gets through), ORed together.
 pub struct Blend {
     pub gains: Vec<Q16>,
-    /// The output's width in words (that of the input's main connection): a source of
-    /// another width is cut or padded to it, so adding a connection never reshapes the
-    /// input it joins.
-    pub words: usize,
+    /// The output's width in frames, and a frame's width in words. Sources of another width
+    /// are composed to it frame by frame: source frame j goes to frame j mod `frames`
+    /// (folded, ORed: converging pathways superpose; a word keeps its code, so it can still
+    /// be copied), and missing frames stay empty.
+    pub frames: usize,
+    pub frame_words: usize,
     out: BitVector,
 }
 
 impl Blend {
-    pub fn new(gains: Vec<Q16>, words: usize) -> Self {
-        Self { gains, words, out: BitVector::EMPTY }
+    pub fn new(gains: Vec<Q16>, frames: usize, frame_words: usize) -> Self {
+        Self { gains, frames: frames.max(1), frame_words: frame_words.max(1), out: BitVector::EMPTY }
     }
 }
 
@@ -573,10 +575,12 @@ impl Module for Blend {
         1
     }
     fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
-        let mut words = vec![0u64; self.words];
+        let fw = self.frame_words;
+        let mut words = vec![0u64; self.frames * fw];
         for (x, &g) in inputs.iter().zip(&self.gains) {
-            for (d, s) in words.iter_mut().zip(pass_share(x, g).as_words()) {
-                *d |= s;
+            for (i, &w) in pass_share(x, g).as_words().iter().enumerate() {
+                let (f, o) = (i / fw, i % fw);
+                words[(f % self.frames) * fw + o] |= w;
             }
         }
         self.out = BitVector::from_words(words);

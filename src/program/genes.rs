@@ -48,10 +48,13 @@ pub struct Conn {
     pub gain: u32,
 }
 
-/// An input port: the connections into it (none: unconnected).
+/// An input port: the connections into it (none: unconnected), and its width in frames
+/// (word-sized), if set: sources are folded or padded to it (see `Blend`). Unset, the input
+/// is as wide as its main connection.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Input {
     pub conns: Vec<Conn>,
+    pub frames: Option<u32>,
 }
 
 const FULL: u32 = 65536;
@@ -59,7 +62,7 @@ const STEP: u32 = 4096; // 1/16
 
 impl Input {
     fn wire(src: Option<Source>, prev: bool) -> Input {
-        Input { conns: src.map(|s| Conn { src: s, prev, gain: FULL }).into_iter().collect() }
+        Input { conns: src.map(|s| Conn { src: s, prev, gain: FULL }).into_iter().collect(), frames: None }
     }
 }
 
@@ -342,7 +345,11 @@ impl GeneList {
             };
             // an input's width is its main (strongest, then first) connection's
             let main = |inp: &Input| -> Option<Conn> { inp.conns.iter().filter(|c| c.gain > 0).fold(None, |m: Option<&Conn>, c| if m.map_or(true, |m| c.gain > m.gain) { Some(c) } else { m }).copied() };
-            let in_widths: Vec<usize> = (0..g.inputs.len().max(1)).map(|k| g.inputs.get(k).and_then(main).map(|c| conn_width(&c)).unwrap_or(word_bits)).collect();
+            let natural: Vec<usize> = (0..g.inputs.len().max(1)).map(|k| g.inputs.get(k).and_then(main).map(|c| conn_width(&c)).unwrap_or(word_bits)).collect();
+            let in_widths: Vec<usize> = (0..natural.len()).map(|k| match g.inputs.get(k).and_then(|i| i.frames) {
+                Some(n) => n.max(1) as usize * word_bits,
+                None => natural[k],
+            }).collect();
             let w_in = |k: usize| -> usize { in_widths.get(k).copied().unwrap_or(word_bits) };
             let w0 = w_in(0);
             match g.kind {
@@ -410,9 +417,11 @@ impl GeneList {
                         },
                     }
                 };
+                // a single connection at full gain, at its own width, is a plain wire
+                let reshaped = inp.frames.map_or(false, |n| n as usize * word_bits != natural[k]);
                 let s = match live.as_slice() {
                     [] => None,
-                    [(c, conn)] if conn.gain >= FULL => match resolve(&mut net, *c, conn) {
+                    [(c, conn)] if conn.gain >= FULL && !reshaped => match resolve(&mut net, *c, conn) {
                         Ok(s) => Some(s),
                         Err((j, p)) => {
                             late_here.push((k, j, p));
@@ -432,7 +441,8 @@ impl GeneList {
                                 }
                             }
                         }
-                        let b = net.place(Box::new(crate::program::modules::Blend::new(gains, w_in(k).div_ceil(64))), &ins);
+                        let fw = word_bits.div_ceil(64);
+                        let b = net.place(Box::new(crate::program::modules::Blend::new(gains, w_in(k).div_ceil(word_bits), fw)), &ins);
                         for (port, j, p) in later {
                             late.push((b, port, j, p));
                         }
@@ -478,10 +488,16 @@ impl GeneList {
             };
             format!("{src}{}{}", if c.prev { "@prev" } else { "" }, if c.gain < FULL { format!("*{}/16", c.gain / STEP) } else { String::new() })
         };
-        let input = |i: &Input| match i.conns.len() {
-            0 => "zero".to_string(),
-            1 => conn(&i.conns[0]),
-            _ => format!("[{}]", i.conns.iter().map(conn).collect::<Vec<_>>().join(" + ")),
+        let input = |i: &Input| {
+            let body = match i.conns.len() {
+                0 => "zero".to_string(),
+                1 => conn(&i.conns[0]),
+                _ => format!("[{}]", i.conns.iter().map(conn).collect::<Vec<_>>().join(" + ")),
+            };
+            match i.frames {
+                Some(n) => format!("{body}|{n} frames"),
+                None => body,
+            }
         };
         for g in &self.genes {
             let ins: Vec<String> = g.inputs.iter().map(input).collect();
@@ -527,6 +543,33 @@ impl GeneList {
             }
         }
         v
+    }
+
+    /// An input's natural width in frames: its main connection's (a predictor's output and
+    /// the word are one frame; a concat's is the sum of its inputs').
+    fn natural_frames(&self, gi: usize, k: usize, word_bits: u32) -> u32 {
+        let main = self.genes[gi].inputs[k].conns.iter().filter(|c| c.gain > 0).max_by_key(|c| c.gain).copied();
+        let mut seen = 0;
+        let mut frames_of = |src: Source| -> u32 {
+            fn go(l: &GeneList, src: Source, depth: &mut u32) -> u32 {
+                *depth += 1;
+                if *depth > 64 {
+                    return 1;
+                }
+                match src {
+                    Source::In(_) => 1,
+                    Source::Gene(j, _) => match l.index_of(j).map(|x| &l.genes[x]) {
+                        Some(g) if g.kind == Kind::Concat => g.inputs.len() as u32 * g.inputs.iter().map(|i| i.frames.unwrap_or_else(|| i.conns.iter().max_by_key(|c| c.gain).map_or(1, |c| go(l, c.src, depth)))).max().unwrap_or(1),
+                        Some(g) if g.kind == Kind::Predict => 1,
+                        Some(g) => g.inputs.first().map_or(1, |i| i.frames.unwrap_or_else(|| i.conns.iter().max_by_key(|c| c.gain).map_or(1, |c| go(l, c.src, depth)))),
+                        None => 1,
+                    },
+                }
+            }
+            go(self, src, &mut seen)
+        };
+        let _ = word_bits;
+        main.map_or(1, |c| frames_of(c.src))
     }
 
     /// The input ports a new connection may join: bit signals, not a clock or a
@@ -641,6 +684,21 @@ impl GeneList {
                 let (gi, k) = ports[rng.gen_range(0..ports.len())];
                 let gain = if op == "connect" { 0 } else { STEP };
                 self.new_conn(gi, k, gain, rng).map_or(format!("{op}: no new source"), |d| format!("{op} {d}"))
+            }
+            "reshape" => {
+                // one input one frame wider or narrower (its sources folded or padded to it)
+                let ports = self.open_ports();
+                if ports.is_empty() {
+                    return "reshape: no input".into();
+                }
+                let (gi, k) = ports[rng.gen_range(0..ports.len())];
+                let id = self.genes[gi].id;
+                let word_bits = self.genes.iter().filter_map(|g| g.params.get("bits")).copied().max().unwrap_or(64).max(64) as u32;
+                let now = self.genes[gi].inputs[k].frames.unwrap_or_else(|| self.natural_frames(gi, k, word_bits));
+                let up = now <= 1 || rng.gen_bool(0.5);
+                let n = if up { (now + 1).min(8) } else { now - 1 };
+                self.genes[gi].inputs[k].frames = Some(n);
+                format!("reshape g{id} input {k}: {now} -> {n} frames")
             }
             "weaken" => {
                 let used: Vec<(usize, usize, usize)> = self
@@ -816,5 +874,42 @@ mod tests {
         };
         let (a, b) = (run(&base), run(&grown));
         assert!(a.iter().zip(&b).all(|(x, y)| x.as_words() == y.as_words()), "genes nothing reads, and connections at gain 0, change nothing");
+    }
+
+    #[test]
+    fn a_wider_source_folds_frame_by_frame_and_a_narrower_one_is_padded() {
+        use crate::bitvec::BitVector;
+        use crate::program::modules::{Blend, Ctx, Module};
+        // three one-word frames: bits 0, 64 + 1, 128 + 2
+        let x = BitVector::from_bits(&[0, 65, 130], 192);
+        let mut r = StdRng::seed_from_u64(1);
+        let mut fold = |frames: usize| {
+            let mut b = Blend::new(vec![65536], frames, 1);
+            b.tick(&[&x], &mut Ctx { rng: &mut r, learn: false });
+            b.output(0).as_words().to_vec()
+        };
+        assert_eq!(fold(1), vec![0b111], "all three frames superposed in one");
+        assert_eq!(fold(2), vec![0b101, 0b10], "frames 0 and 2 in the first, 1 in the second");
+        assert_eq!(fold(4), vec![1, 2, 4, 0], "padded with an empty frame");
+    }
+
+    #[test]
+    fn reshaped_inputs_build_and_run() {
+        use crate::bitvec::BitVector;
+        use crate::program::modules::{Ctx, Module};
+        let g = Genome::parse(include_str!("../../genomes/hierarchy.gen")).unwrap();
+        let mut list = GeneList::from_genome(&g).unwrap();
+        let mut rng = StdRng::seed_from_u64(5);
+        for _ in 0..6 {
+            list.mutate("reshape", &mut rng);
+        }
+        assert!(list.to_text().contains("frames"), "{}", list.to_text());
+        let (mut net, _) = list.build(1);
+        let w = BitVector::from_bits(&(0..32).collect::<Vec<_>>(), 8192);
+        let mut r = StdRng::seed_from_u64(2);
+        for _ in 0..20 {
+            net.tick(&[&w, &BitVector::EMPTY], &mut Ctx { rng: &mut r, learn: true });
+        }
+        assert_eq!(net.output(0).bit_len(), 8192);
     }
 }

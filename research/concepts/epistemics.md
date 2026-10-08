@@ -58,7 +58,10 @@ search there gains (the rise in the answer's lead: the intrinsic reward, as dopa
 signals the value of information). The network can rank questions by it, or pick them by
 its own basal-ganglia policy with no ranking rule. Asking a teacher (a source like any
 other) settles what "unknown" left open; asking also teaches who errs, which moves trust
-beyond the question asked.
+beyond the question asked. With practice the learned policy finds the undecided
+question on its own; with a cost (energy for compute, refilled each sleep) it chooses when
+to stop by itself. Trust is per topic: a narrator can be reliable about places and not
+about families.
 
 ## What is still missing
 - Proposals and the network's own claims as sources with earned trust (premise credibility

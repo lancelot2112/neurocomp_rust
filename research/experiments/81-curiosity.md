@@ -71,10 +71,75 @@ answers were already settled (gain 0.00–0.11).
    practice conflicts, correcting practice names taught distrust of him, which settled sam
    indirectly. The erring narrator now alternates.
 
+## Addendum: asking during practice, learning its own policy, and paying for it
+
+**Code (since the first runs).**
+- `ASK_ROUNDS=r`: asking happens in r rounds per sleep, each followed by a share of the
+  practice quiz, so the learned policy sees each round's gains before choosing the next
+  round's questions.
+- `ASK_POLICY=cost`, `Curiosity::decide`: **the network balances cost itself.** Each
+  question uses energy, the compute its answer took to weigh (relation-store replays,
+  `COST_UNIT` replays to a full reserve), from a reserve refilled by `POWER` (0.5) each
+  sleep. At each step the basal-ganglia selector chooses a question or *stop*; every
+  choice is coded with the reserve's band and how far into the sleep it is. Stop is worth
+  one half; asking one half plus half the information gained minus the energy spent,
+  weighed up to twice as heavily as the reserve empties. Nothing says when to stop. Unit
+  test: at a cost of 0.25 it learns to ask where a search gains 0.8 and to stop rather than
+  ask where it gains nothing.
+- Two fixes the runs forced (both in [`bayes.rs`](../../src/program/bayes.rs) and the
+  harness):
+  - **Trust per source per topic** (each relation a topic; default). Once the frame fix
+    let "mary smith went to the kitchen" parse with the family as a filler, every story
+    brought true family claims, and a liar who lies only in "X is a Y" statements earned
+    0.60 overall, close to the honest narrators: tom's and lucy's conflicts looked as
+    undecided as sam's, and the network said "unknown" to all of them. Per topic, its trust
+    on families is 0.48 again (honest 0.59 and 0.63). Unit test: a source honest about one
+    topic and lying about another loses trust on the second only, and a 1:1 conflict there
+    is settled more decisively than with one trust per source.
+  - **The go/no-go keeps one code per state.** Codes shared across belief and lead bands
+    (so unpractised states would borrow from neighbours) leaked "answer" from tom's state
+    into sam's, which shares its belief band: sam answered wrong on two seeds of three.
+    Backed out (`GONOGO_CODES=shared` keeps it as an option).
+
+**Results** (posterior belief, learned answer-or-unknown, trust per topic; 2 questions a
+round, 4 rounds a sleep; seeds 0 / 1 / 2). Family questions right (sam: right or
+"unknown"):
+
+| Policy | Questions asked | Sam asked | Sam | Tom and lucy |
+|---|---|---|---|---|
+| none | 0 | – | "unknown", every seed | 91–100% |
+| random | 48 | 1 seed of 3 | right on that seed (89%), else "unknown" | lucy "unknown" on seed 1 |
+| fixed ranking | 48 | **every seed** | **96–100% right** | 94–100% |
+| learned policy | 48 | **every seed** | **99–100% right** | seed 1 lucy, seed 2 both "unknown" |
+| cost, cheap (0.06 a question) | 33–40 (stops 4–8) | every seed | 93–100% right | seed 2 both "unknown" |
+| cost, 0.25 a question | 12–14 (stops 13–17) | never | "unknown" | 72–100% |
+| cost, 0.5 a question | 6–7 (stops 17–18) | never | "unknown" | seed 1 both "unknown" |
+
+**Findings.**
+1. **With practice the learned policy finds the undecided question.** It asked about sam on
+   every seed and settled him (99–100% right), as the fixed ranking does; random asking
+   reached him on one seed in three. Its learned values separate (48 questions): asking in
+   undecided states 0.47–0.50, in settled ones 0.14–0.21.
+2. **The network balances cost by itself:** cheap questions, it asks 33–40 times and stops
+   4–8 times; four times dearer, 12–14 questions and 13–17 stops; eight times, 6–7. Energy
+   runs out (0.00 left) where questions are dear.
+3. **It does not yet save for later.** At 0.25 a question it spends its reserve in the early
+   sleeps on practice and trained names and never reaches sam, who appears only at the last
+   sleep; it then says "unknown" about him, which is right for what it knows. Stop is worth
+   a flat one half and the reserve is capped, so nothing rewards keeping energy for a
+   question that has not arrived yet.
+4. **An asked name can land in a state the go/no-go never practised** (high belief and lead
+   after the teacher's answer) and default to "unknown": tom and lucy on some seeds under
+   the learned policy and cheap cost. Generalising by shared codes leaked instead (above);
+   the fix is still open.
+5. **Trust has topics.** A source's reliability is not one number: the same narrator can be
+   right about places and wrong about families, and the module now learns that.
+
 ## Next
-- More experience for the learned policy: let it ask during practice as well (each quiz
-  round a chance to ask), so its values separate before the new names arrive.
-- The go/no-go should generalise to unpractised states (codes that share bits across
-  neighbouring bands, as the asking policy's do) instead of defaulting to "unknown".
+- ~~More experience for the learned policy~~ (asking during practice: addendum).
+- A go/no-go that generalises to unpractised states without leaking between neighbours
+  (shared codes leaked: addendum).
+- Saving energy for later: a value for the reserve itself, or a sense of what is still
+  to come, so the cost policy does not spend everything early.
 - Other searches than asking: replay priority and attention while reading for open
   questions; and a cost per question, so the budget itself is learned.

@@ -226,8 +226,10 @@ slot codes bound to content in the hippocampus, recalled by slot.
      [80](experiments/80-learned-answer-or-unknown.md));
   7. ~~seek evidence on an "unknown": a curiosity module~~ (built: asking a teacher,
      by a fixed ranking or the network's own learned policy; a question asked is settled,
-     [81](experiments/81-curiosity.md)); next: more experience for the learned policy, a
-     go/no-go that generalises to unpractised states, replay and attention as searches;
+     [81](experiments/81-curiosity.md)); with practice the learned policy settles the
+     undecidable name on every seed, and a cost policy balances questions against energy
+     by itself; trust is per topic. Next: saving energy for later, a go/no-go that
+     generalises without leaking, replay and attention as searches;
   8. ~~frames that survive a lopsided filler~~ (done: a position where a known filler
      recurs is a slot, unit test; relation-store entries within margin).
 - **The relation store's learned parts, and what is still an algorithm over word ids.**

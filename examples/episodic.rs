@@ -1983,6 +1983,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let step_test_learn = std::env::var("STEP_TEST_LEARN").is_ok();
     let step_cost: i32 = q16(std::env::var("STEP_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05)) as i32;
     let mut step_bg = BasalGanglia::new(BITS);
+    if question_learned {
+        // one reward at the answer credits several acts in the story: learn from the reward
+        // against its running average, not against the chosen act's value (which locks in
+        // whichever act is tried first while rewards are mostly positive)
+        step_bg.baseline_rate = Some(ONE / 64);
+    }
     let step_code = |ctx: usize, act: usize| {
         let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(7_000_003) ^ ((ctx * 2 + act) as u64 + 5000));
         let all: Vec<usize> = (0..BITS).collect();

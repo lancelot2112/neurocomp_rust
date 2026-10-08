@@ -1550,11 +1550,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // QUESTION_ACT=learned: the basal ganglia choose both (ask or not, per the word's
     // familiarity band and the column's confidence band; restate with k = 0, 1 or 2, per the
     // sentence's first two words), rewarded at the story's answer less STEP_COST an act.
-    // QUESTION_ACT=1: a hand-set reference: ask below familiarity band 4, restate a sentence
-    // that starts with "the", up to its "is".
+    // QUESTION_ACT=1: a hand-set reference: ask about the stranger (a name from the
+    // stranger lists), restate a sentence that starts with "the", up to its "is".
     let question_act = std::env::var("QUESTION_ACT").ok();
     let question_learned = question_act.as_deref() == Some("learned");
     let mut open_q: Option<usize> = None;
+    let mut open_band = 7u64;
     // Per-restatement credit (QUESTION_ACT=learned): each restatement's stored event is
     // tagged with the choice that made it. At the answer, the event the hippocampus recalls
     // is the one that was used, and its choice alone gets the answer's outcome (+1 right, −1
@@ -2982,6 +2983,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         rolled = 0;
         rolled_surname = None;
         open_q = None;
+        open_band = 7;
         restated = 0;
         restate_pending.clear();
         restate_open = None;
@@ -4772,8 +4774,38 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let c = column.confidence();
                     let cb = if c < Q_HALF { 0 } else if c < Q_08 { 1 } else { 2 };
                     let explore = !testing;
-                    match open_q {
-                        Some(tag) if !sent.contains(&tag) && sent.len() >= 3 && restated < 8 && t + 1 < s.answer_at => {
+                    // a less familiar word than the open question's takes the question over
+                    // (the most novel item in the story holds it)
+                    let cue = sem_cue_w.filter(|w| sent.contains(w));
+                    let reask = match (open_q, cue) {
+                        (None, Some(_)) => true,
+                        (Some(q), Some(c)) => c != q && fam_band < open_band,
+                        _ => false,
+                    };
+                    if reask && t + 1 < s.answer_at {
+                        {
+                            if let Some(tag) = cue {
+                                let ask = if question_learned {
+                                    let ctx = 3000 + fam_band.min(7) as usize * 3 + cb;
+                                    let cands = [step_code(ctx, 0), step_code(ctx, 1)];
+                                    let a = step_bg.select(&cands, if explore { Some(&mut bg_rng) } else { None }).unwrap_or(0);
+                                    if !testing {
+                                        step_pending.push((cands[a].clone(), a == 1));
+                                    }
+                                    a == 1
+                                } else {
+                                    // the hand-set reference asks about the stranger itself
+                                    let w = vocab[tag];
+                                    NEW_NAMES.contains(&w) || PRACTICE_NAMES.contains(&w) || question_pool().contains(&w)
+                                };
+                                if ask {
+                                    open_q = Some(tag);
+                                    open_band = fam_band;
+                                    q_stats[0] += (testing && s.held_out) as usize;
+                                }
+                            }
+                        }
+                    } else if let Some(tag) = open_q.filter(|&q| !sent.contains(&q) && sent.len() >= 3 && restated < 8 && t + 1 < s.answer_at) {
                             let k = if question_learned {
                                 let ctx = 4000 + sent[0] * (vocab.len() + 1) + sent[1];
                                 let cands = [step_code(ctx, 0), step_code(ctx, 1), step_code(ctx, 2)];
@@ -4796,7 +4828,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             if k > 0 && k < sent.len() - 1 {
                                 // QUESTION_CONTROL=1: the restatement names another stranger,
                                 // not the open item (repetition without binding)
-                                let subject = if std::env::var("QUESTION_CONTROL").is_ok() {
+                                // QUESTION_SUBJECT=season: the story's first word (its season)
+                                let subject = if std::env::var("QUESTION_SUBJECT").map_or(false, |v| v == "season") {
+                                    ids[0]
+                                } else if std::env::var("QUESTION_CONTROL").is_ok() {
                                     let pool: Vec<usize> = NEW_NAMES.iter().chain(PRACTICE_NAMES).chain(question_pool()).map(|w| index[w]).filter(|&w| w != tag).collect();
                                     pool[(s_i + t) % pool.len()]
                                 } else {
@@ -4834,30 +4869,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 }
                             }
                         }
-                        None if t + 1 < s.answer_at => {
-                            if let Some(tag) = sem_cue_w.filter(|w| sent.contains(w)) {
-                                let ask = if question_learned {
-                                    let ctx = 3000 + fam_band.min(7) as usize * 3 + cb;
-                                    let cands = [step_code(ctx, 0), step_code(ctx, 1)];
-                                    let a = step_bg.select(&cands, if explore { Some(&mut bg_rng) } else { None }).unwrap_or(0);
-                                    if !testing {
-                                        step_pending.push((cands[a].clone(), a == 1));
-                                    }
-                                    a == 1
-                                } else {
-                                    fam_band < 4
-                                };
-                                if ask {
-                                    open_q = Some(tag);
-                                    q_stats[0] += (testing && s.held_out) as usize;
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
                 }
                 if question_act.is_some() && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
+                    if std::env::var("QDIAG").is_ok() && testing && s.held_out && q_credit[0] < 6 {
+                        eprintln!("  QDIAG open {:?}; answer rows {:?}; restatements {:?}; story {:?}", open_q.map(|w| vocab[w]), answer_rows, restate_pending.iter().map(|x| (x.1, x.2)).collect::<Vec<_>>(), s.words);
+                    }
                     for (code, acted, row) in restate_pending.drain(..) {
                         let used = acted && row.map_or(false, |r| answer_rows.contains(&r));
                         if testing && s.held_out && acted {

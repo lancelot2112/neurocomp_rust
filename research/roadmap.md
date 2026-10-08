@@ -229,6 +229,10 @@ slot codes bound to content in the hippocampus, recalled by slot.
      [81](experiments/81-curiosity.md)); next: more experience for the learned policy, a
      go/no-go that generalises to unpractised states, replay and attention as searches;
   8. frames that survive a lopsided filler (found in 80).
+- **The goal is continuous learning.** Experiments switch learning off at test so a run
+  is measured cleanly, and that stays for now. The network itself is meant to learn all the
+  time, with no train/test split: belief, trust, the go/no-go and the curiosity policy
+  keep updating from whatever it reads, asks and is told.
 
 ## 5. A third level and a slower clock
 **Build.**

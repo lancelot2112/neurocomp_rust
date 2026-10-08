@@ -1526,6 +1526,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // states, rewarded by the information each answer brought
     let ask_random = std::env::var("ASK_POLICY").map_or(false, |v| v == "random");
     let ask_learned = std::env::var("ASK_POLICY").map_or(false, |v| v == "learned");
+    let ask_rounds: usize = std::env::var("ASK_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
     let mut curiosity: Curiosity<usize> = Curiosity::new(8, 8);
     let mut ask_rng = StdRng::seed_from_u64(seed ^ 0xA5C0_0001);
     let mut asked_log: Vec<(usize, usize)> = Vec::new(); // (person asked about, at which sleep)
@@ -2233,60 +2234,64 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // curiosity: once this sleep's facts are weighed, the open questions (people whose
             // family the module has claims about) are ranked by the value of information; the
             // chosen ones are asked of the teacher, and its answers weighed in a second pass
-            if let (true, Some(k), Some(isa)) = (ask > 0, narrators, rel.relation_for(&[index["is"], index["a"]])) {
-                let mut asked: Vec<(usize, usize, u32)> = Vec::new(); // (person, context, lead before)
-                let people: Vec<usize> = NAMES.iter().chain(NEW_NAMES).chain(PRACTICE_NAMES).filter_map(|n| index.get(n).copied()).collect();
-                let mut open: Vec<usize> = Vec::new();
-                for &w in &people {
-                    if let (Some((_, ctx)), Some((_, _, lead))) = (decisiveness(&rel, w, isa), lead_of(&rel, w, isa)) {
-                        curiosity.note(w, ctx, ONE - lead.min(ONE));
-                        open.push(w);
+            // ASK_ROUNDS=r: asking in r rounds, each followed by a share of the practice
+            // quiz, so the asking policy learns from each round's gains before the next
+            for _round in 0..ask_rounds {
+                if let (true, Some(k), Some(isa)) = (ask > 0, narrators, rel.relation_for(&[index["is"], index["a"]])) {
+                    let mut asked: Vec<(usize, usize, u32)> = Vec::new(); // (person, context, lead before)
+                    let people: Vec<usize> = NAMES.iter().chain(NEW_NAMES).chain(PRACTICE_NAMES).filter_map(|n| index.get(n).copied()).collect();
+                    let mut open: Vec<usize> = Vec::new();
+                    for &w in &people {
+                        if let (Some((_, ctx)), Some((_, _, lead))) = (decisiveness(&rel, w, isa), lead_of(&rel, w, isa)) {
+                            curiosity.note(w, ctx, ONE - lead.min(ONE));
+                            open.push(w);
+                        }
+                    }
+                    let chosen: Vec<usize> = if ask_random {
+                        open.choose_multiple(&mut ask_rng, ask).copied().collect()
+                    } else if ask_learned {
+                        curiosity.pick_learned(ask, &mut ask_rng)
+                    } else {
+                        curiosity.pick(ask)
+                    };
+                    for w in chosen {
+                        let (Some(f), Some((_, ctx))) = (true_family(vocab[w], &practice_truth), decisiveness(&rel, w, isa)) else { continue };
+                        let before = lead_of(&rel, w, isa).map_or(0, |x| x.2);
+                        rel.observe_from(&[w, index["is"], index["a"], index[SURNAMES[f]]], k as u16 + 1);
+                        asked.push((w, ctx, before));
+                        asked_log.push((w, sleeps_seen));
+                    }
+                    if !asked.is_empty() {
+                        rel.consolidate(&enc.codes, reps, &mut rel_rng);
+                    }
+                    // the information each question gained: the rise in its answer's lead
+                    for &(w, ctx, before) in &asked {
+                        let after = lead_of(&rel, w, isa).map_or(0, |x| x.2);
+                        curiosity.learn(ctx, after.saturating_sub(before), &mut ask_rng);
                     }
                 }
-                let chosen: Vec<usize> = if ask_random {
-                    open.choose_multiple(&mut ask_rng, ask).copied().collect()
-                } else if ask_learned {
-                    curiosity.pick_learned(ask, &mut ask_rng)
-                } else {
-                    curiosity.pick(ask)
-                };
-                for w in chosen {
-                    let (Some(f), Some((_, ctx))) = (true_family(vocab[w], &practice_truth), decisiveness(&rel, w, isa)) else { continue };
-                    let before = lead_of(&rel, w, isa).map_or(0, |x| x.2);
-                    rel.observe_from(&[w, index["is"], index["a"], index[SURNAMES[f]]], k as u16 + 1);
-                    asked.push((w, ctx, before));
-                    asked_log.push((w, sleeps_seen));
-                }
-                if !asked.is_empty() {
-                    rel.consolidate(&enc.codes, reps, &mut rel_rng);
-                }
-                // the information each question gained: the rise in its answer's lead
-                for &(w, ctx, before) in &asked {
-                    let after = lead_of(&rel, w, isa).map_or(0, |x| x.2);
-                    curiosity.learn(ctx, after.saturating_sub(before), &mut ask_rng);
+                // the practice quiz: each practice name the module has claims about is asked its
+                // family; the go/no-go answers (the believed family) or says "unknown", and the
+                // world then reveals the truth
+                if let (true, Some(isa), false) = (unknown_learned, rel.relation_for(&[index["is"], index["a"]]), testing) {
+                    for _ in 0..quiz_reps.div_ceil(ask_rounds) {
+                        for (j, n) in PRACTICE_NAMES.iter().enumerate() {
+                            let Some(&w) = index.get(n) else { continue };
+                            let Some((v, band)) = decisiveness(&rel, w, isa) else { continue };
+                            let cands = [unknown_code(band, false), unknown_code(band, true)];
+                            let answer = unknown_bg.select(&cands, Some(&mut quiz_rng)) == Some(1);
+                            let right = vocab[v] == SURNAMES[practice_truth[j]];
+                            let r = if !answer { ONE / 2 } else if right { ONE } else { 0 };
+                            unknown_bg.reward_candidate(&cands[answer as usize], r as i32, &mut quiz_rng);
+                            let q = &mut quiz_stats[band];
+                            q[0] += 1;
+                            q[1] += answer as usize;
+                            q[2] += (answer && right) as usize;
+                        }
+                    }
                 }
             }
             sleeps_seen += 1;
-            // the practice quiz: each practice name the module has claims about is asked its
-            // family; the go/no-go answers (the believed family) or says "unknown", and the
-            // world then reveals the truth
-            if let (true, Some(isa), false) = (unknown_learned, rel.relation_for(&[index["is"], index["a"]]), testing) {
-                for _ in 0..quiz_reps {
-                    for (j, n) in PRACTICE_NAMES.iter().enumerate() {
-                        let Some(&w) = index.get(n) else { continue };
-                        let Some((v, band)) = decisiveness(&rel, w, isa) else { continue };
-                        let cands = [unknown_code(band, false), unknown_code(band, true)];
-                        let answer = unknown_bg.select(&cands, Some(&mut quiz_rng)) == Some(1);
-                        let right = vocab[v] == SURNAMES[practice_truth[j]];
-                        let r = if !answer { ONE / 2 } else if right { ONE } else { 0 };
-                        unknown_bg.reward_candidate(&cands[answer as usize], r as i32, &mut quiz_rng);
-                        let q = &mut quiz_stats[band];
-                        q[0] += 1;
-                        q[1] += answer as usize;
-                        q[2] += (answer && right) as usize;
-                    }
-                }
-            }
             // proposals judged again now that the facts of this stretch are in the module
             if let (true, Some(ireps), Some(hc), Some(isa)) = (proposals_on, infer_reps, bind_hc.as_ref(), rel.relation_for(&[index["is"], index["a"]])) {
                 let stories = validate_proposals(&mut proposals, Some((&rel, isa)), &**hc, &row_narrator, &vocab, proposal_min, proposal_support);

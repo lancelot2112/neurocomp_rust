@@ -1479,6 +1479,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let inner_when_definite = std::env::var("INNER_WHEN").map_or(false, |v| v == "definite");
     let inner_say_recall = std::env::var("INNER_SAY").map_or(false, |v| v == "recall");
     let mut phono = PhonologicalLoop::new();
+    let mut inner_diag = 0usize;
     let mut inner_stats = [0usize; 3]; // test: surprises where it could speak, spoken, spoken in held-out stories
     let mut completed_sentence = false;
     let mut rolled = 0usize; // internal steps inserted in this sentence
@@ -4212,7 +4213,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         rolled_surname = Some(vocab[w] == SURNAMES[family_of(i, true)]);
                     }
                 }
-                if let (false, Some(mode), Some(w), false, false) = (rollout, complete.as_deref(), bind_answer.filter(|_| !hc_ec), completed_sentence, testing && bind_lesion) {
+                if let (false, Some(mode), Some(w), false, false) = (rollout || inner_speech, complete.as_deref(), bind_answer.filter(|_| !hc_ec), completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                     let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], w, c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
                     let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
@@ -4590,6 +4591,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let recalled = bind_answer.filter(|&w| inner_say_recall && !hc_ec && !(testing && bind_lesion) && fits(w));
                     let said_vec = recalled.map(|w| enc.codes[w].clone()).unwrap_or_else(|| out.clone());
                     let said = enc.decode(&said_vec).filter(|&w| definite && w != next && vocab[w] != ".");
+                    if std::env::var("INNERDIAG").is_ok() && testing && s.held_out && NEW_NAMES.iter().any(|n| s.words[..=t].contains(n)) && inner_diag < 40 {
+                        inner_diag += 1;
+                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        eprintln!("  INNERDIAG {:?} | page {} | out {:?} recalled {:?} definite {definite} rolled {rolled} -> said {:?}", &s.words[start..=t], vocab[next], enc.decode(&out).map(|w| vocab[w]), bind_answer.map(|w| vocab[w]), said.map(|w| vocab[w]));
+                    }
                     if let Some(w) = said {
                         let go = if inner_learned {
                             let c = mix_conf.unwrap_or_else(|| column.confidence());

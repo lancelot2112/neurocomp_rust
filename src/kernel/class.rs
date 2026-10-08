@@ -828,6 +828,23 @@ impl KernelClass<SimpleKernel> {
             .map(|(_, k)| self.active_kernels[k].output_vector())
     }
 
+    /// As `peek`, among the matching kernels that read at most `depth` frames: the column's
+    /// prediction without the frames beyond, from the same match (the cells that do not
+    /// receive those inputs are active in the same pass). Used for credit without a second
+    /// run.
+    pub fn peek_shallow(&self, input: &BitVector, depth: usize) -> Option<BitVector> {
+        let matched = self.matching(input)?;
+        matched
+            .iter()
+            .filter(|&&(k, _)| self.active_kernels[k as usize].context_frames <= depth)
+            .map(|&(k, c)| {
+                let kern = &self.active_kernels[k as usize];
+                ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
+            })
+            .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
+            .map(|(_, k)| self.active_kernels[k].output_vector())
+    }
+
     /// As `peek_union`, among the matching kernels whose context reaches at least `depth`
     /// frames only.
     pub fn peek_union_deep(&self, input: &BitVector, bits: usize, depth: usize) -> BitVector {

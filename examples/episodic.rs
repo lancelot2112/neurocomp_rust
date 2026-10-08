@@ -1628,13 +1628,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // ROUTE=1: learned input routing. The column's L4 row is no longer laid out by hand.
     // The current word drives slot 0; every other frame of the row (memory, relays, the
     // top-down frame, the previous input) and each promoted higher area's prediction is a
-    // channel. Each channel is bound to its source (rotated by a fixed per-source offset),
+    // channel. Each channel keeps its own code (topographic: the column can copy a word
+    // from it; ROUTE_BIND=1 rotates it by a per-source offset instead, which stops copying),
     // passes a share of its bits set by its counterfactual record (as HIER_TRUST_GATE=cf),
     // and is placed in a slot by the thalamus: every ROUTE_EVERY (250) training stories the
     // channels are ranked by fixes − breaks, the most useful first (kernels read slots in
     // order). The row keeps its width: channels beyond its slots are ORed into the last one.
     // The record: each training step one channel in turn is removed (one extra look-up).
     let route_on = std::env::var("ROUTE").is_ok();
+    // The record (default): each training step, for every slot, the column's prediction
+    // against its prediction from the kernels that do not read that slot or any later one
+    // (`peek_shallow`, the same match: no second run); a slot's fix or break is credited to
+    // the channels in it. ROUTE_RECORD=rerun: one channel in turn removed and the column
+    // asked again (one extra look-up; not a mechanism a brain has).
+    // The slot order changes only in a critical period, the first ROUTE_CRITICAL (1000)
+    // training stories; after it the layout is fixed and only the gains (shares) adapt, as
+    // laminar targets are fixed after development while thalamic gain stays plastic.
+    // ROUTE_NOSCALE=1: every channel passes whole (binding and slot order only; a control)
+    let route_noscale = std::env::var("ROUTE_NOSCALE").is_ok();
+    let route_rerun = std::env::var("ROUTE_RECORD").map_or(false, |v| v == "rerun");
+    let route_critical: usize = std::env::var("ROUTE_CRITICAL").ok().and_then(|v| v.parse().ok()).unwrap_or(1000);
     let route_every: usize = std::env::var("ROUTE_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(250);
     let mut route_order: Vec<usize> = Vec::new(); // channel ids, best slot first
     let mut route_score: HashMap<usize, (u64, u64)> = HashMap::default(); // (fixes, breaks) per channel
@@ -2783,7 +2796,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         // ROUTE: the thalamus re-ranks the channels into slots, most useful first
-        if route_on && !testing && !replaying && s_i > 0 && s_i % route_every == 0 && !route_order.is_empty() {
+        if route_on && !testing && !replaying && s_i > 0 && s_i <= route_critical && s_i % route_every == 0 && !route_order.is_empty() {
             let score = |c: &usize| route_score.get(c).map_or(0i64, |&(f, b)| f as i64 - b as i64);
             let before = route_order.clone();
             // with hysteresis: a channel moves up past its neighbour only when its net help
@@ -3706,7 +3719,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     let slots = nf - 1;
                     let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
-                    let shares: Vec<u64> = ch.iter().map(|(c, _)| (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64)).collect();
+                    let shares: Vec<u64> = ch.iter().map(|(c, _)| if route_noscale { ONE as u64 } else { (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64) }).collect();
                     let row = route_row(&word, &ch, &shares, &route_order, slots, None);
                     route_step = (!testing && !inner[t + 1]).then(|| (word, ch, slots));
                     row
@@ -4710,6 +4723,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // (one look-up): right where it would be wrong 1, wrong where it would be
                     // right 0, no difference one half less the compute; skipping, one half
                     // the routing record (ROUTE): one channel in turn, passed whole against removed
+                    if let (Some((_, ch, slots)), false) = (route_step.as_ref(), route_rerun) {
+                        if page && !ch.is_empty() {
+                            // every slot at once, from the same match
+                            let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                            let with = column.l23.peek(&input).and_then(|o| enc.decode(&o)) == Some(next);
+                            for k in 1..=*slots {
+                                let in_slot: Vec<usize> = ch.iter().map(|(c, _)| *c).filter(|c| route_order.iter().position(|x| x == c).unwrap_or(route_order.len()).min(slots - 1) + 1 == k).collect();
+                                if in_slot.is_empty() {
+                                    continue;
+                                }
+                                let without = column.l23.peek_shallow(&input, k).and_then(|o| enc.decode(&o)) == Some(next);
+                                if with != without {
+                                    for c in in_slot {
+                                        mix.record(ROUTE_SRC + c as u8, key, with);
+                                        let e = route_score.entry(c).or_insert((0, 0));
+                                        if with { e.0 += 1 } else { e.1 += 1 }
+                                    }
+                                }
+                            }
+                        }
+                        route_step = None;
+                    }
                     if let Some((word, ch, slots)) = route_step.take() {
                         if page && !ch.is_empty() {
                             let j = route_turn % ch.len();
@@ -6214,7 +6249,9 @@ fn route_row(word: &BitVector, channels: &[(usize, BitVector)], shares: &[u64], 
             continue;
         }
         let mut v = content.clone();
-        v.rotl_mut(((*c + 1) * ROUTE_ROT) % (fw * 64));
+        if route_bind() {
+            v.rotl_mut(((*c + 1) * ROUTE_ROT) % (fw * 64));
+        }
         let share = shares[j];
         let slot = order.iter().position(|x| x == c).unwrap_or(order.len()).min(slots - 1);
         let dst = &mut row[fw * (1 + slot)..fw * (2 + slot)];
@@ -6249,4 +6286,13 @@ fn l4_row(column: &CorticalColumn, current: &BitVector, frames: &[BitVector], ro
             BitVector::from_words(route_row(current, &ch, &shares, order, frames.len() + 1, None))
         }
     }
+}
+
+/// ROUTE_BIND=1: bind each channel to its source by a rotation. Off by default: a rotated
+/// word no longer matches the output code, so the column cannot copy it (a new name read
+/// from memory or from above); the slot, fixed after the critical period, already says
+/// where a channel came from.
+fn route_bind() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("ROUTE_BIND").is_ok())
 }

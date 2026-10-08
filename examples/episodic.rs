@@ -3828,6 +3828,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 l4_mid = (input.as_words().len() / (BITS / 64)).saturating_sub(2);
                 // LEARNING=three: the cerebellum works in parallel with the cortex's
                 // feedforward sweep, from a copy of its input (cortex → pons → mossy fibres)
+                // its candidates (every matching kernel's prediction), as the column's
+                // expectation is the union of its own
+                let cb_union: Option<BitVector> = cerebellum.as_ref().map(|cb| cb.kernels.peek_union(&input, BITS));
                 let cb_early: Option<BitVector> = cerebellum.as_mut().map(|cb| {
                     let p = cb.predict(&input).clone();
                     cb_word = enc.decode(&p);
@@ -3838,9 +3841,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if bind && !(testing && bind_lesion) {
                     // the column's expectation for the next slot, and that slot's cell
                     expect_prev = column.l23.peek_union(&input, BITS);
-                    // LEARNING=three: the cerebellum's prediction joins the expectation
-                    if let Some(p) = cb_early.as_ref() {
-                        expect_prev.or_mut(p);
+                    // LEARNING=three: the cerebellum's candidates join the expectation
+                    if let Some(u) = cb_union.as_ref() {
+                        expect_prev.or_mut(u);
                     }
                     let next_slot = roles.winner(&slot_input(&expect_prev, slot_prev, &roles)).map(|w| w.0);
                     bind_answer = None;
@@ -4015,13 +4018,29 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // the column's expectation: with LEARNING=three, the integrated one (the slow
                     // cortex's and the cerebellum's), as the column's output is
                     let mut expect = column.l23.peek_union(&input, BITS);
-                    if let Some(p) = cb_early.as_ref() {
-                        expect.or_mut(p);
+                    if let Some(u) = cb_union.as_ref() {
+                        expect.or_mut(u);
                     }
                     // a definite expectation (one word) violated starts a rollout; a started
                     // rollout continues while the page does not match the expectation
-                    let definite = if rollout_loop { expect.count_ones() <= 48 } else { (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1 };
-                    let contradicted = expect.count_ones() > 0 && ov(ids[t + 1], &expect) < 24;
+                    let col_w = match (column.l23.peek_scored(&input), cb_early.as_ref()) {
+                        // LEARNING=three: the more confident of the slow cortex and the cerebellum
+                        (Some((o, c)), Some(p)) if c < cb_conf => enc.decode(p).or_else(|| enc.decode(&o)),
+                        (Some((o, _)), _) => enc.decode(&o),
+                        (None, Some(p)) => enc.decode(p),
+                        (None, None) => None,
+                    };
+                    // what starts a recall is a definite prediction the page contradicts. Under
+                    // LEARNING=three that prediction is the integrated winner (`col_w`); the
+                    // union of candidates (`expect`) only filters what recall may offer
+                    let (definite, contradicted) = if three {
+                        (col_w.is_some(), col_w.map_or(false, |w| ov(ids[t + 1], &enc.codes[w]) < 24))
+                    } else {
+                        (
+                            if rollout_loop { expect.count_ones() <= 48 } else { (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1 },
+                            expect.count_ones() > 0 && ov(ids[t + 1], &expect) < 24,
+                        )
+                    };
                     let skipped = if step_learned { contradicted } else { (definite || rolled > 0) && contradicted };
                     let from_area = || -> Option<usize> {
                         let td = td_src.as_ref().filter(|_| rollout_area)?;
@@ -4038,13 +4057,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         sem_used[0] += 1;
                         sem_used[1] += (testing && s.held_out) as usize;
                     }
-                    let col_w = match (column.l23.peek_scored(&input), cb_early.as_ref()) {
-                        // LEARNING=three: the more confident of the slow cortex and the cerebellum
-                        (Some((o, c)), Some(p)) if c < cb_conf => enc.decode(p).or_else(|| enc.decode(&o)),
-                        (Some((o, _)), _) => enc.decode(&o),
-                        (None, Some(p)) => enc.decode(p),
-                        (None, None) => None,
-                    };
                     // (word, offering source: 0 slot memory, 1 semantic store, 2 higher area, 3 column)
                     let offer: Option<(usize, usize)> = if rollout_mix && mixing {
                         let prev = if t > 0 { ids[t - 1] } else { vocab.len() };

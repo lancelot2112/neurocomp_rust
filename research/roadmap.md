@@ -341,7 +341,11 @@ These are not research stages. They keep earlier results trustworthy as the code
   the margin. `--record` writes new figures after an intended change.
   - **Entries:** 24, from story boundary (26) to motor speech (71); the table lists them
     with their pages and settings.
-  - **Run it before every commit** that touches `src/` or the harness. Add an entry with
+  - **Run it before every commit** that touches `src/` or the harness.
+  - Re-recorded after intended changes: the frame fix (a recurring filler is a slot) moved
+    the relation-store entries within the margin; trust per topic then moved
+    belief-decides (78) past it on seen answers (68.1 → 63.7, held-out 80.7 → 81.7), back
+    near its first recording (61.9). Add an entry with
     each new experiment.
 - **Independent random streams per subsystem** (after [77](experiments/77-infer-from-every-statement.md)).
   Stories, the basal ganglia, sleep (replay order, consolidation, sleep learning), the

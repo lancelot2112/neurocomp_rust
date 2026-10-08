@@ -1017,6 +1017,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut class = make_l23(three.then_some(slow_gen).filter(|&f| f > 0.0));
     if three {
         class.set_growth_probability(Some(slow_p));
+        // SLOW_GATE=0: no uncertainty growth gate on the slow cortex (a slow learner keeps
+        // missing while it has not grown yet, which the gate reads as a noisy context)
+        if std::env::var("SLOW_GATE").map_or(false, |v| v == "0") {
+            class.set_growth_gate(None);
+        }
     }
     let mut cerebellum: Option<neurocomp::program::Cerebellum> = three.then(|| neurocomp::program::Cerebellum::new(BITS, make_l23(None)));
     let mut cb_rng = StdRng::seed_from_u64(seed.wrapping_add(5151));
@@ -4007,7 +4012,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let rollout_w = if rollout && rolled < 4 && (testing || complete.as_deref() == Some("rollout")) && bind && mem_size(&bind_hc, &bind_mem, hippo_self) > 0 {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                     let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], w, c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
-                    let expect = column.l23.peek_union(&input, BITS);
+                    // the column's expectation: with LEARNING=three, the integrated one (the slow
+                    // cortex's and the cerebellum's), as the column's output is
+                    let mut expect = column.l23.peek_union(&input, BITS);
+                    if let Some(p) = cb_early.as_ref() {
+                        expect.or_mut(p);
+                    }
                     // a definite expectation (one word) violated starts a rollout; a started
                     // rollout continues while the page does not match the expectation
                     let definite = if rollout_loop { expect.count_ones() <= 48 } else { (0..vocab.len()).filter(|&i| ov(i, &expect) >= 24).count() == 1 };
@@ -4028,7 +4038,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         sem_used[0] += 1;
                         sem_used[1] += (testing && s.held_out) as usize;
                     }
-                    let col_w = column.l23.peek(&input).and_then(|o| enc.decode(&o));
+                    let col_w = match (column.l23.peek_scored(&input), cb_early.as_ref()) {
+                        // LEARNING=three: the more confident of the slow cortex and the cerebellum
+                        (Some((o, c)), Some(p)) if c < cb_conf => enc.decode(p).or_else(|| enc.decode(&o)),
+                        (Some((o, _)), _) => enc.decode(&o),
+                        (None, Some(p)) => enc.decode(p),
+                        (None, None) => None,
+                    };
                     // (word, offering source: 0 slot memory, 1 semantic store, 2 higher area, 3 column)
                     let offer: Option<(usize, usize)> = if rollout_mix && mixing {
                         let prev = if t > 0 { ids[t - 1] } else { vocab.len() };

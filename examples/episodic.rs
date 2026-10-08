@@ -3796,9 +3796,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 };
                 let input = BitVector::from_words(words);
                 l4_mid = (input.as_words().len() / (BITS / 64)).saturating_sub(2);
+                // LEARNING=three: the cerebellum works in parallel with the cortex's
+                // feedforward sweep, from a copy of its input (cortex → pons → mossy fibres)
+                let cb_early: Option<BitVector> = cerebellum.as_mut().map(|cb| {
+                    let p = cb.predict(&input).clone();
+                    cb_word = enc.decode(&p);
+                    cb_conf = cb.confidence();
+                    cb_input = Some(input.clone());
+                    p
+                });
                 if bind && !(testing && bind_lesion) {
                     // the column's expectation for the next slot, and that slot's cell
                     expect_prev = column.l23.peek_union(&input, BITS);
+                    // LEARNING=three: the cerebellum's prediction joins the expectation
+                    if let Some(p) = cb_early.as_ref() {
+                        expect_prev.or_mut(p);
+                    }
                     let next_slot = roles.winner(&slot_input(&expect_prev, slot_prev, &roles)).map(|w| w.0);
                     bind_answer = None;
                     bind_raw = None;
@@ -4169,12 +4182,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 };
                 // LEARNING=three: the cerebellum predicts from a copy of the cortex's input, and
                 // its prediction returns through the thalamus as a channel
-                let input = match cerebellum.as_mut() {
-                    Some(cb) => {
-                        let p = cb.predict(&input).clone();
-                        cb_word = enc.decode(&p);
-                        cb_conf = cb.confidence();
-                        cb_input = Some(input.clone());
+                let input = match cb_early.clone() {
+                    Some(p) => {
                         match (route_on && p.count_ones() > 0, route_cur.take()) {
                             (true, Some((word, mut ch, slots))) => {
                                 if !route_order.contains(&CB_CHANNEL) {
@@ -4264,6 +4273,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         proposals.push((0, ctx + bucket(column.confidence()), vec![w]));
                     }
                     if let (Some(w), true) = (cb_word, cerebellum.is_some()) {
+                        if std::env::var("CBDIAG").is_ok() && testing && t + 1 == s.answer_at && cb_stats[0] < 8 {
+                            eprintln!("  CBDIAG {:?}: cerebellum says {}, answer {}, own {:?}", &s.words[..=t], vocab[w], vocab[next], own.map(|o| vocab[o]));
+                        }
                         proposals.push((CB_SRC, ctx + bucket(cb_conf), vec![w]));
                         if testing && t + 1 == s.answer_at {
                             cb_stats[0] += 1;
@@ -4397,6 +4409,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         out = enc.codes[w].clone();
                         mix_conf = Some(SourceMix::confidence(total));
+                        if three {
+                            column.set_output(out.clone(), SourceMix::confidence(total));
+                        }
                         // every source supports the chosen word (a source may offer several)
                         mix_agreed = proposals.len() > 1 && proposals.iter().all(|p| p.2.contains(&w));
                     }

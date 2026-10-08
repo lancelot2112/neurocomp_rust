@@ -323,6 +323,15 @@ impl CorticalColumn {
         self.confidence
     }
 
+    /// L5 after thalamic integration: the column's output is set to a prediction that
+    /// combines its own with what arrived through the thalamus (the cerebellum's, memory's,
+    /// the higher areas'), so its surprise, outcome and confidence describe what the network
+    /// as a whole expected, not L2/3 alone.
+    pub fn set_output(&mut self, prediction: BitVector, confidence: Q16) {
+        self.prediction = prediction;
+        self.confidence = confidence;
+    }
+
     /// L5 → basal ganglia: the outcome of the latest prediction, the column's shared
     /// reward signal (dopamine-like): `actual`'s share of the prediction × the predicting
     /// kernel's reliability, in 0..=1 (= 1 − surprise). Any selector whose choice fed this

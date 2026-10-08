@@ -97,13 +97,27 @@ pub struct Predictor {
     pub class: KernelClass<SimpleKernel>,
     bits: usize,
     last_input: Option<BitVector>,
-    outs: [BitVector; 2],
+    outs: [BitVector; 3],
+    /// Expose a third output: the winning kernel's reliability (`scalar`).
+    confidence_port: bool,
+    /// Take no part in sleep.
+    no_sleep: bool,
 }
 
 impl Predictor {
     pub fn new(bits: usize, class: KernelClass<SimpleKernel>) -> Self {
-        Self { class, bits, last_input: None, outs: [zeros(bits), zeros(bits)] }
+        Self { class, bits, last_input: None, outs: [zeros(bits), zeros(bits), scalar(0)], confidence_port: false, no_sleep: false }
     }
+}
+
+/// A graded signal on a wire (a reliability, a share): one `Q16` in a one-word vector.
+pub fn scalar(v: Q16) -> BitVector {
+    BitVector::from_words(vec![v as u64])
+}
+
+/// The value of a `scalar` wire (0 if unconnected).
+pub fn scalar_of(x: &BitVector) -> Q16 {
+    x.as_words().first().map_or(0, |&w| w.min(ONE as u64) as Q16)
 }
 
 impl Module for Predictor {
@@ -114,7 +128,7 @@ impl Module for Predictor {
         2
     }
     fn n_outputs(&self) -> usize {
-        2
+        2 + self.confidence_port as usize
     }
     fn tick(&mut self, inputs: &[&BitVector], ctx: &mut Ctx) {
         let (input, teach) = (inputs[0], inputs[1]);
@@ -141,16 +155,19 @@ impl Module for Predictor {
             self.last_input = None;
         }
         self.outs[0] = out;
+        self.outs[2] = scalar(self.class.confidence().unwrap_or(0));
     }
     fn output(&self, port: usize) -> &BitVector {
         self.outs.get(port).unwrap_or(&EMPTY)
     }
     fn sleep(&mut self) {
-        self.class.sleep();
+        if !self.no_sleep {
+            self.class.sleep();
+        }
     }
     fn reset(&mut self) {
         self.last_input = None;
-        self.outs = [zeros(self.bits), zeros(self.bits)];
+        self.outs = [zeros(self.bits), zeros(self.bits), scalar(0)];
     }
     fn kernels(&self) -> usize {
         self.class.len()
@@ -367,6 +384,137 @@ impl Module for Scatter {
     }
     fn reset(&mut self) {
         self.out = zeros(self.outputs);
+    }
+}
+
+/// The sentence so far: inputs `[x, clear]`; while `clear` has a bit the bag empties first,
+/// then `x` joins it. Output: the bag.
+pub struct Bag {
+    bag: BitVector,
+}
+
+impl Default for Bag {
+    fn default() -> Self {
+        Self { bag: BitVector::EMPTY }
+    }
+}
+
+impl Module for Bag {
+    fn name(&self) -> String {
+        "Bag".into()
+    }
+    fn n_inputs(&self) -> usize {
+        2
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        if inputs[1].count_ones() > 0 || self.bag.bit_len() != inputs[0].bit_len() {
+            self.bag = zeros(inputs[0].bit_len());
+        }
+        self.bag.or_mut(inputs[0]);
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.bag } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.bag = BitVector::EMPTY;
+    }
+}
+
+/// A slow state over sentences: inputs `[x, advance]`. `x` joins the current sentence's
+/// content; while `advance` has a bit, the current content (if any) is first kept as one
+/// of the last `span` sentences. Output: the current content OR the kept ones (the higher
+/// area's slow state). With `keep`, a reset (a story's end) clears nothing.
+pub struct Window {
+    span: usize,
+    keep: bool,
+    current: BitVector,
+    kept: std::collections::VecDeque<BitVector>,
+    out: BitVector,
+}
+
+impl Window {
+    pub fn new(span: usize, keep: bool) -> Self {
+        Self { span: span.max(1), keep, current: BitVector::EMPTY, kept: Default::default(), out: BitVector::EMPTY }
+    }
+}
+
+impl Module for Window {
+    fn name(&self) -> String {
+        format!("Window({}{})", self.span, if self.keep { ", kept across stories" } else { "" })
+    }
+    fn n_inputs(&self) -> usize {
+        2
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let bits = inputs[0].bit_len();
+        if self.current.bit_len() != bits {
+            self.current = zeros(bits);
+        }
+        if inputs[1].count_ones() > 0 && self.current.count_ones() > 0 {
+            self.kept.push_back(std::mem::replace(&mut self.current, zeros(bits)));
+            while self.kept.len() > self.span {
+                self.kept.pop_front();
+            }
+        }
+        self.current.or_mut(inputs[0]);
+        let mut out = self.current.clone();
+        for k in &self.kept {
+            out.or_mut(k);
+        }
+        self.out = out;
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        if !self.keep {
+            self.current = BitVector::EMPTY;
+            self.kept.clear();
+            self.out = BitVector::EMPTY;
+        }
+    }
+}
+
+/// The word-level comparator (L5): inputs `[x, prediction, confidence]`. Passes `x` when
+/// the prediction gave it less than `threshold` (`Q16`): its share of the prediction times
+/// the predicting kernel's reliability. No prediction: everything is surprising.
+pub struct Surprise {
+    threshold: Q16,
+    out: BitVector,
+}
+
+impl Module for Surprise {
+    fn name(&self) -> String {
+        "Surprise".into()
+    }
+    fn n_inputs(&self) -> usize {
+        3
+    }
+    fn n_outputs(&self) -> usize {
+        1
+    }
+    fn tick(&mut self, inputs: &[&BitVector], _ctx: &mut Ctx) {
+        let (x, p) = (inputs[0], inputs[1]);
+        let predicted = p.count_ones();
+        let share = if predicted == 0 {
+            0
+        } else {
+            let hit: u32 = x.as_words().iter().zip(p.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
+            ((ratio(hit as u64, predicted as u64) as u64 * scalar_of(inputs[2]) as u64) >> 16) as Q16
+        };
+        self.out = if share < self.threshold { x.clone() } else { zeros(x.bit_len()) };
+    }
+    fn output(&self, port: usize) -> &BitVector {
+        if port == 0 { &self.out } else { &EMPTY }
+    }
+    fn reset(&mut self) {
+        self.out = BitVector::EMPTY;
     }
 }
 
@@ -1054,7 +1202,7 @@ impl Module for Network {
 pub struct KernelSpec {
     /// Near-miss generalisation: drop silent inputs of near-matching kernels that would
     /// have been right (fraction kept), after `generalize_after` misses.
-    pub generalize: Option<f32>,
+    pub generalize: Option<f32>, // float: config (the kernel class's own type)
     pub generalize_after: u8,
     /// Learn fully only on surprise; an expected target confirms the winner.
     pub surprise_gate: bool,
@@ -1076,18 +1224,29 @@ pub struct KernelSpec {
     pub trust_floor: Option<(u16, u16)>,
     /// Recent inputs kept for sleep replay (0 = none).
     pub replay: usize,
+    /// Take no part in sleep (no consolidation of this class).
+    pub no_sleep: bool,
+    /// Most kernels the class may hold (0: the class's default).
+    pub max_kernels: usize,
+    /// Share of a kernel's sampled bits that must be present for it to match (0: default).
+    pub match_fraction: Option<f32>, // float: config (the kernel class's own type)
+    /// Share of the target a prediction may miss and still count as right (0: default).
+    pub surprise_fraction: Option<f32>, // float: config (the kernel class's own type)
 }
 
 impl KernelSpec {
     /// A predictive kernel class with this rule.
     pub fn class(&self, bits: usize, frames: usize, sample_bits: usize) -> KernelClass<SimpleKernel> {
+        let d = GrowthConfig::default();
         let cfg = GrowthConfig {
+            max_kernels: if self.max_kernels > 0 { self.max_kernels } else { d.max_kernels },
             frame_words: bits.div_ceil(64),
             max_frames: frames.max(1),
             sample_bits,
+            match_fraction: self.match_fraction.unwrap_or(d.match_fraction),
+            surprise_fraction: self.surprise_fraction.unwrap_or(d.surprise_fraction),
             generalize: self.generalize,
             generalize_after: self.generalize_after.max(1),
-            ..GrowthConfig::default()
         };
         let mut c = KernelClass::predictive(cfg);
         c.set_surprise_gate(self.surprise_gate);
@@ -1187,7 +1346,175 @@ pub enum NetOp {
     Nop,
     /// Push an unconnected signal: an empty frame (a slot reserved in a `Concat`).
     Zero,
+    /// Push a number on the number stack.
+    Num(i64),
+    /// Pop a number into a gene of this definition (see `Gene`).
+    Set(Gene),
+    /// Place a base kernel whose parameters are popped from the number stack (see `Kind`),
+    /// then its signal inputs, as `Place`.
+    Make(Kind),
 }
+
+/// A gene: one number of a definition's learning rule or (in the top definition) its
+/// update loop. Fractions are `Q16` (65536 = 1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Gene {
+    Generalize,
+    GeneralizeAfter,
+    SurpriseGate,
+    Canonical,
+    Memo,
+    GrowthGate,
+    GrowthGateMin,
+    GrowthProb,
+    Sticky,
+    CopyGrowth,
+    GrowTrust,
+    TrustFloor,
+    Replay,
+    SleepEvery,
+    ResetAtStory,
+    ResetAtSentence,
+    /// 1: this definition's predictors consolidate at sleep (the default); 0: they do not.
+    Sleep,
+    MaxKernels,
+    MatchFraction,
+    SurpriseFraction,
+}
+
+impl Gene {
+    pub const ALL: [(&'static str, Gene); 20] = [
+        ("max_kernels", Gene::MaxKernels),
+        ("match_fraction", Gene::MatchFraction),
+        ("surprise_fraction", Gene::SurpriseFraction),
+        ("sleep", Gene::Sleep),
+        ("generalize", Gene::Generalize),
+        ("generalize_after", Gene::GeneralizeAfter),
+        ("surprise_gate", Gene::SurpriseGate),
+        ("canonical", Gene::Canonical),
+        ("memo", Gene::Memo),
+        ("growth_gate", Gene::GrowthGate),
+        ("growth_gate_min", Gene::GrowthGateMin),
+        ("growth_prob", Gene::GrowthProb),
+        ("sticky", Gene::Sticky),
+        ("copy_growth", Gene::CopyGrowth),
+        ("grow_trust", Gene::GrowTrust),
+        ("trust_floor", Gene::TrustFloor),
+        ("replay", Gene::Replay),
+        ("sleep_every", Gene::SleepEvery),
+        ("reset_at_story", Gene::ResetAtStory),
+        ("reset_at_sentence", Gene::ResetAtSentence),
+    ];
+}
+
+/// A base kernel placed by `Make`, with the numbers it pops (in the order pushed).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kind {
+    /// `bits frames sample_bits` → a `Predictor` with this definition's genes; inputs
+    /// `[input, teach]`, outputs `[prediction, surprise, confidence]`.
+    Predict,
+    /// `n` → `Concat(n)`.
+    Concat,
+    Delay,
+    Gate,
+    And,
+    Or,
+    Xor,
+    Clear,
+    /// → `Bag`; inputs `[x, clear]`.
+    Bag,
+    /// `span keep` → `Window`; inputs `[x, advance]`.
+    Window,
+    /// `threshold` → `Surprise`; inputs `[x, prediction, confidence]`.
+    Surprise,
+}
+
+impl Kind {
+    pub const ALL: [(&'static str, Kind); 11] = [
+        ("predict", Kind::Predict),
+        ("concat", Kind::Concat),
+        ("delay", Kind::Delay),
+        ("gate", Kind::Gate),
+        ("and", Kind::And),
+        ("or", Kind::Or),
+        ("xor", Kind::Xor),
+        ("clear", Kind::Clear),
+        ("bag", Kind::Bag),
+        ("window", Kind::Window),
+        ("surprise", Kind::Surprise),
+    ];
+}
+
+/// The genes a definition has set so far.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Genes {
+    spec: KernelSpec,
+    schedule: Schedule,
+}
+
+impl Genes {
+    fn set(&mut self, g: Gene, v: i64) {
+        let q = |v: i64| v.clamp(0, ONE as i64) as Q16;
+        // a Q16 fraction as a ratio the kernel class compares by cross-multiplication
+        let r = |v: i64| (((v.clamp(0, ONE as i64) as u64 * 1000) >> 16) as u16, 1000u16);
+        let s = &mut self.spec;
+        match g {
+            Gene::Generalize => s.generalize = (v > 0).then(|| q(v) as f32 / ONE as f32), // float: config (the class's own type)
+            Gene::GeneralizeAfter => s.generalize_after = v.clamp(1, 255) as u8,
+            Gene::SurpriseGate => s.surprise_gate = v != 0,
+            Gene::Canonical => s.canonical = v != 0,
+            Gene::Memo => s.memo = v != 0,
+            Gene::GrowthGate => s.growth_gate = (v > 0).then(|| (v as u32, s.growth_gate.map_or(16, |g| g.1))),
+            Gene::GrowthGateMin => s.growth_gate = s.growth_gate.map(|g| (g.0, v.clamp(0, u16::MAX as i64) as u16)),
+            Gene::GrowthProb => s.growth_prob = (v > 0).then(|| q(v)),
+            Gene::Sticky => s.sticky = (v > 0).then(|| v.clamp(1, 255) as u8),
+            Gene::CopyGrowth => s.copy_growth = v != 0,
+            Gene::GrowTrust => s.grow_trust = (v > 0).then(|| r(v)),
+            Gene::TrustFloor => s.trust_floor = (v > 0).then(|| r(v)),
+            Gene::Replay => s.replay = v.max(0) as usize,
+            Gene::SleepEvery => self.schedule.sleep_every = v.max(0) as usize,
+            Gene::ResetAtStory => self.schedule.reset_at_story = v != 0,
+            Gene::ResetAtSentence => self.schedule.reset_at_sentence = v != 0,
+            Gene::Sleep => s.no_sleep = v == 0,
+            Gene::MaxKernels => s.max_kernels = v.max(0) as usize,
+            Gene::MatchFraction => s.match_fraction = (v > 0).then(|| q(v) as f32 / ONE as f32), // float: config (the class's own type)
+            Gene::SurpriseFraction => s.surprise_fraction = (v > 0).then(|| q(v) as f32 / ONE as f32), // float: config
+        }
+    }
+
+    /// Build a `Make` kernel from the numbers it pops.
+    fn make(&self, k: Kind, nums: &mut Vec<i64>) -> Box<dyn Module> {
+        let mut pop = |n: usize| -> Vec<i64> {
+            let mut v: Vec<i64> = (0..n).map(|_| nums.pop().unwrap_or(0)).collect();
+            v.reverse();
+            v
+        };
+        match k {
+            Kind::Predict => {
+                let a = pop(3);
+                let (bits, frames, sample) = (a[0].max(64) as usize, a[1].max(1) as usize, a[2].max(1) as usize);
+                let mut p = Predictor::new(bits, self.spec.class(bits, frames, sample));
+                p.confidence_port = true;
+                p.no_sleep = self.spec.no_sleep;
+                Box::new(p)
+            }
+            Kind::Concat => Box::new(Concat::new(pop(1)[0].max(1) as usize)),
+            Kind::Delay => Box::<Delay>::default(),
+            Kind::Gate => Box::new(Gate { out: BitVector::EMPTY }),
+            Kind::And => Box::new(BitOp::new(KernelOp::And)),
+            Kind::Or => Box::new(BitOp::new(KernelOp::Or)),
+            Kind::Xor => Box::new(BitOp::new(KernelOp::Xor)),
+            Kind::Clear => Box::new(BitOp::new(KernelOp::Clear)),
+            Kind::Bag => Box::<Bag>::default(),
+            Kind::Window => {
+                let a = pop(2);
+                Box::new(Window::new(a[0].max(1) as usize, a[1] != 0))
+            }
+            Kind::Surprise => Box::new(Surprise { threshold: pop(1)[0].clamp(0, ONE as i64) as Q16, out: BitVector::EMPTY }),
+        }
+    }
+}
+
 
 /// One module definition: its number of inputs and the code that builds it.
 #[derive(Clone, Debug, PartialEq)]
@@ -1209,11 +1536,11 @@ pub struct Schedule {
 }
 
 /// A library of definitions; later ones may place earlier ones (`Sub`). The last is the
-/// whole architecture (the initial configuration), and `schedule` its update loop.
+/// whole architecture (the initial configuration); the genes its code sets include its
+/// update loop (`Schedule`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Genome {
     pub defs: Vec<NetDef>,
-    pub schedule: Schedule,
 }
 
 /// A signal on the builder's stack.
@@ -1232,7 +1559,19 @@ impl Genome {
 
     /// Build definition `k` as a network.
     pub fn build(&self, k: usize) -> Network {
+        self.build_with_genes(k).0
+    }
+
+    /// Build the last definition (the whole architecture) and its update loop.
+    pub fn build_top_and_schedule(&self) -> (Network, Schedule) {
+        let (net, genes) = self.build_with_genes(self.defs.len() - 1);
+        (net, genes.schedule)
+    }
+
+    fn build_with_genes(&self, k: usize) -> (Network, Genes) {
         let def = &self.defs[k];
+        let mut genes = Genes::default();
+        let mut nums: Vec<i64> = Vec::new();
         let mut net = Network::new(&def.label, def.inputs);
         let mut stack: Vec<Option<Sig>> = Vec::new();
         let mut bound: Vec<Option<Option<Sig>>> = Vec::new(); // per Feedback: its binding
@@ -1310,6 +1649,15 @@ impl Genome {
                 NetOp::Out => exports.push(stack.pop().flatten()),
                 NetOp::Nop => {}
                 NetOp::Zero => stack.push(None),
+                NetOp::Num(n) => nums.push(*n),
+                NetOp::Set(g) => {
+                    let v = nums.pop().unwrap_or(0);
+                    genes.set(*g, v);
+                }
+                NetOp::Make(kind) => {
+                    let m = genes.make(*kind, &mut nums);
+                    place(&mut net, &mut stack, &mut pending_wires, m);
+                }
             }
         }
 
@@ -1332,7 +1680,69 @@ impl Genome {
         for e in exports {
             net.export(resolve(e));
         }
-        net
+        (net, genes)
+    }
+
+    /// Read a genome from text. Each definition is `def <name> <inputs>` … `end`. Inside:
+    /// a number pushes it on the number stack; `in:i`, `sub:<name>`, `pick:n`,
+    /// `set:<gene>`, `make:<kind>`; and `dup swap drop over feedback close out zero nop`.
+    /// `#` starts a comment.
+    pub fn parse(text: &str) -> Result<Genome, String> {
+        let mut g = Genome::default();
+        let mut names: Vec<String> = Vec::new();
+        let mut cur: Option<(String, usize, Vec<NetOp>)> = None;
+        let toks: Vec<&str> = text.lines().flat_map(|l| l.split('#').next().unwrap_or("").split_whitespace()).collect();
+        let mut i = 0;
+        while i < toks.len() {
+            let t = toks[i];
+            i += 1;
+            if t == "def" {
+                let name = toks.get(i).ok_or("def without a name")?.to_string();
+                let n: usize = toks.get(i + 1).and_then(|x| x.parse().ok()).ok_or(format!("def {name}: inputs"))?;
+                i += 2;
+                cur = Some((name, n, Vec::new()));
+                continue;
+            }
+            let Some((name, n, code)) = cur.as_mut() else { return Err(format!("`{t}` outside a def")) };
+            if t == "end" {
+                g.define(name, *n, std::mem::take(code));
+                names.push(name.clone());
+                cur = None;
+                continue;
+            }
+            let arg = |p: &str| t.strip_prefix(p);
+            let op = if let Ok(v) = t.parse::<i64>() {
+                NetOp::Num(v)
+            } else if let Some(a) = arg("in:") {
+                NetOp::In(a.parse().map_err(|_| format!("bad {t}"))?)
+            } else if let Some(a) = arg("pick:") {
+                NetOp::Pick(a.parse().map_err(|_| format!("bad {t}"))?)
+            } else if let Some(a) = arg("sub:") {
+                NetOp::Sub(names.iter().position(|x| x == a).ok_or(format!("{t}: no earlier def named {a}"))?)
+            } else if let Some(a) = arg("set:") {
+                NetOp::Set(Gene::ALL.iter().find(|x| x.0 == a).ok_or(format!("{t}: no such gene"))?.1)
+            } else if let Some(a) = arg("make:") {
+                NetOp::Make(Kind::ALL.iter().find(|x| x.0 == a).ok_or(format!("{t}: no such kernel"))?.1)
+            } else {
+                match t {
+                    "dup" => NetOp::Dup,
+                    "swap" => NetOp::Swap,
+                    "drop" => NetOp::Drop,
+                    "over" => NetOp::Over,
+                    "feedback" => NetOp::Feedback,
+                    "close" => NetOp::Close,
+                    "out" => NetOp::Out,
+                    "zero" => NetOp::Zero,
+                    "nop" => NetOp::Nop,
+                    _ => return Err(format!("unknown word `{t}`")),
+                }
+            };
+            code.push(op);
+        }
+        if cur.is_some() {
+            return Err("a def without end".into());
+        }
+        Ok(g)
     }
 
     /// Build the last definition (the whole architecture).

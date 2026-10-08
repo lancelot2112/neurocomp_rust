@@ -1,0 +1,39 @@
+# A column with a higher area above it (experiment 24): the area reads the sentence so far
+# and the words the column found surprising over the last four sentences, learns only where
+# the column was wrong, and sends its prediction down as the column's top-down slot.
+# The same as the harness's POLICIES=nomemory HIER=1 (one area, no mix).
+
+def hierarchy 2
+  # sizes and thresholds of every predictor here
+  100000 set:max_kernels
+  52429 set:match_fraction  # 0.8 of a kernel's sampled bits must be present
+  32768 set:surprise_fraction
+
+  # the update loop
+  1 set:reset_at_story
+  500 set:sleep_every
+
+  # the column's surprise at this word (L5): its last prediction and confidence come back
+  # through two loops, bound below
+  in:0 feedback feedback 32768 make:surprise     # -> s
+
+  # the higher area: [sentence so far | surprising words of the last 4 sentences]
+  in:0 in:1 make:bag                             # s bag
+  over in:1 4 1 make:window                      # s bag window   (kept across stories)
+  2 make:concat                                  # s input
+  swap                                           # input s        (taught only by surprises)
+  0 set:generalize 0 set:growth_gate 0 set:sticky 0 set:copy_growth 0 set:grow_trust 0 set:replay
+  1 set:surprise_gate 1 set:canonical 0 set:memo 0 set:sleep
+  8192 2 16 make:predict                         # topdown surprise confidence
+  drop drop                                      # topdown
+
+  # the column: [word | top-down | previous word]
+  32768 set:generalize 1 set:generalize_after 1 set:surprise_gate 1 set:canonical 1 set:memo
+  3 set:growth_gate 16 set:growth_gate_min 255 set:sticky 1 set:copy_growth 32768 set:grow_trust
+  512 set:replay 1 set:sleep
+  in:0 swap in:0 make:delay 3 make:concat
+  in:0 8192 3 16 make:predict                    # prediction surprise confidence
+  close                                          # the confidence loop
+  drop dup close                                 # the prediction loop
+  out
+end

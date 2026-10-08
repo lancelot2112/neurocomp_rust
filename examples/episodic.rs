@@ -6552,43 +6552,9 @@ fn route_extra_slots() -> usize {
     })
 }
 
-/// The column's learning-rule genes, read from the same settings the harness uses.
-fn kernel_spec_from_env() -> neurocomp::program::modules::KernelSpec {
-    let parse = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
-    neurocomp::program::modules::KernelSpec {
-        generalize: parse("GENERALIZE").map(|f| f as f32),
-        generalize_after: parse("GENERALIZE_AFTER").map_or(1, |f| f as u8),
-        surprise_gate: std::env::var("SURPRISE_GATE").is_ok(),
-        canonical: std::env::var("CANON").is_ok(),
-        memo: std::env::var("MEMO").is_ok(),
-        growth_gate: parse("GROW_GATE").map(|k| (k as u32, parse("UNC_MIN").map_or(16, |m| m as u16))),
-        growth_prob: None,
-        sticky: parse("STICKY").map(|f| f as u8),
-        copy_growth: std::env::var("COPY_GROW").is_ok(),
-        grow_trust: ratio_env("GROW_TRUST"),
-        trust_floor: ratio_env("TRUST"),
-        replay: if std::env::var("SLEEP_EVERY").is_ok() { parse("REPLAY_LEN").map_or(512, |n| n as usize) } else { 0 },
-    }
-}
-
-/// GENOME=column: the network is a genome, built by the grammar and run by its own update
-/// loop (`Reader`); this harness only supplies the stories and scores the answers. The
-/// column genome lays out the hand row (`[word | empty slots | previous]`) so it can be
-/// compared with the harness's own column (POLICIES=nomemory, no HIER, no MIX).
-fn column_genome(slots: usize) -> neurocomp::program::Genome {
-    use neurocomp::program::{NetOp::*, Prim};
-    let mut code = vec![In(0)];
-    code.extend(std::iter::repeat(Zero).take(slots));
-    code.extend([In(0), Place(Prim::Delay), Place(Prim::Concat(slots + 2)), In(0)]);
-    code.push(Place(Prim::PredictWith { bits: BITS, frames: slots + 2, sample_bits: 16, spec: kernel_spec_from_env() }));
-    code.extend([Swap, Out, Out]);
-    let mut g = neurocomp::program::Genome::default();
-    g.define("column", 1, code);
-    g.schedule.reset_at_story = true;
-    g.schedule.sleep_every = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    g
-}
-
+/// GENOME=<file>: the network is a genome (`genomes/*.gen`), built by the grammar and run by
+/// its own update loop (`Reader`); this harness only supplies the stories and scores the
+/// answers. Every number the network needs is in the genome, none in settings.
 fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut rng = StdRng::seed_from_u64(seed);
     let vocab = task_vocab(task);
@@ -6597,9 +6563,9 @@ fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
     let stream = |k: u64| StdRng::seed_from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ k.wrapping_mul(0xBF58_476D_1CE4_E5B9));
     let mut story_rng = stream(1);
     let season_len: usize = std::env::var("SEASON_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
-    let genome = match std::env::var("GENOME").as_deref() {
-        Ok("column") | Ok(_) | Err(_) => column_genome(1),
-    };
+    let path = std::env::var("GENOME").expect("GENOME=<file>");
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("GENOME {path}: {e}"));
+    let genome = neurocomp::program::Genome::parse(&text).unwrap_or_else(|e| panic!("GENOME {path}: {e}"));
     let mut reader = neurocomp::program::Reader::new(&genome, seed ^ 0x67e9_0e5e);
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
     for s_i in 0..TRAIN + TEST {

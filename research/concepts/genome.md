@@ -9,35 +9,57 @@ answers. This is the roadmap's "grown, not designed" item and rule 5 of the
 
 ## The format
 
-[`src/program/modules.rs`](../../src/program/modules.rs):
-- **Structure.** A `Genome` is a library of definitions written in a stack language
-  (`NetOp`): push inputs, place base kernels (`Prim`) or earlier definitions (`Sub`),
-  close loops (`Feedback` / `Close`), expose outputs. The last definition is the whole
-  architecture. Any instruction sequence builds a valid network, so genomes can be
-  mutated ([51](../experiments/51-networks-of-kernels.md)). `Zero` reserves an empty
-  frame (a slot of a `Concat`).
-- **Learning rules as genes.** `KernelSpec`: generalisation, the surprise gate, canonical
-  kernels, memo, the uncertainty growth gate, slow-learning probability, sticky synapses,
-  copy growth, growth trust, trust floor, replay length: what the harness set from
-  environment variables. `Prim::PredictWith` places a predictor with a spec.
-- **The update loop.** Every word, the network ticks once, with slow learning on until
-  the test. Besides that, the genome's `Schedule` says three things: clear activity at the
-  end of a sentence, clear it at the end of a story, sleep every n stories. Learning
-  signals travel on wires (a predictor's teaching port), so nothing outside calls "learn".
+A genome is a text file ([`genomes/`](../../genomes)) read by `Genome::parse` and built by a
+stack machine ([`src/program/modules.rs`](../../src/program/modules.rs)). Nothing the
+network needs is set in code or in environment variables: every size, threshold and
+learning rule is a number in the genome.
 
-[`src/program/reader.rs`](../../src/program/reader.rs): `Reader` runs a genome in four
-calls: `read(word)` (one tick; returns the prediction), `end_sentence()`, `end_story()`,
-`start_test()`. It knows nothing about the task.
+- **Definitions.** `def <name> <inputs>` … `end`. The last definition is the whole
+  network; `sub:<name>` places an earlier one inside it.
+- **Two stacks.** Numbers go on the number stack (`8192`); signals go on the signal stack
+  (`in:0` is the word, `in:1` the sentence clock). `dup swap drop over pick:n` move
+  signals; `feedback` … `close` make a loop (reading a later module gives its value from the
+  last step); `out` exposes a signal; `zero` is an empty slot.
+- **Kernels.** `make:<kind>` places a base kernel, taking its numbers from the number stack
+  and then its signal inputs: `8192 3 16 make:predict` is a predictor of 8,192 bits reading
+  3 frames, sampling 16 bits a frame. Kinds: `predict`, `concat`, `delay`, `gate`, `and`,
+  `or`, `xor`, `clear`, `bag`, `window`, `surprise`.
+- **Genes.** `set:<gene>` takes a number into the definition's learning rule, used by the
+  predictors it places next (`1 set:surprise_gate`, `100000 set:max_kernels`), and, in the
+  top definition, its update loop (`1 set:reset_at_story`, `500 set:sleep_every`).
+  Fractions are integers over 65,536.
+- **The update loop.** Every word the network ticks once. The world's clock reaches it two
+  ways: as a wire (input 1 is on at the first word after a sentence ended, so a module that
+  keeps a sentence's content knows to move on) and as the schedule's resets and sleeps.
 
-[`examples/episodic.rs`](../../examples/episodic.rs): `GENOME=column` runs the same
-stories through a genome instead of the hand-built network and prints the same report, so
-any genome can be compared with a suite entry.
+[`src/program/reader.rs`](../../src/program/reader.rs): `Reader` runs a genome in four calls,
+`read(word)`, `end_sentence()`, `end_story()`, `start_test()`. It knows nothing about the
+task.
 
-## Parity so far
+[`examples/episodic.rs`](../../examples/episodic.rs): `GENOME=genomes/<file>.gen` runs the
+harness's stories through a genome instead of the hand-built network and prints the same
+report, so any genome can be compared with a suite entry.
 
-| Genome | Harness setting it replaces | Result |
-|---|---|---|
-| `column`: `[word, empty slot, previous]` → predictor with the harness's genes, reset at each story, sleep every `SLEEP_EVERY` stories | `POLICIES=nomemory` without `HIER` or `MIX` | **Identical**: same kernels (101) and same answers on the give task, seeds 0 and 1 (8.4 / 8.8%, 10.0 / 8.2%); season and habit 0% in both (a column alone cannot carry the context) |
+## The genomes so far
+
+- [`column.gen`](../../genomes/column.gen): `[word | empty slot | previous word]` →
+  predictor. **Identical** to the harness's column (`POLICIES=nomemory`, no higher area,
+  no mix): the same kernels and the same answers (give task, seeds 0 and 1: 8.4 / 8.8%,
+  10.0 / 8.2%).
+- [`hierarchy.gen`](../../genomes/hierarchy.gen): the column with a higher area (experiment
+  24). `surprise` (the column's word-level surprise: the word's share of its last
+  prediction × its confidence, both brought back through loops) feeds a `window` of the
+  last four sentences' surprising words; with the sentence so far (`bag`) it is the area's
+  input; the area is taught only by surprising words and its prediction is the column's
+  top-down slot. Against the harness's `HIER=1` (one area, no mix), habit, seeds 0 and 1:
+  harness 79.8 / 84.4% and 69.4 / 68.2% (seen / held-out), genome 91.2 / 93.0% and
+  71.6 / 74.2%. **Close, not identical.** The known difference: at a story's end the genome
+  clears the column's activity (its previous word and last prediction); the harness carries
+  them into the next story (the column grows 592 kernels against the harness's 420).
+  Season is 0% in both (one area, no story boundary: as in 25).
+- Finding the gap showed a hidden constant: the kernel class's default cap of 1,024
+  kernels, which the harness overrode. The cap and the match and surprise fractions are
+  now genes, set in every genome file.
 
 ## Migration plan: what each harness part needs
 
@@ -46,8 +68,8 @@ parity with the harness setting it replaces before going on.
 
 | Step | System | Primitives to add | Parity target |
 |---|---|---|---|
-| 1 | Column | `PredictWith`, `KernelSpec`, `Zero`, `Schedule`, `Reader` (done) | nomemory column (done) |
-| 2 | Higher area | a sentence-end input port (the world's clock as a wire, so modules respond by wiring, not by hooks); `Bag` (OR of the sentence so far, cleared at a sentence end); `Window(n)` (OR of the last n sentences' contents, advanced at a sentence end); `Surprised` (word-level: did the prediction miss the input, as a flag); `Gate` exists (teach only on the column's residual) | `HIER=1`, one area, no mix |
+| 1 | Column | numbers, genes, `make:predict`, `zero`, the text format, `Reader` (done) | nomemory column: identical |
+| 2 | Higher area | the sentence clock as input 1; `bag`, `window`, `surprise`; a predictor's confidence as a third output (done) | `HIER=1`, one area, no mix: close (above) |
 | 3 | Thalamic mix | `Mix(n)`: n proposal ports and a context port; each source's record per context; outputs the combined word and its confidence; taught by the next input | `MIX=1` |
 | 4 | Routing | `Share`: a channel scaled by its record (same-pass credit from depth-limited predictions) | `ROUTE=1` |
 | 5 | Hippocampus | `Engram` (store, recall by cue, walk, replay at sleep, source tags) wrapping the engram store; `Roles` (role cells); `Decode` (CA1: recall → word codes); a `Replay` action in the schedule | `HIPPO=engram`, `BIND=1`, `HC_EC=1` |

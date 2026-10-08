@@ -1,0 +1,34 @@
+# A cortical column on its own: it reads [word | an empty slot | the previous word] and
+# predicts the next word. The same as the harness's column with POLICIES=nomemory (no
+# higher area, no mix).
+#
+# Numbers go on the number stack; set:<gene> and make:<kernel> take theirs from it.
+# Signals go on the signal stack: in:0 is the word, in:1 the sentence clock.
+
+def column 2
+  # its learning rule
+  100000 set:max_kernels
+  52429 set:match_fraction  # 0.8 of a kernel's sampled bits must be present
+  32768 set:surprise_fraction
+  32768 set:generalize      # keep half a near-miss's inputs (65536 = 1)
+  1 set:generalize_after
+  1 set:surprise_gate       # learn fully only when surprised
+  1 set:canonical
+  1 set:memo
+  3 set:growth_gate         # no growth where a context is known to be noise...
+  16 set:growth_gate_min    # ...after 16 observations
+  255 set:sticky
+  1 set:copy_growth
+  32768 set:grow_trust
+  512 set:replay            # inputs kept for sleep replay
+
+  # its update loop
+  1 set:reset_at_story
+  500 set:sleep_every
+
+  # L4: the word, an empty slot, the previous word (L6)
+  in:0 zero in:0 make:delay 3 make:concat
+  # L2/3: predicts the next word, taught by it
+  in:0 8192 3 16 make:predict      # -> prediction surprise confidence
+  drop drop out
+end

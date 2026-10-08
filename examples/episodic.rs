@@ -1047,6 +1047,33 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     };
     let mut area = make_area(hier_span, hier_levels > 1 && !chain_mix && role_mode.is_none(), role_mode.is_some());
     let mut upper: Vec<HigherArea> = (1..hier_levels).map(|j| make_area(hier_span.pow(j as u32 + 1), j + 1 < hier_levels && !chain_mix, false)).collect();
+    // HIER_GROW=1 (with HIER_CHAIN=mix): areas grow by need. The top area keeps a bud above
+    // it, the last of `upper`, with a window HIER_SPAN times longer. The bud reads and learns
+    // like any area (the column's residual) and its vote is weighed by the mix (its
+    // reliability is learned) but not counted: it runs in shadow. Each training word, the
+    // mix's choice with and without the bud is compared: a fix (wrong without it, right with
+    // it) or a break (the reverse); a story's answer counts HIER_GROW_ANSWER times (16).
+    // Every HIER_GROW_EVERY training stories (250), a bud whose fixes beat its breaks by more
+    // than HIER_GROW_Z (2) standard deviations (a sign test), with at least HIER_GROW_MIN (32)
+    // fixes, is promoted to a full area and a new bud starts above it (up to
+    // HIER_GROW_MAX areas above the column, 4); a bud not promoted in HIER_GROW_PATIENCE
+    // checks (4) is pruned and a fresh one starts. No bud at test.
+    let hier_grow = std::env::var("HIER_GROW").is_ok() && chain_mix;
+    let grow_every: usize = std::env::var("HIER_GROW_EVERY").ok().and_then(|v| v.parse().ok()).unwrap_or(250);
+    let grow_answer: u64 = std::env::var("HIER_GROW_ANSWER").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
+    let grow_z: u64 = std::env::var("HIER_GROW_Z").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+    let grow_min: u64 = std::env::var("HIER_GROW_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
+    let grow_max: usize = std::env::var("HIER_GROW_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+    let grow_patience: usize = std::env::var("HIER_GROW_PATIENCE").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
+    if hier_grow {
+        upper.push(make_area(hier_span.pow(upper.len() as u32 + 2), false, false));
+    }
+    let mut bud_live = hier_grow;
+    let mut bud_tally = (0u64, 0u64); // (fixes, breaks) since the last check
+    let mut bud_checks = 0usize; // checks the current bud has failed
+    let mut grow_log: Vec<String> = Vec::new();
+    // the mix's source id of upper area i (3, 4, 5, then past the other sources)
+    let upper_src = |i: usize| if i < 3 { 3 + i as u8 } else { 10 + i as u8 };
     let mut role_rng = StdRng::seed_from_u64(seed.wrapping_add(77));
     let mut roles = RoleArea::new(BITS, 64, &mut role_rng);
     // test: per role cell, how often each word filled the slot it fired for (description only)
@@ -2704,6 +2731,34 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 hc.end_sequence();
             }
         }
+        // HIER_GROW: promote, prune or keep the bud
+        if hier && bud_live && !testing && !replaying && s_i > 0 && s_i % grow_every == 0 {
+            let (fixes, breaks) = bud_tally;
+            let k = upper.len() - 1; // the bud's index
+            // a sign test: fixes beat breaks by more than HIER_GROW_Z (2) standard deviations
+            // (in integers: (fixes − breaks)² > z² · (fixes + breaks))
+            let lead = fixes.saturating_sub(breaks);
+            if fixes >= grow_min && lead * lead > grow_z * grow_z * (fixes + breaks) {
+                grow_log.push(format!("story {s_i}: area {} (window {}) promoted, fixes {fixes} breaks {breaks}", k + 3, upper[k].span()));
+                if upper.len() + 1 < grow_max {
+                    upper.push(make_area(hier_span.pow(upper.len() as u32 + 2), false, false));
+                } else {
+                    bud_live = false;
+                }
+                bud_checks = 0;
+            } else {
+                bud_checks += 1;
+                if bud_checks >= grow_patience {
+                    grow_log.push(format!("story {s_i}: bud (window {}) pruned, fixes {fixes} breaks {breaks}", upper[k].span()));
+                    upper[k] = make_area(upper[k].span(), false, false);
+                    bud_checks = 0;
+                }
+            }
+            bud_tally = (0, 0);
+            upper_pred.resize(upper.len(), None);
+            upper_in.resize(upper.len(), None);
+            upper_has_answer.resize(upper.len(), 0);
+        }
         if hier && hier_reset {
             area.clear();
             for u in upper.iter_mut() {
@@ -3975,16 +4030,40 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             proposals.push((6, ctx + bind_strength, vec![w]));
                         }
                     }
-                    // the upper areas of the chain, one source each
+                    // the upper areas of the chain, one source each (the bud, HIER_GROW, apart)
+                    let mut bud_prop: Option<(u8, u64, Vec<usize>)> = None;
                     for (i, p) in upper_pred.iter().enumerate() {
                         if let Some(p) = p {
                             let uw = words_of(p);
                             if !uw.is_empty() {
-                                proposals.push((3 + i as u8, ctx + bucket(upper[i].column.confidence()), uw));
+                                let prop = (upper_src(i), ctx + bucket(upper[i].column.confidence()), uw);
+                                if bud_live && i + 1 == upper.len() {
+                                    bud_prop = Some(prop);
+                                } else {
+                                    proposals.push(prop);
+                                }
                             }
                         }
                     }
                     let votes: Vec<(usize, u32)> = proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, mix.weight(*src, *key))).collect::<Vec<_>>()).collect();
+                    // the bud in shadow: would its vote have fixed or broken the mix's choice?
+                    if let Some((src, key, ws)) = bud_prop {
+                        if !testing && !inner[t + 1] && !reciting {
+                            let without = SourceMix::combine(&votes).map(|(w, _)| w).or(own);
+                            let mut with_votes = votes.clone();
+                            with_votes.extend(ws.iter().map(|&w| (w, mix.weight(src, key))));
+                            let with = SourceMix::combine(&with_votes).map(|(w, _)| w);
+                            let n = if t + 1 == s.answer_at { grow_answer } else { 1 };
+                            match (without == Some(next), with == Some(next)) {
+                                (false, true) => bud_tally.0 += n,
+                                (true, false) => bud_tally.1 += n,
+                                _ => {}
+                            }
+                            for &w in &ws {
+                                mix.record(src, key, w == next);
+                            }
+                        }
+                    }
                     if std::env::var("BQDIAG").is_ok() && testing && t + 1 == s.answer_at && s.held_out && s.words[t] == "a" {
                         mix_dbg = format!("cue {:?} ", sem_cue_w.map(|w| vocab[w])) + &proposals.iter().map(|(src, key, ws)| format!("{src}:{:?}@{:.2}", ws.iter().map(|&w| vocab[w]).collect::<Vec<_>>(), to_f32(mix.weight(*src, *key)))).collect::<Vec<_>>().join(" ");
                     }
@@ -4897,6 +4976,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .map(|(i, (u, h))| format!("area {} (window {} sentences) {} kernels, held the answer at {:.1}%", i + 3, u.span(), u.column.l23.live(), 100.0 * *h as f64 / TEST as f64))
                 .collect();
             eprintln!("  CHAIN seed {seed}: {}", parts.join("; "));
+        }
+        if hier_grow {
+            eprintln!(
+                "  GROW seed {seed}: {} area(s) above the column at the end{}; {}",
+                1 + upper.len() - bud_live as usize,
+                if bud_live { " and a bud" } else { "" },
+                if grow_log.is_empty() { "no promotions or prunings".to_string() } else { grow_log.join("; ") }
+            );
         }
         if std::env::var("BOUNDDIAG").is_ok() && !bound_log.is_empty() {
             let stats = |first: bool, f: &dyn Fn(&(bool, f32, f32)) -> f32| -> String {

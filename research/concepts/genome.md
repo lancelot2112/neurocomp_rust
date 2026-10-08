@@ -61,6 +61,15 @@ report, so any genome can be compared with a suite entry.
   kernels, which the harness overrode. The cap and the match and surprise fractions are
   now genes, set in every genome file.
 
+## Evolvability ([86](../experiments/86-evolvable-genome.md))
+
+The stack text is the readable surface; evolution works on the **gene list**
+([`src/program/genes.rs`](../../src/program/genes.rs)), which the text compiles to: genes with
+permanent ids, wiring by id, explicit loops, parameters on each gene, one random stream per
+predictor. Single mutations: nudged numbers move the score little (under 5 points in 18 of
+20), added or duplicated genes are exactly neutral, but rewiring or switching off a used
+gene is drastic; graded wiring (a gain per connection) is the next step.
+
 ## Migration plan: what each harness part needs
 
 Each step adds the primitives it needs, expresses one system as a definition, and checks

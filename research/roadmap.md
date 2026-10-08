@@ -104,6 +104,35 @@ an area reads is set by thalamic gain rather than by fixed wiring alone.
 column with no change to its input width; story boundary growing from one area with its
 new areas read by the column, not only voting.
 
+### Three learning systems (proposed)
+**Why.** The brain combines learners of different speeds and teachers: the
+**hippocampus** stores single events fast and in detail; the **cortex** learns slowly and
+interleaved, so it generalises without overwriting (complementary learning systems,
+McClelland, McNaughton & O'Reilly 1995); the **cerebellum** learns from errors, each output
+with its own teacher; the **basal ganglia** learn from reward (Doya 2000). Here the
+hippocampus (the engram store) and the basal ganglia (the selectors) match. The cortex and
+the cerebellum do not: the column's kernels grow in one shot on every miss, each output
+corrected by the next word, which is the cerebellum's rule, and slow generalisation is
+bolted on at sleep. That fits two things the runs keep showing: a change at 0.2% of training
+steps moves a seed by 20 points (every early event shapes what follows), and seen pairs beat
+held-out ones on the memory entries (a fast learner memorises).
+
+**Build.**
+- **Cerebellum:** the current fast kernels, kept as the precise corrector, one more source
+  of the column's prediction.
+- **Cortex:** a separate slow learner reading the same input: learning is stochastic and
+  rare (a miss grows a kernel only with a small probability, so a context must recur before
+  it is learned, as stochastic synapses with low transition probabilities learn slowly,
+  Amit & Fusi 1994), with near-miss generalisation, from waking and replay alike.
+- **Hippocampus:** as now, with its output as entorhinal feedback (below) and replay
+  priority from a prediction-error tag set at encoding.
+- **How they combine:** each is a source in the thalamic mix, weighed by its record per
+  context; the slow cortex should win where a context is common, the hippocampus where it
+  is new, the fast kernels where they are reliable.
+
+**Test.** Held-out (new names) at least as good as now, seen pairs no better than held-out
+by much; the suite at parity; smaller spread across seeds.
+
 ## 3. Thinking in steps
 **Why.** Two-hop chains one recall into another, but the chain is fixed by hand. Reasoning
 is a sequence of internal steps whose number depends on the question.

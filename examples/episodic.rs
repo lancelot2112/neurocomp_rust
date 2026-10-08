@@ -4744,7 +4744,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 }
                             };
                             if k > 0 && k < sent.len() - 1 {
-                                let mut said = vec![tag];
+                                // QUESTION_CONTROL=1: the restatement names another stranger,
+                                // not the open item (repetition without binding)
+                                let subject = if std::env::var("QUESTION_CONTROL").is_ok() {
+                                    let pool: Vec<usize> = NEW_NAMES.iter().chain(PRACTICE_NAMES).map(|w| index[w]).filter(|&w| w != tag).collect();
+                                    pool[(s_i + t) % pool.len()]
+                                } else {
+                                    tag
+                                };
+                                let mut said = vec![subject];
                                 said.extend_from_slice(&sent[k..]);
                                 said.push(full_stop);
                                 if testing && s.held_out {

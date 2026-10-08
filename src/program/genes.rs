@@ -686,8 +686,11 @@ impl GeneList {
                 self.new_conn(gi, k, gain, rng).map_or(format!("{op}: no new source"), |d| format!("{op} {d}"))
             }
             "reshape" => {
-                // one input one frame wider or narrower (its sources folded or padded to it)
-                let ports = self.open_ports();
+                // a learner's reading input one frame wider or narrower (its sources folded or
+                // padded to it). Only there: a pass-through gene (bag, delay, a concat's slot)
+                // passes its width on, and a concat pads every slot to its widest, so a wider
+                // signal there moves every other signal's position in the row a learner reads
+                let ports: Vec<(usize, usize)> = self.open_ports().into_iter().filter(|&(i, k)| self.genes[i].kind == Kind::Predict && k == 0).collect();
                 if ports.is_empty() {
                     return "reshape: no input".into();
                 }

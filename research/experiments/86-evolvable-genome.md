@@ -106,6 +106,23 @@ take no new connections either (this last fix is not separately remeasured).
 3. **Flags are still jumps:** `copy_growth` 0 → 1 cost 35 points in one nudge. A switch
    could become a probability (applied a growing share of the time).
 
+## Addendum: moldable width
+
+**Code.** An input's width (in word-sized frames) is a gene. Sources are composed to it frame
+by frame by `Blend`: a wider source is folded (its frame j into frame j mod n, ORed:
+converging pathways superpose, and a word keeps its code, so it can still be copied); a
+narrower one is padded with empty frames. Unset, an input is as wide as its main connection
+(compiled genomes unchanged). `reshape`: one input a frame wider or narrower.
+
+**Results** (8 mutants, as above): widening the higher area's reading input (2 → 3 frames)
+changed nothing (a trailing empty frame: kernels do not grow into it until something fills
+it). Widening a pass-through gene's input (the bag, a delay, the concat's window slot,
+1 → 2 frames) cost 50–87 points (7 mutants): those genes pass their width on, and a concat
+pads every slot to its widest, so one wider signal moved every other signal's position in the
+row the learner reads. `reshape` is now limited to a learner's reading input; a concat that
+places each slot at its own width (so widening the last slot appends) would let it reach
+further.
+
 ## Next
 - Flags as probabilities.
 - ~~Graded wiring~~ (addendum).

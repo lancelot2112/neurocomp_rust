@@ -1,6 +1,6 @@
 use crate::bitvec::BitVector;
 use crate::common::config;
-use crate::fixed::{div_round, mul_floor, q16, ratio, Q16, ONE};
+use crate::fixed::{chance, div_round, mul_floor, q16, ratio, Q16, ONE};
 use crate::kernel::simple::{KernelStats, SimpleKernel};
 use rand::seq::SliceRandom;
 
@@ -157,6 +157,8 @@ struct PredictiveState {
     copy_growth: bool,
     /// Ambiguity-driven growth (see `set_grow_on_ambiguity`).
     grow_on_ambiguity: bool,
+    /// Slow learning (see `set_growth_probability`).
+    growth_prob: Option<Q16>,
     /// Bad credit releases tags: a tagged bit that was active when its kernel fired and
     /// the target did not contain the bit it copies loses its tag (then prunes normally).
     sticky_blame: bool,
@@ -563,6 +565,7 @@ impl KernelClass<SimpleKernel> {
             sticky_blame: false,
             copy_growth: false,
             grow_on_ambiguity: false,
+            growth_prob: None,
             trust_floor: None,
             growth_trust: None,
             last_hits: Vec::new(),
@@ -1695,6 +1698,17 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// Slow learning (None = off, every miss may grow). With `Some(p)`, a miss grows a new
+    /// kernel only with probability p (`Q16`): a stochastic synapse with a low transition
+    /// probability (Amit & Fusi 1994). A context met once is rarely learned; one met many
+    /// times almost surely is, so what is learned is what recurs: the slow, statistical
+    /// learner of complementary learning systems, beside the fast one-shot kernels.
+    pub fn set_growth_probability(&mut self, p: Option<Q16>) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.growth_prob = p;
+        }
+    }
+
     /// Credit-guided growth: a new kernel samples, in any frame that contains the target's
     /// bits, only those bits (it is born as a copy kernel for the whole word).
     pub fn set_copy_growth(&mut self, on: bool) {
@@ -1870,6 +1884,13 @@ impl KernelClass<SimpleKernel> {
             }
         }
 
+        // slow learning: a miss grows a kernel only with this probability, so a context must
+        // recur before it is learned (counts on existing kernels still move every step)
+        if let Some(p) = self.predictive.as_ref().and_then(|st| st.growth_prob) {
+            if !chance(rng, p) {
+                return;
+            }
+        }
         let depth = winner.map_or(1, |w| self.active_kernels[w].context_frames);
         if !depth_has_target[depth] {
             self.grow(input, target, depth, rng);

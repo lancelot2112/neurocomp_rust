@@ -130,6 +130,10 @@ const ROUTE_SRC: u8 = 100;
 /// The burst code's rotation (HIER_UP=both) and the per-source binding step (ROUTE).
 const BURST_ROT: usize = 4099;
 const ROUTE_ROT: usize = 997;
+/// The entorhinal feedback channel's source id (HC_ROUTE).
+const HC_CHANNEL: usize = 48;
+/// The slow cortex's source id in the mix (SLOW_CORTEX).
+const SLOW_SRC: u8 = 12;
 /// Persist: anchor facts only appear in the first anchor_stories() training stories (env).
 fn anchor_stories() -> usize {
     std::env::var("ANCHOR_STORIES").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
@@ -932,7 +936,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
         max_kernels: 100_000,
         frame_words: BITS / 64,
-        max_frames: mid_frames + 2,
+        // ROUTE_EXTRA: room for routed channels beyond the hand row (HC_ROUTE: one, for the
+        // entorhinal feedback channel)
+        max_frames: mid_frames + 2 + route_extra_slots(),
         sample_bits: 16,
         match_fraction: 0.8,
         surprise_fraction: 0.5,
@@ -987,6 +993,34 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the cortical column: L4 input assembly, L2/3 predictor (`class`), L5 prediction /
     // confidence / surprise, L6 context (`th`, whose match rules the thalamus gates)
     let mut column = CorticalColumn::new(BITS, class, th);
+    // SLOW_CORTEX=1: three learning systems. The column's kernels grow in one shot on every
+    // miss, each output corrected by the next word: the cerebellum's rule, kept as the fast,
+    // precise learner. Beside it, a slow cortex reads the same input and learns slowly and
+    // generally: a miss grows a kernel only with probability SLOW_P (1/16), so a context is
+    // learned once it recurs, with near-miss generalisation (SLOW_GEN, 0.5), from waking and
+    // replay alike (complementary learning systems: the hippocampus fast and detailed, the
+    // cortex slow and statistical). It votes in the thalamic mix with its own record.
+    let slow_p: Q16 = q16(std::env::var("SLOW_P").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0 / 16.0));
+    let mut slow: Option<KernelClass<SimpleKernel>> = std::env::var("SLOW_CORTEX").is_ok().then(|| {
+        let mut c = KernelClass::predictive(GrowthConfig {
+            max_kernels: 100_000,
+            frame_words: BITS / 64,
+            max_frames: mid_frames + 2 + route_extra_slots(),
+            sample_bits: 16,
+            match_fraction: 0.8,
+            surprise_fraction: 0.5,
+            generalize: Some(std::env::var("SLOW_GEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5)),
+            generalize_after: 1,
+        });
+        c.set_surprise_gate(true);
+        c.set_canonical(true);
+        c.set_growth_probability(Some(slow_p));
+        c
+    });
+    let mut slow_rng = StdRng::seed_from_u64(seed.wrapping_add(4242));
+    let mut slow_word: Option<usize> = None;
+    let mut slow_conf: Q16 = 0;
+    let mut slow_stats = [0usize; 3]; // answers: proposed, right; the mix chose its word
     // the higher area (HIER=1): its own predictive L2/3 over [sentence bag | slow state],
     // the slow state spanning the last HIER_SPAN sentences' surprises
     let hier_span: usize = std::env::var("HIER_SPAN").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
@@ -1636,6 +1670,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // order). The row keeps its width: channels beyond its slots are ORed into the last one.
     // The record: each training step one channel in turn is removed (one extra look-up).
     let route_on = std::env::var("ROUTE").is_ok();
+    // HC_ROUTE=1 (with ROUTE): the hippocampus reaches the column as entorhinal feedback, not
+    // as a vote. Within a word's step, in theta order: the column's feedforward sweep gives
+    // its expectation, the hippocampus recalls (cued as before), CA1 decodes the recall into
+    // word codes (the words the unbound episode holds, best overlap first, up to three), and
+    // they arrive as one more channel before the column predicts: context, never the driver,
+    // its gain learned like any channel's. The slot memory's word no longer votes in the mix.
+    let hc_route = route_on && std::env::var("HC_ROUTE").is_ok();
+    let mut route_cur: Option<(BitVector, Vec<(usize, BitVector)>, usize)> = None; // this step's row parts
     // The record (default): each training step, for every slot, the column's prediction
     // against its prediction from the kernels that do not read that slot or any later one
     // (`peek_shallow`, the same match: no second run); a slot's fix or break is credited to
@@ -1653,6 +1695,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut route_score: HashMap<usize, (u64, u64)> = HashMap::default(); // (fixes, breaks) per channel
     let mut route_step: Option<(BitVector, Vec<(usize, BitVector)>, usize)> = None; // (word, channels, slots)
     let mut route_turn = 0usize;
+    let mut hc_routed = 0usize; // steps the hippocampus reached the column (HC_ROUTE)
     let mut route_log: Vec<String> = Vec::new();
     let mut cf_scaled = [0usize; 2]; // steps whose frame was scaled down
     let mut cf_share_sum = [0u64; 2]; // Σ share passed (Q16), training and test
@@ -3717,10 +3760,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             route_order.push(*c);
                         }
                     }
-                    let slots = nf - 1;
+                    let slots = nf - 1 + route_extra_slots();
                     let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
                     let shares: Vec<u64> = ch.iter().map(|(c, _)| if route_noscale { ONE as u64 } else { (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64) }).collect();
                     let row = route_row(&word, &ch, &shares, &route_order, slots, None);
+                    route_cur = Some((word.clone(), ch.clone(), slots));
                     route_step = (!testing && !inner[t + 1]).then(|| (word, ch, slots));
                     row
                 } else {
@@ -4069,8 +4113,44 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         completed_sentence = true;
                     }
                 }
+                // HC_ROUTE: the recall, decoded by CA1, returns as entorhinal feedback
+                let input = match (hc_route, bind_raw.as_ref().filter(|_| !(testing && bind_lesion)), route_cur.take()) {
+                    (true, Some(raw), Some((word, mut ch, slots))) => {
+                        let ov = |i: usize| enc.codes[i].as_words().iter().zip(raw.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
+                        let mut cands: Vec<(u32, usize)> = (0..vocab.len()).map(|i| (ov(i), i)).filter(|x| x.0 >= 24).collect();
+                        cands.sort_by(|a, b| b.cmp(a));
+                        let mut ec = BitVector::new(BITS, Some(0));
+                        for &(_, i) in cands.iter().take(3) {
+                            ec.or_mut(&enc.codes[i]);
+                        }
+                        if ec.count_ones() == 0 {
+                            input
+                        } else {
+                            if !route_order.contains(&HC_CHANNEL) {
+                                route_order.push(HC_CHANNEL);
+                            }
+                            ch.push((HC_CHANNEL, ec));
+                            let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                            let shares: Vec<u64> = ch.iter().map(|(c, _)| if route_noscale { ONE as u64 } else { (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64) }).collect();
+                            let row = route_row(&word, &ch, &shares, &route_order, slots, None);
+                            if let Some(st) = route_step.as_mut() {
+                                st.1 = ch;
+                            }
+                            hc_routed += 1;
+                            BitVector::from_words(row)
+                        }
+                    }
+                    _ => input,
+                };
                 let mut out = BitVector::new(BITS, Some(0));
                 out.or_mut(column.predict(&input));
+                // the slow cortex's prediction (SLOW_CORTEX)
+                if let Some(sc) = slow.as_mut() {
+                    let mut so = BitVector::new(BITS, Some(0));
+                    sc.process_predictive(&input, &mut so);
+                    slow_word = enc.decode(&so);
+                    slow_conf = sc.confidence().unwrap_or(0);
+                }
                 // PROF: [1] L2/3 prediction
                 prof[1] += prof_t.elapsed().as_secs_f64();
                 prof_t = std::time::Instant::now();
@@ -4129,6 +4209,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     } else if let Some(w) = own {
                         proposals.push((0, ctx + bucket(column.confidence()), vec![w]));
+                    }
+                    if let (Some(w), true) = (slow_word, slow.is_some()) {
+                        proposals.push((SLOW_SRC, ctx + bucket(slow_conf), vec![w]));
+                        if testing && t + 1 == s.answer_at {
+                            slow_stats[0] += 1;
+                            slow_stats[1] += (w == next) as usize;
+                        }
                     }
                     let mut mw = words_of(&mem_src);
                     if sparse_hc && own_conf_step >= Q_HALF && !mw.is_empty() {
@@ -4195,7 +4282,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // sparse in time: the column is sure here, the hippocampus's answer is not sent
                             hc_withheld += (testing && !replaying) as usize;
                         } else {
-                            proposals.push((6, ctx + bind_strength, vec![w]));
+                            if !hc_route {
+                                proposals.push((6, ctx + bind_strength, vec![w]));
+                            }
                         }
                     }
                     // the upper areas of the chain, one source each (the bud, HIER_GROW, apart)
@@ -4717,6 +4806,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let page = !inner[t + 1];
                     if page {
                         column.learn(&input, &enc.codes[next], &mut rng);
+                        if let Some(sc) = slow.as_mut() {
+                            sc.feedback(&input, &enc.codes[next], &mut slow_rng);
+                        }
                     }
                     // the top-down go/no-go's reward (HIER_SURPRISE=learned): consulting is worth
                     // what the frame changed, against the column's own prediction without it
@@ -5231,9 +5323,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 eprintln!("  TRUSTGATE seed {seed}: top-down frame passed at {:.0}% of training steps, {:.0}% of test steps", share(trust_passed[0]), share(trust_passed[1]));
             }
         }
+        if let Some(sc) = slow.as_ref() {
+            eprintln!("  SLOWCORTEX seed {seed}: {} kernels (the column {}); at test answers it proposed a word at {} and was right at {} ({:.1}%)", sc.live(), column.l23.live(), slow_stats[0], slow_stats[1], 100.0 * slow_stats[1] as f64 / slow_stats[0].max(1) as f64);
+        }
         if route_on {
             let score: Vec<String> = route_order.iter().map(|c| { let (f, b) = route_score.get(c).copied().unwrap_or((0, 0)); format!("{c}: +{f} −{b}") }).collect();
-            eprintln!("  ROUTE seed {seed}: final order (channel: fixes, breaks) [{}]; re-routings: {}", score.join(", "), if route_log.is_empty() { "none".to_string() } else { route_log.join("; ") });
+            eprintln!("  ROUTE seed {seed}: final order (channel: fixes, breaks) [{}]; re-routings: {}; hippocampus routed at {hc_routed} steps", score.join(", "), if route_log.is_empty() { "none".to_string() } else { route_log.join("; ") });
         }
         if hier_grow {
             eprintln!(
@@ -6295,4 +6390,15 @@ fn l4_row(column: &CorticalColumn, current: &BitVector, frames: &[BitVector], ro
 fn route_bind() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("ROUTE_BIND").is_ok())
+}
+
+/// Slots the routed row adds beyond the hand row (ROUTE_EXTRA, default 1 with HC_ROUTE).
+fn route_extra_slots() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| {
+        if std::env::var("ROUTE").is_err() {
+            return 0;
+        }
+        std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(std::env::var("HC_ROUTE").is_ok() as usize)
+    })
 }

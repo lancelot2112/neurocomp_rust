@@ -360,6 +360,17 @@ fn belief_band(b: Q16) -> usize {
     ((b as u64 * 8) >> 16).min(7) as usize
 }
 
+/// What the answer-or-unknown go/no-go sees about a key: the believed value, and the
+/// context (the band of its belief, in eighths, × the band of its lead over the runner-up,
+/// in sixteenths up to 7/16): how strongly it is believed, and how decisively.
+fn decisiveness(rel: &RelationStore, w: usize, r: usize) -> Option<(usize, usize)> {
+    let v = rel.bayes.believed(&(r, w, 0, 1))?;
+    let top = rel.belief(w, r, 0, 1, v);
+    let second = rel.claims(w, r, 0, 1).iter().filter(|c| c.0 != v).map(|c| c.2).max().unwrap_or(0);
+    let lead = ((top.saturating_sub(second) as u64 * 16) >> 16).min(7) as usize;
+    Some((v, belief_band(top) * 8 + lead))
+}
+
 /// BELIEF_Q=1: test questions that ask a new name's family (see `season_story_with`).
 fn belief_q() -> bool {
     std::env::var("BELIEF_Q").is_ok()
@@ -1482,10 +1493,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // answering right is worth 1, answering wrong 0, "unknown" one half, so answering wins
     // a band once its answers there are right more often than not
     let unknown_learned = std::env::var("BELIEF_UNKNOWN").map_or(false, |v| v == "learned");
-    let mut unknown_bg = BasalGanglia::new(256);
-    let unknown_code = |band: usize, answer: bool| BitVector::from_bits(&((band * 2 + answer as usize) * 8..(band * 2 + answer as usize) * 8 + 8).collect::<Vec<_>>(), 256);
+    let mut unknown_bg = BasalGanglia::new(1024);
+    let unknown_code = |ctx: usize, answer: bool| BitVector::from_bits(&((ctx * 2 + answer as usize) * 8..(ctx * 2 + answer as usize) * 8 + 8).collect::<Vec<_>>(), 1024);
     let mut quiz_rng = StdRng::seed_from_u64(seed ^ 0x5157_4954);
-    let mut quiz_stats = [[0usize; 3]; 8]; // per band: (quizzes, answered, answered right)
+    let mut quiz_stats = [[0usize; 3]; 64]; // per context: (quizzes, answered, answered right)
     let quiz_reps: usize = std::env::var("QUIZ_REPS").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
     // PRACTICE: each practice name has a true family and one of three kinds of statement:
     // 0, the first honest narrator (truth) against the liar (a lie); 1, the first honest
@@ -2193,8 +2204,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 for _ in 0..quiz_reps {
                     for (j, n) in PRACTICE_NAMES.iter().enumerate() {
                         let Some(&w) = index.get(n) else { continue };
-                        let Some(v) = rel.bayes.believed(&(isa, w, 0, 1)) else { continue };
-                        let band = belief_band(rel.belief(w, isa, 0, 1, v));
+                        let Some((v, band)) = decisiveness(&rel, w, isa) else { continue };
                         let cands = [unknown_code(band, false), unknown_code(band, true)];
                         let answer = unknown_bg.select(&cands, Some(&mut quiz_rng)) == Some(1);
                         let right = vocab[v] == SURNAMES[practice_truth[j]];
@@ -3915,7 +3925,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let belief = isa.and_then(|r| rel.bayes.believed(&(r, w, 0, 1)).map(|v| rel.belief(w, r, 0, 1, v)));
                             let sure = match (unknown_learned, belief) {
                                 (_, None) => false,
-                                (true, Some(b)) => unknown_bg.value(&unknown_code(belief_band(b), true)) > unknown_bg.value(&unknown_code(belief_band(b), false)),
+                                (true, Some(_)) => decisiveness(&rel, w, isa.unwrap()).is_some_and(|(_, c)| unknown_bg.value(&unknown_code(c, true)) > unknown_bg.value(&unknown_code(c, false))),
                                 (false, Some(b)) => b > ONE / 2,
                             };
                             let u = &mut unknown_tally[i];
@@ -5126,13 +5136,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             .collect();
         eprintln!("  UNKNOWN seed {seed}: family questions {}", parts.join("; "));
         if unknown_learned {
-            let bands: Vec<String> = (0..8)
+            let bands: Vec<String> = (0..64)
                 .filter(|&b| quiz_stats[b][0] > 0)
                 .map(|b| {
                     let q = quiz_stats[b];
                     format!(
-                        "{}/8: {} quizzes, answered {:.0}% ({:.0}% of those right), now {}",
-                        b,
+                        "belief {}/8 lead {}/16: {} quizzes, answered {:.0}% ({:.0}% of those right), now {}",
+                        b / 8,
+                        b % 8,
                         q[0],
                         100.0 * q[1] as f64 / q[0] as f64,
                         100.0 * q[2] as f64 / q[1].max(1) as f64,
@@ -5140,7 +5151,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     )
                 })
                 .collect();
-            eprintln!("  UNKNOWN seed {seed}: learned go/no-go by belief band: {}", bands.join("; "));
+            eprintln!("  UNKNOWN seed {seed}: learned go/no-go by belief and lead: {}", bands.join("; "));
+            let ctx: Vec<String> = NEW_NAMES
+                .iter()
+                .filter_map(|n| index.get(n).map(|&w| (n, w)))
+                .filter_map(|(n, w)| rel.relation_for(&[index["is"], index["a"]]).and_then(|r| decisiveness(&rel, w, r)).map(|(_, c)| format!("{n}: belief {}/8 lead {}/16", c / 8, c % 8)))
+                .collect();
+            eprintln!("  UNKNOWN seed {seed}: the new names' contexts: {}", ctx.join("; "));
+            if let Some(isa) = rel.relation_for(&[index["is"], index["a"]]) {
+                let pn: Vec<String> = PRACTICE_NAMES
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(j, n)| index.get(n).map(|&w| (j, n, w)))
+                    .map(|(j, n, w)| {
+                        let c = rel.claims(w, isa, 0, 1);
+                        format!("{n} (kind {}, true {}): {}", j % 3, SURNAMES[practice_truth[j]], c.iter().map(|&(v, src, b)| format!("{} by {} {:.2}", vocab[v], src, to_f32(b))).collect::<Vec<_>>().join(", "))
+                    })
+                    .collect();
+                eprintln!("  UNKNOWN seed {seed}: practice claims: {}", pn.join("; "));
+            }
         }
     }
     if belief_q() {

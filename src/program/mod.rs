@@ -7,6 +7,9 @@ pub use neurocomp::*;
 pub mod cortex;
 pub use cortex::{AreaContext, ContextBuffer, CorticalColumn, HigherArea, RoleArea, RouteScores};
 
+pub mod reader;
+pub use reader::Reader;
+
 pub mod cerebellum;
 pub use cerebellum::Cerebellum;
 

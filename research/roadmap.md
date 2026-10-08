@@ -194,6 +194,10 @@ can express the column and the hippocampus exactly, but builds nothing the suite
 
 **Test.** One genome scoring within noise of the hand-tuned settings on every entry.
 
+**Started** ([genome](concepts/genome.md)): kernel genes, an update loop (`Schedule`), a
+generic `Reader`, and `GENOME=column` in the harness, identical to the hand-built column;
+the migration plan lists the primitives each system needs.
+
 ### Relations from structure, not a parser (proposed)
 **Why.** The relation store finds a fact's relation by counting neighbours over exact
 positions and composes rules by counting paths: hand-written algorithms over kernels

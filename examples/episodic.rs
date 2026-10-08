@@ -724,9 +724,9 @@ struct Outcome {
     places: f64,
 }
 
-fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
-    let mut rng = StdRng::seed_from_u64(seed);
-    let mut vocab: Vec<&str> = vec![
+/// The words of a task's stories, in a fixed order (their codes follow it).
+fn task_vocab(task: Task) -> Vec<&'static str> {
+    let mut vocab: Vec<&'static str> = vec![
         "went", "to", "the", ".", "where", "is", "?", "all", "way", "over", "right", "now", "quickly", "slowly", "big", "old", "picked", "up",
     ];
     vocab.extend(OBJECTS);
@@ -768,6 +768,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         vocab.extend(&BOOKS[..book_ids()]);
         vocab.push("@close");
     }
+    vocab
+}
+
+fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
+    if std::env::var("GENOME").is_ok() {
+        return run_genome(task, max_facts, seed);
+    }
+    let mut rng = StdRng::seed_from_u64(seed);
+    let vocab = task_vocab(task);
     let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
     let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
     // Independent random streams, one per subsystem, split off the seed: switching a
@@ -6541,4 +6550,97 @@ fn route_extra_slots() -> usize {
         let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(false, |v| v == "three") as usize;
         std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     })
+}
+
+/// The column's learning-rule genes, read from the same settings the harness uses.
+fn kernel_spec_from_env() -> neurocomp::program::modules::KernelSpec {
+    let parse = |k: &str| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok());
+    neurocomp::program::modules::KernelSpec {
+        generalize: parse("GENERALIZE").map(|f| f as f32),
+        generalize_after: parse("GENERALIZE_AFTER").map_or(1, |f| f as u8),
+        surprise_gate: std::env::var("SURPRISE_GATE").is_ok(),
+        canonical: std::env::var("CANON").is_ok(),
+        memo: std::env::var("MEMO").is_ok(),
+        growth_gate: parse("GROW_GATE").map(|k| (k as u32, parse("UNC_MIN").map_or(16, |m| m as u16))),
+        growth_prob: None,
+        sticky: parse("STICKY").map(|f| f as u8),
+        copy_growth: std::env::var("COPY_GROW").is_ok(),
+        grow_trust: ratio_env("GROW_TRUST"),
+        trust_floor: ratio_env("TRUST"),
+        replay: if std::env::var("SLEEP_EVERY").is_ok() { parse("REPLAY_LEN").map_or(512, |n| n as usize) } else { 0 },
+    }
+}
+
+/// GENOME=column: the network is a genome, built by the grammar and run by its own update
+/// loop (`Reader`); this harness only supplies the stories and scores the answers. The
+/// column genome lays out the hand row (`[word | empty slots | previous]`) so it can be
+/// compared with the harness's own column (POLICIES=nomemory, no HIER, no MIX).
+fn column_genome(slots: usize) -> neurocomp::program::Genome {
+    use neurocomp::program::modules::{Do, On};
+    use neurocomp::program::{NetOp::*, Prim};
+    let mut code = vec![In(0)];
+    code.extend(std::iter::repeat(Zero).take(slots));
+    code.extend([In(0), Place(Prim::Delay), Place(Prim::Concat(slots + 2)), In(0)]);
+    code.push(Place(Prim::PredictWith { bits: BITS, frames: slots + 2, sample_bits: 16, spec: kernel_spec_from_env() }));
+    code.extend([Swap, Out, Out]);
+    let mut g = neurocomp::program::Genome::default();
+    g.define("column", 1, code);
+    g.schedule.rules.push((On::Story, Do::Reset));
+    if let Some(n) = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok()) {
+        g.schedule.rules.push((On::Stories(n), Do::Sleep));
+    }
+    g
+}
+
+fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
+    use neurocomp::program::modules::On;
+    let mut rng = StdRng::seed_from_u64(seed);
+    let vocab = task_vocab(task);
+    let index: HashMap<&str, usize> = vocab.iter().enumerate().map(|(i, w)| (*w, i)).collect();
+    let enc = Encoder::new(vocab.len(), BITS, 32, &mut rng);
+    let stream = |k: u64| StdRng::seed_from_u64(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ k.wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    let mut story_rng = stream(1);
+    let season_len: usize = std::env::var("SEASON_LEN").ok().and_then(|v| v.parse().ok()).unwrap_or(32);
+    let genome = match std::env::var("GENOME").as_deref() {
+        Ok("column") | Ok(_) | Err(_) => column_genome(1),
+    };
+    let mut reader = neurocomp::program::Reader::new(&genome, seed ^ 0x67e9_0e5e);
+    let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
+    for s_i in 0..TRAIN + TEST {
+        let testing = s_i >= TRAIN;
+        if s_i == TRAIN {
+            reader.event(On::TestStart);
+        }
+        let held_out = testing && s_i % 2 == 1;
+        let s = match task {
+            Task::Season => {
+                let d = story_rng.gen_range(0..season_len);
+                season_story_with(&mut story_rng, d, held_out, None, None)
+            }
+            Task::Habit => habit_story(&mut story_rng, held_out),
+            Task::Elim => elim_story(&mut story_rng, held_out),
+            Task::Give => give_story(&mut story_rng, held_out),
+            Task::Topic => topic_story(&mut story_rng, held_out),
+            Task::Persist => persist_story(&mut story_rng, s_i, held_out, testing),
+            Task::Books => panic!("GENOME: the books task is not supported yet"),
+            _ => story(&mut story_rng, task, max_facts, held_out),
+        };
+        let ids: Vec<usize> = s.words.iter().map(|w| index[w]).collect();
+        for t in 0..ids.len() {
+            let p = reader.step(&enc.codes[ids[t]]).clone();
+            if testing && t + 1 == s.answer_at {
+                let right = enc.decode(&p) == Some(ids[t + 1]);
+                let r = if s.held_out { &mut held } else { &mut seen };
+                r.0 += right as usize;
+                r.1 += 1;
+            }
+            if s.words[t] == "." {
+                reader.event(On::Sentence);
+            }
+        }
+        reader.event(On::Story);
+    }
+    eprintln!("  GENOME seed {seed}: {} kernels\n{}", reader.kernels(), neurocomp::program::Module::describe(&reader.net, 2).trim_end());
+    let pct = |r: (usize, usize)| 100.0 * r.0 as f64 / r.1.max(1) as f64;
+    Outcome { seen: pct(seen), held_out: pct(held), recall: 0.0, places: 0.0 }
 }

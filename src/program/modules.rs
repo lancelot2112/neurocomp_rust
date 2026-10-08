@@ -1048,9 +1048,71 @@ impl Module for Network {
 // ---------------------------------------------------------------------------
 // The grammar
 
+/// The learning rule of a predictive kernel class, as genes: what the harness used to set
+/// from environment variables per run. `Default` is the plain class.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct KernelSpec {
+    /// Near-miss generalisation: drop silent inputs of near-matching kernels that would
+    /// have been right (fraction kept), after `generalize_after` misses.
+    pub generalize: Option<f32>,
+    pub generalize_after: u8,
+    /// Learn fully only on surprise; an expected target confirms the winner.
+    pub surprise_gate: bool,
+    /// Canonical kernels (deterministic sampling, hash-consing at growth).
+    pub canonical: bool,
+    /// Memoised interpretation.
+    pub memo: bool,
+    /// Uncertainty-gated growth `(k, min)` (see `KernelClass::set_growth_gate`).
+    pub growth_gate: Option<(u32, u16)>,
+    /// Slow learning: a miss grows a kernel with this probability (`Q16`).
+    pub growth_prob: Option<Q16>,
+    /// Credit-tagged synapses need this many times the confirmations before pruning.
+    pub sticky: Option<u8>,
+    /// New kernels sample only the target's bits in a frame that contains them.
+    pub copy_growth: bool,
+    /// A lucky unreliable kernel (below this rate) does not block growth.
+    pub grow_trust: Option<(u16, u16)>,
+    /// Depth only outranks reliability among kernels at least this reliable.
+    pub trust_floor: Option<(u16, u16)>,
+    /// Recent inputs kept for sleep replay (0 = none).
+    pub replay: usize,
+}
+
+impl KernelSpec {
+    /// A predictive kernel class with this rule.
+    pub fn class(&self, bits: usize, frames: usize, sample_bits: usize) -> KernelClass<SimpleKernel> {
+        let cfg = GrowthConfig {
+            frame_words: bits.div_ceil(64),
+            max_frames: frames.max(1),
+            sample_bits,
+            generalize: self.generalize,
+            generalize_after: self.generalize_after.max(1),
+            ..GrowthConfig::default()
+        };
+        let mut c = KernelClass::predictive(cfg);
+        c.set_surprise_gate(self.surprise_gate);
+        c.set_canonical(self.canonical);
+        c.set_memo(self.memo);
+        c.set_growth_gate(self.growth_gate);
+        c.set_growth_probability(self.growth_prob);
+        if let Some(f) = self.sticky {
+            c.set_sticky(f, None);
+        }
+        c.set_copy_growth(self.copy_growth);
+        c.set_growth_trust(self.grow_trust);
+        c.set_trust_floor(self.trust_floor);
+        if self.replay > 0 {
+            c.set_replay(self.replay);
+        }
+        c
+    }
+}
+
 /// A base kernel the grammar can place.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prim {
+    /// A `Predictor` whose kernel class follows `spec` (its learning-rule genes).
+    PredictWith { bits: usize, frames: usize, sample_bits: usize, spec: KernelSpec },
     /// A `Predictor` with `bits` outputs, reading inputs of `frames` frames, each `bits`
     /// wide, growing kernels that sample `sample_bits` bits per frame.
     Predict { bits: usize, frames: usize, sample_bits: usize },
@@ -1079,6 +1141,7 @@ impl Prim {
                 let cfg = GrowthConfig { frame_words: bits.div_ceil(64), max_frames: frames.max(1), sample_bits, ..GrowthConfig::default() };
                 Box::new(Predictor::new(bits, KernelClass::predictive(cfg)))
             }
+            Prim::PredictWith { bits, frames, sample_bits, spec } => Box::new(Predictor::new(*bits, spec.class(*bits, *frames, *sample_bits))),
             &Prim::Op(op) => Box::new(BitOp::new(op)),
             Prim::Delay => Box::<Delay>::default(),
             &Prim::Concat(n) => Box::new(Concat::new(n)),
@@ -1122,6 +1185,8 @@ pub enum NetOp {
     /// Pop a signal and expose it as the next output port.
     Out,
     Nop,
+    /// Push an unconnected signal: an empty frame (a slot reserved in a `Concat`).
+    Zero,
 }
 
 /// One module definition: its number of inputs and the code that builds it.
@@ -1132,10 +1197,42 @@ pub struct NetDef {
     pub code: Vec<NetOp>,
 }
 
-/// A library of definitions; later ones may place earlier ones (`Sub`).
+/// A clock event from the environment the network lives in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum On {
+    /// A sentence ended.
+    Sentence,
+    /// A story (an episode) ended.
+    Story,
+    /// Every `n` stories read while learning.
+    Stories(usize),
+    /// Learning stops (the test begins).
+    TestStart,
+}
+
+/// What the network does at an event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Do {
+    /// Clear activity (`Module::reset`), keeping what was learned.
+    Reset,
+    /// Offline consolidation (`Module::sleep`).
+    Sleep,
+}
+
+/// The update loop on top of the structure: every word, the network ticks once (with
+/// slow learning on while learning); at each clock event, the rules that match fire in
+/// order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Schedule {
+    pub rules: Vec<(On, Do)>,
+}
+
+/// A library of definitions; later ones may place earlier ones (`Sub`). The last is the
+/// whole architecture (the initial configuration), and `schedule` its update loop.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Genome {
     pub defs: Vec<NetDef>,
+    pub schedule: Schedule,
 }
 
 /// A signal on the builder's stack.
@@ -1231,6 +1328,7 @@ impl Genome {
                 }
                 NetOp::Out => exports.push(stack.pop().flatten()),
                 NetOp::Nop => {}
+                NetOp::Zero => stack.push(None),
             }
         }
 

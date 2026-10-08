@@ -27,6 +27,13 @@
 //!   state carries to its neighbours); the selector releases the question to ask, with
 //!   exploration, and the gain realised is its reward. It learns which states of
 //!   uncertainty a search pays off in, from what searching brought.
+//! - **Cost, balanced by the network** (`decide`): a search uses energy (the compute it
+//!   took), from a reserve that refills by a fixed power budget each sleep. At each step the
+//!   selector chooses one of the open questions or *stop*; every choice is coded with the
+//!   reserve's band and how far into the sleep it is (a sense of time). Stopping is worth a
+//!   neutral one half; asking, one half plus half the information gained, minus the energy
+//!   spent, weighed up to twice as heavily as the reserve empties. Nothing says when to stop:
+//!   the selector learns per state, energy and time whether a question is worth its cost.
 //!
 //! Brain: the anterior cingulate and lateral habenula track uncertainty and when information
 //! will arrive; midbrain dopamine neurons signal the value of information itself
@@ -44,6 +51,9 @@ use crate::program::BasalGanglia;
 
 /// Bits per band in a question's code for the learned policy.
 const BAND_BITS: usize = 8;
+/// Bands of the energy reserve and of time within a sleep, in the codes of `decide`.
+pub const ENERGY_BANDS: usize = 4;
+pub const TIME_BANDS: usize = 4;
 
 pub struct Curiosity<K> {
     /// Per context: (gain realised, summed, `Q16`; searches).
@@ -52,6 +62,8 @@ pub struct Curiosity<K> {
     open: HashMap<K, (usize, u32)>,
     searches: u64,
     gained: u64,
+    stops: u64,
+    spent: u64,
     /// The learned policy: a selector over question states, and the (belief, lead) bands
     /// a context splits into.
     bg: BasalGanglia,
@@ -67,18 +79,108 @@ impl<K: Hash + Eq + Clone + Ord> Curiosity<K> {
             open: HashMap::default(),
             searches: 0,
             gained: 0,
-            bg: BasalGanglia::new((belief_bands + lead_bands) * BAND_BITS),
+            stops: 0,
+            spent: 0,
+            bg: BasalGanglia::new((belief_bands + lead_bands + 1 + 2 * (ENERGY_BANDS + TIME_BANDS)) * BAND_BITS),
             bands: (belief_bands, lead_bands),
         }
     }
 
+    fn width(&self) -> usize {
+        (self.bands.0 + self.bands.1 + 1 + 2 * (ENERGY_BANDS + TIME_BANDS)) * BAND_BITS
+    }
+
     /// A context's code for the selector: its belief band's bits and its lead band's.
     fn code(&self, context: usize) -> BitVector {
+        BitVector::from_bits(&self.state_bits(context), self.width())
+    }
+
+    fn state_bits(&self, context: usize) -> Vec<usize> {
         let (bb, lb) = self.bands;
         let (b, l) = ((context / lb).min(bb - 1), context % lb);
         let mut bits: Vec<usize> = (b * BAND_BITS..(b + 1) * BAND_BITS).collect();
         bits.extend((bb + l) * BAND_BITS..(bb + l + 1) * BAND_BITS);
-        BitVector::from_bits(&bits, (bb + lb) * BAND_BITS)
+        bits
+    }
+
+    /// Block `i` (in bands) after the question-state blocks.
+    fn block(&self, i: usize) -> std::ops::Range<usize> {
+        let at = (self.bands.0 + self.bands.1 + i) * BAND_BITS;
+        at..at + BAND_BITS
+    }
+
+    /// Asking about a question in `context`, at energy band `e` and time band `t`.
+    fn ask_code(&self, context: usize, e: usize, t: usize) -> BitVector {
+        let mut bits = self.state_bits(context);
+        bits.extend(self.block(1 + e.min(ENERGY_BANDS - 1)));
+        bits.extend(self.block(1 + ENERGY_BANDS + t.min(TIME_BANDS - 1)));
+        BitVector::from_bits(&bits, self.width())
+    }
+
+    /// Stopping, at energy band `e` and time band `t`.
+    fn stop_code(&self, e: usize, t: usize) -> BitVector {
+        let mut bits: Vec<usize> = self.block(0).collect();
+        bits.extend(self.block(1 + ENERGY_BANDS + TIME_BANDS + e.min(ENERGY_BANDS - 1)));
+        bits.extend(self.block(1 + 2 * ENERGY_BANDS + TIME_BANDS + t.min(TIME_BANDS - 1)));
+        BitVector::from_bits(&bits, self.width())
+    }
+
+    /// The energy band of a reserve (`Q16`).
+    pub fn energy_band(energy: u32) -> usize {
+        ((energy.min(ONE) as u64 * ENERGY_BANDS as u64) >> 16).min(ENERGY_BANDS as u64 - 1) as usize
+    }
+
+    /// One step of the network's own cost-aware policy: a question to ask (removed from the
+    /// open ones until noted again), or None to stop. `energy` is the reserve (`Q16`),
+    /// `time` the step's band within the sleep.
+    pub fn decide<R: Rng>(&mut self, energy: u32, time: usize, rng: &mut R) -> Option<(K, usize)> {
+        let e = Self::energy_band(energy);
+        let mut qs: Vec<(K, usize)> = self.open.iter().map(|(k, &(c, _))| (k.clone(), c)).collect();
+        qs.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut codes: Vec<BitVector> = qs.iter().map(|q| self.ask_code(q.1, e, time)).collect();
+        codes.push(self.stop_code(e, time));
+        let i = self.bg.select(&codes, Some(&mut *rng))?;
+        if i == qs.len() {
+            self.stops += 1;
+            return None;
+        }
+        let (k, c) = qs.swap_remove(i);
+        self.open.remove(&k);
+        Some((k, c))
+    }
+
+    /// Reward a question asked by `decide`: it gained `gain` and cost `cost` (both `Q16`),
+    /// asked at reserve `energy` before the cost and time band `time`.
+    pub fn reward_ask<R: Rng>(&mut self, context: usize, energy: u32, time: usize, gain: u32, cost: u32, rng: &mut R) {
+        // energy weighs more as the reserve empties: once at full, twice at empty
+        let scarcity = 2 * ONE as u64 - energy.min(ONE) as u64;
+        let price = (cost as u64 * scarcity) >> 16;
+        let r = (ONE as i64 / 2 + gain.min(ONE) as i64 / 2 - price as i64).clamp(0, ONE as i64);
+        let code = self.ask_code(context, Self::energy_band(energy), time);
+        self.bg.reward_candidate(&code, r as i32, rng);
+        let c = context.min(self.gain.len() - 1);
+        self.gain[c].0 += gain as u64;
+        self.gain[c].1 += 1;
+        self.searches += 1;
+        self.gained += gain as u64;
+        self.spent += cost as u64;
+    }
+
+    /// Reward a stop (worth a neutral one half).
+    pub fn reward_stop<R: Rng>(&mut self, energy: u32, time: usize, rng: &mut R) {
+        let code = self.stop_code(Self::energy_band(energy), time);
+        self.bg.reward_candidate(&code, ONE as i32 / 2, rng);
+    }
+
+    /// The learned values of asking about `context` and of stopping, at energy band `e`
+    /// and time band `t` (`Q16`).
+    pub fn values_at(&self, context: usize, e: usize, t: usize) -> (u32, u32) {
+        (self.bg.value(&self.ask_code(context, e, t)), self.bg.value(&self.stop_code(e, t)))
+    }
+
+    /// (stops chosen, energy spent `Q16`).
+    pub fn spending(&self) -> (u64, u64) {
+        (self.stops, self.spent)
     }
 
     /// The network's own choice of `budget` questions: one at a time, the selector releases
@@ -202,5 +304,28 @@ mod tests {
             paying += c.pick_learned(1, &mut rng).iter().filter(|&&k| k % 2 == 0).count();
         }
         assert!(paying >= 40, "{paying} of 50");
+    }
+
+    #[test]
+    fn the_network_learns_when_a_question_is_worth_its_cost() {
+        let mut rng = StdRng::seed_from_u64(3);
+        // context 0: a search gains 0.8; context 1: it gains nothing. Each costs 0.25.
+        let mut c: Curiosity<u32> = Curiosity::new(2, 2);
+        let cost = ONE / 4;
+        for _ in 0..400 {
+            for k in 0..6 {
+                c.note(k, (k % 2) as usize, ONE / 2);
+            }
+            let energy = ONE;
+            if let Some((_, ctx)) = c.decide(energy, 0, &mut rng) {
+                c.reward_ask(ctx, energy, 0, if ctx == 0 { ONE * 4 / 5 } else { 0 }, cost, &mut rng);
+            } else {
+                c.reward_stop(energy, 0, &mut rng);
+            }
+        }
+        let (ask0, stop) = c.values_at(0, ENERGY_BANDS - 1, 0);
+        let (ask1, _) = c.values_at(1, ENERGY_BANDS - 1, 0);
+        assert!(ask0 > stop, "worth asking: {ask0} vs stop {stop}");
+        assert!(ask1 < stop, "not worth its cost: {ask1} vs stop {stop}");
     }
 }

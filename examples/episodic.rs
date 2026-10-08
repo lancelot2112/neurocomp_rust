@@ -1536,6 +1536,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let ask_random = std::env::var("ASK_POLICY").map_or(false, |v| v == "random");
     let ask_learned = std::env::var("ASK_POLICY").map_or(false, |v| v == "learned");
     let ask_rounds: usize = std::env::var("ASK_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1).max(1);
+    // =cost: the network's own policy with a cost. Each question uses energy, the compute its
+    // answer took to weigh (relation-store replays, per COST_UNIT replays a full reserve),
+    // from a reserve refilled by POWER (a share of a full reserve) at each sleep; at each
+    // step the policy asks or stops, knowing the reserve and how far into the sleep it is
+    // (see `Curiosity::decide`). ASK is then only the most it may ask in a round.
+    let ask_cost = std::env::var("ASK_POLICY").map_or(false, |v| v == "cost");
+    let power: u32 = q16(std::env::var("POWER").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
+    let cost_unit: u64 = std::env::var("COST_UNIT").ok().and_then(|v| v.parse().ok()).unwrap_or(400);
+    let mut energy: u32 = ONE;
+    let mut work_total = 0u64;
     let mut curiosity: Curiosity<usize> = Curiosity::new(8, 8);
     let mut ask_rng = StdRng::seed_from_u64(seed ^ 0xA5C0_0001);
     let mut asked_log: Vec<(usize, usize)> = Vec::new(); // (person asked about, at which sleep)
@@ -2245,7 +2255,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // chosen ones are asked of the teacher, and its answers weighed in a second pass
             // ASK_ROUNDS=r: asking in r rounds, each followed by a share of the practice
             // quiz, so the asking policy learns from each round's gains before the next
-            for _round in 0..ask_rounds {
+            energy = (energy + power).min(ONE);
+            for round in 0..ask_rounds {
                 if let (true, Some(k), Some(isa)) = (ask > 0, narrators, rel.relation_for(&[index["is"], index["a"]])) {
                     let mut asked: Vec<(usize, usize, u32)> = Vec::new(); // (person, context, lead before)
                     let people: Vec<usize> = NAMES.iter().chain(NEW_NAMES).chain(PRACTICE_NAMES).filter_map(|n| index.get(n).copied()).collect();
@@ -2256,7 +2267,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             open.push(w);
                         }
                     }
-                    let chosen: Vec<usize> = if ask_random {
+                    // the cost-aware policy's steps this round: (person, energy when chosen)
+                    let time_band = round * neurocomp::program::curiosity::TIME_BANDS / ask_rounds;
+                    let mut costed: Vec<(usize, u32)> = Vec::new();
+                    if ask_cost {
+                        for _ in 0..ask {
+                            if energy == 0 {
+                                break;
+                            }
+                            match curiosity.decide(energy, time_band, &mut ask_rng) {
+                                Some((w, _)) => costed.push((w, energy)),
+                                None => {
+                                    curiosity.reward_stop(energy, time_band, &mut ask_rng);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    let chosen: Vec<usize> = if ask_cost {
+                        costed.iter().map(|x| x.0).collect()
+                    } else if ask_random {
                         open.choose_multiple(&mut ask_rng, ask).copied().collect()
                     } else if ask_learned {
                         curiosity.pick_learned(ask, &mut ask_rng)
@@ -2270,13 +2300,25 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         asked.push((w, ctx, before));
                         asked_log.push((w, sleeps_seen));
                     }
+                    let work_before = rel.stats().1;
                     if !asked.is_empty() {
                         rel.consolidate(&enc.codes, reps, &mut rel_rng);
                     }
+                    // the compute the answers took, shared among the questions
+                    let work = (rel.stats().1 - work_before) as u64;
+                    work_total += work;
+                    let cost = ((work << 16) / (cost_unit * asked.len().max(1) as u64)).min(ONE as u64) as u32;
                     // the information each question gained: the rise in its answer's lead
                     for &(w, ctx, before) in &asked {
                         let after = lead_of(&rel, w, isa).map_or(0, |x| x.2);
-                        curiosity.learn(ctx, after.saturating_sub(before), &mut ask_rng);
+                        let gain = after.saturating_sub(before);
+                        match costed.iter().find(|x| x.0 == w) {
+                            Some(&(_, e)) => {
+                                curiosity.reward_ask(ctx, e, time_band, gain, cost, &mut ask_rng);
+                                energy = energy.saturating_sub(cost);
+                            }
+                            None => curiosity.learn(ctx, gain, &mut ask_rng),
+                        }
                     }
                 }
                 // the practice quiz: each practice name the module has claims about is asked its
@@ -5218,6 +5260,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         let new_asked: Vec<String> = asked_log.iter().filter(|x| kind(x.0) == 0).map(|&(w, sl)| format!("{} (sleep {sl})", vocab[w])).collect();
         let ctxs: Vec<String> = curiosity.learned().iter().map(|&(c, n, g)| format!("belief {}/8 lead {}/16: {} asked, gain {:.2}, policy value {:.2}", c / 8, c % 8, n, to_f32(g), to_f32(curiosity.learned_value(c)))).collect();
+        let (stops, spent) = curiosity.spending();
+        eprintln!(
+            "  CURIOSITY seed {seed}: compute {} replays ({:.1} per question); energy spent {:.2} reserves, stops chosen {}, energy left {:.2}",
+            work_total,
+            work_total as f64 / searches.max(1) as f64,
+            spent as f64 / ONE as f64,
+            stops,
+            to_f32(energy)
+        );
         eprintln!(
             "  CURIOSITY seed {seed}: {} questions asked ({} about new names, {} practice, {} trained names), mean gain {:.2}, {} open at the end; new names asked: {}; learned value by context: {}",
             searches,

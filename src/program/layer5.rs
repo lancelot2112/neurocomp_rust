@@ -326,6 +326,12 @@ pub struct PrimedLayer5 {
     index: Vec<Vec<(u32, u16)>>,
     /// the evaluation of the last predicted row, reused by `learn` on the same row
     cached: Option<(Vec<u64>, Eval)>,
+    /// Interneurons instead of the gain rule (`set_interneurons`): SST activity (tuft
+    /// inhibition, driven by the area's bursts) and VIP activity (disinhibition, driven by
+    /// the matrix's error signal: the layer's prediction failed).
+    interneurons: bool,
+    sst: Q16,
+    vip: Q16,
     tick: u64,
     theta: Q16,
     /// Grown on demand (`grown`): at most this many cells; None = a fixed pool wired to
@@ -344,6 +350,8 @@ struct PCell {
     out: Vec<u32>,
     trace: u32,
     misses: u16,
+    /// how much this cell has burst recently (`Q16`): its Martinotti (SST) cells' drive
+    bursty: u32,
     prime: Q16,
     prime_tick: u64,
     wired_tick: u64,
@@ -361,8 +369,8 @@ struct Eval {
 
 impl PrimedLayer5 {
     pub fn new(frame_words: usize, sample: usize, cells: usize) -> Self {
-        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
-        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), cached: None, tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
+        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
+        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), cached: None, interneurons: false, sst: ONE / 2, vip: 0, tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
     }
 
     /// Cells grown as needed instead of a pool (the limit of a large reserve of silent cells
@@ -381,7 +389,41 @@ impl PrimedLayer5 {
     }
 
     pub fn threshold(&self) -> Q16 {
-        self.theta
+        if self.interneurons {
+            self.area_theta()
+        } else {
+            self.theta
+        }
+    }
+
+    /// Interneurons set the context threshold instead of the gain rule:
+    /// - **SST (Martinotti)** cells inhibit the tufts. Their area activity follows how much the
+    ///   area bursts (rate 1/16), and each cell's own SST input grows with its own recent
+    ///   bursting (facilitating synapses from the cells they inhibit): a cell that bursts a
+    ///   lot becomes harder to prime, so others get their turn.
+    /// - **VIP** cells inhibit the SST cells. The matrix drives them with an error signal:
+    ///   they rise when the layer's prediction failed or nothing fired, and decay when it
+    ///   was confirmed (rate 1/8).
+    /// - The tuft threshold is 0.3 + 0.6 × SST × (1 − VIP), plus a quarter of the cell's own
+    ///   burstiness, at most 0.95. (PV cells are the winner-take-all among the fired cells.)
+    pub fn set_interneurons(&mut self, on: bool) {
+        self.interneurons = on;
+    }
+
+    pub fn interneuron_state(&self) -> (Q16, Q16) {
+        (self.sst, self.vip)
+    }
+
+    fn area_theta(&self) -> Q16 {
+        let inhib = (self.sst as u64 * (ONE - self.vip.min(ONE)) as u64) >> 16;
+        ONE * 3 / 10 + ((inhib * 6 / 10) as Q16)
+    }
+
+    fn theta_for(&self, c: usize) -> Q16 {
+        if !self.interneurons {
+            return self.theta;
+        }
+        (self.area_theta() + self.cells[c].bursty.min(ONE) / 4).min(ONE * 95 / 100)
     }
 
     fn split(&self, row: &BitVector) -> (Vec<u32>, Vec<u32>) {
@@ -466,7 +508,7 @@ impl PrimedLayer5 {
             let p_now = ((a as u64) << 16) / na;
             let p = (p_now as Q16).max(self.carried(c)).min(ONE);
             if cell.out.is_empty() {
-                if p >= self.theta {
+                if p >= self.theta_for(c) {
                     free_primed.push((c, p));
                 }
                 continue;
@@ -479,7 +521,7 @@ impl PrimedLayer5 {
             let frac = (ONE as u64 * 4 / 5) - (p as u64 * 3 / 10);
             let need = ((nb * frac) + (ONE as u64 - 1)) >> 16;
             if b as u64 >= need.max(1) {
-                fired.push((c, p, p >= self.theta));
+                fired.push((c, p, p >= self.theta_for(c)));
             }
         }
         Eval { fired, free_primed }
@@ -512,8 +554,15 @@ impl PrimedLayer5 {
             self.cells[c].prime_tick = self.tick;
         }
         let w = self.winner(&e);
-        // the matrix gain
-        if w.map_or(false, |x| x.2) {
+        if self.interneurons {
+            // SST follows the area's bursting; each winner's own burstiness drives its SST
+            let burst = w.map_or(false, |x| x.2);
+            self.sst = if burst { self.sst + (ONE - self.sst.min(ONE)) / 16 } else { self.sst - self.sst / 16 };
+            if let Some((c, _, b)) = w {
+                let cell = &mut self.cells[c];
+                cell.bursty = if b { cell.bursty + (ONE - cell.bursty.min(ONE)) / 8 } else { cell.bursty - cell.bursty / 8 };
+            }
+        } else if w.map_or(false, |x| x.2) {
             self.theta += (ONE * 9 / 10).saturating_sub(self.theta) / 64;
         } else {
             self.theta = (self.theta - self.theta / 64).max(ONE * 3 / 10);
@@ -621,6 +670,10 @@ impl PrimedLayer5 {
                 }
             }
         }
+        if self.interneurons {
+            // the matrix's error signal drives VIP
+            self.vip = if confirmed { self.vip - self.vip / 8 } else { self.vip + (ONE - self.vip.min(ONE)) / 8 };
+        }
         // other fired cells: those right are confirmed in their trace, those wrong decay
         for &(c, _, _) in &e.fired {
             if Some(c) == w.map(|x| x.0) || self.cells[c].out.is_empty() {
@@ -644,7 +697,7 @@ impl PrimedLayer5 {
                 } else if let Some(f) = self.cells.iter().position(|c| c.out.is_empty()) {
                     f
                 } else {
-                    self.cells.push(PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 });
+                    self.cells.push(PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 });
                     self.cells.len() - 1
                 };
                 self.wire(slot, &ctx, rng);

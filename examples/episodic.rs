@@ -1758,7 +1758,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         let n = std::env::var("L23_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(16384);
         if std::env::var("L23_GROW").is_ok() { PrimedLayer5::grown(BITS / 64, 16, n) } else { PrimedLayer5::new(BITS / 64, 16, n) }
     });
-    let mut l23_stats = [0usize; 2]; // predictions by primed cells, by the old kernels
+    // INTERNEURONS=1: SST and VIP cells set the primed layers' context threshold (instead of
+    // the gain rule)
+    if std::env::var("INTERNEURONS").is_ok() {
+        for l in primed5.iter_mut().chain(primed23.iter_mut()) {
+            l.set_interneurons(true);
+        }
+    }
+    let mut l23_stats = [0usize; 2];
+    let burst_vote = std::env::var("BURST_VOTE").is_ok(); // predictions by primed cells, by the old kernels
     let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
     let mut src_burst: HashMap<u8, Q16> = HashMap::default();
     let mut gate_theta: Q16 = ONE / 2;
@@ -4872,6 +4880,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 route_cur = None;
                 let mut out = BitVector::new(BITS, Some(0));
                 out.or_mut(column.predict(&input));
+                // the column's burst this step (its strength), for BURST_VOTE
+                let mut col_burst: Option<Q16> = None;
                 // L5=two: a burst of a two-compartment cell (input and context together)
                 // overrides L2/3's habit; without a burst L2/3 speaks, and where it has
                 // nothing to say the mix falls to the other sources (the cerebellum)
@@ -4879,16 +4889,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Some((o, c)) = l.predict(&input, BITS) {
                         out = o;
                         column.set_output(out.clone(), c);
+                        col_burst = Some(c);
                     }
                 }
                 // L23=primed: L2/3 as two-compartment primed cells: whenever one fires (spike or
                 // burst) it is the column's prediction; the old kernels speak only when none fires
                 if let Some(l) = primed23.as_mut() {
                     match l.predict(&input, BITS) {
-                        Some((o, c, _)) => {
+                        Some((o, c, burst)) => {
                             out = o;
                             column.set_output(out.clone(), c);
                             l23_stats[0] += 1;
+                            if burst {
+                                col_burst = Some(c);
+                            }
                         }
                         None => l23_stats[1] += 1,
                     }
@@ -4898,6 +4912,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Some((o, c, true)) = l.predict(&input, BITS) {
                         out = o;
                         column.set_output(out.clone(), c);
+                        col_burst = Some(c);
                     }
                 }
                 // the slow cortex's prediction (SLOW_CORTEX)
@@ -5095,6 +5110,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                         }
                     }
+                    // BURST_VOTE: a bursting column votes with the burst's own evidence (its
+                    // strength now), not the word-keyed reliability learned for the old column
+                    let burst_weight = |src: u8, key: u64| -> u32 {
+                        match (burst_vote, src, col_burst) {
+                            (true, 0, Some(c)) => mix.weight_of_rate(c),
+                            _ => mix.weight(src, key),
+                        }
+                    };
                     let votes: Vec<(usize, u32)> = if burst_gate {
                         let beta = |src: u8| src_burst.get(&src).copied().unwrap_or(ONE / 2);
                         let mut pass: Vec<&(u8, u64, Vec<usize>)> = proposals.iter().filter(|p| beta(p.0) >= gate_theta).collect();
@@ -5115,7 +5138,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         pass.iter().flat_map(|(src, _, ws)| ws.iter().map(|&w| (w, mix.weight_of_rate(beta(*src)))).collect::<Vec<_>>()).collect()
                     } else {
-                        proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, mix.weight(*src, *key))).collect::<Vec<_>>()).collect()
+                        proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, burst_weight(*src, *key))).collect::<Vec<_>>()).collect()
                     };
                     // the bud in shadow: would its vote have fixed or broken the mix's choice?
                     if let Some((src, key, ws)) = bud_prop {
@@ -6795,8 +6818,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if let Some(l) = primed5.as_ref() {
             eprintln!(
-                "  L5 seed {seed}: primed, {} committed cells; context threshold {:.2}; bursts won {}, spikes {}, nothing fired {}; commitments {}, freed {}",
-                l.committed(), to_f32(l.threshold()), l.stats[0], l.stats[1], l.stats[2], l.stats[3], l.stats[4]
+                "  L5 seed {seed}: primed, {} committed cells; context threshold {:.2} (SST {:.2}, VIP {:.2}); bursts won {}, spikes {}, nothing fired {}; commitments {}, freed {}",
+                l.committed(), to_f32(l.threshold()), to_f32(l.interneuron_state().0), to_f32(l.interneuron_state().1), l.stats[0], l.stats[1], l.stats[2], l.stats[3], l.stats[4]
             );
         }
         if let Some(l) = layer5.as_ref() {

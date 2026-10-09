@@ -156,7 +156,7 @@ about the item falls back to what is known about it from elsewhere.
 | routing, no holding | 69.2 / 66.6 / 69.0 | 68.3 | |
 | oracle hold, oracle attach, query channel | 69.0 / 66.8 / 66.2 | 67.3 | +487 / −195, ranked last of 3 |
 | the same, soft retrieval | 69.0 / 66.8 / 66.2 | 67.3 | the same |
-| oracle hold, learned attach, soft query channel | 69.8 / 67.4 / 67.8 | 68.3 | +227 / −98 (nothing attached) |
+| oracle hold, learned attach, soft query channel | 69.8 / 67.4 / 67.8 | 68.3 | +227 / −98; seeds 0 and 2 never attach, seed 1 attaches (661 events, all found by the query) |
 
 1. **Routing alone is stable** (66.6–69.2%) where the entorhinal path varied from 30 to 67%,
    so this is the better base for the comparison.
@@ -166,8 +166,9 @@ about the item falls back to what is known about it from elsewhere.
 3. **Soft and hard retrieval give identical results here**, as they should on this task:
    every story binds the stranger, so the same-story events always win. Soft retrieval
    matters only where a story says nothing about the item. This task does not test that.
-4. **The learned attach still never attaches.** With nothing gained from the query, there is
-   nothing to learn.
+4. **The learned attach attaches on one seed of three.** On seed 1 it attached 661 events,
+   all found by the query, and that seed still scored 67.4. On the other two seeds it never
+   attaches: with nothing gained from the query, there is nothing to learn.
 
 **Where the gap is.** Retrieval and routing work; the column does not turn a surname in a
 side channel into the family's place. For trained names it never had to: in "mary smith went

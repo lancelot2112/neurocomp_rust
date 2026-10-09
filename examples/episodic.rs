@@ -1037,6 +1037,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
 
     // TRUST=f: depth only outranks reliability among kernels at least f reliable
     class.set_trust_floor(ratio_env("TRUST"));
+    // SPECIFIC=1: within a depth, the kernel that matched more of the input wins before
+    // reliability is compared (consolidated, context-specific kernels over general ones)
+    class.set_specificity(std::env::var("SPECIFIC").is_ok());
     // STICKY=f: credit-tagged synapses (input bits that carried the correctly predicted
     // word) need f times as many silent confirmations before pruning
     if let Some(f) = std::env::var("STICKY").ok().and_then(|v| v.parse().ok()) {
@@ -1211,6 +1214,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         a
     });
     let mut own_diag = [0usize; 3]; // OWNDIAG, test answers: all, the column decodes a word, any bits
+    let mut own_diag_k = [0usize; 4]; // OWNDIAG: Σ matched kernels, Σ proposing a place, Σ proposing the answer, answers where any matched kernel proposes it
     let mut assoc_in: Option<BitVector> = None; // this step's input, for learning
     let mut assoc_word: Option<usize> = None; // this step's proposal
     let mut assoc_conf: Q16 = 0;
@@ -4861,7 +4865,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         own_diag[0] += 1;
                         own_diag[1] += own.is_some() as usize;
                         own_diag[2] += (out.count_ones() > 0) as usize;
+                        // which matched kernels propose the answer, how deep, how reliable
+                        let mk = column.l23.matched_kernels(&input);
+                        let place = |v: &BitVector| enc.decode(v).map_or(false, |w| PLACES.contains(&vocab[w]));
+                        let n_place = mk.iter().filter(|k| place(&k.2)).count();
+                        let n_right = mk.iter().filter(|k| enc.decode(&k.2) == Some(next)).count();
+                        own_diag_k[0] += mk.len();
+                        own_diag_k[1] += n_place;
+                        own_diag_k[2] += n_right;
+                        own_diag_k[3] += (n_right > 0) as usize;
                         if own_diag[0] <= 8 {
+                            let best_right = mk.iter().filter(|k| enc.decode(&k.2) == Some(next)).map(|k| (k.0, k.1)).max();
+                            let best_any = mk.iter().map(|k| (k.0, k.1, enc.decode(&k.2).map(|w| vocab[w]))).max();
+                            eprintln!("  OWNDIAG matched {} kernels, {} propose a place, {} the answer; best for the answer (depth, rate) {:?}; best overall {:?}", mk.len(), n_place, n_right, best_right, best_any);
                             eprintln!("  OWNDIAG {:?}: column says {:?} ({} bits), answer {}", &s.words[s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1)..=t], own.map(|w| vocab[w]), out.count_ones(), vocab[next]);
                         }
                     }
@@ -6617,7 +6633,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
         }
         if std::env::var("OWNDIAG").is_ok() {
-            eprintln!("  OWNDIAG seed {seed}: at {} test answers the column decoded a word at {} and output any bits at {}", own_diag[0], own_diag[1], own_diag[2]);
+            eprintln!("  OWNDIAG seed {seed}: at {} test answers the column decoded a word at {} and output any bits at {}; matched kernels {} (a place {}, the answer {}); some matched kernel proposes the answer at {} answers", own_diag[0], own_diag[1], own_diag[2], own_diag_k[0], own_diag_k[1], own_diag_k[2], own_diag_k[3]);
         }
         if let Some(a) = assoc.as_ref() {
             eprintln!("  ASSOC seed {seed}: {} kernels; {} replays taught it; at test answers it proposed a word at {} and was right at {}", a.column.l23.kernels().len(), assoc_stats[2], assoc_stats[0], assoc_stats[1]);

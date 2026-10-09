@@ -126,3 +126,30 @@ Under three systems, hippocampus teaches cortex on seed 0: the column alone is r
 `REPLAY_PREDICT` stays an option: it is correct, but it changes recorded figures in both
 directions, so it needs the full suite at five seeds before it becomes the default.
 
+## Addendum 3: the right answer is among the candidates; the hand-set ranking discards it
+
+With the replay fix (`REPLAY_PREDICT`), a diagnostic of the matched kernels at test answers
+(`OWNDIAG`, `KernelClass::matched_kernels`; hippocampus teaches cortex, three systems, seed 0)
+shows:
+- the column now proposes places ("bedroom"), not "cat";
+- about 9 kernels match per answer, 7 of them proposing a place;
+- **some matched kernel proposes the right place at 925 of 1,000 answers.**
+
+All of them read the same number of frames (depth 3), so reliability decides. The same
+general "bedroom" kernel (hit rate 0.29) wins over the right one (0.13–0.29), and the column
+alone is right at 21%.
+
+**Specificity** (`SPECIFIC=1`, `KernelClass::set_specificity`): within a depth, more matched
+input bits before reliability. It is worse. On seed 0 the mixed answer is 52.0 (69.5 without),
+held-out 37.8 (54.8), and the right answer is among the matched kernels at 695 answers (925).
+The rule also changes which kernels win and learn during training.
+
+**What this shows.** The competition among the column's kernels is ranked by hand: depth
+(frames in a hand-set layout), then reliability. The right, consolidated candidate exists but
+the ranking cannot tell it from a general one of the same depth, and a second hand rule
+(specificity) made it worse. A flexible fix replaces the hand parts:
+- learned routing (`ROUTE`) instead of the fixed frame layout, so depth means something the
+  network chose;
+- a learned competition: candidates weighed by a learned, per-context reliability, as the
+  thalamic mix already weighs sources, or chosen by the basal ganglia.
+

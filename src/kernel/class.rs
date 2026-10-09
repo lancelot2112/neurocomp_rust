@@ -168,6 +168,8 @@ struct PredictiveState {
     /// Growth: only kernels at least this reliable count as "this depth already
     /// predicts the target" (None = any kernel does).
     growth_trust: Option<Rate>,
+    /// Winner ranking: within a depth, more matched input bits before reliability.
+    specific: bool,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
     /// Fast inhibitory loop (see `set_fast_inhibition`). None = off.
@@ -568,6 +570,7 @@ impl KernelClass<SimpleKernel> {
             growth_prob: None,
             trust_floor: None,
             growth_trust: None,
+            specific: false,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
             fast: None,
@@ -693,7 +696,8 @@ impl KernelClass<SimpleKernel> {
         let trust_floor = st.trust_floor;
         // ... then the older kernel (lower id): ties must not depend on the order kernels
         // are visited, which differs between the index fan-out and the frame memo
-        let mut best: Option<((bool, bool, bool, usize, bool, Rate, u32, std::cmp::Reverse<usize>), usize)> = None;
+        let specific = st.specific;
+        let mut best: Option<((bool, bool, bool, usize, bool, u32, Rate, u32, std::cmp::Reverse<usize>), usize)> = None;
         for &k in &st.touched {
             let k = k as usize;
             let count = st.counts[k];
@@ -714,7 +718,9 @@ impl KernelClass<SimpleKernel> {
             let r = Rate::of(&kern.stats);
             let trusted = trust_floor.map_or(true, |f| r >= f);
             let free = st.fast.as_ref().map_or(true, |f| !f.inhibits(k));
-            let key = (free, prefer, trusted, kern.context_frames, tie, r, count, std::cmp::Reverse(k));
+            // specificity (set_specificity): within a depth, the kernel that matched more of
+            // the input outranks a more reliable but more general one
+            let key = (free, prefer, trusted, kern.context_frames, tie, if specific { count } else { 0 }, r, count, std::cmp::Reverse(k));
             if best.map_or(true, |(b, _)| key > b) {
                 best = Some((key, k));
             }
@@ -761,10 +767,23 @@ impl KernelClass<SimpleKernel> {
             .iter()
             .map(|&(k, c)| {
                 let kern = &self.active_kernels[k as usize];
-                ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
+                ((kern.context_frames, if self.predictive.as_ref().map_or(false, |st| st.specific) { c } else { 0 }, Rate::of(&kern.stats), c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
-            .map(|((_, rel, _), k)| (self.active_kernels[k].output_vector(), rel.q16()))
+            .map(|((_, _, rel, _), k)| (self.active_kernels[k].output_vector(), rel.q16()))
+    }
+
+    /// Every kernel matching `input`: (its context depth, its smoothed hit rate in `Q16`,
+    /// its output). For diagnostics.
+    pub fn matched_kernels(&self, input: &BitVector) -> Vec<(usize, Q16, BitVector)> {
+        let Some(matched) = self.matching(input) else { return Vec::new() };
+        matched
+            .iter()
+            .map(|&(k, _)| {
+                let kern = &self.active_kernels[k as usize];
+                (kern.context_frames as usize, Rate::of(&kern.stats).q16(), kern.output_vector())
+            })
+            .collect()
     }
 
     /// The kernels matching `input` and their matched bits: from the cache if this input
@@ -825,7 +844,7 @@ impl KernelClass<SimpleKernel> {
             .filter(|&&(k, _)| self.active_kernels[k as usize].context_frames >= depth)
             .map(|&(k, c)| {
                 let kern = &self.active_kernels[k as usize];
-                ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
+                ((kern.context_frames, if self.predictive.as_ref().map_or(false, |st| st.specific) { c } else { 0 }, Rate::of(&kern.stats), c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
             .map(|(_, k)| self.active_kernels[k].output_vector())
@@ -842,7 +861,7 @@ impl KernelClass<SimpleKernel> {
             .filter(|&&(k, _)| self.active_kernels[k as usize].context_frames <= depth)
             .map(|&(k, c)| {
                 let kern = &self.active_kernels[k as usize];
-                ((kern.context_frames, Rate::of(&kern.stats), c), k as usize)
+                ((kern.context_frames, if self.predictive.as_ref().map_or(false, |st| st.specific) { c } else { 0 }, Rate::of(&kern.stats), c), k as usize)
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
             .map(|(_, k)| self.active_kernels[k].output_vector())
@@ -953,6 +972,16 @@ impl KernelClass<SimpleKernel> {
     pub fn set_trust_floor(&mut self, floor: Option<(u16, u16)>) {
         if let Some(st) = self.predictive.as_mut() {
             st.trust_floor = floor.map(|(p, q)| Rate::new(p, q));
+            st.version += 1;
+        }
+    }
+
+    /// Specificity in the winner ranking: within the same context depth, the kernel that
+    /// matched more of the input wins before reliability is compared (a consolidated,
+    /// context-specific kernel over a general, frequently right one).
+    pub fn set_specificity(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.specific = on;
             st.version += 1;
         }
     }

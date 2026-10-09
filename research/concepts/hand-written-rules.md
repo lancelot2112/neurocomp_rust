@@ -103,3 +103,9 @@ rule of the question and hold line (`QUESTION_ACT` and its operators and subject
 `QHOLD=oracle|novel`, `QATTACH=oracle|all`, the take-over gate, the word-id key for attach).
 What is left is learned, apart from the query trigger.
 
+**The column's winner ranking** belongs on this list too: depth first (context frames in the
+hand-set row layout), then reliability. It is the bottleneck of consolidation under three
+learning systems ([94](../experiments/94-sleep-gated-consolidation.md), addendum 3): the
+right candidate matches at 92% of answers and loses on that ranking. A hand-set
+specificity rule made it worse; the replacement should be learned.
+

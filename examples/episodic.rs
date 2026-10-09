@@ -1792,6 +1792,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 l.set_interneurons(true);
             }
         }
+        // L5_META=1: each cell's learning rate and threshold calibrate from its own outcomes
+        if std::env::var("L5_META").is_ok() {
+            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                l.set_meta(true);
+            }
+        }
         // L5_IDX=id: plasticity indexed by the cell's id and the step, no random draw
         if std::env::var("L5_IDX").map_or(false, |v| v == "id") {
             for l in bit23.iter_mut().chain(bit5.iter_mut()) {

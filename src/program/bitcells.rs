@@ -69,6 +69,11 @@ struct Cell {
     /// present basal synapses, active apical synapses (kept as the masks change)
     nb: u32,
     na: u32,
+    /// metaplasticity (`set_meta`): the learning rate as the number of random bits a change
+    /// needs (k: probability 2^-k), and the firing threshold as a share of the basal
+    /// synapses (`Q16`), both set by the cell's own outcomes; 0 = not yet set
+    k: u8,
+    thr: u32,
     prime: Q16,
     prime_tick: u64,
     wired_tick: u64,
@@ -94,6 +99,9 @@ pub struct BitCells {
     interneurons: bool,
     /// the plasticity index from the cell's id and the step (`set_id_index`), no generator
     id_index: bool,
+    /// self-calibrating rates and thresholds (`set_meta`), and the area's error rate
+    meta: bool,
+    err: Q16,
     sst: Q16,
     vip: Q16,
     cached: Option<(Vec<u64>, Eval)>,
@@ -113,6 +121,8 @@ impl BitCells {
             theta: ONE * 4 / 5,
             interneurons: false,
             id_index: false,
+            meta: false,
+            err: 0,
             sst: ONE / 2,
             vip: 0,
             cached: None,
@@ -127,6 +137,31 @@ impl BitCells {
     /// gates fire on fixed residues of the same sum. Deterministic, no generator.
     pub fn set_id_index(&mut self, on: bool) {
         self.id_index = on;
+    }
+
+    /// Self-calibration (metaplasticity and intrinsic plasticity), from each cell's outcomes:
+    /// - **rate:** a change needs k random bits (probability 2^-k; consolidation and growth
+    ///   need k, pruning k − 1). A confirmed fire raises the cell's k by one (at most 6: it
+    ///   settles), a contradicted one lowers it (at least 1: it learns faster). While the
+    ///   area's error rate is above one half (surprise), every cell's k counts one less.
+    /// - **threshold:** a contradicted fire raises the cell's threshold by 1/32 of its basal
+    ///   synapses (at most 95%: it fires more selectively), a confirmed one lowers it by
+    ///   1/128 (at least 50%).
+    /// Starting at k = 2 and 80%, the fixed rates and threshold are where it begins.
+    pub fn set_meta(&mut self, on: bool) {
+        self.meta = on;
+    }
+
+    fn cell_k(&self, c: usize) -> u32 {
+        if !self.meta {
+            return 2;
+        }
+        let k = if self.cells[c].k == 0 { 2 } else { self.cells[c].k as u32 };
+        if self.err > ONE / 2 { k.saturating_sub(1).max(1) } else { k }
+    }
+
+    fn cell_thr(&self, c: usize) -> u32 {
+        if !self.meta || self.cells[c].thr == 0 { ONE * 4 / 5 } else { self.cells[c].thr }
     }
 
     pub fn set_interneurons(&mut self, on: bool) {
@@ -235,7 +270,7 @@ impl BitCells {
             if cell.nb == 0 || b + bs == 0 {
                 continue;
             }
-            let need = (cell.nb * 4).div_ceil(5).max(1);
+            let need = (((cell.nb as u64 * self.cell_thr(c) as u64) + (ONE as u64 - 1)) >> 16).max(1) as u32;
             let eff = b as u32 + if p >= theta { bs as u32 } else { 0 };
             if eff >= need {
                 fired.push((c, p, p >= theta));
@@ -378,6 +413,8 @@ impl BitCells {
         }
         let cell = &mut self.cells[c];
         cell.out.clear();
+        cell.k = 0;
+        cell.thr = 0;
         cell.trace = ONE / 2;
         cell.misses = 0;
         cell.prime = 0;
@@ -416,11 +453,19 @@ impl BitCells {
             // and its high bits gate the rarer changes
             let r = if self.id_index { ((wc as u64).wrapping_add(self.tick) & 0xff).wrapping_mul(0x0101_0101_0101_0101) } else { rng.next_u64() };
             let byte = |i: u32| ((r >> (8 * i)) & 0xff) as u32;
+            // a change gated by k random bits (all zero: probability 2^-k)
+            let k = self.cell_k(wc);
+            let gate = |pos: u32, k: u32| k == 0 || (r >> pos) & ((1u64 << k) - 1) == 0;
             if predicts(&self.cells[wc]) {
                 confirmed = true;
                 let cell = &mut self.cells[wc];
                 cell.trace += (ONE - cell.trace.min(ONE)) / 2;
                 cell.misses = 0;
+                if self.meta {
+                    cell.k = (if cell.k == 0 { 2 } else { cell.k } + 1).min(6);
+                    let t = if cell.thr == 0 { ONE * 4 / 5 } else { cell.thr };
+                    cell.thr = (t - ONE / 128).max(ONE / 2);
+                }
                 for (apical, base) in [(false, 0u32), (true, 3u32)] {
                     if apical && !burst {
                         continue;
@@ -431,11 +476,11 @@ impl BitCells {
                         s.active |= m;
                     });
                     // consolidate one active synapse (1/4)
-                    if (r >> (48 + base)) & 3 == 0 {
+                    if gate(48 + base, k) {
                         self.change(wc, apical, &words, byte(base + 1), |s, x| s.active & x & !s.sticky, |s, m| s.sticky |= m);
                     }
                     // prune one unused synapse (1/2)
-                    if (r >> (52 + base)) & 1 == 0 {
+                    if gate(52 + base, k - 1) {
                         self.change(wc, apical, &words, byte(base + 2), |s, x| s.present() & !x & !s.sticky, |s, m| {
                             s.active &= !m;
                             s.silent &= !m;
@@ -443,11 +488,11 @@ impl BitCells {
                     }
                 }
                 // grow one synapse onto an active input the cell lacks (1/4)
-                if (r >> 58) & 3 == 0 && !basal.is_empty() {
+                if gate(58, k) && !basal.is_empty() {
                     let b = basal[((r >> 16) & 0xffff) as usize % basal.len()];
                     self.grow_one(wc, false, b);
                 }
-                if burst && (r >> 60) & 3 == 0 && !apical.is_empty() {
+                if burst && gate(60, k) && !apical.is_empty() {
                     let b = apical[((r >> 32) & 0xffff) as usize % apical.len()];
                     self.grow_one(wc, true, b);
                 }
@@ -461,12 +506,17 @@ impl BitCells {
                 let cell = &mut self.cells[wc];
                 cell.trace -= cell.trace / 2;
                 cell.misses = cell.misses.saturating_add(1);
+                if self.meta {
+                    cell.k = (if cell.k == 0 { 2 } else { cell.k }).saturating_sub(1).max(1);
+                    let t = if cell.thr == 0 { ONE * 4 / 5 } else { cell.thr };
+                    cell.thr = (t + ONE / 32).min(ONE * 95 / 100);
+                }
                 let fail = cell.misses >= 4 && cell.trace < ONE / 8;
                 if burst {
                     // this context did not make it right: one active tuft synapse pruned,
                     // and (1/2) one sticky one unstuck
                     self.change(wc, true, &words, byte(0), |s, x| s.active & x & !s.sticky, |s, m| s.active &= !m);
-                    if (r >> 48) & 1 == 0 {
+                    if gate(48, k - 1) {
                         self.change(wc, true, &words, byte(1), |s, x| s.sticky & x, |s, m| s.sticky &= !m);
                     }
                 }
@@ -474,6 +524,9 @@ impl BitCells {
                     self.free(wc);
                 }
             }
+        }
+        if self.meta && w.is_some() {
+            self.err = if confirmed { self.err - self.err / 16 } else { self.err + (ONE - self.err.min(ONE)) / 16 };
         }
         if self.interneurons {
             self.vip = if confirmed { self.vip - self.vip / 8 } else { self.vip + (ONE - self.vip.min(ONE)) / 8 };
@@ -559,6 +612,26 @@ mod tests {
             let (o, _, _) = l.predict(&row(1, 1), 64).unwrap();
             assert_eq!(o.as_words(), target(3).as_words());
         }
+    }
+
+    #[test]
+    fn self_calibrating_cells_learn_input_in_context() {
+        let mut l = BitCells::new(1, 8, 64);
+        l.set_meta(true);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        for _ in 0..400 {
+            for (ctx, out) in [(0, 2), (1, 3)] {
+                let r = row(1, ctx);
+                l.predict(&r, 64);
+                l.learn(&r, &target(out), &mut rng);
+            }
+        }
+        let (o, _, _) = l.predict(&row(1, 0), 64).unwrap();
+        assert_eq!(o.as_words(), target(2).as_words());
+        let (o, _, _) = l.predict(&row(1, 1), 64).unwrap();
+        assert_eq!(o.as_words(), target(3).as_words());
+        // confirmed cells settled: their rate exponent rose
+        assert!(l.cells.iter().any(|c| c.k > 2));
     }
 
     #[test]

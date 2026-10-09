@@ -322,8 +322,10 @@ pub struct PrimedLayer5 {
     frame_words: usize,
     sample: usize,
     cells: Vec<PCell>,
-    /// row bit → (cell, apical?)
-    index: Vec<Vec<(u32, bool)>>,
+    /// row bit → (cell, synapse position, with the apical flag in bit 15)
+    index: Vec<Vec<(u32, u16)>>,
+    /// the evaluation of the last predicted row, reused by `learn` on the same row
+    cached: Option<(Vec<u64>, Eval)>,
     tick: u64,
     theta: Q16,
     /// Grown on demand (`grown`): at most this many cells; None = a fixed pool wired to
@@ -360,7 +362,7 @@ struct Eval {
 impl PrimedLayer5 {
     pub fn new(frame_words: usize, sample: usize, cells: usize) -> Self {
         let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
-        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
+        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), cached: None, tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
     }
 
     /// Cells grown as needed instead of a pool (the limit of a large reserve of silent cells
@@ -402,12 +404,12 @@ impl PrimedLayer5 {
         (basal, apical)
     }
 
-    fn index_add(&mut self, cell: usize, bit: u32, apical: bool) {
+    fn index_add(&mut self, cell: usize, bit: u32, apical: bool, pos: usize) {
         let b = bit as usize;
         if self.index.len() <= b {
             self.index.resize(b + 1, Vec::new());
         }
-        self.index[b].push((cell as u32, apical));
+        self.index[b].push((cell as u32, pos as u16 | if apical { 1 << 15 } else { 0 }));
     }
 
     fn index_remove(&mut self, cell: usize, bit: u32) {
@@ -425,17 +427,23 @@ impl PrimedLayer5 {
 
     fn evaluate(&self, row: &BitVector) -> Eval {
         // connected active synapses per cell and compartment
-        let mut counts: crate::det::HashMap<u32, (u16, u16)> = crate::det::HashMap::default();
+        let mut counts: Vec<(u16, u16)> = vec![(0, 0); self.cells.len()];
+        let mut touched: Vec<u32> = Vec::new();
         for (wi, &w) in row.as_words().iter().enumerate() {
             let mut w = w;
             while w != 0 {
                 let b = wi * 64 + w.trailing_zeros() as usize;
                 if let Some(list) = self.index.get(b) {
-                    for &(c, ap) in list {
+                    for &(c, code) in list {
                         let cell = &self.cells[c as usize];
+                        let ap = code >> 15 == 1;
+                        let pos = (code & 0x7fff) as usize;
                         let syn = if ap { &cell.apical } else { &cell.basal };
-                        if syn.iter().any(|&(x, p)| x as usize == b && p >= CONNECTED) {
-                            let e = counts.entry(c).or_insert((0, 0));
+                        if syn.get(pos).map_or(false, |s| s.1 >= CONNECTED) {
+                            let e = &mut counts[c as usize];
+                            if *e == (0, 0) {
+                                touched.push(c);
+                            }
                             if ap {
                                 e.1 += 1;
                             } else {
@@ -449,10 +457,9 @@ impl PrimedLayer5 {
         }
         let mut fired = Vec::new();
         let mut free_primed = Vec::new();
-        let mut keys: Vec<u32> = counts.keys().copied().collect();
-        keys.sort_unstable();
-        for c in keys {
-            let (b, a) = counts[&c];
+        touched.sort_unstable();
+        for c in touched {
+            let (b, a) = counts[c as usize];
             let c = c as usize;
             let cell = &self.cells[c];
             let na = cell.apical.iter().filter(|s| s.1 >= CONNECTED).count().max(1) as u64;
@@ -497,6 +504,8 @@ impl PrimedLayer5 {
     pub fn predict(&mut self, row: &BitVector, out_bits: usize) -> Option<(BitVector, Q16, bool)> {
         self.tick += 1;
         let e = self.evaluate(row);
+        let e2 = Eval { fired: e.fired.clone(), free_primed: e.free_primed.clone() };
+        self.cached = Some((row.as_words().to_vec(), e2));
         // priming persists
         for &(c, p, _) in &e.fired {
             self.cells[c].prime = p;
@@ -564,8 +573,8 @@ impl PrimedLayer5 {
         pick.sort_unstable();
         self.cells[c].apical = pick.iter().map(|&b| (b, CONNECTED + 32)).collect();
         self.cells[c].wired_tick = self.tick;
-        for b in pick {
-            self.index_add(c, b, true);
+        for (i, b) in pick.into_iter().enumerate() {
+            self.index_add(c, b, true, i);
         }
     }
 
@@ -575,7 +584,10 @@ impl PrimedLayer5 {
             return;
         }
         let (basal, apical) = self.split(row);
-        let e = self.evaluate(row);
+        let e = match self.cached.take() {
+            Some((words, e)) if words == row.as_words() => e,
+            _ => self.evaluate(row),
+        };
         let predicts = |cell: &PCell| !cell.out.is_empty() && cell.out.iter().filter(|&&b| (b as usize) < target.bit_len() && target.bit_get(b as usize)).count() * 2 >= cell.out.len();
         let w = self.winner(&e);
         let mut confirmed = false;
@@ -638,8 +650,8 @@ impl PrimedLayer5 {
                 self.wire(slot, &ctx, rng);
                 let mut pick: Vec<u32> = basal.choose_multiple(rng, self.sample.min(basal.len())).copied().collect();
                 pick.sort_unstable();
-                for &b in &pick {
-                    self.index_add(slot, b, false);
+                for (i, &b) in pick.iter().enumerate() {
+                    self.index_add(slot, b, false, i);
                 }
                 let mut out = Vec::new();
                 for (wi, &w) in target.as_words().iter().enumerate() {
@@ -663,8 +675,8 @@ impl PrimedLayer5 {
             if let Some(&(c, _)) = e.free_primed.iter().max_by_key(|x| (x.1, std::cmp::Reverse(x.0))) {
                 let mut pick: Vec<u32> = basal.choose_multiple(rng, self.sample.min(basal.len())).copied().collect();
                 pick.sort_unstable();
-                for &b in &pick {
-                    self.index_add(c, b, false);
+                for (i, &b) in pick.iter().enumerate() {
+                    self.index_add(c, b, false, i);
                 }
                 let mut out = Vec::new();
                 for (wi, &w) in target.as_words().iter().enumerate() {
@@ -679,20 +691,6 @@ impl PrimedLayer5 {
                 cell.out = out;
                 cell.trace = ONE / 2;
                 self.stats[3] += 1;
-            }
-        }
-        // drop dead synapses (permanence 0)
-        if let Some((wc, _, _)) = w {
-            for ap in [false, true] {
-                let dead: Vec<u32> = {
-                    let syn = if ap { &self.cells[wc].apical } else { &self.cells[wc].basal };
-                    syn.iter().filter(|s| s.1 == 0).map(|s| s.0).collect()
-                };
-                for b in &dead {
-                    self.index_remove(wc, *b);
-                }
-                let syn = if ap { &mut self.cells[wc].apical } else { &mut self.cells[wc].basal };
-                syn.retain(|s| s.1 > 0);
             }
         }
         self.recent_apical = apical.clone();

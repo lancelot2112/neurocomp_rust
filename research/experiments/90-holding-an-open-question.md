@@ -82,3 +82,57 @@ references only.
   like the rest.
 - **Context keys as vectors, not word ids**, so the attach choice generalises (the audit's
   symbolic shortcut).
+
+## Addendum: the held item as its own recall query
+
+**Build** (`QQUERY`, [`engram.rs`](../../src/program/engram.rs) `recall_here`,
+`recall_here_all`). When the held item is read again ("lucy went …"), it cues the
+hippocampus on its own. The cue is the item (its held-field id) plus the context (the
+current story's place). The words of what it finds join the entorhinal feedback for the
+rest of the sentence, and the events found share the answer's credit.
+- It is context-dependent retrieval: only the current story's events are searched, so
+  lucy's events from earlier stories cannot compete.
+- Mechanically it is autoassociative completion: the item and the fact were stored in one
+  event, and the item alone completes it. Functionally it is a paired association.
+- `QQUERY=all` returns the blend of every event bound with the item here, since a cue
+  matched by several traces completes to their blend.
+- `QQUERY_FULL` passes the answer whole, not scaled by the cortex's uncertainty.
+- Labelled references: `QHOLD=oracle` holds the stranger; `QATTACH=oracle` attaches only the
+  stranger's sentence.
+
+**Results** (held-out, per seed):
+
+| Hold / attach / query | Held-out | What the query found |
+|---|---|---|
+| `HC_EC`, no holding | 53.8 / 30.2 / 67.4 | |
+| oracle hold, learned attach, query | 54.8 / 29.2 | nothing: the learned attach never attaches |
+| oracle hold, attach all, query (latest event) | 67.0 / 67.2 | the latest attached event; a surname in 8% |
+| learned hold, learned attach, query | 66.0 / 59.6 | the hold never takes the stranger, so no query |
+| oracle hold, learned attach, blended query | 67.8 / 67.2 | nothing: never attaches |
+| oracle hold, attach all, blended query | 55.0 / 49.8 | every event: both families' surnames |
+| **oracle hold, oracle attach, query** (upper bound) | **64.0 / 64.0 / 53.6** | the stranger's fact, 500 of 500 |
+| the same, answer passed whole | 60.0 / 60.4 / 50.6 | the same |
+
+1. **Retrieval works.** With the right event attached, the item-and-context query finds it
+   in every story.
+2. **Use is now the bottleneck.** Given the right fact in its context, the column answers
+   right about 60% of the time, below the 68% the network reaches without entorhinal
+   feedback (where it answers from votes and the rollout). Passing the fact whole does not
+   help. The column does not learn to turn a surname in the entorhinal slot into that
+   family's place. This is the same weakness experiment 87 found for `HC_EC` (worse wherever
+   memory must carry the answer).
+3. **The learned attach collapses to never attaching.** Attaching pays only once the column
+   uses what is queried, and the column learns to use it only if attaching happens.
+4. **`HC_EC` alone varies between runs** (30–67% on the same seeds across builds), so
+   two-seed differences on it are not readable.
+
+**Next.** The column must learn to read memory's context. Two concrete ways:
+- give the queried answer its own learned channel (routing, [87](87-three-learning-systems-and-routing.md)),
+  so kernels grow on it rather than on a slot shared with the sentence recall;
+- consolidation: replay "lucy … smith → the smith place" so the cortex learns the
+  combination.
+
+Then the learned attach has something to learn from. The cue can also become a soft
+conjunction (item match plus a same-story bonus, not a gate), so a story that says nothing
+about the item falls back to what is known about it from elsewhere.
+

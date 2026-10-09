@@ -1559,7 +1559,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let qhold_learned = std::env::var("QHOLD").map_or(false, |v| v == "learned");
     let qhold = qhold_learned.then_some(());
     let qattach_learned = std::env::var("QATTACH").map_or(false, |v| v == "learned");
-    let mut attach_pending: Vec<(BitVector, bool, Option<u32>)> = Vec::new(); // (choice, attached, its event's row)
+    let mut attach_pending: Vec<(BitVector, bool, Option<u32>, usize)> = Vec::new(); // (choice, attached, its event's row, the held word)
+    // Recall-tagged credit for the hold (default; QHOLD_CREDIT=story: the story's reward for
+    // every hold choice, as in 91): taking a word into working memory gets the answer's outcome
+    // (+1 right, −1 wrong) only if an event it was stored with was recalled for that answer;
+    // otherwise only STEP_COST, and leaving a word 0.
+    let hold_credit_story = std::env::var("QHOLD_CREDIT").map_or(false, |v| v == "story");
+    let mut hold_pending: Vec<(BitVector, Option<usize>)> = Vec::new(); // (choice, the word taken)
     let mut answer_rows: Vec<u32> = Vec::new(); // the events recalled for the answer
     let mut held_item: Option<(usize, Q16)> = None; // the held word and its novelty when taken
     let mut q_err = [0usize; 5]; // QUESTION, held-out answers: right, right family wrong season, other family right season, other, no place
@@ -2993,6 +2999,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         query_ec = None;
         query_rows.clear();
         attach_pending.clear();
+        hold_pending.clear();
         answer_rows.clear();
         page_marks = vec![false; ids.len()];
         inner = vec![false; ids.len()];
@@ -3228,7 +3235,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let cands = [step_code(ctx, 0), step_code(ctx, 1)];
                             let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
                             if !testing {
-                                step_pending.push((cands[a].clone(), a == 1));
+                                if hold_credit_story {
+                                    step_pending.push((cands[a].clone(), a == 1));
+                                } else {
+                                    hold_pending.push((cands[a].clone(), (a == 1).then_some(ids[t])));
+                                }
                             }
                             if a == 1 {
                                 held_item = Some((ids[t], nov));
@@ -4897,9 +4908,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         q_err[4] += 1;
                     }
                 }
-                if qattach_learned && t + 1 == s.answer_at {
+                if (qattach_learned || qhold_learned) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
-                    for (code, acted, row) in attach_pending.drain(..) {
+                    let outcome = if right { ONE as i32 } else { -(ONE as i32) };
+                    // the held words whose stored events served this answer
+                    let used_items: Vec<usize> = attach_pending.iter().filter(|x| x.1 && x.2.map_or(false, |r| answer_rows.contains(&r))).map(|x| x.3).collect();
+                    for (code, took) in hold_pending.drain(..) {
+                        if !testing {
+                            let r = match took {
+                                Some(w) if used_items.contains(&w) => outcome - step_cost,
+                                Some(_) => -step_cost,
+                                None => 0,
+                            };
+                            step_bg.reward_candidate(&code, r, &mut bg_rng);
+                        }
+                    }
+                    for (code, acted, row, _) in attach_pending.drain(..) {
                         let used = acted && row.map_or(false, |r| answer_rows.contains(&r));
                         if testing && s.held_out && used {
                             hold_stats[3] += 1;
@@ -4910,7 +4934,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
-                if (step_learned || inner_learned || qhold_learned) && t + 1 == s.answer_at {
+                if (step_learned || inner_learned || (qhold_learned && hold_credit_story)) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     for (code, stepped) in step_pending.drain(..) {
                         step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut bg_rng);
@@ -5575,7 +5599,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                             })
                                             .collect();
                                         let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
-                                        attach_pending.push((cands[a].clone(), a == 1, None));
+                                        attach_pending.push((cands[a].clone(), a == 1, None, hw));
                                         (a == 1).then_some(hw)
                                     }
                                     _ => None,

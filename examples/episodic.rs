@@ -5646,7 +5646,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
                                 let attach = match (held_item, qattach.as_deref()) {
                                     (Some((hw, _)), Some(mode)) if !ids[start..t].contains(&hw) && t > start + 1 => {
-                                        if mode == "learned" {
+                                        if mode == "oracle" {
+                                            // a labelled upper bound: only the sentence about the stranger
+                                            (vocab[ids[start]] == "the" && vocab[ids[start + 1]] == "person").then_some(hw)
+                                        } else if mode == "learned" {
                                             let ctx = 7000 + ids[start] * (vocab.len() + 1) + ids[start + 1];
                                             let cands = [step_code(ctx, 0), step_code(ctx, 1)];
                                             let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);

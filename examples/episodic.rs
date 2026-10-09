@@ -1603,6 +1603,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // With ROUTE: the query's answer is a channel of its own (Q_CHANNEL), whose share and
     // slot routing learns like any other's (87), instead of a share of the entorhinal slot.
     let qquery_soft = std::env::var("QQUERY").map_or(false, |v| v == "soft");
+    // QAREA=1 (with QQUERY): the query's answer goes to the higher areas' sentence context
+    // only, not to the column's row (no routed channel, no entorhinal slot share)
+    let qarea = std::env::var("QAREA").is_ok();
     let mut query_rows: Vec<u32> = Vec::new(); // QQUERY=all: every event the query blended
     let mut query_ec: Option<(u32, BitVector)> = None; // the query's event and its words' codes
     let mut query_stats = [0usize; 3]; // test, held-out: queries, an event found, the event holds the stranger's surname // the held word and its novelty when taken
@@ -3768,6 +3771,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     } else {
                         sentence.clone()
                     };
+                    // QAREA: the held item's queried event is reinstated in the higher areas'
+                    // working context (hippocampus → entorhinal → association cortex), as
+                    // the semantic store's content is under COOPERATE
+                    if let (true, Some((_, q))) = (qarea, query_ec.as_ref().filter(|_| !(testing && bind_lesion))) {
+                        x.or_mut(q);
+                    }
                     if cooperate || graded_enrich || sparse_hc {
                         let empty = BitVector::new(BITS, Some(0));
                         let own = column.l23.peek_scored(&l4_row(&column, code, &vec![empty; l4_mid], route_on.then_some(&route_order[..])));
@@ -4469,7 +4478,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             ec.or_mut(&enc.codes[i]);
                         }
                         // QQUERY: what the held item's own query found, added to the feedback
-                        if let Some((_, q)) = query_ec.as_ref().filter(|_| !(testing && bind_lesion)) {
+                        if let Some((_, q)) = query_ec.as_ref().filter(|_| !(testing && bind_lesion) && !qarea) {
                             ec.or_mut(q);
                         }
                         if ec.count_ones() == 0 {
@@ -4493,7 +4502,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // QQUERY_FULL: the held item's answer passes whole, not scaled by
                             // the sweep's uncertainty (a query asked on purpose, not a recall
                             // that competes with the cortex's own guess)
-                            if let (true, Some((_, q))) = (qquery_full, query_ec.as_ref().filter(|_| !(testing && bind_lesion))) {
+                            if let (true, Some((_, q))) = (qquery_full && !qarea, query_ec.as_ref().filter(|_| !(testing && bind_lesion))) {
                                 for (d, x) in w[at..at + fw].iter_mut().zip(q.as_words()) {
                                     *d |= *x;
                                 }
@@ -4537,7 +4546,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     _ => input,
                 };
                 // QQUERY with ROUTE: the held item's answer as a channel of its own
-                let input = match (route_on && qquery, query_ec.as_ref().filter(|_| !(testing && bind_lesion)), route_cur.clone()) {
+                let input = match (route_on && qquery && !qarea, query_ec.as_ref().filter(|_| !(testing && bind_lesion)), route_cur.clone()) {
                     (true, Some((_, q)), Some((word, mut ch, slots))) if q.count_ones() > 0 => {
                         if !route_order.contains(&Q_CHANNEL) {
                             route_order.push(Q_CHANNEL);

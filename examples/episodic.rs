@@ -3235,7 +3235,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     bind_sentence_pairs.push((ids[t], c));
                     if let (Some(_), Some(hc), false) = (qhold.as_deref(), bind_hc.as_ref(), replaying) {
                         let nov = hc.novelty(&sparse_binding(code, ids[t], c, false));
-                        if held_item.map_or(true, |(_, hn)| nov > hn) {
+                        if held_item.map_or(true, |(_, hn)| nov > hn || qhold.as_deref() == Some("oracle")) {
                             let take = if qhold_learned {
                                 let band = (nov as u64 * 4 >> 16).min(3) as usize;
                                 let ctx = 6000 + band * 2 + held_item.is_some() as usize;
@@ -3245,6 +3245,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     step_pending.push((cands[a].clone(), a == 1));
                                 }
                                 a == 1
+                            } else if qhold.as_deref() == Some("oracle") {
+                                // a labelled reference for measuring recall, never the mechanism
+                                let w = vocab[ids[t]];
+                                NEW_NAMES.contains(&w) || PRACTICE_NAMES.contains(&w) || question_pool().contains(&w)
                             } else {
                                 nov >= ONE * 3 / 4
                             };
@@ -4115,7 +4119,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     source_stats[(src > 0) as usize] += 1;
                                 }
                             }
-                            if std::env::var("SELFDIAG").is_ok() && testing && s.held_out && bind_diag < 10 && s.words[..=t].iter().any(|w| NEW_NAMES.contains(w)) {
+                            if std::env::var("SELFDIAG").is_ok() && testing && s.held_out && bind_diag < 10 && (qhold.is_none() || t + 1 == s.answer_at) && s.words[..=t].iter().any(|w| NEW_NAMES.contains(w)) {
                                 bind_diag += 1;
                                 let decode = |v: &BitVector| -> Vec<String> {
                                     let mut out = Vec::new();

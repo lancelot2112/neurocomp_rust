@@ -352,6 +352,8 @@ slot codes bound to content in the hippocampus, recalled by slot.
      [90](experiments/90-holding-an-open-question.md), negative: recall at the question
      matches the sentence, not the item. Next: the held item as a query of its own (pattern
      completion from the item and this story's place), "open" as unresolved in this story;
+     built (query, soft retrieval, routed channel): retrieval works, the column does not
+     use the answer; next, the answer into the higher area's context;
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and
      a heard slot the column learns to use.
 

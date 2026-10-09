@@ -136,3 +136,44 @@ Then the learned attach has something to learn from. The cue can also become a s
 conjunction (item match plus a same-story bonus, not a gate), so a story that says nothing
 about the item falls back to what is known about it from elsewhere.
 
+## Addendum 2: soft retrieval and a learned channel for the answer
+
+**Build.**
+- **Soft retrieval** (`QQUERY=soft`, `recall_soft` in [`engram.rs`](../../src/program/engram.rs)):
+  the cue is the item and the context as a weighted match. Every event holding the item
+  scores its overlap with the cue, plus a bonus of 2 if it was stored in the current story.
+  The top-scoring events (the latest 8) are blended. If the story bound the item, its events
+  win; if the story says nothing about it, what the item was bound to elsewhere answers. The
+  hard filter of `recall_here` returned nothing in that case. A unit test covers both cases.
+- **A learned channel** (`QQUERY` under `ROUTE`): the query's answer is a routed channel of
+  its own (`Q_CHANNEL`), with its share and slot learned like every other channel's
+  ([87](87-three-learning-systems-and-routing.md)), instead of a share of the entorhinal slot.
+
+**Results.** Three seeds, held-out, learned routing, `QUESTION_POOL=300`:
+
+| Hold / attach / query | Held-out | Mean | The query channel's record (seed 0: fixes / breaks) |
+|---|---|---|---|
+| routing, no holding | 69.2 / 66.6 / 69.0 | 68.3 | |
+| oracle hold, oracle attach, query channel | 69.0 / 66.8 / 66.2 | 67.3 | +487 / −195, ranked last of 3 |
+| the same, soft retrieval | 69.0 / 66.8 / 66.2 | 67.3 | the same |
+| oracle hold, learned attach, soft query channel | 69.8 / 67.4 / 67.8 | 68.3 | +227 / −98 (nothing attached) |
+
+1. **Routing alone is stable** (66.6–69.2%) where the entorhinal path varied from 30 to 67%,
+   so this is the better base for the comparison.
+2. **The right fact in a learned channel still does not reach the answer.** The query finds
+   the stranger's fact in all 500 stories. Routing credits the channel a little (it fixes
+   more predictions than it breaks), but held-out answers do not move (67.3 vs 68.3).
+3. **Soft and hard retrieval give identical results here**, as they should on this task:
+   every story binds the stranger, so the same-story events always win. Soft retrieval
+   matters only where a story says nothing about the item. This task does not test that.
+4. **The learned attach still never attaches.** With nothing gained from the query, there is
+   nothing to learn.
+
+**Where the gap is.** Retrieval and routing work; the column does not turn a surname in a
+side channel into the family's place. For trained names it never had to: in "mary smith went
+to the", the surname reaches the answer through the higher area's sentence context (with the
+season), not through a slot of the column's row. So the queried fact probably belongs where
+the cortex already keeps context: the higher area's working context, as hippocampal output
+reaches association cortex rather than the primary area. That is the next build to test,
+with the oracle hold and attach as the upper bound first.
+

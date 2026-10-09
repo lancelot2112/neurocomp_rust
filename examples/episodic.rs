@@ -1594,6 +1594,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // of the sentence, and the event counts as used for the answer's credit.
     let qquery = std::env::var("QQUERY").is_ok();
     let qquery_all = std::env::var("QQUERY").map_or(false, |v| v == "all");
+    let qquery_full = std::env::var("QQUERY_FULL").is_ok();
     let mut query_rows: Vec<u32> = Vec::new(); // QQUERY=all: every event the query blended
     let mut query_ec: Option<(u32, BitVector)> = None; // the query's event and its words' codes
     let mut query_stats = [0usize; 3]; // test, held-out: queries, an event found, the event holds the stranger's surname // the held word and its novelty when taken
@@ -4475,6 +4476,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     }
                                 }
                                 *d = x & keep;
+                            }
+                            // QQUERY_FULL: the held item's answer passes whole, not scaled by
+                            // the sweep's uncertainty (a query asked on purpose, not a recall
+                            // that competes with the cortex's own guess)
+                            if let (true, Some((_, q))) = (qquery_full, query_ec.as_ref().filter(|_| !(testing && bind_lesion))) {
+                                for (d, x) in w[at..at + fw].iter_mut().zip(q.as_words()) {
+                                    *d |= *x;
+                                }
                             }
                             hc_ec_stats[0] += 1;
                             hc_ec_stats[1] += share;

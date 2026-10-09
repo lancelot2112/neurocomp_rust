@@ -185,6 +185,10 @@ can express the column and the hippocampus exactly, but builds nothing the suite
 **Build.**
 - Express the suite's systems as genomes: column, higher area, hippocampus, cerebellum,
   thalamic routing, basal-ganglia go/no-go, each a definition built from base kernels.
+- Remove the harness's hand-written decisions as each step lands: the
+  [audit](concepts/hand-written-rules.md) lists them (the rollout, completion, the question
+  act's operators, word-count definiteness, familiarity and rarity counts, contexts keyed by
+  word ids). Rule 6: no new ones.
 - One genome for the reading network, the same for every task; what differs between tasks
   is only the data. Growth (areas by need, kernels on surprise, routing in a critical
   period) does the rest.

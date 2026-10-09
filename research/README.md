@@ -150,7 +150,7 @@ names: 82% on held-out pairs, all learned, with nothing task-specific put in by 
 - *Output and speech:* [69](experiments/69-answering-by-speaking.md)–[72](experiments/72-go-no-go-signals.md), [88](experiments/88-inner-speech.md), [89](experiments/89-questions-as-inner-speech.md)
 - *Epistemics and curiosity:* [74](experiments/74-proposals-and-premises.md)–[81](experiments/81-curiosity.md)
 - *Infrastructure:* [08](experiments/08-credit-assignment.md), [47](experiments/47-integer-only.md), [51](experiments/51-networks-of-kernels.md), [53](experiments/53-phase-codes-and-centering.md), [86](experiments/86-evolvable-genome.md)
-- *Cross-cutting:* [connection audit](concepts/connection-plausibility.md), [the network as a genome](concepts/genome.md), [architecture map](concepts/architecture-map.md), [roadmap](roadmap.md)
+- *Cross-cutting:* [connection audit](concepts/connection-plausibility.md), [hand-written rules](concepts/hand-written-rules.md), [the network as a genome](concepts/genome.md), [architecture map](concepts/architecture-map.md), [roadmap](roadmap.md)
 
 Experiments (chronological)
 1. [Stock network on a reading task](experiments/01-stock-network-reading.md)

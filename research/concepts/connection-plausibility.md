@@ -179,3 +179,7 @@ are then targets for learned circuits to match, not mechanisms to keep.
 5. **New mechanisms are built from base kernels and wiring**, so they could be expressed
    in the genome grammar; a hand-written algorithm is acceptable only as a specification
    that a learned circuit is later tested against.
+6. **No new decisions written as rules.** A new behaviour is a primitive plus learning; a
+   hand-set rule is allowed only as a labelled reference (an oracle or a specification),
+   never a default, never reported as the network's own behaviour. The existing ones are
+   listed in the [audit of hand-written rules](hand-written-rules.md).

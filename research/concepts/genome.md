@@ -89,5 +89,8 @@ parity with the harness setting it replaces before going on.
 | 8 | Relation store, Bayes, speech | wrapped as primitives first, each marked as a specification to be replaced by circuits | the relation, belief and speech entries |
 | 9 | One genome for all tasks | the whole suite from a single genome; then search over mutations | the suite within noise |
 
+The [audit of hand-written rules](hand-written-rules.md) lists, per step, the decisions the
+harness still makes for the network; each step removes those it replaces.
+
 **What stays outside the genome:** the world (stories, questions, the teacher), the word
 codes (the senses), and the score. Everything the network does with them belongs in it.

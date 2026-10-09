@@ -84,3 +84,31 @@ Better credit, not new rules:
   it is learned. This is the bottleneck attention gives, not a decision about which word.
 - **Attaching must not damage recall.** Store the held item as context (the store's context
   ids, which recall does not require to match), not as content.
+
+## Addendum: recall-tagged credit for the hold
+
+**Build** (default; `QHOLD_CREDIT=story` for the rule above). Taking a word into working
+memory gets the answer's outcome (+1 right, −1 wrong) only if an event it was stored with
+was recalled for that answer. Otherwise the take gets only STEP_COST, and leaving a word
+gets 0. Each hold decision now has an outcome of its own instead of a share of the story's.
+
+**Result** (question task, five seeds, held-out):
+
+| | Per seed | Mean |
+|---|---|---|
+| routing alone | 69.2 / 66.6 / 69.0 / 68.6 / 69.6 | 68.6 |
+| story-level credit (above) | 32.6 / 62.4 / 92.0 / 55.6 / 60.0 | 60.5 |
+| recall-tagged credit | 59.8 / 63.2 / 67.8 / 48.4 / 56.8 | 59.2 |
+
+At test the network holds nothing (0 holds on every seed). The errors are all season errors
+again (161–248 of 500).
+
+**Why.** A hold pays only through a chain: take the item, attach it to an event, store the
+event, and have it recalled for the answer. Early in training the chain almost never
+completes. So every take costs and nothing earns, and holding is extinguished before it can
+be useful. The result is still below routing alone because the early holds and attaches
+changed what was stored during training. Precise credit needs the chain to be reachable
+first: an exploration phase, or a cheaper first link. The more direct route is not to need
+the chain at all: [reinstatement](../concepts/hippocampal-functions.md#an-index-to-the-cortex-not-a-store-of-vectors)
+brings back the context the hold was approximating.
+

@@ -57,9 +57,15 @@ On seed 0:
 
 | | Word loop | L2/3 prediction phase | Learning and after | Held-out |
 |---|---|---|---|---|
-| event-driven | 271 s | 57% | 38% | 54.4 |
-| vectorized | 242 s | 46% | 49% | 54.4 |
-| default network (no primed layer) | 21 s | 52% | 12% | |
+| no primed layer (same entry and settings) | 159 s | 34% | 60% | 58.2 |
+| primed, event-driven | 271 s | 57% | 38% | 54.4 |
+| primed, vectorized | 242 s | 46% | 49% | 54.4 |
+| primed, vectorized, native instructions | 220 s | 47% | 49% | 54.4 |
+| no primed layer, native instructions | 150 s | 36% | 59% | 58.2 |
+
+*Correction:* the first version of this page compared with 21 s, a different entry run with
+default settings. On the same entry and settings the primed layer costs about 1.5× (+70 s
+with native instructions), not 11×.
 
 ## Findings
 1. **Primed L2/3 gains on average (+1.8).** It is the second learned replacement with a
@@ -75,8 +81,12 @@ On seed 0:
    before spikes and decides commitment. Their place is layer 5, where only bursts count.
 4. **Vectorized counting is exact but only 11% faster.** Counting is no longer the main
    cost. Per touched cell the layer still counts its connected synapses one by one, and
-   learning re-syncs the bitsets. The primed layer still costs about 11× the default
-   network.
+   learning re-syncs the bitsets.
+5. **The build was not using hardware popcount.** Without a target CPU, Rust compiles
+   `count_ones` to a software sequence for baseline x86-64. Building for the machine's own
+   instructions (`.cargo/config.toml`: `target-cpu=native`, with POPCNT and AVX-512's vector
+   popcount) gives identical results, 6% faster for the whole network and 9% for the primed
+   layer.
 
 Not a default yet.
 

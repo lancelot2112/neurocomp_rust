@@ -1,0 +1,4 @@
+# Use the build machine's instruction set: hardware popcount (POPCNT, AVX-512 VPOPCNTDQ) and
+# wide vector AND/XOR for the bit operations. Integer results are unchanged.
+[build]
+rustflags = ["-C", "target-cpu=native"]

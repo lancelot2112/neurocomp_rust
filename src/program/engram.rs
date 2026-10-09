@@ -927,6 +927,21 @@ impl EpisodicCircuit for EngramStore {
         Some((s, self.content_words(&self.row(s)?.what)))
     }
 
+    fn recall_here_all(&self, cue: &[usize]) -> (Vec<u32>, Vec<usize>) {
+        let here = place_key(&self.phase);
+        let (mut rows, mut words) = (Vec::new(), Vec::new());
+        for &s in self.place.get(&here).map_or(&[][..], |v| &v[..]) {
+            let Some(r) = self.row(s).filter(|r| r.place == here) else { continue };
+            if cue.iter().any(|&i| r.what.binary_search(&(i as u32)).is_ok()) {
+                rows.push(s);
+                words.extend(self.content_words(&r.what));
+            }
+        }
+        words.sort_unstable();
+        words.dedup();
+        (rows, words)
+    }
+
     fn end_sequence(&mut self) {
         self.prev_episode_rows = std::mem::take(&mut *self.episode_rows.borrow_mut());
         self.move_by(1);
@@ -1066,6 +1081,8 @@ mod tests {
         let (row, words) = m.recall_here(&event(&[5])).expect("found here");
         assert_eq!(m.row(row).unwrap().what, event(&[5, 6, 7]).iter().map(|&i| i as u32).collect::<Vec<_>>());
         assert!(!words.is_empty());
+        let (rows, _) = m.recall_here_all(&event(&[5]));
+        assert_eq!(rows.len(), 1, "only this story's event with the item");
         m.end_sequence();
         assert!(m.recall_here(&event(&[5])).is_none(), "a new story has nothing bound to the item yet");
     }

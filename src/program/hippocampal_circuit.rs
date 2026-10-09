@@ -594,6 +594,11 @@ pub trait EpisodicCircuit {
     fn recall_here(&self, _cue: &[usize]) -> Option<(u32, Vec<usize>)> {
         None
     }
+    /// As `recall_here`, but every event here that holds any of `cue`'s ids: their rows and
+    /// the union of their words (a cue matched by several traces completes to their blend).
+    fn recall_here_all(&self, _cue: &[usize]) -> (Vec<u32>, Vec<usize>) {
+        (Vec::new(), Vec::new())
+    }
     /// The row the latest store wrote or strengthened (for a caller that keeps something
     /// per row, e.g. the cortical state it was stored in).
     fn last_row(&self) -> Option<u32> {

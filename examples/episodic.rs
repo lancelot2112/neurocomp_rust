@@ -1593,6 +1593,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // event it was stored with. The event's words join the entorhinal feedback for the rest
     // of the sentence, and the event counts as used for the answer's credit.
     let qquery = std::env::var("QQUERY").is_ok();
+    let qquery_all = std::env::var("QQUERY").map_or(false, |v| v == "all");
+    let mut query_rows: Vec<u32> = Vec::new(); // QQUERY=all: every event the query blended
     let mut query_ec: Option<(u32, BitVector)> = None; // the query's event and its words' codes
     let mut query_stats = [0usize; 3]; // test, held-out: queries, an event found, the event holds the stranger's surname // the held word and its novelty when taken
     let mut hold_stats = [0usize; 4]; // test, held-out: stories with an item held, the stranger held, events attached, attached events recalled for the answer // test, held out: restatements by sentence start and k
@@ -3013,6 +3015,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         open_q = None;
         held_item = None;
         query_ec = None;
+        query_rows.clear();
         open_band = 7;
         restated = 0;
         restate_pending.clear();
@@ -3270,7 +3273,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let (true, Some((hw, _)), Some(hc), false) = (qquery, held_item, bind_hc.as_ref(), replaying) {
                         let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
                         if ids[t] == hw && !ids[..start].is_empty() && ids[..start].contains(&hw) {
-                            let found = hc.recall_here(&sparse_binding(&enc.codes[hw], hw, HELD_FIELD, false));
+                            let cue = sparse_binding(&enc.codes[hw], hw, HELD_FIELD, false);
+                            // QQUERY=all: every event bound with the item here, blended
+                            let found = if qquery_all {
+                                let (rows, words) = hc.recall_here_all(&cue);
+                                query_rows = rows.clone();
+                                (!rows.is_empty()).then(|| (rows[rows.len() - 1], words))
+                            } else {
+                                hc.recall_here(&cue)
+                            };
                             if testing && s.held_out {
                                 query_stats[0] += 1;
                                 query_stats[1] += found.is_some() as usize;
@@ -4141,6 +4152,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 answer_rows = r.ca1.clone();
                                 if let Some((qr, _)) = query_ec.as_ref() {
                                     answer_rows.push(*qr);
+                                    answer_rows.extend(query_rows.iter().copied());
                                 }
                             }
                             if hc_surprise && !reuse {

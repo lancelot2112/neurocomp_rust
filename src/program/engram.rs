@@ -942,6 +942,33 @@ impl EpisodicCircuit for EngramStore {
         (rows, words)
     }
 
+    fn recall_soft(&self, cue: &[usize], bonus: usize, max_rows: usize) -> (Vec<u32>, Vec<usize>) {
+        let here = place_key(&self.phase);
+        let mut hits: Vec<u32> = cue.iter().filter_map(|&i| self.what.get(i)).flatten().copied().collect();
+        hits.sort_unstable();
+        let mut scored: Vec<(usize, u32)> = Vec::new(); // (score, serial)
+        let mut i = 0;
+        while i < hits.len() {
+            let s = hits[i];
+            let mut o = 0;
+            while i < hits.len() && hits[i] == s {
+                o += 1;
+                i += 1;
+            }
+            if let Some(r) = self.row(s) {
+                scored.push((o + if r.place == here { bonus } else { 0 }, s));
+            }
+        }
+        let Some(top) = scored.iter().map(|x| x.0).max() else { return (Vec::new(), Vec::new()) };
+        let mut rows: Vec<u32> = scored.iter().filter(|x| x.0 == top).map(|x| x.1).collect();
+        rows.sort_unstable_by(|a, b| b.cmp(a)); // latest first
+        rows.truncate(max_rows.max(1));
+        let mut words: Vec<usize> = rows.iter().filter_map(|&s| self.row(s)).flat_map(|r| self.content_words(&r.what)).collect();
+        words.sort_unstable();
+        words.dedup();
+        (rows, words)
+    }
+
     fn end_sequence(&mut self) {
         self.prev_episode_rows = std::mem::take(&mut *self.episode_rows.borrow_mut());
         self.move_by(1);
@@ -1083,8 +1110,15 @@ mod tests {
         assert!(!words.is_empty());
         let (rows, _) = m.recall_here_all(&event(&[5]));
         assert_eq!(rows.len(), 1, "only this story's event with the item");
+        // soft: this story's event wins on the place bonus over the earlier story's
+        let (soft, _) = m.recall_soft(&event(&[5]), 2, 8);
+        assert_eq!(soft, vec![row]);
         m.end_sequence();
         assert!(m.recall_here(&event(&[5])).is_none(), "a new story has nothing bound to the item yet");
+        // soft: with nothing here, both earlier events with the item answer, latest first
+        let (soft, _) = m.recall_soft(&event(&[5]), 2, 8);
+        assert_eq!(soft.len(), 2);
+        assert_eq!(soft[0], row);
     }
 
     #[test]

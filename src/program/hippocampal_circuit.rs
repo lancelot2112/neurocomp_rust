@@ -599,6 +599,14 @@ pub trait EpisodicCircuit {
     fn recall_here_all(&self, _cue: &[usize]) -> (Vec<u32>, Vec<usize>) {
         (Vec::new(), Vec::new())
     }
+    /// Soft context-dependent recall: every event holding any of `cue`'s ids scores its
+    /// overlap with the cue plus `bonus` if it was stored at the current place; the events
+    /// with the top score (the latest `max_rows` of them) are blended: their rows and the
+    /// union of their words. An item bound in this episode recalls this episode's events;
+    /// an item this episode says nothing about recalls what it was bound with elsewhere.
+    fn recall_soft(&self, cue: &[usize], _bonus: usize, _max_rows: usize) -> (Vec<u32>, Vec<usize>) {
+        self.recall_here_all(cue)
+    }
     /// The row the latest store wrote or strengthened (for a caller that keeps something
     /// per row, e.g. the cortical state it was stored in).
     fn last_row(&self) -> Option<u32> {

@@ -137,6 +137,8 @@ const SLOW_SRC: u8 = 12;
 /// The cerebellum's source id in the mix and its thalamic channel (LEARNING=three).
 const CB_SRC: u8 = 13;
 const CB_CHANNEL: usize = 49;
+/// QQUERY with ROUTE: the held item's query answer as a routed channel.
+const Q_CHANNEL: usize = 50;
 /// Persist: anchor facts only appear in the first anchor_stories() training stories (env).
 fn anchor_stories() -> usize {
     std::env::var("ANCHOR_STORIES").ok().and_then(|v| v.parse().ok()).unwrap_or(300)
@@ -1595,6 +1597,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let qquery = std::env::var("QQUERY").is_ok();
     let qquery_all = std::env::var("QQUERY").map_or(false, |v| v == "all");
     let qquery_full = std::env::var("QQUERY_FULL").is_ok();
+    // QQUERY=soft: the query's cue is the item and the context as a weighted match (overlap
+    // with the item plus a bonus for this story's events), not a gate: a story that says
+    // nothing about the item answers with what it was bound to elsewhere.
+    // With ROUTE: the query's answer is a channel of its own (Q_CHANNEL), whose share and
+    // slot routing learns like any other's (87), instead of a share of the entorhinal slot.
+    let qquery_soft = std::env::var("QQUERY").map_or(false, |v| v == "soft");
     let mut query_rows: Vec<u32> = Vec::new(); // QQUERY=all: every event the query blended
     let mut query_ec: Option<(u32, BitVector)> = None; // the query's event and its words' codes
     let mut query_stats = [0usize; 3]; // test, held-out: queries, an event found, the event holds the stranger's surname // the held word and its novelty when taken
@@ -3276,7 +3284,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if ids[t] == hw && !ids[..start].is_empty() && ids[..start].contains(&hw) {
                             let cue = sparse_binding(&enc.codes[hw], hw, HELD_FIELD, false);
                             // QQUERY=all: every event bound with the item here, blended
-                            let found = if qquery_all {
+                            let found = if qquery_soft {
+                                // soft: item × context, a bonus for this story's events
+                                let (rows, words) = hc.recall_soft(&cue, 2, 8);
+                                query_rows = rows.clone();
+                                (!rows.is_empty()).then(|| (rows[0], words))
+                            } else if qquery_all {
                                 let (rows, words) = hc.recall_here_all(&cue);
                                 query_rows = rows.clone();
                                 (!rows.is_empty()).then(|| (rows[rows.len() - 1], words))
@@ -4520,6 +4533,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             hc_routed += 1;
                             BitVector::from_words(row)
                         }
+                    }
+                    _ => input,
+                };
+                // QQUERY with ROUTE: the held item's answer as a channel of its own
+                let input = match (route_on && qquery, query_ec.as_ref().filter(|_| !(testing && bind_lesion)), route_cur.clone()) {
+                    (true, Some((_, q)), Some((word, mut ch, slots))) if q.count_ones() > 0 => {
+                        if !route_order.contains(&Q_CHANNEL) {
+                            route_order.push(Q_CHANNEL);
+                        }
+                        ch.push((Q_CHANNEL, q.clone()));
+                        let key = ((if t > 0 { ids[t - 1] } else { vocab.len() }) * (vocab.len() + 1) + ids[t]) as u64 * 64;
+                        let shares: Vec<u64> = ch.iter().map(|(c, _)| if route_noscale { ONE as u64 } else { (2 * mix.rate(ROUTE_SRC + *c as u8, key) as u64).min(ONE as u64) }).collect();
+                        let row = route_row(&word, &ch, &shares, &route_order, slots, None);
+                        if let Some(st) = route_step.as_mut() {
+                            st.1 = ch.clone();
+                        }
+                        route_cur = Some((word, ch, slots));
+                        BitVector::from_words(row)
                     }
                     _ => input,
                 };
@@ -7082,7 +7113,7 @@ fn route_extra_slots() -> usize {
             // HC_EC: the entorhinal feedback slot; INNER_SLOT: the heard slot
             return std::env::var("HC_EC").is_ok() as usize + std::env::var("INNER_SLOT").is_ok() as usize;
         }
-        let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(false, |v| v == "three") as usize;
+        let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(false, |v| v == "three") as usize + std::env::var("QQUERY").is_ok() as usize;
         std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     })
 }

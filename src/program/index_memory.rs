@@ -61,11 +61,19 @@ pub struct IndexConfig {
     pub period: u32,
     /// Link each stored row to the next one (sequences).
     pub link: bool,
+    /// The place code (0: off): each episode (between `end_sequence` calls) has its own
+    /// `place_bits` input indices, drawn from `place_pool` ids starting at `place_base`.
+    /// Stored events include the current place's indices, and so does every cue: place
+    /// cells are more input, and the inverse weighting makes them count where this episode
+    /// has events (they are rare) and nowhere else (a new place matches nothing).
+    pub place_bits: usize,
+    pub place_pool: usize,
+    pub place_base: usize,
 }
 
 impl Default for IndexConfig {
     fn default() -> Self {
-        Self { cap: 4096, inverse: true, min_overlap: 16, write_strength: 128, novelty_bonus: 127, bump: 16, period: 64, link: true }
+        Self { cap: 4096, inverse: true, min_overlap: 16, write_strength: 128, novelty_bonus: 127, bump: 16, period: 64, link: true, place_bits: 0, place_pool: 4096, place_base: 0 }
     }
 }
 
@@ -93,6 +101,8 @@ pub struct IndexMemory {
     scores: RefCell<(Vec<u64>, Vec<u32>, Vec<u32>)>, // per-row score, overlap, touched rows
     recalls: Cell<usize>,
     work: Cell<u64>,
+    /// The current episode's number (the place code's seed).
+    place: u64,
 }
 
 impl IndexMemory {
@@ -110,7 +120,48 @@ impl IndexMemory {
             scores: RefCell::new((Vec::new(), Vec::new(), Vec::new())),
             recalls: Cell::new(0),
             work: Cell::new(0),
+            place: 0,
         }
+    }
+
+    /// The current place's input indices (empty when the place code is off).
+    fn place_ids(&self) -> Vec<usize> {
+        let mut v: Vec<usize> = (0..self.cfg.place_bits as u64)
+            .map(|j| {
+                let h = (self.place.wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (j + 1).wrapping_mul(0xBF58_476D_1CE4_E5B9)).rotate_left(17);
+                self.cfg.place_base + (h % self.cfg.place_pool.max(1) as u64) as usize
+            })
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    /// `cue` with the current place's indices.
+    fn with_place(&self, cue: &[usize]) -> Vec<usize> {
+        if self.cfg.place_bits == 0 {
+            return cue.to_vec();
+        }
+        let mut c = cue.to_vec();
+        c.extend(self.place_ids());
+        c
+    }
+
+    /// Every live row sharing an index with `cue` (place included), with its weighted score.
+    fn scored(&self, cue: &[usize]) -> Vec<(u64, u32)> {
+        let cue = self.with_place(cue);
+        let mut acc: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
+        for &i in &cue {
+            let n = self.n(i);
+            if n == 0 || n > self.cfg.cap {
+                continue;
+            }
+            let w = if self.cfg.inverse { recip32(n as u64) >> 16 } else { ONE as u64 };
+            for &r in &self.postings[i] {
+                *acc.entry(r).or_default() += w;
+            }
+        }
+        acc.into_iter().filter(|&(r, _)| self.strength(&self.rows[r as usize]) > 0).map(|(r, s)| (s, r)).collect()
     }
 
     /// A row's strength now (0 = forgotten).
@@ -179,7 +230,8 @@ impl IndexMemory {
     }
 
     fn recall_row(&self, cue: &[usize], bump: bool) -> Recall {
-        let (best, own) = self.best(cue);
+        let cue = self.with_place(cue);
+        let (best, own) = self.best(&cue);
         let Some((r, s, o)) = best else { return Recall::default() };
         let row = &self.rows[r as usize];
         if bump {
@@ -311,10 +363,11 @@ impl EpisodicCircuit for IndexMemory {
             return 0;
         }
         let mut keys: Vec<u32> = content.iter().chain(context).map(|&i| i as u32).collect();
+        let all: Vec<usize> = { let mut a: Vec<usize> = keys.iter().map(|&i| i as usize).collect(); a.sort_unstable(); a.dedup(); a };
+        let novelty = self.novelty(&all);
+        keys.extend(self.place_ids().into_iter().map(|i| i as u32));
         keys.sort_unstable();
         keys.dedup();
-        let all: Vec<usize> = keys.iter().map(|&i| i as usize).collect();
-        let novelty = self.novelty(&all);
         self.novelty_sum.0 += novelty as u64;
         self.novelty_sum.1 += 1;
         let unseen: Vec<usize> = content.iter().copied().filter(|&b| self.n(b) == 0).collect();
@@ -352,6 +405,41 @@ impl EpisodicCircuit for IndexMemory {
 
     fn end_sequence(&mut self) {
         self.last = None;
+        self.place += 1;
+    }
+
+    fn last_row(&self) -> Option<u32> {
+        (!self.rows.is_empty()).then(|| self.rows.len() as u32 - 1)
+    }
+
+    fn row_here(&self, row: u32) -> bool {
+        let ids = self.place_ids();
+        match (self.rows.get(row as usize), ids.first()) {
+            (Some(r), Some(&p)) => r.keys.binary_search(&(p as u32)).is_ok(),
+            _ => false,
+        }
+    }
+
+    fn recall_here_all(&self, cue: &[usize]) -> (Vec<u32>, Vec<usize>) {
+        let mut rows: Vec<u32> = self.scored(cue).into_iter().map(|x| x.1).filter(|&r| self.row_here(r)).collect();
+        rows.sort_unstable_by(|a, b| b.cmp(a));
+        let mut words: Vec<usize> = rows.iter().flat_map(|&r| self.rows[r as usize].out.clone()).collect();
+        words.sort_unstable();
+        words.dedup();
+        (rows, words)
+    }
+
+    fn recall_soft(&self, cue: &[usize], _bonus: usize, max_rows: usize) -> (Vec<u32>, Vec<usize>) {
+        // the place indices are part of the cue: this episode's events lead by their weight
+        let sc = self.scored(cue);
+        let Some(top) = sc.iter().map(|x| x.0).max() else { return (Vec::new(), Vec::new()) };
+        let mut rows: Vec<u32> = sc.iter().filter(|x| x.0 * 4 >= top * 3).map(|x| x.1).collect();
+        rows.sort_unstable_by(|a, b| b.cmp(a));
+        rows.truncate(max_rows.max(1));
+        let mut words: Vec<usize> = rows.iter().flat_map(|&r| self.rows[r as usize].out.clone()).collect();
+        words.sort_unstable();
+        words.dedup();
+        (rows, words)
     }
 
     fn mark_consolidated(&self, start: &[u32]) {
@@ -415,6 +503,26 @@ mod tests {
 
     fn overlap(a: &[usize], b: &[usize]) -> usize {
         a.iter().filter(|x| b.contains(x)).count()
+    }
+
+    /// The place code: the same partial cue recalls this episode's event, not an earlier
+    /// episode's similar one, and a new place matches nothing of its own.
+    #[test]
+    fn place_cells_prefer_this_episode() {
+        let cfg = IndexConfig { place_bits: 16, place_base: 1 << 14, min_overlap: 4, ..IndexConfig::default() };
+        let mut m = IndexMemory::new(cfg);
+        let old = episode(&[1, 2, 3]); // "lucy went bedroom" in an earlier story
+        m.store(&old);
+        m.end_sequence();
+        let here = episode(&[1, 4, 5]); // "lucy came" in this story
+        m.store(&here);
+        let r = m.recall(&episode(&[1, 2])); // the cue matches the old event's words better
+        assert_eq!(r.ec, here, "this episode's event wins on its place cells");
+        assert!(m.row_here(r.ca3[0]));
+        m.end_sequence();
+        let r = m.recall(&episode(&[1, 2]));
+        assert_eq!(r.ec, old, "in a new place, content decides");
+        assert!(!m.row_here(r.ca3[0]));
     }
 
     /// The one-shot test of the hippocampal circuit: one rare episode among many common

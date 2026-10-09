@@ -1302,6 +1302,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         cfg.inverse = std::env::var("INDEX_PLAIN").is_err();
         cfg.cap = henv("INDEX_CAP", 4096.0) as usize;
         cfg.min_overlap = henv("INDEX_MIN", 16.0) as u32;
+        // INDEX_PLACE=k: the place code as k input indices per story (place cells as more
+        // input), in a range above the binding fields
+        cfg.place_bits = henv("INDEX_PLACE", 0.0) as usize;
+        cfg.place_base = (2 * SPARSE_FIELDS + 1) * BITS;
         index_hc = Some(Box::new(IndexMemory::new(cfg)) as Box<dyn EpisodicCircuit>);
     }
     let mut bind_hc = (std::env::var("HIPPO").map_or(false, |v| v == "full")).then(|| {

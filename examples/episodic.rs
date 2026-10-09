@@ -1567,7 +1567,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut restate_open: Option<usize> = None; // the restatement whose event is not stored yet
     let mut answer_rows: Vec<u32> = Vec::new(); // the events recalled for the answer
     let mut q_credit = [0usize; 3]; // test, held out: restatements, recalled for the answer, recalled and right
-    let mut q_choice: HashMap<String, usize> = HashMap::default(); // test, held out: restatements by sentence start and k
+    let mut q_choice: HashMap<String, usize> = HashMap::default();
+    // QHOLD (with HIPPO_SELF, SPARSE_BIND, engram): the self-taught question act. No sentence
+    // is rewritten and nothing names the item from outside.
+    // - Novelty: the hippocampus's own novelty for a word's binding (1 − its recall match),
+    //   measured as the word is bound.
+    // - Holding: a binding more novel than the one held takes working memory (QHOLD=novel:
+    //   when its novelty is at least 3/4; QHOLD=learned: the basal ganglia choose hold or
+    //   ignore per novelty band, rewarded at the story's answer less STEP_COST).
+    // - Binding: the held item is active, so it is part of every cue, and at a sentence's
+    //   end it may be stored with that sentence's event, in a field of its own (QATTACH=all:
+    //   every later sentence; QATTACH=learned: the basal ganglia choose per sentence, keyed
+    //   by its first two words, credited by recall: the attached event recalled for the
+    //   answer gets the outcome).
+    // - Use: recall reaches the column as usual (HC_EC: entorhinal context), so the fact
+    //   bound with the held item can shape the answer.
+    let qhold = std::env::var("QHOLD").ok();
+    let qhold_learned = qhold.as_deref() == Some("learned");
+    let qattach = std::env::var("QATTACH").ok();
+    let qattach_learned = qattach.as_deref() == Some("learned");
+    let mut held_item: Option<(usize, Q16)> = None; // the held word and its novelty when taken
+    let mut hold_stats = [0usize; 4]; // test, held-out: stories with an item held, the stranger held, events attached, attached events recalled for the answer // test, held out: restatements by sentence start and k
     let mut restated = 0usize;
     let mut q_stats = [0usize; 4]; // test, held-out stories: questions asked, restatements, restatements naming the stranger's sentence ("the person"), answers right after a restatement
     let mut inner_diag = 0usize;
@@ -2983,6 +3003,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         rolled = 0;
         rolled_surname = None;
         open_q = None;
+        held_item = None;
         open_band = 7;
         restated = 0;
         restate_pending.clear();
@@ -3212,6 +3233,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     bind_list.push((ids[t], c));
                     bind_sentence.push(b);
                     bind_sentence_pairs.push((ids[t], c));
+                    if let (Some(_), Some(hc), false) = (qhold.as_deref(), bind_hc.as_ref(), replaying) {
+                        let nov = hc.novelty(&sparse_binding(code, ids[t], c, false));
+                        if held_item.map_or(true, |(_, hn)| nov > hn) {
+                            let take = if qhold_learned {
+                                let band = (nov as u64 * 4 >> 16).min(3) as usize;
+                                let ctx = 6000 + band * 2 + held_item.is_some() as usize;
+                                let cands = [step_code(ctx, 0), step_code(ctx, 1)];
+                                let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
+                                if !testing {
+                                    step_pending.push((cands[a].clone(), a == 1));
+                                }
+                                a == 1
+                            } else {
+                                nov >= ONE * 3 / 4
+                            };
+                            if take {
+                                held_item = Some((ids[t], nov));
+                            }
+                        }
+                    }
                 }
                 slot_prev = slot;
             }
@@ -4008,6 +4049,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
                                 let mut idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
                                 idx.extend(bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)));
+                                // what is held in working memory is active, so it cues too
+                                if let Some((hw, _)) = held_item {
+                                    idx.extend(sparse_binding(&enc.codes[hw], hw, HELD_FIELD, false));
+                                }
                                 idx.sort_unstable();
                                 idx.dedup();
                                 if cue_ctl && !bind_sentence_pairs.is_empty() {
@@ -4870,7 +4915,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                         }
                 }
-                if question_act.is_some() && t + 1 == s.answer_at {
+                if qhold.is_some() && testing && s.held_out && t + 1 == s.answer_at {
+                    if let Some((hw, _)) = held_item {
+                        hold_stats[0] += 1;
+                        hold_stats[1] += NEW_NAMES.contains(&vocab[hw]) as usize;
+                    }
+                }
+                if (question_act.is_some() || qattach_learned) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     if std::env::var("QDIAG").is_ok() && testing && s.held_out && q_credit[0] < 6 {
                         eprintln!("  QDIAG open {:?}; answer rows {:?}; restatements {:?}; story {:?}", open_q.map(|w| vocab[w]), answer_rows, restate_pending.iter().map(|x| (x.1, x.2)).collect::<Vec<_>>(), s.words);
@@ -4882,13 +4933,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             q_credit[1] += used as usize;
                             q_credit[2] += (used && right) as usize;
                         }
-                        if question_learned && !testing {
+                        if testing && s.held_out && used && qattach_learned {
+                            hold_stats[3] += 1;
+                        }
+                        if (question_learned || qattach_learned) && !testing {
                             let r = if used { if right { ONE as i32 } else { -(ONE as i32) } } else { 0 } - if acted { step_cost } else { 0 };
                             step_bg.reward_candidate(&code, r, &mut bg_rng);
                         }
                     }
                 }
-                if (step_learned || inner_learned || question_learned) && t + 1 == s.answer_at {
+                if (step_learned || inner_learned || question_learned || qhold_learned) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     for (code, stepped) in step_pending.drain(..) {
                         step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut bg_rng);
@@ -5531,12 +5585,35 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                             if sparse_bind {
                                 let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
-                                let content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                                let mut content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                                // the held item, stored with this event if attached
+                                let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
+                                let attach = match (held_item, qattach.as_deref()) {
+                                    (Some((hw, _)), Some(mode)) if !ids[start..t].contains(&hw) && t > start + 1 => {
+                                        if mode == "learned" {
+                                            let ctx = 7000 + ids[start] * (vocab.len() + 1) + ids[start + 1];
+                                            let cands = [step_code(ctx, 0), step_code(ctx, 1)];
+                                            let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
+                                            restate_pending.push((cands[a].clone(), a == 1, None));
+                                            (a == 1).then_some(hw)
+                                        } else {
+                                            Some(hw)
+                                        }
+                                    }
+                                    _ => None,
+                                };
+                                if let Some(hw) = attach {
+                                    content_idx.extend(sparse_binding(&enc.codes[hw], hw, HELD_FIELD, false));
+                                    hold_stats[2] += (testing && s.held_out) as usize;
+                                }
                                 let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)).collect();
                                 hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
                                 if let (Some(i), Some(r), true) = (restate_open, hc.last_row(), inner[t]) {
                                     restate_pending[i].2 = Some(r);
                                     restate_open = None;
+                                }
+                                if let (true, Some(r), Some(last)) = (qattach_learned && attach.is_some(), hc.last_row(), restate_pending.last_mut()) {
+                                    last.2 = Some(r);
                                 }
                                 if let Some(r) = hc.last_row() {
                                     row_narrator.insert(r, narrator + 1);
@@ -6206,6 +6283,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 cw.iter().filter(|x| NEW_NAMES.iter().any(|n| x.0.contains(n))).take(16).collect::<Vec<_>>()
             );
         }
+        if qhold.is_some() {
+            eprintln!("  QHOLD seed {seed}: in held-out test stories, an item held at {} answers ({} the stranger); {} events stored with it, {} of them recalled for the answer", hold_stats[0], hold_stats[1], hold_stats[2], hold_stats[3]);
+        }
         if question_act.is_some() {
             let mut qc: Vec<_> = q_choice.iter().collect();
             qc.sort_by(|a, b| b.1.cmp(a.1));
@@ -6512,6 +6592,8 @@ fn fam_count(hc: &Option<Box<dyn EpisodicCircuit>>, mem: &EpisodicMemory, own: b
 /// `slot`, in the slot's own 8,192-bit field (context bindings in a second set of fields),
 /// so a bit belongs to essentially one binding.
 const SPARSE_FIELDS: usize = 64;
+/// QHOLD: the field of the item held in working memory (a content field no sentence reaches).
+const HELD_FIELD: usize = SPARSE_FIELDS - 1;
 
 fn engram_mode() -> bool {
     static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();

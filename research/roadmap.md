@@ -364,7 +364,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
      built ([92](experiments/92-reinstatement.md)): +1.4 on the question task, destructive when
      other stories' states are reinstated, neutral when restricted to this story. An
      acetylcholine-like mode from the episode's novelty (built) gates it safely without a
-     rule; next, its signal from the same retrieval that reinstates; then a
+     rule; with its signal from the same retrieval that reinstates
+     ([93](experiments/93-neuromodulated-hippocampus.md)): 68.6 → 72.7 on the question task,
+     safe on the suite; next, five seeds on every engram entry. Then a
      norepinephrine-like gain (salience tag, adaptive exploration)
      ([neuromodulation](concepts/hippocampal-functions.md#acetylcholine-and-norepinephrine-modes-of-the-hippocampus));
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and

@@ -97,7 +97,7 @@ encoding and retrieval (Hasselmo; Hasselmo, Bodelón & Wyble 2002):
 
 | Function | Ours |
 |---|---|
-| Encoding vs retrieval mode | missing: every step stores and recalls at full strength ([90](../experiments/90-holding-an-open-question.md): recall matched the sentence and pulled in old stories; [92](../experiments/92-reinstatement.md): reinstatement always at full strength) |
+| Encoding vs retrieval mode | built as an option (`ACH`, [93](../experiments/93-neuromodulated-hippocampus.md)): novelty of the episode from the reinstating retrieval gates reinstatement. Before it, every step stored and recalled at full strength ([90](../experiments/90-holding-an-open-question.md): recall matched the sentence and pulled in old stories; [92](../experiments/92-reinstatement.md): reinstatement always at full strength) |
 | Mode from CA1's mismatch | partly: the hippocampus's novelty is computed (the learned hold uses it) but sets no mode |
 | Low acetylcholine: replay | present (sleep replay, consolidation) |
 | Salience tag strengthening storage | partly: `REPLAY_TAGGED` (replay priority), growth on surprise; storage strength is not modulated |

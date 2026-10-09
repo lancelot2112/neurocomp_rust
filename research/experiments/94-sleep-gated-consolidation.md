@@ -89,3 +89,40 @@ The two leads above:
 - **Replay as evidence:** each replay in which a kernel predicts the trace's answer counts as
   a hit, so consolidated kernels arrive with the evidence they need.
 
+## Addendum 2: a replay bug, and consolidation reaching the slow cortex
+
+**The bug.** Learning (`KernelClass::feedback`) credits hits and misses to the kernels that
+matched at the *last prediction*, and decides growth from the last winner. Consolidation
+replay called `learn` on the replayed input without predicting it first. Every replay was
+therefore credited against whatever the network last predicted while awake. With the
+surprise gate on, if that stale winner happened to predict the replayed answer, learning was
+skipped entirely. This affects replay into the higher area in the default suite too, so the
+recorded figures carry it. `REPLAY_PREDICT=1` predicts each replayed input before learning
+it, at all six replay sites (higher area, association area, column).
+
+**Results** (five seeds, held-out):
+
+| Entry | Recorded | Default + fix | Three + sleep-gated (above) | Three + sleep-gated + fix |
+|---|---|---|---|---|
+| family consolidated | 52.0 | 52.3 | 41.3 | **47.7** |
+| hippocampus teaches cortex | 60.9 | 57.4 | 45.4 | **51.5** |
+| index hippocampus | 66.0 | 56.3 | 31.8 | 34.1 |
+| engram store | 67.4 | 66.6 | 40.8 | **45.4** |
+| semantic store | 63.1 | 66.1 | 35.7 | 38.6 |
+
+Under three systems, hippocampus teaches cortex on seed 0: the column alone is right at
+**21.2%** of test answers (0.0% before), the mix 69.5%, all sources agreeing 18.8% of the time
+(93% right then).
+
+1. **Consolidation now reaches the slow cortex.** Under three learning systems every entry
+   rises by 2–6 points, and the slow column answers for the first time. The gap to the default
+   narrows: family consolidated 47.7 vs 52.0, hippocampus teaches cortex 51.5 vs 60.9.
+2. **In the default network the fix is mixed:** semantic store +3, index hippocampus −10,
+   others within noise. There the higher area had been learning from replay with the stale
+   credit, and the suite's figures were recorded that way.
+3. The column's winner-take-all still favours the general "the → cat" kernel most of the
+   time (the column alone right at 21%). The specificity and evidence leads above remain.
+
+`REPLAY_PREDICT` stays an option: it is correct, but it changes recorded figures in both
+directions, so it needs the full suite at five seeds before it becomes the default.
+

@@ -1407,6 +1407,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // STORE_TEST=1: the hippocampus encodes test stories too (it is never off); without it,
     // only training stories are stored (QUESTION stores test events by itself)
     let store_test = std::env::var("STORE_TEST").is_ok();
+    // REINSTATE_TOP=k: the states of the best k events are reinstated (default 4); 1 is the
+    // best event's own state only
+    let reinstate_top: usize = std::env::var("REINSTATE_TOP").ok().and_then(|v| v.parse().ok()).unwrap_or(4).max(1);
     let reinstate_bonus: usize = std::env::var("REINSTATE_BONUS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
     let mut row_cortex: HashMap<u32, BitVector> = HashMap::default(); // engram row → the cortical state it was stored in
     let mut reinstate_stats = [0u64; 3]; // test steps: reinstated, from this story's events only, bits reinstated
@@ -3887,10 +3890,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let (rows, _) = if reinstate_here {
                             let (mut r, w) = hc.recall_here_all(&cue);
                             r.sort_unstable_by(|a, b| b.cmp(a));
-                            r.truncate(4);
+                            r.truncate(reinstate_top);
                             (r, w)
                         } else {
-                            hc.recall_soft(&cue, reinstate_bonus, 4)
+                            hc.recall_soft(&cue, reinstate_bonus, reinstate_top)
                         };
                         // ACH with REINSTATE: the mode's signal comes from this same retrieval.
                         // Its best event from this story: familiar here (CA1's mismatch on
@@ -6417,9 +6420,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  NE seed {seed}: {} salient sentences stored twice; mean exploration in training {:.2}, final {:.2}", ne_stats[0], ne_stats[2] as f64 / (ne_stats[1].max(1) as f64 * ONE as f64), to_f32(step_bg.explore));
         }
         if ach_on {
-            eprintln!("  ACH seed {seed}: mean level at test {:.2}", ach_stats[1] as f64 / (ach_stats[0].max(1) as f64 * ONE as f64));
+            if bind_lesion {
+                eprintln!("  ACH seed {seed}: hippocampus lesioned at test (no recall, no reinstatement, no update); mean level in the last training stories {:.2}", to_f32(ach));
+            } else {
+                eprintln!("  ACH seed {seed}: mean level at test {:.2}", ach_stats[1] as f64 / (ach_stats[0].max(1) as f64 * ONE as f64));
+            }
         }
-        if reinstate {
+        if reinstate && bind_lesion {
+            eprintln!("  REINSTATE seed {seed}: hippocampus lesioned at test: reinstatement in training only");
+        } else if reinstate {
             eprintln!("  REINSTATE seed {seed}: at test, a cortical state reinstated at {} steps (mean {} bits of context with it)", reinstate_stats[0], reinstate_stats[2] / reinstate_stats[0].max(1));
         }
         if qhold.is_some() {

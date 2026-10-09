@@ -56,3 +56,6 @@ pub use speech::{OutputBuffer, PhonologicalLoop, Spoken};
 
 pub mod motor;
 pub use motor::{MotorArea, VocalTract};
+
+pub mod boundary;
+pub use boundary::BoundaryCell;

@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{BoundaryCell, Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1725,6 +1725,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // 0.5). The boundary lies just after the older fact: each area forgets it and everything
     // older (`HigherArea::forget_through`)
     let bound_detect = std::env::var("BOUNDARY").is_ok();
+    // EVENT_BOUNDARY=learned: no "." trigger. An event-boundary cell (BoundaryCell) learns from
+    // the column's surprise which inputs precede unpredictable stretches, and its firing ends
+    // the event: storage, resets and everything else the "." used to trigger. BOUND_MIN is
+    // its refractory span, BOUND_MAX the longest event it holds. The page's end still closes
+    // the last event.
+    let learned_bound = std::env::var("EVENT_BOUNDARY").map_or(false, |v| v == "learned");
+    let bound_min: usize = std::env::var("BOUND_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    let bound_max: usize = std::env::var("BOUND_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
+    let mut bcell = BoundaryCell::new(BITS, bound_min, bound_max);
+    let mut bound_stats = [0usize; 3]; // at test: boundaries, of them at ".", periods
     let bound_kind: Q16 = q16(std::env::var("BOUNDARY_KIND").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
     // context signature per word: the words seen just before (< V) and just after (V + w)
     let mut word_ctx: Vec<neurocomp::det::HashSet<usize>> = vec![neurocomp::det::HashSet::default(); vocab.len()];
@@ -3253,6 +3263,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         let mut t_next = 0;
+        let mut seg_start = 0usize; // where the current event began (EVENT_BOUNDARY=learned)
+        bcell.reset();
         while t_next < ids.len() {
             // (a while loop: completion can insert an internal word into the stream)
             let t = t_next;
@@ -3340,6 +3352,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 eff_stats[2] += (altered && share < predicted_share) as usize;
                 eff_stats[3] += (!altered && share < predicted_share) as usize;
             }
+            if learned_bound && !replaying {
+                bcell.learn(ONE - share);
+            }
             if sent_words == 0 {
                 first_surprise = to_f32(ONE - share); // report
             }
@@ -3422,7 +3437,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     // the held item read again: it queries what was stored with it here
                     if let (true, Some((hw, _)), Some(hc), false) = (qquery, held_item, bind_hc.as_ref(), replaying) {
-                        let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
+                        let start = if learned_bound { seg_start } else { s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1) };
                         if ids[t] == hw && !ids[..start].is_empty() && ids[..start].contains(&hw) {
                             let cue = sparse_binding(&enc.codes[hw], hw, HELD_FIELD, false);
                             // QQUERY=all: every event bound with the item here, blended
@@ -3921,7 +3936,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let own = column.l23.peek_scored(&l4_row(&column, code, &vec![empty; l4_mid], route_on.then_some(&route_order[..])));
                         let conf = own.map_or(0, |(_, c)| c);
                         own_conf_step = conf;
-                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                         let (cue, cue_fam) = if hippo_self {
                             bind_sentence_pairs
                                 .iter()
@@ -4486,7 +4501,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let sem_cue_w: Option<usize> = if hippo_self {
                     bind_sentence_pairs.iter().zip(&bind_sentence).min_by_key(|((w, c), b)| fam_binding(&bind_hc, &bind_mem, true, sparse_bind, b, &enc.codes[*w], *w, *c)).map(|((w, _), _)| *w)
                 } else {
-                    let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                    let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                     ids[start..=t].iter().min_by_key(|&&w| word_count[w]).copied()
                 };
                 let mut fed_vec: Option<BitVector> = None;
@@ -4569,7 +4584,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                             (g.count_ones() >= 24).then_some(g)
                         };
-                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                         let sem_out = semantic_reps.and(sem_cue_w).and_then(|cw| sem_read(&sem_store, &enc.codes, cw, slot_in(&bind_sentence_pairs, cw), sem_typed, roles.used(), true, &sem_frames, rel_reps.map(|_| (&rel, rel_hops)), &bind_sentence_pairs));
                         let fed = [
                             bind_raw.as_ref().filter(|_| !(testing && bind_lesion) && !hc_ec).and_then(|v| gate(v)).map(|v| (v, 0usize)),
@@ -4632,7 +4647,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let k = if !testing { 0 } else if s.held_out { 2 } else { 1 };
                     complete_stats[k] += 1;
                     if k == 2 {
-                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                         *complete_words.entry(format!("{} -> {}", s.words[start..=t].join(" "), vocab[w])).or_default() += 1;
                     }
                     ids.insert(t + 1, w);
@@ -4659,7 +4674,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 if let (false, Some(mode), Some(w), false, false) = (rollout || inner_speech, complete.as_deref(), bind_answer.filter(|_| !hc_ec), completed_sentence, testing && bind_lesion) {
                     let ov = |i: usize, v: &BitVector| enc.codes[i].as_words().iter().zip(v.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                     let band = bind_sentence.iter().zip(&bind_sentence_pairs).map(|(b, &(w, c))| fam_binding(&bind_hc, &bind_mem, hippo_self, sparse_bind, b, &enc.codes[w], w, c)).min().map_or(7, |c| (64 - c.leading_zeros() as u64).min(7));
-                    let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                    let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                     let skipped = ov(ids[t + 1], &expect_prev) < 24;
                     let fresh = w != ids[t + 1] && !ids[start..=t].contains(&w) && s.words[t + 1] != ".";
                     if skipped && fresh && band < 4 && (testing || mode != "test") {
@@ -4881,7 +4896,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let best_right = mk.iter().filter(|k| enc.decode(&k.2) == Some(next)).map(|k| (k.0, k.1)).max();
                             let best_any = mk.iter().map(|k| (k.0, k.1, enc.decode(&k.2).map(|w| vocab[w]))).max();
                             eprintln!("  OWNDIAG matched {} kernels, {} propose a place, {} the answer; best for the answer (depth, rate) {:?}; best overall {:?}", mk.len(), n_place, n_right, best_right, best_any);
-                            eprintln!("  OWNDIAG {:?}: column says {:?} ({} bits), answer {}", &s.words[s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1)..=t], own.map(|w| vocab[w]), out.count_ones(), vocab[next]);
+                            eprintln!("  OWNDIAG {:?}: column says {:?} ({} bits), answer {}", &s.words[if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) }..=t], own.map(|w| vocab[w]), out.count_ones(), vocab[next]);
                         }
                     }
                     // the cortex's class: every word in its possible continuations
@@ -5110,7 +5125,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let said = enc.decode(&said_vec).filter(|&w| definite && fits(w) && w != next && vocab[w] != ".");
                     if std::env::var("INNERDIAG").is_ok() && testing && s.held_out && NEW_NAMES.iter().any(|n| s.words[..=t].contains(n)) && inner_diag < 40 {
                         inner_diag += 1;
-                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                         eprintln!("  INNERDIAG {:?} | page {} | out {:?} recalled {:?} definite {definite} rolled {rolled} -> said {:?}", &s.words[start..=t], vocab[next], enc.decode(&out).map(|w| vocab[w]), bind_answer.map(|w| vocab[w]), said.map(|w| vocab[w]));
                     }
                     if let Some(w) = said {
@@ -5140,7 +5155,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let k = if s.held_out { 2 } else { 1 };
                                 complete_stats[k] += 1;
                                 if k == 2 {
-                                    let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                                    let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                                     *complete_words.entry(format!("{} -> {}", s.words[start..=t].join(" "), vocab[w])).or_default() += 1;
                                 }
                             } else {
@@ -5252,7 +5267,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 } else if bind && consolidate_steps && !testing && !replaying && fam_band < 4 && enc.decode(&out) != Some(next) && s.words[t + 1] != "." {
                     let input = if consolidate_assoc {
-                        let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                        let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                         let mut bag = BitVector::new(BITS, Some(0));
                         for &w in &ids[start..=t] {
                             if sentence_count > 50 && (word_count[w] as u64) * 100 < sentence_count as u64 {
@@ -5443,9 +5458,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // the basal ganglia release speech or hold it; the motor area says it
                             let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
                             let nov = if cortex_fam_on {
-                                exposure_band(&word_count, &ids, &s.words, t)
+                                exposure_band(&word_count, &ids, if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) }, t)
                             } else if kernel_fam_on {
-                                sentence_familiarity(&cortex_fam, &ids, &s.words, t)
+                                sentence_familiarity(&cortex_fam, &ids, if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) }, t)
                             } else {
                                 fam_band
                             };
@@ -5475,7 +5490,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             speech.speak(enc.decode(&out), c, Some(next), s.held_out as u8)
                         };
                         if s.held_out && speech.score(Some(1)).2 % 80 == 1 {
-                            let q_start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+                            let q_start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                             transcripts.push(format!("{:?} -> said {:?} (page: {})", &s.words[q_start..=t], said.map_or("unknown", |w| vocab[w]), vocab[next]));
                         }
                         let gap = std::env::var("SILENCE").map_or(false, |v| v == "gap");
@@ -5510,9 +5525,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let c = mix_conf.unwrap_or_else(|| column.confidence());
                     let cb = CONF_BANDS.iter().filter(|&&e| c >= e).count();
                     let nov = if cortex_fam_on {
-                        exposure_band(&word_count, &ids, &s.words, t)
+                        exposure_band(&word_count, &ids, if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) }, t)
                     } else if kernel_fam_on {
-                        sentence_familiarity(&cortex_fam, &ids, &s.words, t)
+                        sentence_familiarity(&cortex_fam, &ids, if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) }, t)
                     } else {
                         fam_band
                     };
@@ -5840,9 +5855,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 gate_pending = None;
             }
 
-            if ids[t] == full_stop && hier && bound_detect {
+            // the event ends here: at "." (default), or where the boundary cell fires
+            let boundary_now = if learned_bound {
+                let fired = bcell.observe(&set_bits(&enc.codes[ids[t]])) || t + 1 == ids.len();
+                if testing && !replaying {
+                    bound_stats[0] += fired as usize;
+                    bound_stats[1] += (fired && ids[t] == full_stop) as usize;
+                    bound_stats[2] += (ids[t] == full_stop) as usize;
+                }
+                fired
+            } else {
+                ids[t] == full_stop
+            };
+            // the event's words: [seg_lo, seg_hi) (the "." itself excluded by default)
+            let (seg_lo, seg_hi) = if learned_bound { (seg_start, t + 1) } else { (s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1), t) };
+            if boundary_now && hier && bound_detect {
                 if testing {
-                    let opening = !s.words[..t].contains(&".");
+                    let opening = seg_lo == 0;
                     story_openings += opening as usize;
                     if bound_fired {
                         if opening {
@@ -5854,7 +5883,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 bound_fired = false;
             }
-            if ids[t] == full_stop {
+            if boundary_now {
                 query_ec = None;
                 // one-shot: the whole sentence (or its unpredicted part) is one episode.
                 // Persist: test questions are not stored, or the first anchor question
@@ -5897,14 +5926,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let n_prev = bind_list.len().saturating_sub(bind_sentence_pairs.len());
                                 let mut content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
                                 // the held item, stored with this event if attached
-                                let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
+                                let start = if learned_bound { seg_start } else { s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1) };
                                 let attach = match (held_item, qattach_learned) {
-                                    (Some((hw, _)), true) if !ids[start..t].contains(&hw) && t > start + 1 => {
+                                    (Some((hw, _)), true) if !ids[start..seg_hi].contains(&hw) && seg_hi > start + 1 => {
                                         // the choice's code is the sentence itself (its words'
                                         // codes, shifted per action) plus a per-action bias, so
                                         // what is learned carries over to sentences sharing words
                                         let mut bag = BitVector::new(BITS, Some(0));
-                                        for &w in &ids[start..t] {
+                                        for &w in &ids[start..seg_hi] {
                                             bag.or_mut(&enc.codes[w]);
                                         }
                                         let cands: Vec<BitVector> = (0..2)
@@ -5945,7 +5974,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 // slow state at the sentence's start), kept per row for replay
                                 if let (true, Some(r)) = (infer_reps.is_some() && hier, hc.last_row()) {
                                     row_state.insert(r, set_bits(&area.state(&BitVector::new(BITS, Some(0)))).into_iter().map(|b| b as u32).collect());
-                                    let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
+                                    let start = if learned_bound { seg_start } else { s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1) };
                                     row_prefix.insert(r, ids[..start].to_vec());
                                 }
                             } else {
@@ -5963,7 +5992,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 bind_sentence_pairs.clear();
                 if proposals_on && !testing && !replaying && !proposals.is_empty() {
                     // what is read confirms or contradicts the proposals of this season
-                    let sent: Vec<usize> = s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect::<Vec<_>>().into_iter().rev().collect();
+                    let sent: Vec<usize> = s.words[seg_lo..seg_hi].iter().map(|w| index[w]).collect();
                     if let (Some(season), Some(&first)) = (s.words.iter().find_map(|w| SEASONS.iter().position(|x| x == w)), sent.first()) {
                         for ((ps, pw), e) in proposals.iter_mut() {
                             if *ps != season || pw.first() != Some(&first) || pw.len() != sent.len() {
@@ -5979,11 +6008,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 if rel_reps.is_some() && !testing && !replaying {
-                    let fact: Vec<usize> = s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect();
+                    let fact: Vec<usize> = s.words[seg_lo..seg_hi].iter().rev().map(|w| index[w]).collect();
                     rel.observe_from(&fact.into_iter().rev().collect::<Vec<_>>(), narrator + 1);
                 }
                 if semantic_reps.is_some() && !testing && !replaying && !hippo_self {
-                    sem_buf.push(s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".").map(|w| index[w]).collect());
+                    sem_buf.push(s.words[seg_lo..seg_hi].iter().rev().map(|w| index[w]).collect());
                 }
                 completed_sentence = false;
                 rolled = 0;
@@ -6000,13 +6029,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // word frequencies (per sentence), for read-back's "rare"
                 sentence_count += !replaying as u32;
                 if testing {
-                    let first_of_story = !s.words[..t].contains(&".");
+                    let first_of_story = seg_lo == 0;
                     bound_log.push((first_of_story, sent_surprise / sent_words.max(1) as f32, first_surprise));
                 }
                 sent_surprise = 0.0;
                 sent_words = 0;
                 sent_surprises = 0;
-                for w in s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".") {
+                for w in &s.words[seg_lo..seg_hi] {
                     word_count[index[w]] += !replaying as u32;
                 }
                 // read-back: say back the most recent rare word held, hear it
@@ -6027,7 +6056,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             // the probe: the cue "." in the sentence frame (end of sentence: say
                             // back) and the area's state; an area reading from above gets an
                             // empty frame there
-                            let cue = &enc.codes[full_stop];
+                            let cue = &enc.codes[if learned_bound { ids[t] } else { full_stop }];
                             let x = if (k == n && n > 0 && !chain_mix) || (k + 1 < n && !chain_mix) {
                                 a.input_with(cue, &empty, Some(&empty))
                             } else {
@@ -6055,6 +6084,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
+            }
+            if boundary_now {
+                seg_start = t + 1;
             }
             prev = Some(ids[t]);
         }
@@ -6684,6 +6716,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 .collect();
             eprintln!("  ROLES seed {seed}: {} cells recruited; what filled each cell's slot at test: {}", roles.used(), parts.join(" | "));
         }
+        if learned_bound {
+            eprintln!(
+                "  EVENT_BOUNDARY seed {seed}: at test, {} boundaries, {} of them at \".\" ({:.1}%); {:.1}% of the {} periods closed an event",
+                bound_stats[0],
+                bound_stats[1],
+                100.0 * bound_stats[1] as f64 / bound_stats[0].max(1) as f64,
+                100.0 * bound_stats[1] as f64 / bound_stats[2].max(1) as f64,
+                bound_stats[2]
+            );
+        }
         if saccade.is_some() && new_wording() {
             let f = |k: usize| {
                 let (n, l, r) = sacc_wording[k];
@@ -7223,16 +7265,14 @@ fn cortical_familiarity(kernels: &[SimpleKernel], codes: &[BitVector], bits: usi
 
 /// The current sentence's least familiar word (by cortical familiarity), as a band
 /// (log2 of its count, at most 7).
-fn sentence_familiarity(fam: &[u32], ids: &[usize], words: &[&str], t: usize) -> u64 {
-    let start = words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+fn sentence_familiarity(fam: &[u32], ids: &[usize], start: usize, t: usize) -> u64 {
     ids[start..=t].iter().map(|&w| fam.get(w).copied().unwrap_or(0)).min().map_or(7, |c| (32 - c.leading_zeros() as u64).min(7))
 }
 
 /// Novelty from exposure: the band of the current sentence's least exposed word (sentences
 /// read that held it): under 16 → 0, under 64 → 2, under 256 → 4, more → 6 (the go/no-go
 /// halves it into four bands).
-fn exposure_band(count: &[u32], ids: &[usize], words: &[&str], t: usize) -> u64 {
-    let start = words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
+fn exposure_band(count: &[u32], ids: &[usize], start: usize, t: usize) -> u64 {
     let c = ids[start..=t].iter().map(|&w| count.get(w).copied().unwrap_or(0)).min().unwrap_or(u32::MAX);
     match c {
         0..=15 => 0,

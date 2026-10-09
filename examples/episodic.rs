@@ -1383,6 +1383,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // areas' context, beside their own: recall brings back the state, not words.
     let reinstate = std::env::var("REINSTATE").is_ok();
     let reinstate_here = std::env::var("REINSTATE").map_or(false, |v| v == "here");
+    // ACH=1: an acetylcholine-like mode set by the hippocampus's own novelty (Hasselmo). Each
+    // step's recall gives CA1's mismatch (1 − its match; 1 when nothing is recalled), and a
+    // tonic level follows it (a quarter of the way each step). High (novel input): encoding
+    // mode, recall's pull on the cortex is weakened, so only a share 1 − ACh of the
+    // reinstated state and of the entorhinal feedback passes. Low (familiar): retrieval mode,
+    // both pass. (Storage already follows novelty: a familiar event strengthens its row, a
+    // new one is appended.)
+    let ach_on = std::env::var("ACH").is_ok();
+    let mut ach: Q16 = ONE;
+    let mut ach_stats = [0u64; 2]; // test steps, Σ ACh
     // STORE_TEST=1: the hippocampus encodes test stories too (it is never off); without it,
     // only training stories are stored (QUESTION stores test events by itself)
     let store_test = std::env::var("STORE_TEST").is_ok();
@@ -3872,9 +3882,24 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         };
                         let mut x = surprising.clone();
                         let mut n = 0u64;
+                        // ACH: only a share 1 − ACh of the reinstated bits passes
+                        let pass = if ach_on { (ONE - ach.min(ONE)) as u64 } else { ONE as u64 };
                         for r in &rows {
                             if let Some(st) = row_cortex.get(r) {
-                                x.or_mut(st);
+                                let mut v = st.clone();
+                                if pass < ONE as u64 {
+                                    for (wi, w) in v.as_words_mut().iter_mut().enumerate() {
+                                        let mut keep = 0u64;
+                                        for b in 0..64 {
+                                            let h = ((wi * 64 + b) as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 48;
+                                            if h < pass {
+                                                keep |= 1 << b;
+                                            }
+                                        }
+                                        *w &= keep;
+                                    }
+                                }
+                                x.or_mut(&v);
                                 n += 1;
                             }
                         }
@@ -4180,6 +4205,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             } else {
                                 hc.recall(&set_bits(&cue))
                             };
+                            if ach_on && !reciting {
+                                let nov = if r.ca3.is_empty() { ONE } else { ONE - r.ca1_match.min(ONE) };
+                                ach = ((3 * ach as u64 + nov as u64) / 4) as Q16;
+                                if testing {
+                                    ach_stats[0] += 1;
+                                    ach_stats[1] += ach as u64;
+                                }
+                            }
                             if t + 1 == s.answer_at {
                                 answer_rows = r.ca1.clone();
                                 if let Some((qr, _)) = query_ec.as_ref() {
@@ -4494,7 +4527,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             input
                         } else {
                             let conf = column.l23.peek_scored(&input).map_or(0, |(_, c)| c) as u64;
-                            let share = (ONE as u64).saturating_sub(conf);
+                            let mut share = (ONE as u64).saturating_sub(conf);
+                            if ach_on {
+                                share = (share * (ONE - ach.min(ONE)) as u64) >> 16;
+                            }
                             let fw = BITS / 64;
                             let mut w = input.as_words().to_vec();
                             let at = w.len() - 2 * fw; // the slot before the previous input
@@ -6330,6 +6366,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if question() {
             eprintln!("  QERR seed {seed}: held-out answers: right {}, the family's place for another season {}, the other family's place for this season {}, other {}, no place {}", q_err[0], q_err[1], q_err[2], q_err[3], q_err[4]);
+        }
+        if ach_on {
+            eprintln!("  ACH seed {seed}: mean level at test {:.2}", ach_stats[1] as f64 / (ach_stats[0].max(1) as f64 * ONE as f64));
         }
         if reinstate {
             eprintln!("  REINSTATE seed {seed}: at test, a cortical state reinstated at {} steps (mean {} bits of context with it)", reinstate_stats[0], reinstate_stats[2] / reinstate_stats[0].max(1));

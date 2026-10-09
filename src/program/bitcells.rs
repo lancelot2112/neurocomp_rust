@@ -92,6 +92,8 @@ pub struct BitCells {
     tick: u64,
     theta: Q16,
     interneurons: bool,
+    /// the plasticity index from the cell's id and the step (`set_id_index`), no generator
+    id_index: bool,
     sst: Q16,
     vip: Q16,
     cached: Option<(Vec<u64>, Eval)>,
@@ -110,6 +112,7 @@ impl BitCells {
             tick: 0,
             theta: ONE * 4 / 5,
             interneurons: false,
+            id_index: false,
             sst: ONE / 2,
             vip: 0,
             cached: None,
@@ -118,6 +121,14 @@ impl BitCells {
     }
 
     /// SST/VIP interneurons set the context threshold (see `PrimedLayer5::set_interneurons`).
+    /// Take each plasticity event's index and gates from the cell's id plus the step
+    /// counter instead of a random word: (id + step) mod 256 in every byte, so each cell
+    /// sweeps through its synapses and cells on the same step change different ones; the
+    /// gates fire on fixed residues of the same sum. Deterministic, no generator.
+    pub fn set_id_index(&mut self, on: bool) {
+        self.id_index = on;
+    }
+
     pub fn set_interneurons(&mut self, on: bool) {
         self.interneurons = on;
     }
@@ -403,7 +414,7 @@ impl BitCells {
         if let Some((wc, _, burst)) = w {
             // one plasticity event: one random word; its bytes index the synapses changed
             // and its high bits gate the rarer changes
-            let r = rng.next_u64();
+            let r = if self.id_index { ((wc as u64).wrapping_add(self.tick) & 0xff).wrapping_mul(0x0101_0101_0101_0101) } else { rng.next_u64() };
             let byte = |i: u32| ((r >> (8 * i)) & 0xff) as u32;
             if predicts(&self.cells[wc]) {
                 confirmed = true;

@@ -1792,6 +1792,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 l.set_interneurons(true);
             }
         }
+        // L5_IDX=id: plasticity indexed by the cell's id and the step, no random draw
+        if std::env::var("L5_IDX").map_or(false, |v| v == "id") {
+            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                l.set_id_index(true);
+            }
+        }
     }
     let burst_vote = std::env::var("BURST_VOTE").is_ok();
     let burst_key = std::env::var("BURST_KEY").is_ok();

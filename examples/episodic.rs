@@ -134,6 +134,8 @@ const ROUTE_ROT: usize = 997;
 const HC_CHANNEL: usize = 48;
 /// The slow cortex's source id in the mix (SLOW_CORTEX).
 const SLOW_SRC: u8 = 12;
+/// ASSOC: the association area's vote in the mix.
+const ASSOC_SRC: u8 = 15;
 /// The cerebellum's source id in the mix and its thalamic channel (LEARNING=three).
 const CB_SRC: u8 = 13;
 const CB_CHANNEL: usize = 49;
@@ -1191,6 +1193,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         a
     };
     let mut area = make_area(hier_span, hier_levels > 1 && !chain_mix && role_mode.is_none(), role_mode.is_some());
+    // ASSOC=1 (with HIER): an association area, the hippocampus's cortical partner
+    // (perirhinal / parahippocampal cortex behind the entorhinal gate). An area like the
+    // higher area ([sentence | slow context] → next word), with its own role:
+    // - it learns slowly while awake (growth probability ASSOC_P, default 1/16) and readily
+    //   from consolidation replay while asleep (growth probability 1, gate open): replay goes
+    //   to it instead of the higher area;
+    // - the hippocampus's return goes to it: reinstated states (REINSTATE) join its context,
+    //   not the higher area's;
+    // - it reaches reading through the thalamic mix, as a source of its own (ASSOC_SRC) whose
+    //   reliability per context is learned like any other's.
+    let assoc_on = hier && std::env::var("ASSOC").is_ok();
+    let assoc_p: Q16 = q16(std::env::var("ASSOC_P").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0 / 16.0));
+    let mut assoc: Option<HigherArea> = assoc_on.then(|| {
+        let mut a = make_area(hier_span, false, false);
+        a.column.l23.set_growth_probability(Some(assoc_p));
+        a
+    });
+    let mut assoc_in: Option<BitVector> = None; // this step's input, for learning
+    let mut assoc_word: Option<usize> = None; // this step's proposal
+    let mut assoc_conf: Q16 = 0;
+    let mut assoc_stats = [0usize; 3]; // test answers: proposed, right; replays taught
     let mut upper: Vec<HigherArea> = (1..hier_levels).map(|j| make_area(hier_span.pow(j as u32 + 1), j + 1 < hier_levels && !chain_mix, false)).collect();
     // HIER_GROW=1 (with HIER_CHAIN=mix): areas grow by need. The top area keeps a bud above
     // it, the last of `upper`, with a window HIER_SPAN times longer. The bud reads and learns
@@ -2352,8 +2375,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     for &i in &order {
                         let (sent, bl, ans, _) = &traces[i];
                         let x = replay_input(sent, bl);
-                        area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
-                        area.column.l23.add_replay(&x, &enc.codes[*ans]);
+                        if let Some(a) = assoc.as_mut() {
+                            // the association area learns from replay, its plasticity open
+                            let gate = a.column.l23.growth_gate();
+                            a.column.l23.set_growth_gate(None);
+                            a.column.l23.set_growth_probability(Some(ONE));
+                            a.learn(&x, &enc.codes[*ans], &mut sleep_rng);
+                            a.column.l23.add_replay(&x, &enc.codes[*ans]);
+                            a.column.l23.set_growth_probability(Some(assoc_p));
+                            a.column.l23.set_growth_gate(gate);
+                            assoc_stats[2] += 1;
+                        } else {
+                            area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
+                            area.column.l23.add_replay(&x, &enc.codes[*ans]);
+                        }
                         replayed += 1;
                         if let (Some(p), Some(row)) = (sleep_p, trace_rows.get(i).filter(|r| r.count_ones() > 0)) {
                             // asleep, the column's plasticity is open: growth probability p,
@@ -2368,13 +2403,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
-                area.column.l23.generalize_from_replay();
+                match assoc.as_mut() {
+                    Some(a) => a.column.l23.generalize_from_replay(),
+                    None => area.column.l23.generalize_from_replay(),
+                }
             } else {
                 for &i in &novel {
                     let (sent, bl, ans, _) = &traces[i];
                     let x = replay_input(sent, bl);
                     for _ in 0..reps {
-                        area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
+                        if let Some(a) = assoc.as_mut() {
+                            let gate = a.column.l23.growth_gate();
+                            a.column.l23.set_growth_gate(None);
+                            a.column.l23.set_growth_probability(Some(ONE));
+                            a.learn(&x, &enc.codes[*ans], &mut sleep_rng);
+                            a.column.l23.set_growth_probability(Some(assoc_p));
+                            a.column.l23.set_growth_gate(gate);
+                            assoc_stats[2] += 1;
+                        } else {
+                            area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
+                        }
                         replayed += 1;
                         if let (Some(p), Some(row)) = (sleep_p, trace_rows.get(i).filter(|r| r.count_ones() > 0)) {
                             // asleep, the column's plasticity is open: growth probability p,
@@ -3167,6 +3215,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if hier && hier_reset {
             area.clear();
+            if let Some(a) = assoc.as_mut() {
+                a.clear();
+            }
             for u in upper.iter_mut() {
                 u.clear();
             }
@@ -3291,6 +3342,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if hier {
                     area.note_word(code);
+                    if let Some(a) = assoc.as_mut() {
+                        a.note_word(code);
+                    }
                     for u in upper.iter_mut() {
                         u.note_word(code);
                     }
@@ -3994,7 +4048,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     gated_steps[2 + !hier_skip as usize] += hier_surprise as usize;
                     let mut above: Option<BitVector> = None;
                     for i in (0..upper.len()).rev() {
-                        let hin_u = upper[i].input_with(&sentence_plus, &surprising_r, if chain_mix { None } else { above.as_ref() });
+                        let hin_u = upper[i].input_with(&sentence_plus, if assoc_on { &surprising } else { &surprising_r }, if chain_mix { None } else { above.as_ref() });
                         let p = if hier_skip { BitVector::new(BITS, Some(0)) } else { upper[i].predict(&hin_u) };
                         upper_pred[i] = (p.count_ones() > 0).then(|| p.clone());
                         if testing && t + 1 == s.answer_at {
@@ -4013,9 +4067,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             role_now = roles.observe(&expect, !testing, &mut role_rng);
                             role_now.map_or(empty, |c| roles.code(c).clone())
                         };
-                        area.input_lead(&lead, &sentence_plus, &surprising_r)
+                        area.input_lead(&lead, &sentence_plus, if assoc_on { &surprising } else { &surprising_r })
                     } else {
-                        area.input_with(&sentence_plus, &surprising_r, if chain_mix { None } else { above.as_ref() })
+                        area.input_with(&sentence_plus, if assoc_on { &surprising } else { &surprising_r }, if chain_mix { None } else { above.as_ref() })
                     };
                     let td = if hier_skip { BitVector::new(BITS, Some(0)) } else { area.predict(&hin) };
                     if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
@@ -4102,6 +4156,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         words.extend_from_slice(frame.as_words());
                     }
                     hier_in = (!hier_skip).then_some(hin);
+                    // the association area: [sentence | its slow context + the hippocampus's return]
+                    if let Some(a) = assoc.as_mut() {
+                        let ain = a.input(&sentence_plus, &surprising_r);
+                        let p = a.predict(&ain);
+                        assoc_word = enc.decode(&p);
+                        assoc_conf = a.column.confidence();
+                        assoc_in = Some(ain);
+                    }
                 }
                 if inner_slot {
                     // the heard slot (auditory input, the phonological store): one's own speech
@@ -4791,6 +4853,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if testing && t + 1 == s.answer_at {
                             cb_stats[0] += 1;
                             cb_stats[1] += (w == next) as usize;
+                        }
+                    }
+                    if let Some(w) = assoc_word.take() {
+                        proposals.push((ASSOC_SRC, ctx + bucket(assoc_conf), vec![w]));
+                        if testing && t + 1 == s.answer_at {
+                            assoc_stats[0] += 1;
+                            assoc_stats[1] += (w == next) as usize;
                         }
                     }
                     if let (Some(w), true) = (slow_word, slow.is_some()) {
@@ -5674,6 +5743,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if let Some(ctx) = hier_gate_step.take() {
                         hier_gate.learn(0, &ctx, td_used, &mut rng);
                     }
+                    if let (Some(a), Some(x), true) = (assoc.as_mut(), assoc_in.take(), page) {
+                        a.learn(&x, &enc.codes[next], &mut rng);
+                    }
                     if let Some(hin) = hier_in.take() {
                         if page && (!hier_residual || column.surprise(&enc.codes[next]) >= Q_HALF) {
                             area.learn(&hin, &enc.codes[next], &mut rng);
@@ -5867,6 +5939,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 rolled = 0;
                 if hier {
                     area.end_sentence(&surprising);
+                    if let Some(a) = assoc.as_mut() {
+                        a.end_sentence(&surprising);
+                    }
                     for u in upper.iter_mut() {
                         u.end_sentence(&surprising);
                     }
@@ -6509,6 +6584,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        if let Some(a) = assoc.as_ref() {
+            eprintln!("  ASSOC seed {seed}: {} kernels; {} replays taught it; at test answers it proposed a word at {} and was right at {}", a.column.l23.kernels().len(), assoc_stats[2], assoc_stats[0], assoc_stats[1]);
         }
         if da_on {
             eprintln!("  DA seed {seed}: {} traces, mean dopamine {:.2}; {} chosen for replay over all sleeps", da_stats[0], da_stats[1] as f64 / (da_stats[0].max(1) as f64 * ONE as f64), da_stats[2]);

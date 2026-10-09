@@ -1392,6 +1392,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // both pass. (Storage already follows novelty: a familiar event strengthens its row, a
     // new one is appended.)
     let ach_on = std::env::var("ACH").is_ok();
+    // NE=1: a norepinephrine-like gain (locus coeruleus).
+    // - Phasic, a salience tag: a sentence that surprised the column at two or more words is
+    //   stored twice, so its event is strengthened as a repeat would strengthen it.
+    // - Tonic, adaptive exploration (Aston-Jones & Cohen): a running error rate of training
+    //   answers (1/64 per answer) raises the basal ganglia's exploration while outcomes are
+    //   poor, from 0.1 up to 0.5, and lowers it as they improve.
+    let ne_on = std::env::var("NE").is_ok();
+    let mut ne_tonic: Q16 = ONE / 2;
+    let mut sent_surprises = 0usize; // this sentence's surprising words
+    let mut ne_stats = [0u64; 3]; // salient sentences stored twice, answers seen, Σ exploration (Q16)
     let mut ach: Q16 = ONE;
     let mut ach_stats = [0u64; 2]; // test steps, Σ ACh
     // STORE_TEST=1: the hippocampus encodes test stories too (it is never off); without it,
@@ -3201,6 +3211,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
             sent_surprise += to_f32(ONE - share); // report
             step_surprised = share < predicted_share || sent_words == 0;
+            sent_surprises += (share < predicted_share) as usize;
             sent_words += 1;
             if share < predicted_share {
                 surprising.or_mut(code);
@@ -3881,6 +3892,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         } else {
                             hc.recall_soft(&cue, reinstate_bonus, 4)
                         };
+                        // ACH with REINSTATE: the mode's signal comes from this same retrieval.
+                        // Its best event from this story: familiar here (CA1's mismatch on
+                        // it, approximated as 0); none, or only other stories': novel
+                        if ach_on && !reciting {
+                            let nov = if rows.iter().any(|&r| hc.row_here(r)) { 0 } else { ONE };
+                            ach = ((3 * ach as u64 + nov as u64) / 4) as Q16;
+                            if testing {
+                                ach_stats[0] += 1;
+                                ach_stats[1] += ach as u64;
+                            }
+                        }
                         let mut x = surprising.clone();
                         let mut n = 0u64;
                         // ACH: only a share 1 − ACh of the reinstated bits passes
@@ -4206,7 +4228,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             } else {
                                 hc.recall(&set_bits(&cue))
                             };
-                            if ach_on && !reciting {
+                            if ach_on && !reinstate && !reciting {
                                 // novelty is the episode's, not the words': content recalled
                                 // from another story is "seen, but not here" (full novelty);
                                 // from this story, CA1's mismatch
@@ -4996,6 +5018,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         q_err[4] += 1;
                     }
                 }
+                // NE, tonic: the running error rate of training answers sets exploration
+                if ne_on && t + 1 == s.answer_at && !testing && !replaying {
+                    let wrong = enc.decode(&out) != Some(next);
+                    ne_tonic = ((63 * ne_tonic as u64 + if wrong { ONE as u64 } else { 0 }) / 64) as Q16;
+                    let explore = ONE / 10 + ((ne_tonic as u64 * 4 / 10) as Q16).min(ONE * 4 / 10);
+                    step_bg.explore = explore;
+                    ne_stats[1] += 1;
+                    ne_stats[2] += explore as u64;
+                }
                 if (qattach_learned || qhold_learned) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     let outcome = if right { ONE as i32 } else { -(ONE as i32) };
@@ -5698,6 +5729,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 }
                                 let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)).collect();
                                 hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
+                                if ne_on && sent_surprises >= 2 {
+                                    // NE: the salient event is strengthened (stored again)
+                                    hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
+                                    ne_stats[0] += 1;
+                                }
                                 if let (true, Some(r), Some(last)) = (qattach_learned && attach.is_some(), hc.last_row(), attach_pending.last_mut()) {
                                     last.2 = Some(r);
                                 }
@@ -5768,6 +5804,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sent_surprise = 0.0;
                 sent_words = 0;
+                sent_surprises = 0;
                 for w in s.words[..=t].iter().rev().skip(1).take_while(|w| **w != ".") {
                     word_count[index[w]] += !replaying as u32;
                 }
@@ -5868,6 +5905,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             bind_sentence_pairs.clear();
             sent_surprise = 0.0;
             sent_words = 0;
+            sent_surprises = 0;
         }
         if !reciting {
             if !story_altered {
@@ -6374,6 +6412,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if question() {
             eprintln!("  QERR seed {seed}: held-out answers: right {}, the family's place for another season {}, the other family's place for this season {}, other {}, no place {}", q_err[0], q_err[1], q_err[2], q_err[3], q_err[4]);
+        }
+        if ne_on {
+            eprintln!("  NE seed {seed}: {} salient sentences stored twice; mean exploration in training {:.2}, final {:.2}", ne_stats[0], ne_stats[2] as f64 / (ne_stats[1].max(1) as f64 * ONE as f64), to_f32(step_bg.explore));
         }
         if ach_on {
             eprintln!("  ACH seed {seed}: mean level at test {:.2}", ach_stats[1] as f64 / (ach_stats[0].max(1) as f64 * ONE as f64));

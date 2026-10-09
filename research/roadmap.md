@@ -348,8 +348,10 @@ slot codes bound to content in the hippocampus, recalled by slot.
      ([plan](concepts/output-and-self-supervision.md)).
   3. **questions as inner speech:** (built, [89](experiments/89-questions-as-inner-speech.md):
      restating a fact under the open item stores the binding, but nothing brings it back at
-     the question, so it gains nothing); next, the open item cues recall at the question and
-     the fact is said back (recall-planned inner speech), then per-restatement credit;
+     the question, so it gains nothing); rebuilt self-taught in
+     [90](experiments/90-holding-an-open-question.md), negative: recall at the question
+     matches the sentence, not the item. Next: the held item as a query of its own (pattern
+     completion from the item and this story's place), "open" as unresolved in this story;
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and
      a heard slot the column learns to use.
 

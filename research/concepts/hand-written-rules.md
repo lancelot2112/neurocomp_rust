@@ -93,3 +93,7 @@ Without the restate operator and the oracle:
   said back by inner speech only if the network's own prediction carries it.
 - **Measured** against no holding, on the same task, with no oracle. The task stays: it is the
   environment.
+
+Built in [90](../experiments/90-holding-an-open-question.md): negative. Recall at the
+question matches the sentence ("lucy went to the …" from earlier stories), not the held
+item's facts.

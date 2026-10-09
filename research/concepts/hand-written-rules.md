@@ -45,7 +45,7 @@ Each row says what the rule decides, what should decide it instead, and the step
 | **Semantic store reading** (`SEMANTIC`, `SEM_TYPED`) | the cue is the rarest word; the slot is computed; typed relations | a learned kernel class over the cue (`REL_COMPLETE` is a start) | 8 |
 | **Relation store, Bayes** (`REL`, `BELIEF`) | relations and belief rules as algorithms | already marked as specifications (connection audit) | 8 |
 | **Source ranking in the mix** (`MIX`) | sources vote with per-context reliabilities: learned, but the vote is over decoded words | the mix over vectors (each source's share of bits, as routing) | 3 |
-| **Sentence-end triggers** | storage, resets, consolidation traces, the question act fire on the "." token | the sentence clock is an input (port 1 in the genome); boundary detection (`BOUNDARY`) learns topic changes | 2 (done for the column) |
+| **Sentence-end triggers** | storage, resets, consolidation traces fire on the "." token | a boundary cell learning from surprise where events end (`EVENT_BOUNDARY=learned`, [97](../experiments/97-learned-competition-frames-boundaries.md)): 90% of its boundaries on the "." untold; costs relations and story boundary | 2 (built, not default) |
 | **Fixed row layout** (column input) | [word, memory frames, top-down, previous] in fixed places | learned routing (`ROUTE`, 87), not yet the default | 4 |
 | **Policies** (`POLICIES`) | memory reaches the column by a fixed policy (relay, gate, select…) | routing and the thalamic mix | 3–4 |
 
@@ -109,3 +109,9 @@ learning systems ([94](../experiments/94-sleep-gated-consolidation.md), addendum
 right candidate matches at 92% of answers and loses on that ranking. A hand-set
 specificity rule made it worse; the replacement should be learned.
 
+
+Learned replacements were tried in [97](../experiments/97-learned-competition-frames-boundaries.md):
+a vote with a learned gain per depth (mixed), learned routing of the row (worse), and a
+boundary cell for the period trigger (finds the sentence untold; costs two entries). The next
+step is a burst gate: the row split into apical (context) and basal (input) frames, and a
+source or kernel trusted when the two agree and the input confirms it.

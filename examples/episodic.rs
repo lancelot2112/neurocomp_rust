@@ -1465,6 +1465,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // CONSOLIDATE_INTERLEAVE=1: interleaved replay (novel and familiar traces mixed) that
     // also feeds sleep generalisation (needs HIER_DREAM / HIER_SLEEP_GEN)
     let consolidate_interleave = std::env::var("CONSOLIDATE_INTERLEAVE").is_ok();
+    // SLEEP_P=p (with CONSOLIDATE): sleep-gated plasticity of the cortex. Each trace also keeps
+    // the column's own input row at the answer (the cortical state of that moment, as the
+    // hippocampus indexes it), and at every sleep the replayed trace teaches the column too,
+    // with its growth probability raised to p while it sleeps (low acetylcholine: the slow
+    // cortex learns readily from replay, slowly while awake: SLOW_P under LEARNING=three).
+    let sleep_p: Option<Q16> = std::env::var("SLEEP_P").ok().and_then(|v| v.parse::<f64>().ok()).map(q16);
+    let mut trace_rows: Vec<BitVector> = Vec::new(); // the column's input at each trace's answer
+    let mut sleep_column = 0usize; // replays taught to the column
     // CONSOLIDATE_STEPS=1: besides each training story's answer, every word the network
     // failed to predict in a novel sentence (familiarity band < 4) leaves a trace, so
     // replay covers what surprised it, such as "smith" after "tom is a"
@@ -2327,6 +2335,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                         area.column.l23.add_replay(&x, &enc.codes[*ans]);
                         replayed += 1;
+                        if let (Some(p), Some(row)) = (sleep_p, trace_rows.get(i).filter(|r| r.count_ones() > 0)) {
+                            column.l23.set_growth_probability(Some(p));
+                            column.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            column.l23.set_growth_probability(three.then_some(slow_p));
+                            sleep_column += 1;
+                        }
                     }
                 }
                 area.column.l23.generalize_from_replay();
@@ -2337,6 +2351,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     for _ in 0..reps {
                         area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                         replayed += 1;
+                        if let (Some(p), Some(row)) = (sleep_p, trace_rows.get(i).filter(|r| r.count_ones() > 0)) {
+                            column.l23.set_growth_probability(Some(p));
+                            column.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            column.l23.set_growth_probability(three.then_some(slow_p));
+                            sleep_column += 1;
+                        }
                     }
                 }
             }
@@ -5064,6 +5084,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if bind && consolidate.is_some() && !testing && !replaying && t + 1 == s.answer_at {
                     traces.push((sentence.clone(), bind_list.clone(), next, fam_band));
+                    if sleep_p.is_some() {
+                        trace_rows.push(input.clone());
+                    }
                 } else if bind && consolidate_steps && !testing && !replaying && fam_band < 4 && enc.decode(&out) != Some(next) && s.words[t + 1] != "." {
                     let input = if consolidate_assoc {
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
@@ -5077,6 +5100,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     } else {
                         sentence.clone()
                     };
+                    if sleep_p.is_some() {
+                        trace_rows.push(BitVector::new(BITS, Some(0))); // (no row: not replayed to the column)
+                    }
                     traces.push((input, bind_list.clone(), next, fam_band));
                 }
                 // saccade reward: the prediction right, minus the cost of a regression
@@ -6438,7 +6464,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
         }
         if consolidate.is_some() {
-            eprintln!("  CONSOLIDATE seed {seed}: {} replays of novel episodes to the higher area", replayed);
+            eprintln!("  CONSOLIDATE seed {seed}: {} replays of novel episodes to the higher area; {} to the column (sleep-gated)", replayed, sleep_column);
         }
         if mixing && held_halves[0].1 > 0 {
             eprintln!(

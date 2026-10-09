@@ -942,6 +942,11 @@ impl EpisodicCircuit for EngramStore {
         (rows, words)
     }
 
+    fn row_here(&self, row: u32) -> bool {
+        let here = place_key(&self.phase);
+        self.row(row).map_or(false, |r| r.place == here)
+    }
+
     fn recall_soft(&self, cue: &[usize], bonus: usize, max_rows: usize) -> (Vec<u32>, Vec<usize>) {
         let here = place_key(&self.phase);
         let mut hits: Vec<u32> = cue.iter().filter_map(|&i| self.what.get(i)).flatten().copied().collect();

@@ -1384,7 +1384,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let reinstate = std::env::var("REINSTATE").is_ok();
     let reinstate_here = std::env::var("REINSTATE").map_or(false, |v| v == "here");
     // ACH=1: an acetylcholine-like mode set by the hippocampus's own novelty (Hasselmo). Each
-    // step's recall gives CA1's mismatch (1 − its match; 1 when nothing is recalled), and a
+    // step's recall gives the episode's novelty (1 when nothing is recalled or the best event
+    // is from another story: seen, but not here; else CA1's mismatch, 1 − its match), and a
     // tonic level follows it (a quarter of the way each step). High (novel input): encoding
     // mode, recall's pull on the cortex is weakened, so only a share 1 − ACh of the
     // reinstated state and of the entorhinal feedback passes. Low (familiar): retrieval mode,
@@ -4206,7 +4207,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 hc.recall(&set_bits(&cue))
                             };
                             if ach_on && !reciting {
-                                let nov = if r.ca3.is_empty() { ONE } else { ONE - r.ca1_match.min(ONE) };
+                                // novelty is the episode's, not the words': content recalled
+                                // from another story is "seen, but not here" (full novelty);
+                                // from this story, CA1's mismatch
+                                let nov = match r.ca3.first() {
+                                    None => ONE,
+                                    Some(&row) if !hc.row_here(row) => ONE,
+                                    Some(_) => ONE - r.ca1_match.min(ONE),
+                                };
                                 ach = ((3 * ach as u64 + nov as u64) / 4) as Q16;
                                 if testing {
                                     ach_stats[0] += 1;

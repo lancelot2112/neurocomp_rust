@@ -607,6 +607,11 @@ pub trait EpisodicCircuit {
     fn recall_soft(&self, cue: &[usize], _bonus: usize, _max_rows: usize) -> (Vec<u32>, Vec<usize>) {
         self.recall_here_all(cue)
     }
+    /// Was this row stored at the current place (in the episode being read)? Default: yes
+    /// (circuits without a place code).
+    fn row_here(&self, _row: u32) -> bool {
+        true
+    }
     /// The row the latest store wrote or strengthened (for a caller that keeps something
     /// per row, e.g. the cortical state it was stored in).
     fn last_row(&self) -> Option<u32> {

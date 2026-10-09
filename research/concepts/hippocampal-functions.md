@@ -67,6 +67,28 @@ a workaround for that missing reinstatement.
 - On recall, that state reinstated into the higher area as context (the path of
   [90](../experiments/90-holding-an-open-question.md)'s `QAREA`), not decoded into words.
 
+## The entorhinal cortex: one gateway, both ways
+
+- **In:** association cortex (perirhinal: items; parahippocampal: context) → superficial
+  entorhinal layers II/III → dentate gyrus and CA3 (layer II) and CA1 directly (layer III,
+  what CA1 compares the recall against).
+- **Out:** CA1 and subiculum → deep entorhinal layers V/VI → association cortex (perirhinal,
+  parahippocampal, then temporal, parietal, prefrontal). Deep layers also feed the
+  superficial ones (V → II/III), so a recalled pattern can be the next cue. CA1 and the
+  subiculum also project straight to medial prefrontal cortex.
+- **Awake recall:** cue in through II/III, completion in CA3, reinstatement out through V/VI,
+  in the retrieval phase of theta.
+- **Sleep replay:** the same output path carries sharp-wave ripples, timed with cortical slow
+  oscillations and thalamic spindles, so the cortex is receptive when replay arrives.
+  Disrupting ripples impairs consolidation; strengthening their coupling with spindles helps
+  (Maingret et al. 2016).
+- **Primary areas** are reached only through association cortex's own feedback.
+
+**Against ours:** `CONSOLIDATE` (replay to the higher area) and reinstatement into the higher
+area ([92](../experiments/92-reinstatement.md)–[93](../experiments/93-neuromodulated-hippocampus.md))
+follow this path. `HC_EC` (recall into the column's row) and sleep-gated replay into the
+column ([94](../experiments/94-sleep-gated-consolidation.md)) do not, and neither has worked.
+
 ## Acetylcholine and norepinephrine: modes of the hippocampus
 
 **Acetylcholine** (medial septum and diagonal band, which also pace theta) switches between

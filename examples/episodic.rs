@@ -1542,78 +1542,47 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let inner_when_definite = std::env::var("INNER_WHEN").map_or(false, |v| v == "definite");
     let inner_say_recall = std::env::var("INNER_SAY").map_or(false, |v| v == "recall");
     let mut phono = PhonologicalLoop::new();
-    // QUESTION_ACT (with QUESTION): questions as inner speech, in two acts.
-    // - Ask: at a sentence's end, its least familiar word may become an open question, held
-    //   in the loop for the rest of the story.
-    // - Restate: at a later sentence's end, while a question is open, the network may say
-    //   that sentence again with the open item in place of its first k words (k = 1 or 2):
-    //   "the person is a smith ." → "kim is a smith ." The restatement is read as inner
-    //   steps, and the hippocampus stores it as an event, so the fact is bound to the item.
-    // QUESTION_ACT=learned: the basal ganglia choose both (ask or not, per the word's
-    // familiarity band and the column's confidence band; restate with k = 0, 1 or 2, per the
-    // sentence's first two words), rewarded at the story's answer less STEP_COST an act.
-    // QUESTION_ACT=1: a hand-set reference: ask about the stranger (a name from the
-    // stranger lists), restate a sentence that starts with "the", up to its "is".
-    let question_act = std::env::var("QUESTION_ACT").ok();
-    let question_learned = question_act.as_deref() == Some("learned");
-    let mut open_q: Option<usize> = None;
-    let mut open_band = 7u64;
-    // Per-restatement credit (QUESTION_ACT=learned): each restatement's stored event is
-    // tagged with the choice that made it. At the answer, the event the hippocampus recalls
-    // is the one that was used, and its choice alone gets the answer's outcome (+1 right, −1
-    // wrong); restatements not recalled get only STEP_COST, choosing not to restate 0. The
-    // ask keeps the story's reward. (QUESTION_CREDIT=story: every choice gets the story's
-    // reward, as before.)
-    let q_credit_story = std::env::var("QUESTION_CREDIT").map_or(false, |v| v == "story");
-    let mut restate_pending: Vec<(BitVector, bool, Option<u32>)> = Vec::new(); // (choice, restated, its event's row)
-    let mut restate_open: Option<usize> = None; // the restatement whose event is not stored yet
+    // QHOLD=learned (with HIPPO_SELF, SPARSE_BIND, engram): holding an item in working memory,
+    // learned. No sentence is rewritten, nothing names the item from outside, no hand rule
+    // decides what is held or where it goes (the oracles and operators of 89–90 are removed).
+    // - Holding: as each word is bound, the basal ganglia choose to take it into working
+    //   memory or not, seeing the hippocampus's novelty for its binding (1 − its recall match)
+    //   and that of what is held now (bands), rewarded at the story's answer less STEP_COST.
+    // - Binding: the held item is active, so it is part of every recall cue, and at a
+    //   sentence's end it may be stored with that sentence's event in a field of its own
+    //   (QATTACH=learned): the basal ganglia choose, seeing the sentence itself (its words'
+    //   codes as the choice's code, so what is learned for one sentence carries over to
+    //   sentences that share words). Credit is tagged by recall: an attached event recalled
+    //   for the answer gets the outcome (+1 right, −1 wrong); otherwise only STEP_COST.
+    // - Use: recall reaches the cortex as usual; QQUERY (below) adds the held item's own
+    //   query.
+    let qhold_learned = std::env::var("QHOLD").map_or(false, |v| v == "learned");
+    let qhold = qhold_learned.then_some(());
+    let qattach_learned = std::env::var("QATTACH").map_or(false, |v| v == "learned");
+    let mut attach_pending: Vec<(BitVector, bool, Option<u32>)> = Vec::new(); // (choice, attached, its event's row)
     let mut answer_rows: Vec<u32> = Vec::new(); // the events recalled for the answer
-    let mut q_credit = [0usize; 3]; // test, held out: restatements, recalled for the answer, recalled and right
-    let mut q_choice: HashMap<String, usize> = HashMap::default();
-    // QHOLD (with HIPPO_SELF, SPARSE_BIND, engram): the self-taught question act. No sentence
-    // is rewritten and nothing names the item from outside.
-    // - Novelty: the hippocampus's own novelty for a word's binding (1 − its recall match),
-    //   measured as the word is bound.
-    // - Holding: a binding more novel than the one held takes working memory (QHOLD=novel:
-    //   when its novelty is at least 3/4; QHOLD=learned: the basal ganglia choose hold or
-    //   ignore per novelty band, rewarded at the story's answer less STEP_COST).
-    // - Binding: the held item is active, so it is part of every cue, and at a sentence's
-    //   end it may be stored with that sentence's event, in a field of its own (QATTACH=all:
-    //   every later sentence; QATTACH=learned: the basal ganglia choose per sentence, keyed
-    //   by its first two words, credited by recall: the attached event recalled for the
-    //   answer gets the outcome).
-    // - Use: recall reaches the column as usual (HC_EC: entorhinal context), so the fact
-    //   bound with the held item can shape the answer.
-    let qhold = std::env::var("QHOLD").ok();
-    let qhold_learned = qhold.as_deref() == Some("learned");
-    let qattach = std::env::var("QATTACH").ok();
-    let qattach_learned = qattach.as_deref() == Some("learned");
-    let mut held_item: Option<(usize, Q16)> = None;
+    let mut held_item: Option<(usize, Q16)> = None; // the held word and its novelty when taken
     let mut q_err = [0usize; 5]; // QUESTION, held-out answers: right, right family wrong season, other family right season, other, no place
     let mut held_words: HashMap<&str, usize> = HashMap::default(); // test, held out: what was held at the answer
-    // QQUERY=1 (with QHOLD, HC_EC): the held item as a recall query of its own. When the held
-    // item is read again, it cues the hippocampus alone, among the current story's events
-    // only (context-dependent recall, `recall_here`): pattern completion from the item to the
-    // event it was stored with. The event's words join the entorhinal feedback for the rest
-    // of the sentence, and the event counts as used for the answer's credit.
+    // QQUERY=1 (with QHOLD): the held item as a recall query of its own. When the held item is
+    // read again, it cues the hippocampus alone, among the current story's events only
+    // (context-dependent recall, `recall_here`): pattern completion from the item to the
+    // event it was stored with. The event's words join the entorhinal feedback (HC_EC) for the
+    // rest of the sentence, and the event counts as used for the answer's credit.
+    // QQUERY=all: the blend of every event bound with the item here. QQUERY=soft: the item and
+    // the context as a weighted match (overlap plus a bonus for this story's events), not a
+    // gate. QQUERY_FULL: the answer passes whole, not scaled by the cortex's uncertainty.
+    // With ROUTE: the answer is a routed channel of its own (Q_CHANNEL). QAREA=1: it goes to
+    // the higher areas' sentence context only.
     let qquery = std::env::var("QQUERY").is_ok();
     let qquery_all = std::env::var("QQUERY").map_or(false, |v| v == "all");
     let qquery_full = std::env::var("QQUERY_FULL").is_ok();
-    // QQUERY=soft: the query's cue is the item and the context as a weighted match (overlap
-    // with the item plus a bonus for this story's events), not a gate: a story that says
-    // nothing about the item answers with what it was bound to elsewhere.
-    // With ROUTE: the query's answer is a channel of its own (Q_CHANNEL), whose share and
-    // slot routing learns like any other's (87), instead of a share of the entorhinal slot.
     let qquery_soft = std::env::var("QQUERY").map_or(false, |v| v == "soft");
-    // QAREA=1 (with QQUERY): the query's answer goes to the higher areas' sentence context
-    // only, not to the column's row (no routed channel, no entorhinal slot share)
     let qarea = std::env::var("QAREA").is_ok();
-    let mut query_rows: Vec<u32> = Vec::new(); // QQUERY=all: every event the query blended
+    let mut query_rows: Vec<u32> = Vec::new(); // every event the query blended
     let mut query_ec: Option<(u32, BitVector)> = None; // the query's event and its words' codes
-    let mut query_stats = [0usize; 3]; // test, held-out: queries, an event found, the event holds the stranger's surname // the held word and its novelty when taken
-    let mut hold_stats = [0usize; 4]; // test, held-out: stories with an item held, the stranger held, events attached, attached events recalled for the answer // test, held out: restatements by sentence start and k
-    let mut restated = 0usize;
-    let mut q_stats = [0usize; 4]; // test, held-out stories: questions asked, restatements, restatements naming the stranger's sentence ("the person"), answers right after a restatement
+    let mut query_stats = [0usize; 3]; // test, held-out: queries, an event found, the event holds a surname
+    let mut hold_stats = [0usize; 4]; // test, held-out: answers with an item held, a new name held, events attached, attached events recalled for the answer
     let mut inner_diag = 0usize;
     let mut inner_stats = [0usize; 3]; // test: surprises where it could speak, spoken, spoken in held-out stories
     let mut completed_sentence = false;
@@ -2039,12 +2008,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let step_test_learn = std::env::var("STEP_TEST_LEARN").is_ok();
     let step_cost: i32 = q16(std::env::var("STEP_COST").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.05)) as i32;
     let mut step_bg = BasalGanglia::new(BITS);
-    if question_learned && std::env::var("QUESTION_BASELINE").is_ok() {
-        // one reward at the answer credits several acts in the story: learn from the reward
-        // against its running average, not against the chosen act's value (which locks in
-        // whichever act is tried first while rewards are mostly positive)
-        step_bg.baseline_rate = Some(ONE / 64);
-    }
     let step_code = |ctx: usize, act: usize| {
         let mut crng = StdRng::seed_from_u64(seed.wrapping_mul(7_000_003) ^ ((ctx * 2 + act) as u64 + 5000));
         let all: Vec<usize> = (0..BITS).collect();
@@ -3026,14 +2989,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         completed_sentence = false;
         rolled = 0;
         rolled_surname = None;
-        open_q = None;
         held_item = None;
         query_ec = None;
         query_rows.clear();
-        open_band = 7;
-        restated = 0;
-        restate_pending.clear();
-        restate_open = None;
+        attach_pending.clear();
         answer_rows.clear();
         page_marks = vec![false; ids.len()];
         inner = vec![false; ids.len()];
@@ -3259,26 +3218,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     bind_list.push((ids[t], c));
                     bind_sentence.push(b);
                     bind_sentence_pairs.push((ids[t], c));
-                    if let (Some(_), Some(hc), false) = (qhold.as_deref(), bind_hc.as_ref(), replaying) {
+                    if let (Some(_), Some(hc), false) = (qhold, bind_hc.as_ref(), replaying) {
+                        // take this word into working memory? The basal ganglia decide, seeing
+                        // its novelty and that of what is held (none: band 4)
                         let nov = hc.novelty(&sparse_binding(code, ids[t], c, false));
-                        if held_item.map_or(true, |(_, hn)| nov > hn || qhold.as_deref() == Some("oracle")) {
-                            let take = if qhold_learned {
-                                let band = (nov as u64 * 4 >> 16).min(3) as usize;
-                                let ctx = 6000 + band * 2 + held_item.is_some() as usize;
-                                let cands = [step_code(ctx, 0), step_code(ctx, 1)];
-                                let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
-                                if !testing {
-                                    step_pending.push((cands[a].clone(), a == 1));
-                                }
-                                a == 1
-                            } else if qhold.as_deref() == Some("oracle") {
-                                // a labelled reference for measuring recall, never the mechanism
-                                let w = vocab[ids[t]];
-                                NEW_NAMES.contains(&w) || PRACTICE_NAMES.contains(&w) || question_pool().contains(&w)
-                            } else {
-                                nov >= ONE * 3 / 4
-                            };
-                            if take {
+                        let band = |n: Q16| (n as u64 * 4 >> 16).min(3) as usize;
+                        if held_item.map_or(true, |(hw, _)| hw != ids[t]) {
+                            let ctx = 6000 + band(nov) * 5 + held_item.map_or(4, |(_, hn)| band(hn));
+                            let cands = [step_code(ctx, 0), step_code(ctx, 1)];
+                            let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
+                            if !testing {
+                                step_pending.push((cands[a].clone(), a == 1));
+                            }
+                            if a == 1 {
                                 held_item = Some((ids[t], nov));
                             }
                         }
@@ -4918,109 +4870,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
-                // the question act, at a sentence's end
-                if let (Some(_), true, false) = (question_act.as_deref(), s.words[t] == ".", replaying) {
-                    let start = s.words[..t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
-                    let sent: Vec<usize> = ids[start..t].to_vec();
-                    let c = column.confidence();
-                    let cb = if c < Q_HALF { 0 } else if c < Q_08 { 1 } else { 2 };
-                    let explore = !testing;
-                    // a less familiar word than the open question's takes the question over
-                    // (the most novel item in the story holds it)
-                    let cue = sem_cue_w.filter(|w| sent.contains(w));
-                    let reask = match (open_q, cue) {
-                        (None, Some(_)) => true,
-                        (Some(q), Some(c)) => c != q && fam_band < open_band,
-                        _ => false,
-                    };
-                    if reask && t + 1 < s.answer_at {
-                        {
-                            if let Some(tag) = cue {
-                                let ask = if question_learned {
-                                    let ctx = 3000 + fam_band.min(7) as usize * 3 + cb;
-                                    let cands = [step_code(ctx, 0), step_code(ctx, 1)];
-                                    let a = step_bg.select(&cands, if explore { Some(&mut bg_rng) } else { None }).unwrap_or(0);
-                                    if !testing {
-                                        step_pending.push((cands[a].clone(), a == 1));
-                                    }
-                                    a == 1
-                                } else {
-                                    // the hand-set reference asks about the stranger itself
-                                    let w = vocab[tag];
-                                    NEW_NAMES.contains(&w) || PRACTICE_NAMES.contains(&w) || question_pool().contains(&w)
-                                };
-                                if ask {
-                                    open_q = Some(tag);
-                                    open_band = fam_band;
-                                    q_stats[0] += (testing && s.held_out) as usize;
-                                }
-                            }
-                        }
-                    } else if let Some(tag) = open_q.filter(|&q| !sent.contains(&q) && sent.len() >= 3 && restated < 8 && t + 1 < s.answer_at) {
-                            let k = if question_learned {
-                                let ctx = 4000 + sent[0] * (vocab.len() + 1) + sent[1];
-                                let cands = [step_code(ctx, 0), step_code(ctx, 1), step_code(ctx, 2)];
-                                let k = step_bg.select(&cands, if explore { Some(&mut bg_rng) } else { None }).unwrap_or(0);
-                                if !testing {
-                                    if q_credit_story {
-                                        step_pending.push((cands[k].clone(), k > 0));
-                                    } else {
-                                        restate_pending.push((cands[k].clone(), false, None));
-                                    }
-                                }
-                                k
-                            } else {
-                                let is = index["is"];
-                                match sent.iter().position(|&w| w == is) {
-                                    Some(p) if vocab[sent[0]] == "the" && p <= 2 => p,
-                                    _ => 0,
-                                }
-                            };
-                            if k > 0 && k < sent.len() - 1 {
-                                // QUESTION_CONTROL=1: the restatement names another stranger,
-                                // not the open item (repetition without binding)
-                                // QUESTION_SUBJECT=season: the story's first word (its season)
-                                let subject = if std::env::var("QUESTION_SUBJECT").map_or(false, |v| v == "season") {
-                                    ids[0]
-                                } else if std::env::var("QUESTION_CONTROL").is_ok() {
-                                    let pool: Vec<usize> = NEW_NAMES.iter().chain(PRACTICE_NAMES).chain(question_pool()).map(|w| index[w]).filter(|&w| w != tag).collect();
-                                    pool[(s_i + t) % pool.len()]
-                                } else {
-                                    tag
-                                };
-                                let mut said = vec![subject];
-                                said.extend_from_slice(&sent[k..]);
-                                said.push(full_stop);
-                                if testing && s.held_out {
-                                    *q_choice.entry(format!("{} {} -> k{}", vocab[sent[0]], vocab[sent[1]], k)).or_default() += 1;
-                                    q_stats[1] += 1;
-                                    q_stats[2] += (vocab[sent[0]] == "the" && vocab[sent[1]] == "person") as usize;
-                                }
-                                for (j, &w) in said.iter().enumerate() {
-                                    let at = t + 1 + j;
-                                    ids.insert(at, w);
-                                    s.words.insert(at, vocab[w]);
-                                    page_marks.insert(at, false);
-                                    inner.insert(at, true);
-                                    efference.insert(at, Some(w));
-                                    eff_pred.insert(at, None);
-                                    inner_code.insert(at, None);
-                                }
-                                s.answer_at += said.len();
-                                restated += 1;
-                                // this restatement's event is tagged when it is stored
-                                if question_learned && !testing && !q_credit_story {
-                                    if let Some(last) = restate_pending.last_mut() {
-                                        last.1 = true;
-                                        restate_open = Some(restate_pending.len() - 1);
-                                    }
-                                } else {
-                                    restate_pending.push((BitVector::new(BITS, Some(0)), true, None));
-                                    restate_open = Some(restate_pending.len() - 1);
-                                }
-                            }
-                        }
-                }
                 if qhold.is_some() && testing && s.held_out && t + 1 == s.answer_at {
                     if let Some((hw, _)) = held_item {
                         *held_words.entry(vocab[hw]).or_default() += 1;
@@ -5048,28 +4897,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         q_err[4] += 1;
                     }
                 }
-                if (question_act.is_some() || qattach_learned) && t + 1 == s.answer_at {
+                if qattach_learned && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
-                    if std::env::var("QDIAG").is_ok() && testing && s.held_out && q_credit[0] < 6 {
-                        eprintln!("  QDIAG open {:?}; answer rows {:?}; restatements {:?}; story {:?}", open_q.map(|w| vocab[w]), answer_rows, restate_pending.iter().map(|x| (x.1, x.2)).collect::<Vec<_>>(), s.words);
-                    }
-                    for (code, acted, row) in restate_pending.drain(..) {
+                    for (code, acted, row) in attach_pending.drain(..) {
                         let used = acted && row.map_or(false, |r| answer_rows.contains(&r));
-                        if testing && s.held_out && acted {
-                            q_credit[0] += 1;
-                            q_credit[1] += used as usize;
-                            q_credit[2] += (used && right) as usize;
-                        }
-                        if testing && s.held_out && used && qattach_learned {
+                        if testing && s.held_out && used {
                             hold_stats[3] += 1;
                         }
-                        if (question_learned || qattach_learned) && !testing {
+                        if !testing {
                             let r = if used { if right { ONE as i32 } else { -(ONE as i32) } } else { 0 } - if acted { step_cost } else { 0 };
                             step_bg.reward_candidate(&code, r, &mut bg_rng);
                         }
                     }
                 }
-                if (step_learned || inner_learned || question_learned || qhold_learned) && t + 1 == s.answer_at {
+                if (step_learned || inner_learned || qhold_learned) && t + 1 == s.answer_at {
                     let right = enc.decode(&out) == Some(next);
                     for (code, stepped) in step_pending.drain(..) {
                         step_bg.reward_candidate(&code, if right { ONE as i32 } else { 0 } - if stepped { step_cost } else { 0 }, &mut bg_rng);
@@ -5716,20 +5557,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 let mut content_idx: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
                                 // the held item, stored with this event if attached
                                 let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
-                                let attach = match (held_item, qattach.as_deref()) {
-                                    (Some((hw, _)), Some(mode)) if !ids[start..t].contains(&hw) && t > start + 1 => {
-                                        if mode == "oracle" {
-                                            // a labelled upper bound: only the sentence about the stranger
-                                            (vocab[ids[start]] == "the" && vocab[ids[start + 1]] == "person").then_some(hw)
-                                        } else if mode == "learned" {
-                                            let ctx = 7000 + ids[start] * (vocab.len() + 1) + ids[start + 1];
-                                            let cands = [step_code(ctx, 0), step_code(ctx, 1)];
-                                            let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
-                                            restate_pending.push((cands[a].clone(), a == 1, None));
-                                            (a == 1).then_some(hw)
-                                        } else {
-                                            Some(hw)
+                                let attach = match (held_item, qattach_learned) {
+                                    (Some((hw, _)), true) if !ids[start..t].contains(&hw) && t > start + 1 => {
+                                        // the choice's code is the sentence itself (its words'
+                                        // codes, shifted per action) plus a per-action bias, so
+                                        // what is learned carries over to sentences sharing words
+                                        let mut bag = BitVector::new(BITS, Some(0));
+                                        for &w in &ids[start..t] {
+                                            bag.or_mut(&enc.codes[w]);
                                         }
+                                        let cands: Vec<BitVector> = (0..2)
+                                            .map(|a| {
+                                                let mut v = bag.clone();
+                                                v.rotl_mut(a * BITS / 2);
+                                                v.or_mut(&step_code(7000, a));
+                                                v
+                                            })
+                                            .collect();
+                                        let a = step_bg.select(&cands, if !testing { Some(&mut bg_rng) } else { None }).unwrap_or(0);
+                                        attach_pending.push((cands[a].clone(), a == 1, None));
+                                        (a == 1).then_some(hw)
                                     }
                                     _ => None,
                                 };
@@ -5739,11 +5586,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 }
                                 let context_idx: Vec<usize> = bind_list[..n_prev].iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, true)).collect();
                                 hc.store_split(&content_idx, &context_idx, &set_bits(if replay_gen { &ev } else { &content }));
-                                if let (Some(i), Some(r), true) = (restate_open, hc.last_row(), inner[t]) {
-                                    restate_pending[i].2 = Some(r);
-                                    restate_open = None;
-                                }
-                                if let (true, Some(r), Some(last)) = (qattach_learned && attach.is_some(), hc.last_row(), restate_pending.last_mut()) {
+                                if let (true, Some(r), Some(last)) = (qattach_learned && attach.is_some(), hc.last_row(), attach_pending.last_mut()) {
                                     last.2 = Some(r);
                                 }
                                 if let Some(r) = hc.last_row() {
@@ -6419,11 +6262,6 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if qhold.is_some() {
             eprintln!("  QHOLD seed {seed}: in held-out test stories, an item held at {} answers ({} the stranger); {} events stored with it, {} of them recalled for the answer; queries {} (an event found {}, holding a surname {}); held: {:?}", hold_stats[0], hold_stats[1], hold_stats[2], hold_stats[3], query_stats[0], query_stats[1], query_stats[2], { let mut v: Vec<_> = held_words.iter().collect(); v.sort_by(|a, b| b.1.cmp(a.1)); v.into_iter().take(8).collect::<Vec<_>>() });
-        }
-        if question_act.is_some() {
-            let mut qc: Vec<_> = q_choice.iter().collect();
-            qc.sort_by(|a, b| b.1.cmp(a.1));
-            eprintln!("  QUESTION seed {seed}: in held-out test stories, {} questions asked, {} restatements ({} of the stranger's fact; {} recalled for the answer, {} of those right); by sentence start: {:?}", q_stats[0], q_stats[1], q_stats[2], q_credit[1], q_credit[2], qc.iter().take(12).collect::<Vec<_>>());
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);

@@ -67,3 +67,48 @@ suite's other engram entries and five seeds are needed first.
   and without; make the mode's update run on every recall path (two entries skip it).
 - Season errors still dominate (131 of 500 on seed 0). Reinstate the best event's own state
   rather than up to four, so a known person's context does not come along.
+
+## Addendum: all engram entries at five seeds, and the best event only
+
+**The suite** (`REINSTATE=1 ACH=1`, test stories not stored, five seeds, held-out, recorded →
+with reinstatement and the mode):
+
+| Entry | Recorded | Reinstatement + ACh | Per seed |
+|---|---|---|---|
+| engram store | 67.4 | 65.9 | 63.6 / 64.0 / 66.6 / 69.4 / 66.0 |
+| engram walk | 66.8 | 67.8 | 66.8 / 65.4 / 70.6 / 70.6 / 65.6 |
+| engram walk only | 87.0 | **91.2** | 92.4 / 89.0 / 92.6 / 90.0 / 91.8 |
+| inference replay | 59.4 | **65.0** | 60.4 / 62.0 / 67.0 / 69.4 / 66.0 |
+| inference read (lesioned at test) | 45.6 | 48.2 | 43.0 / 50.0 / 54.6 / 45.4 / 47.8 |
+| cooperate | 54.0 | 57.8 | 60.4 / 55.8 / 64.0 / 60.8 / 48.0 |
+| relations (lesioned at test) | 62.8 | 65.8 | 63.0 / 67.6 / 71.2 / 64.0 / 63.4 |
+| speak | 63.1 | 65.8 | 63.2 / 67.8 / 71.2 / 63.6 / 63.2 |
+| speech motor | 62.9 | 65.8 | 63.0 / 67.6 / 71.4 / 63.6 / 63.4 |
+| belief decides | 82.4 | 80.7 | 79.4 / 80.8 / 81.4 / 80.6 / 81.4 |
+
+Eight of ten entries rise and two fall slightly. The mean change is +2.3 points: the engram
+walk alone +4.2, inference replay +5.6, relations, speak and speech motor about +3. Each
+difference alone is within the spread of five seeds; together they lean one way.
+
+The two entries that lesion the hippocampus at test also gain. There, reinstatement acted
+only in training, so what the cortex learned while its earlier states were reinstated
+carried into reading without the hippocampus. The runs with test stories stored, and the
+control for them, were stopped before they finished.
+
+**The best event only** (`REINSTATE_TOP=1`, question task, five seeds):
+
+| | Mean | Season errors (of 500) | Other-family errors |
+|---|---|---|---|
+| top 4 (above) | 72.7 | 131 on seed 0 | |
+| top 1 | 71.2 (73.4 / 69.8 / 72.4 / 71.8 / 68.4) | 84–107 | 27–68 |
+
+One event brings the season back more often, but the single best event is often the known
+person's sentence, which brings the other family. The retrieval does not know which event is
+about whom: the binding problem, which this task does not otherwise test. Four events
+dilute it.
+
+**Status.** Reinstatement with the acetylcholine mode gains on the question task (+4.1) and
+leans positive on the suite (+2.3 on average, 8 of 10 entries). It is the strongest candidate
+for a default from 88–93. The remaining check is the full suite (the other entries do not use
+the engram store and are unaffected).
+

@@ -125,3 +125,8 @@ moment.
 Two-compartment layer 5 cells ([99](../experiments/99-two-compartment-layer5.md)) are the first
 learned replacement for the winner ranking that gains on average under three systems (+2.8):
 a cell bursts on its input and its context together, and a burst overrides the ranked habit.
+
+**Default since [103](../experiments/103-primed-layer5-becomes-default.md):** primed layer 5 with
+SST/VIP interneurons. Where a two-compartment cell bursts (its input arrives while its context
+primes it), its prediction overrides the hand-ranked L2/3 winner; the context threshold is set
+by the inhibitory circuit, not a rule. The ranking still decides where nothing bursts.

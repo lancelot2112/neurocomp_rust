@@ -1746,7 +1746,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut layer5: Option<Layer5> = std::env::var("L5").map_or(false, |v| v == "two").then(|| Layer5::new(BITS / 64, 16, 0.8, std::env::var("L5_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(50_000)));
     // L5=primed: two popcounts, the tuft primes and the input triggers (PrimedLayer5); a pool
     // of L5_CELLS cells wired to random contexts
-    let mut primed5: Option<PrimedLayer5> = std::env::var("L5").map_or(false, |v| v == "primed").then(|| {
+    // Default (experiment 103): primed layer 5 with SST/VIP interneurons, vectorized; L5=off
+    // (or another L5 value) turns it off
+    let mut primed5: Option<PrimedLayer5> = std::env::var("L5").map_or(true, |v| v == "primed").then(|| {
         let n = std::env::var("L5_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(8192);
         // L5_GROW=1: cells grown as needed (up to L5_CELLS) instead of a random-context pool
         if std::env::var("L5_GROW").is_ok() { PrimedLayer5::grown(BITS / 64, 16, n) } else { PrimedLayer5::new(BITS / 64, 16, n) }
@@ -1768,12 +1770,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             l.set_bit_synapses(true);
         }
     }
-    if std::env::var("L5_VEC").is_ok() {
+    if std::env::var("L5_VEC").map_or(true, |v| v != "0") {
         for l in primed5.iter_mut().chain(primed23.iter_mut()) {
             l.set_vectorized(true);
         }
     }
-    if std::env::var("INTERNEURONS").is_ok() {
+    if std::env::var("INTERNEURONS").map_or(true, |v| v != "0") {
         for l in primed5.iter_mut().chain(primed23.iter_mut()) {
             l.set_interneurons(true);
         }
@@ -1787,7 +1789,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     if bitwise {
         primed23 = None;
         primed5 = None;
-        if std::env::var("INTERNEURONS").is_ok() {
+        if std::env::var("INTERNEURONS").map_or(true, |v| v != "0") {
             for l in bit23.iter_mut().chain(bit5.iter_mut()) {
                 l.set_interneurons(true);
             }

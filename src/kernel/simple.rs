@@ -14,6 +14,9 @@ pub struct KernelStats {
     /// Fired and the target did not confirm its output.
     pub misses: u8,
     pub last_useful: u64, // class tick of creation or last hit (least-recently-useful recycling)
+    /// Burst trace (`Q16`, see `KernelClass::set_burst_competition`): how often this
+    /// kernel's recent coincidences (apical and basal input together) were confirmed.
+    pub burst: u32,
 }
 
 impl KernelStats {

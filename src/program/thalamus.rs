@@ -385,6 +385,14 @@ impl SourceMix {
         (self.log2[den] - self.log2[m as usize + 1]) as u32
     }
 
+    /// Weight (1/16 bits) of a vote whose source is right with probability `p` (`Q16`):
+    /// −log2(1 − p), as `weight` computes it from counts (p in steps of 1/256).
+    pub fn weight_of_rate(&self, p: Q16) -> u32 {
+        let h = (p.min(ONE) >> 8) as usize;
+        let m = 256 - h;
+        (self.log2[h + m + 2] - self.log2[m + 1]) as u32
+    }
+
     /// Smoothed rate that a candidate `source` proposed under `key` is right, in `Q16`.
     pub fn rate(&self, source: u8, key: u64) -> Q16 {
         let (h, m) = self.stats.get(&(source, key)).copied().unwrap_or((0, 0));

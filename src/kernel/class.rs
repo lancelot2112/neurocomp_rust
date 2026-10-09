@@ -109,6 +109,14 @@ pub struct KernelClass<K: KernelTrait> {
     recycled: usize,
 }
 
+/// The burst competition's threshold and its counts (`set_burst_competition`).
+#[derive(Clone, Copy, Debug)]
+struct BurstGate {
+    theta: Q16,
+    passed: u64,
+    failed: u64,
+}
+
 /// Bookkeeping for predictive classes.
 /// The growth configuration's fractions in `Q16`, converted once (the per-step code uses
 /// only these).
@@ -175,6 +183,8 @@ struct PredictiveState {
     evidence: bool,
     /// Per depth: (matched kernels that predicted the target, matched kernels judged).
     depth_gain: Vec<(u32, u32)>,
+    /// Burst competition (`set_burst_competition`).
+    burst: Option<BurstGate>,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
     /// Fast inhibitory loop (see `set_fast_inhibition`). None = off.
@@ -578,6 +588,7 @@ impl KernelClass<SimpleKernel> {
             specific: false,
             evidence: false,
             depth_gain: Vec::new(),
+            burst: None,
             last_hits: Vec::new(),
             last_misses: Vec::new(),
             fast: None,
@@ -667,7 +678,7 @@ impl KernelClass<SimpleKernel> {
         // Memoised interpretation (Hashlife-style): the same input under the same prior has
         // the same winner, so a repeated input skips matching. Off with fast inhibition or
         // a top-down bias, which change the winner step by step.
-        let memo_key = if st.memo.is_some() && bias.is_none() && st.fast.is_none() { Some(input_hash(input)) } else { None };
+        let memo_key = if st.memo.is_some() && bias.is_none() && st.fast.is_none() && st.burst.is_none() { Some(input_hash(input)) } else { None };
         if let (Some(key), Some(memo)) = (memo_key, st.memo.as_ref()) {
             st.memo_lookups += 1;
             if let Some(&(v, w)) = memo.get(&key) {
@@ -743,6 +754,29 @@ impl KernelClass<SimpleKernel> {
             };
             let _ = st;
         }
+        if self.predictive.as_ref().map_or(false, |st| st.burst.is_some()) {
+            let frames = input.as_words().len() / self.predictive.as_ref().unwrap().cfg.frame_words.max(1);
+            let st = self.predictive.as_ref().expect("predictive");
+            let free: Vec<usize> = st.last_matches.iter().copied().filter(|&k| st.fast.as_ref().map_or(true, |f| !f.inhibits(k))).collect();
+            let theta = st.burst.as_ref().unwrap().theta;
+            let w = self.burst_winner(&free, frames, theta);
+            let st = self.predictive.as_mut().expect("predictive");
+            let g = st.burst.as_mut().unwrap();
+            match (w, best) {
+                (Some(w), Some((key, _))) => {
+                    best = Some((key, w));
+                    g.passed += 1;
+                    g.theta += (ONE - g.theta.min(ONE)) / 64;
+                }
+                (_, Some(_)) => {
+                    // nothing bursts: the threshold falls (gain up), and the habitual
+                    // ranking chooses this time
+                    g.failed += 1;
+                    g.theta -= g.theta / 16;
+                }
+                _ => {}
+            }
+        }
         let st = self.predictive.as_mut().expect("predictive");
 
         if let (Some(key), Some(memo)) = (memo_key, st.memo.as_mut()) {
@@ -781,6 +815,13 @@ impl KernelClass<SimpleKernel> {
     /// The rate is in `Q16`.
     pub fn peek_scored(&self, input: &BitVector) -> Option<(BitVector, Q16)> {
         let matched = self.matching(input)?;
+        if let Some(g) = self.predictive.as_ref().and_then(|st| st.burst.as_ref()) {
+            let frames = input.as_words().len() / self.predictive.as_ref().unwrap().cfg.frame_words.max(1);
+            let ks: Vec<usize> = matched.iter().map(|&(k, _)| k as usize).collect();
+            if let Some(w) = self.burst_winner(&ks, frames, g.theta) {
+                return Some((self.active_kernels[w].output_vector(), Rate::of(&self.active_kernels[w].stats).q16()));
+            }
+        }
         if self.predictive.as_ref().map_or(false, |st| st.evidence) {
             let ks: Vec<usize> = matched.iter().map(|&(k, _)| k as usize).collect();
             let w = self.evidence_winner(&ks)?;
@@ -794,6 +835,33 @@ impl KernelClass<SimpleKernel> {
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
             .map(|((_, _, rel, _), k)| (self.active_kernels[k].output_vector(), rel.q16()))
+    }
+
+    /// Does `k` read both streams: basal (frame 0, the input, or the last frame, the
+    /// previous input) and apical (the frames between: context)? Only such a kernel can
+    /// burst: its match is a coincidence of input and context.
+    fn coincident(&self, k: &SimpleKernel, frames: usize) -> bool {
+        let fw = self.predictive.as_ref().map_or(1, |st| st.cfg.frame_words.max(1));
+        let (mut basal, mut apical) = (false, false);
+        for &b in &k.input_set {
+            let f = (k.input_idx + b as usize / 64) / fw;
+            if f == 0 || f + 1 >= frames {
+                basal = true;
+            } else {
+                apical = true;
+            }
+        }
+        basal && apical
+    }
+
+    /// Among `matched`, the coincident kernel with the highest burst trace at or above
+    /// `theta` (then the more reliable, then the older).
+    fn burst_winner(&self, matched: &[usize], frames: usize, theta: Q16) -> Option<usize> {
+        matched
+            .iter()
+            .copied()
+            .filter(|&k| self.active_kernels[k].stats.burst >= theta.max(1) && self.coincident(&self.active_kernels[k], frames))
+            .max_by_key(|&k| (self.active_kernels[k].stats.burst, Rate::of(&self.active_kernels[k].stats), std::cmp::Reverse(k)))
     }
 
     /// The winner by evidence among `matched` kernels (see `set_evidence_competition`).
@@ -1038,6 +1106,25 @@ impl KernelClass<SimpleKernel> {
             st.evidence = on;
             st.version += 1;
         }
+    }
+
+    /// Competition by bursts (layer 5 coincidence detection, Larkum 2013). A matched kernel
+    /// that reads both streams, basal (the input and the previous input: the first and last
+    /// frames) and apical (the context frames between), bursts. Its burst trace follows how
+    /// often its recent bursts were confirmed (rate 1/2: the moment, not the long run). The
+    /// matched coincident kernel with the highest trace at or above a threshold wins. The
+    /// threshold has a gain: it falls while nothing passes (1/16 per step) and rises slowly
+    /// while bursts win (1/64 toward 1). When nothing bursts, the usual ranking chooses.
+    pub fn set_burst_competition(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.burst = on.then(|| BurstGate { theta: ONE / 2, passed: 0, failed: 0 });
+            st.version += 1;
+        }
+    }
+
+    /// (threshold, steps a burst won, steps nothing burst), for reports.
+    pub fn burst_stats(&self) -> Option<(Q16, u64, u64)> {
+        self.predictive.as_ref().and_then(|st| st.burst.as_ref()).map(|g| (g.theta, g.passed, g.failed))
     }
 
     /// The learned gain of each depth (`Q16`), for reports.
@@ -1868,6 +1955,18 @@ impl KernelClass<SimpleKernel> {
                 st.replay_pairs.pop_front();
             }
             st.replay_pairs.push_back(pair);
+        }
+        if self.predictive.as_ref().map_or(false, |st| st.burst.is_some() && !st.matches_stale) {
+            // burst traces: each matched coincident kernel, confirmed or not by the target
+            let frames = input.as_words().len() / cfg.frame_words.max(1);
+            let matches = self.predictive.as_ref().unwrap().last_matches.clone();
+            for m in matches {
+                if self.coincident(&self.active_kernels[m], frames) {
+                    let hit = predicts(&self.active_kernels[m], target);
+                    let b = &mut self.active_kernels[m].stats.burst;
+                    *b = if hit { *b + (ONE - (*b).min(ONE)) / 2 } else { *b - *b / 2 };
+                }
+            }
         }
         let Some(st) = self.predictive.as_ref() else { return };
 

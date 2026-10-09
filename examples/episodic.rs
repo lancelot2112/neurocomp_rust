@@ -1043,6 +1043,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // COMPETE=evidence: the column's winner by evidence (each output's matched kernels'
     // reliability × their depth's learned gain), not by the ranking depth-then-reliability
     class.set_evidence_competition(std::env::var("COMPETE").map_or(false, |v| v == "evidence"));
+    // COMPETE=burst: the winner is the matched kernel reading input and context together
+    // whose recent coincidences were confirmed (KernelClass::set_burst_competition)
+    class.set_burst_competition(std::env::var("COMPETE").map_or(false, |v| v == "burst"));
     // STICKY=f: credit-tagged synapses (input bits that carried the correctly predicted
     // word) need f times as many silent confirmations before pruning
     if let Some(f) = std::env::var("STICKY").ok().and_then(|v| v.parse().ok()) {
@@ -1734,6 +1737,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let bound_min: usize = std::env::var("BOUND_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
     let bound_max: usize = std::env::var("BOUND_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(16);
     let mut bcell = BoundaryCell::new(BITS, bound_min, bound_max);
+    // GATE=burst: the thalamic mix weighs each source by its burst rate (how often its recent
+    // predictions were confirmed where the sources disagreed), not by word-keyed tables. Only
+    // sources at or above a threshold pass; the threshold falls while none passes and rises
+    // slowly while some do. When none passes, the cerebellum's prediction goes through.
+    let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
+    let mut src_burst: HashMap<u8, Q16> = HashMap::default();
+    let mut gate_theta: Q16 = ONE / 2;
+    let mut gate_stats = [0usize; 4]; // at test answers: gated, passed, cerebellum fallback, ungated
     let mut bound_stats = [0usize; 3]; // at test: boundaries, of them at ".", periods
     let bound_kind: Q16 = q16(std::env::var("BOUNDARY_KIND").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
     // context signature per word: the words seen just before (< V) and just after (V + w)
@@ -5019,7 +5030,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                         }
                     }
-                    let votes: Vec<(usize, u32)> = proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, mix.weight(*src, *key))).collect::<Vec<_>>()).collect();
+                    let votes: Vec<(usize, u32)> = if burst_gate {
+                        let beta = |src: u8| src_burst.get(&src).copied().unwrap_or(ONE / 2);
+                        let mut pass: Vec<&(u8, u64, Vec<usize>)> = proposals.iter().filter(|p| beta(p.0) >= gate_theta).collect();
+                        let at_answer = testing && t + 1 == s.answer_at;
+                        gate_stats[0] += at_answer as usize;
+                        if pass.is_empty() {
+                            gate_theta -= gate_theta / 16;
+                            pass = proposals.iter().filter(|p| p.0 == CB_SRC).collect();
+                            if pass.is_empty() {
+                                pass = proposals.iter().collect();
+                                gate_stats[3] += at_answer as usize;
+                            } else {
+                                gate_stats[2] += at_answer as usize;
+                            }
+                        } else {
+                            gate_theta += (ONE - gate_theta.min(ONE)) / 64;
+                            gate_stats[1] += at_answer as usize;
+                        }
+                        pass.iter().flat_map(|(src, _, ws)| ws.iter().map(|&w| (w, mix.weight_of_rate(beta(*src)))).collect::<Vec<_>>()).collect()
+                    } else {
+                        proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, mix.weight(*src, *key))).collect::<Vec<_>>()).collect()
+                    };
                     // the bud in shadow: would its vote have fixed or broken the mix's choice?
                     if let Some((src, key, ws)) = bud_prop {
                         if !testing && !inner[t + 1] && !reciting {
@@ -5059,6 +5091,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         // every source supports the chosen word (a source may offer several)
                         mix_agreed = proposals.len() > 1 && proposals.iter().all(|p| p.2.contains(&w));
+                    }
+                    // bursts: where the sources disagreed, each source's trace moves toward
+                    // whether it was confirmed (activity, not learning: at test too)
+                    if burst_gate && !inner[t + 1] && !reciting && !replaying {
+                        let hits: Vec<bool> = proposals.iter().map(|p| p.2.contains(&next)).collect();
+                        if hits.iter().any(|&h| h) && hits.iter().any(|&h| !h) {
+                            for (p, &h) in proposals.iter().zip(&hits) {
+                                let b = src_burst.entry(p.0).or_insert(ONE / 2);
+                                *b = if h { *b + (ONE - (*b).min(ONE)) / 4 } else { *b - *b / 4 };
+                            }
+                        }
                     }
                     // (not on an internal step: its "next word" is the network's own)
                     if (!testing || mix_test_learn) && !inner[t + 1] && !reciting {
@@ -6666,6 +6709,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        if let Some((th, passed, failed)) = column.l23.burst_stats() {
+            eprintln!("  COMPETE seed {seed}: burst threshold {:.2}; a burst won {passed} predictions, nothing burst at {failed}", to_f32(th));
+        }
+        if burst_gate {
+            let mut b: Vec<(u8, f32)> = src_burst.iter().map(|(&k, &v)| (k, (to_f32(v) * 100.0).round() / 100.0)).collect();
+            b.sort_by_key(|x| x.0);
+            eprintln!(
+                "  GATE seed {seed}: threshold {:.2}; at test answers {} gated, {} passed, {} to the cerebellum, {} ungated; burst rates {:?}",
+                to_f32(gate_theta), gate_stats[0], gate_stats[1], gate_stats[2], gate_stats[3], b
+            );
         }
         if std::env::var("COMPETE").map_or(false, |v| v == "evidence") {
             eprintln!("  COMPETE seed {seed}: learned depth gains {:?}", column.l23.depth_gains().iter().map(|&g| (to_f32(g) * 100.0).round() / 100.0).collect::<Vec<_>>());

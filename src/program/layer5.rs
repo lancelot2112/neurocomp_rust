@@ -357,6 +357,8 @@ struct PCell {
     misses: u16,
     /// how much this cell has burst recently (`Q16`): its Martinotti (SST) cells' drive
     bursty: u32,
+    /// connected synapses (basal, apical), kept current as learning changes them
+    conn: (u16, u16),
     prime: Q16,
     prime_tick: u64,
     wired_tick: u64,
@@ -482,7 +484,7 @@ struct Eval {
 
 impl PrimedLayer5 {
     pub fn new(frame_words: usize, sample: usize, cells: usize) -> Self {
-        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
+        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, conn: (0, 0), prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
         Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), cached: None, masks: None, dirty: Vec::new(), interneurons: false, sst: ONE / 2, vip: 0, tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
     }
 
@@ -629,7 +631,7 @@ impl PrimedLayer5 {
             let (b, a) = counts[c as usize];
             let c = c as usize;
             let cell = &self.cells[c];
-            let na = cell.apical.iter().filter(|s| s.1 >= CONNECTED).count().max(1) as u64;
+            let na = cell.conn.1.max(1) as u64;
             let p_now = ((a as u64) << 16) / na;
             let p = (p_now as Q16).max(self.carried(c)).min(ONE);
             if cell.out.is_empty() {
@@ -638,7 +640,7 @@ impl PrimedLayer5 {
                 }
                 continue;
             }
-            let nb = cell.basal.iter().filter(|s| s.1 >= CONNECTED).count() as u64;
+            let nb = cell.conn.0 as u64;
             if nb == 0 {
                 continue;
             }
@@ -735,6 +737,12 @@ impl PrimedLayer5 {
         }
     }
 
+    /// Recount cell `c`'s connected synapses.
+    fn refresh(&mut self, c: usize) {
+        let cell = &mut self.cells[c];
+        cell.conn = (cell.basal.iter().filter(|s| s.1 >= CONNECTED).count() as u16, cell.apical.iter().filter(|s| s.1 >= CONNECTED).count() as u16);
+    }
+
     /// Write cell `c`'s connected synapses into the masks.
     fn sync(&mut self, c: usize) {
         if let Some(m) = self.masks.as_mut() {
@@ -777,6 +785,7 @@ impl PrimedLayer5 {
         cell.trace = ONE / 2;
         cell.misses = 0;
         cell.prime = 0;
+        cell.conn = (0, 0);
         self.stats[4] += 1;
     }
 
@@ -794,6 +803,7 @@ impl PrimedLayer5 {
         for (i, b) in pick.into_iter().enumerate() {
             self.index_add(c, b, true, i);
         }
+        self.refresh(c);
         self.sync(c);
     }
 
@@ -867,7 +877,7 @@ impl PrimedLayer5 {
                 } else if let Some(f) = self.cells.iter().position(|c| c.out.is_empty()) {
                     f
                 } else {
-                    self.cells.push(PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 });
+                    self.cells.push(PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, conn: (0, 0), prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 });
                     self.cells.len() - 1
                 };
                 self.wire(slot, &ctx, rng);
@@ -918,16 +928,15 @@ impl PrimedLayer5 {
                 self.dirty.push(c);
             }
         }
-        if self.masks.is_some() {
-            let mut d: Vec<usize> = e.fired.iter().map(|x| x.0).collect();
-            d.append(&mut self.dirty);
-            for c in d {
-                if !self.cells[c].out.is_empty() || !self.cells[c].apical.is_empty() {
-                    self.sync(c);
-                }
+        // the cells whose synapses changed: their connected counts (and masks) follow
+        let mut d: Vec<usize> = e.fired.iter().map(|x| x.0).collect();
+        d.append(&mut self.dirty);
+        for c in d {
+            self.refresh(c);
+            if self.masks.is_some() && (!self.cells[c].out.is_empty() || !self.cells[c].apical.is_empty()) {
+                self.sync(c);
             }
         }
-        self.dirty.clear();
         self.recent_apical = apical.clone();
         // random context: one free cell is (re)wired to this moment's context; one wired
         // long ago and never committed is rewired

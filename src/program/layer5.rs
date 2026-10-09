@@ -326,6 +326,11 @@ pub struct PrimedLayer5 {
     index: Vec<Vec<(u32, bool)>>,
     tick: u64,
     theta: Q16,
+    /// Grown on demand (`grown`): at most this many cells; None = a fixed pool wired to
+    /// random contexts.
+    grow_cap: Option<usize>,
+    /// the previous step's context bits (a grown cell's tuft samples the recent context)
+    recent_apical: Vec<u32>,
     /// (bursts won, single spikes won, nothing fired, commitments, freed)
     pub stats: [u64; 5],
 }
@@ -340,6 +345,7 @@ struct PCell {
     prime: Q16,
     prime_tick: u64,
     wired_tick: u64,
+    used_tick: u64,
 }
 
 const CONNECTED: u8 = 128;
@@ -353,8 +359,19 @@ struct Eval {
 
 impl PrimedLayer5 {
     pub fn new(frame_words: usize, sample: usize, cells: usize) -> Self {
-        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, prime: 0, prime_tick: 0, wired_tick: 0 };
-        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), tick: 0, theta: ONE * 4 / 5, stats: [0; 5] }
+        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
+        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
+    }
+
+    /// Cells grown as needed instead of a pool (the limit of a large reserve of silent cells
+    /// with random synapses: the one recruited is the one wired closest to the moment). A
+    /// cell is created where nothing predicted the next input, its tuft sampled from the
+    /// recent context (this step's and the previous step's), its basal synapses from the
+    /// input. Past `cap` cells the least recently useful is recycled.
+    pub fn grown(frame_words: usize, sample: usize, cap: usize) -> Self {
+        let mut l = Self::new(frame_words, sample, 0);
+        l.grow_cap = Some(cap);
+        l
     }
 
     pub fn committed(&self) -> usize {
@@ -567,6 +584,7 @@ impl PrimedLayer5 {
             let cell = &mut self.cells[wc];
             if hit {
                 confirmed = true;
+                cell.used_tick = self.tick;
                 cell.trace += (ONE - cell.trace.min(ONE)) / 2;
                 cell.misses = 0;
                 Self::hebb(&mut cell.basal, &basal, 12, 6);
@@ -600,8 +618,48 @@ impl PrimedLayer5 {
             let cell = &mut self.cells[c];
             cell.trace = if hit { cell.trace + (ONE - cell.trace.min(ONE)) / 4 } else { cell.trace - cell.trace / 4 };
         }
+        // grown: a new cell on this coincidence (tuft from the recent context)
+        if let (Some(cap), false, false) = (self.grow_cap, confirmed, basal.is_empty()) {
+            let mut ctx: Vec<u32> = apical.iter().chain(&self.recent_apical).copied().collect();
+            ctx.sort_unstable();
+            ctx.dedup();
+            if !ctx.is_empty() {
+                let live = self.cells.iter().filter(|c| !c.out.is_empty()).count();
+                let slot = if live >= cap {
+                    let v = (0..self.cells.len()).filter(|&c| !self.cells[c].out.is_empty()).min_by_key(|&c| (self.cells[c].used_tick, c)).unwrap();
+                    self.free(v);
+                    v
+                } else if let Some(f) = self.cells.iter().position(|c| c.out.is_empty()) {
+                    f
+                } else {
+                    self.cells.push(PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 });
+                    self.cells.len() - 1
+                };
+                self.wire(slot, &ctx, rng);
+                let mut pick: Vec<u32> = basal.choose_multiple(rng, self.sample.min(basal.len())).copied().collect();
+                pick.sort_unstable();
+                for &b in &pick {
+                    self.index_add(slot, b, false);
+                }
+                let mut out = Vec::new();
+                for (wi, &w) in target.as_words().iter().enumerate() {
+                    let mut w = w;
+                    while w != 0 {
+                        out.push((wi * 64 + w.trailing_zeros() as usize) as u32);
+                        w &= w - 1;
+                    }
+                }
+                let tick = self.tick;
+                let cell = &mut self.cells[slot];
+                cell.basal = pick.iter().map(|&b| (b, CONNECTED + 32)).collect();
+                cell.out = out;
+                cell.trace = ONE / 2;
+                cell.used_tick = tick;
+                self.stats[3] += 1;
+            }
+        }
         // commitment: the most primed free cell takes this input
-        if !confirmed && !basal.is_empty() {
+        if self.grow_cap.is_none() && !confirmed && !basal.is_empty() {
             if let Some(&(c, _)) = e.free_primed.iter().max_by_key(|x| (x.1, std::cmp::Reverse(x.0))) {
                 let mut pick: Vec<u32> = basal.choose_multiple(rng, self.sample.min(basal.len())).copied().collect();
                 pick.sort_unstable();
@@ -637,9 +695,10 @@ impl PrimedLayer5 {
                 syn.retain(|s| s.1 > 0);
             }
         }
+        self.recent_apical = apical.clone();
         // random context: one free cell is (re)wired to this moment's context; one wired
         // long ago and never committed is rewired
-        if !apical.is_empty() {
+        if self.grow_cap.is_none() && !apical.is_empty() && !self.cells.is_empty() {
             let n = self.cells.len();
             let c = rng.gen_range(0..n);
             if self.cells[c].out.is_empty() && (self.cells[c].apical.is_empty() || self.tick.saturating_sub(self.cells[c].wired_tick) > 4 * n as u64) {
@@ -686,5 +745,40 @@ mod primed_tests {
         assert_eq!(o.as_words(), target(2).as_words());
         let (o, _, _) = l5.predict(&row(1, 1), 64).unwrap();
         assert_eq!(o.as_words(), target(3).as_words());
+    }
+
+    #[test]
+    fn grown_cells_learn_input_in_context() {
+        let row = |input: usize, ctx: usize| {
+            let mut v = BitVector::new(192, Some(0));
+            for i in 0..8 {
+                v.bit_set(input * 8 + i);
+                v.bit_set(64 + ctx * 8 + i);
+                v.bit_set(128 + i);
+            }
+            v
+        };
+        let target = |w: usize| {
+            let mut v = BitVector::new(64, Some(0));
+            for i in 0..8 {
+                v.bit_set(w * 8 + i);
+            }
+            v
+        };
+        let mut l5 = PrimedLayer5::grown(1, 8, 64);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        for _ in 0..50 {
+            for (ctx, out) in [(0, 2), (1, 3)] {
+                let r = row(1, ctx);
+                l5.predict(&r, 64);
+                l5.learn(&r, &target(out), &mut rng);
+            }
+        }
+        let (o, _, burst) = l5.predict(&row(1, 0), 64).unwrap();
+        assert!(burst);
+        assert_eq!(o.as_words(), target(2).as_words());
+        let (o, _, _) = l5.predict(&row(1, 1), 64).unwrap();
+        assert_eq!(o.as_words(), target(3).as_words());
+        assert!(l5.committed() <= 64);
     }
 }

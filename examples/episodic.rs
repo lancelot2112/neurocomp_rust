@@ -1382,6 +1382,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // cortical states stored with the best events (up to 4) are reinstated in the higher
     // areas' context, beside their own: recall brings back the state, not words.
     let reinstate = std::env::var("REINSTATE").is_ok();
+    let reinstate_here = std::env::var("REINSTATE").map_or(false, |v| v == "here");
+    // STORE_TEST=1: the hippocampus encodes test stories too (it is never off); without it,
+    // only training stories are stored (QUESTION stores test events by itself)
+    let store_test = std::env::var("STORE_TEST").is_ok();
     let reinstate_bonus: usize = std::env::var("REINSTATE_BONUS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
     let mut row_cortex: HashMap<u32, BitVector> = HashMap::default(); // engram row → the cortical state it was stored in
     let mut reinstate_stats = [0u64; 3]; // test steps: reinstated, from this story's events only, bits reinstated
@@ -3857,7 +3861,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 let surprising_r = match (reinstate && hier && !bind_sentence_pairs.is_empty() && !(testing && bind_lesion), bind_hc.as_ref()) {
                     (true, Some(hc)) => {
                         let cue: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
-                        let (rows, _) = hc.recall_soft(&cue, reinstate_bonus, 4);
+                        // REINSTATE=here: only this story's events (no fallback to other stories)
+                        let (rows, _) = if reinstate_here {
+                            let (mut r, w) = hc.recall_here_all(&cue);
+                            r.sort_unstable_by(|a, b| b.cmp(a));
+                            r.truncate(4);
+                            (r, w)
+                        } else {
+                            hc.recall_soft(&cue, reinstate_bonus, 4)
+                        };
                         let mut x = surprising.clone();
                         let mut n = 0u64;
                         for r in &rows {
@@ -5595,7 +5607,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 sentence = BitVector::new(BITS, Some(0));
                 if hippo_self && bind && !bind_sentence.is_empty() {
-                    if ((!testing || recite_plan || self::question()) && !replaying) || (reciting && self_store) {
+                    if ((!testing || recite_plan || self::question() || store_test) && !replaying) || (reciting && self_store) {
                         if let Some(hc) = &mut bind_hc {
                             hc.set_source(reciting as u8);
                             let ev = event_vec(&bind_sentence, &bind_prev, ctx_offset);

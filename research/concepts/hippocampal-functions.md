@@ -67,6 +67,43 @@ a workaround for that missing reinstatement.
 - On recall, that state reinstated into the higher area as context (the path of
   [90](../experiments/90-holding-an-open-question.md)'s `QAREA`), not decoded into words.
 
+## Acetylcholine and norepinephrine: modes of the hippocampus
+
+**Acetylcholine** (medial septum and diagonal band, which also pace theta) switches between
+encoding and retrieval (Hasselmo; Hasselmo, Bodelón & Wyble 2002):
+- **High acetylcholine (active exploration, attention):** encoding. It suppresses the
+  recurrent CA3 connections that complete patterns, leaves the entorhinal input largely
+  intact, and enhances plasticity. New input dominates and is stored, instead of being
+  absorbed by what it resembles.
+- **Low acetylcholine (quiet rest, slow-wave sleep):** retrieval and consolidation. The
+  recurrent connections dominate, giving pattern completion, sharp-wave ripples and replay
+  to cortex. Within a theta cycle, encoding and retrieval are also thought to alternate by
+  phase.
+- **The loop:** CA1's comparator (recalled vs arriving) signals novelty to the septum through
+  the lateral septum. Novelty raises acetylcholine (encode), familiarity lowers it
+  (retrieve), so the hippocampus sets its own mode.
+
+**Norepinephrine** (locus coeruleus, dense to the dentate gyrus and CA3):
+- **Phasic bursts on novel or surprising events** strengthen plasticity (β-adrenergic LTP).
+  The locus coeruleus also releases dopamine in the hippocampus (Takeuchi et al. 2016;
+  Kempadoo et al. 2016). So a salient event around an ordinary one rescues the ordinary
+  memory (synaptic tagging and capture).
+- **Network reset** (Bouret & Sara 2005): a burst interrupts ongoing processing so the
+  networks reorganise around the new event. This is the roadmap's "brake".
+- **Adaptive gain** (Aston-Jones & Cohen 2005): phasic mode supports focused exploitation,
+  high tonic mode supports exploration and disengagement.
+
+**Against ours.**
+
+| Function | Ours |
+|---|---|
+| Encoding vs retrieval mode | missing: every step stores and recalls at full strength ([90](../experiments/90-holding-an-open-question.md): recall matched the sentence and pulled in old stories; [92](../experiments/92-reinstatement.md): reinstatement always at full strength) |
+| Mode from CA1's mismatch | partly: the hippocampus's novelty is computed (the learned hold uses it) but sets no mode |
+| Low acetylcholine: replay | present (sleep replay, consolidation) |
+| Salience tag strengthening storage | partly: `REPLAY_TAGGED` (replay priority), growth on surprise; storage strength is not modulated |
+| Reset on surprise | missing (the brake) |
+| Adaptive exploration | missing: the basal ganglia explore at a fixed 10%, and in [91](../experiments/91-learned-working-memory-hold.md) a rarely rewarded hold was extinguished |
+
 ## Novelty should come from prediction, not frequency
 Habituation (`novel`) and the rarity cue (`rarest`) force novelty from per-bit
 frequency counts. That is why they need sparse random codes, fragile constants, and

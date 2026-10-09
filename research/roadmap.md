@@ -361,6 +361,11 @@ slot codes bound to content in the hippocampus, recalled by slot.
   5. **the hippocampus as an index that reinstates the cortical state** (Teyler & Rudy):
      events stored with the higher area's state, recall reinstating it as context
      ([concept](concepts/hippocampal-functions.md#an-index-to-the-cortex-not-a-store-of-vectors));
+     built ([92](experiments/92-reinstatement.md)): +1.4 on the question task, destructive when
+     other stories' states are reinstated, neutral when restricted to this story. Next, an
+     acetylcholine-like mode from the hippocampus's novelty (encode vs retrieve) and a
+     norepinephrine-like gain (salience tag, adaptive exploration)
+     ([neuromodulation](concepts/hippocampal-functions.md#acetylcholine-and-norepinephrine-modes-of-the-hippocampus));
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and
      a heard slot the column learns to use.
 

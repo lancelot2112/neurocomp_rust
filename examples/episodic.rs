@@ -1589,6 +1589,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let qattach = std::env::var("QATTACH").ok();
     let qattach_learned = qattach.as_deref() == Some("learned");
     let mut held_item: Option<(usize, Q16)> = None;
+    let mut q_err = [0usize; 5]; // QUESTION, held-out answers: right, right family wrong season, other family right season, other, no place
+    let mut held_words: HashMap<&str, usize> = HashMap::default(); // test, held out: what was held at the answer
     // QQUERY=1 (with QHOLD, HC_EC): the held item as a recall query of its own. When the held
     // item is read again, it cues the hippocampus alone, among the current story's events
     // only (context-dependent recall, `recall_here`): pattern completion from the item to the
@@ -5021,8 +5023,29 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 if qhold.is_some() && testing && s.held_out && t + 1 == s.answer_at {
                     if let Some((hw, _)) = held_item {
+                        *held_words.entry(vocab[hw]).or_default() += 1;
                         hold_stats[0] += 1;
                         hold_stats[1] += NEW_NAMES.contains(&vocab[hw]) as usize;
+                    }
+                }
+                // QUESTION: what a held-out answer got wrong: the family, the season, or both
+                if question() && testing && s.held_out && t + 1 == s.answer_at {
+                    let season = SEASONS.iter().position(|x| *x == s.words[0]);
+                    let fam = s.words.iter().position(|w| *w == "person").and_then(|p| s.words.get(p + 3)).and_then(|w| SURNAMES.iter().position(|x| x == w));
+                    let pred = enc.decode(&out).and_then(|w| PLACES.iter().position(|p| *p == vocab[w]));
+                    if let (Some(se), Some(f), Some(pl)) = (season, fam, pred) {
+                        let k = if pl == family_place(f, se) {
+                            0
+                        } else if (0..4).any(|o| o != se && family_place(f, o) == pl) {
+                            1 // a place of the right family, another season
+                        } else if family_place(1 - f, se) == pl {
+                            2 // the other family's place for this season
+                        } else {
+                            3
+                        };
+                        q_err[k] += 1;
+                    } else {
+                        q_err[4] += 1;
                     }
                 }
                 if (question_act.is_some() || qattach_learned) && t + 1 == s.answer_at {
@@ -6391,8 +6414,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 cw.iter().filter(|x| NEW_NAMES.iter().any(|n| x.0.contains(n))).take(16).collect::<Vec<_>>()
             );
         }
+        if question() {
+            eprintln!("  QERR seed {seed}: held-out answers: right {}, the family's place for another season {}, the other family's place for this season {}, other {}, no place {}", q_err[0], q_err[1], q_err[2], q_err[3], q_err[4]);
+        }
         if qhold.is_some() {
-            eprintln!("  QHOLD seed {seed}: in held-out test stories, an item held at {} answers ({} the stranger); {} events stored with it, {} of them recalled for the answer; queries {} (an event found {}, holding a surname {})", hold_stats[0], hold_stats[1], hold_stats[2], hold_stats[3], query_stats[0], query_stats[1], query_stats[2]);
+            eprintln!("  QHOLD seed {seed}: in held-out test stories, an item held at {} answers ({} the stranger); {} events stored with it, {} of them recalled for the answer; queries {} (an event found {}, holding a surname {}); held: {:?}", hold_stats[0], hold_stats[1], hold_stats[2], hold_stats[3], query_stats[0], query_stats[1], query_stats[2], { let mut v: Vec<_> = held_words.iter().collect(); v.sort_by(|a, b| b.1.cmp(a.1)); v.into_iter().take(8).collect::<Vec<_>>() });
         }
         if question_act.is_some() {
             let mut qc: Vec<_> = q_choice.iter().collect();

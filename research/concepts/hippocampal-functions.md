@@ -89,6 +89,28 @@ area ([92](../experiments/92-reinstatement.md)–[93](../experiments/93-neuromod
 follow this path. `HC_EC` (recall into the column's row) and sleep-gated replay into the
 column ([94](../experiments/94-sleep-gated-consolidation.md)) do not, and neither has worked.
 
+## Where the hippocampus attaches in the hierarchy
+
+- **At the apex.** In Felleman & Van Essen's hierarchy, the hippocampus is the top node.
+  Through the entorhinal cortex it receives the highest association areas of every stream,
+  and prefrontal, cingulate and retrosplenial cortex. It has no direct link to primary
+  areas; recall at the top reaches them through descending feedback.
+- **The fast learner pairs with the slowest cortex.** Higher areas integrate over longer
+  windows (Hasson's temporal receptive windows: from milliseconds in sensory cortex to
+  minutes of narrative in the default-mode network). One-shot storage meets the area that
+  holds a whole episode's context.
+- **A gradient along its long axis.** The posterior (dorsal) hippocampus carries finer
+  codes and links to sensory-side association areas. The anterior (ventral) part carries
+  coarser, slower codes and links to prefrontal cortex (Strange et al. 2014; Brunec et al.
+  2018). It spans several of the top levels, each part paired to a scale.
+
+**For ours.** The hippocampus's index should be the top area's state, and recall and replay
+should go to the top area and cascade down. As areas grow by need
+([84](../experiments/84-areas-grow-by-need.md)), its partner moves up to the newest, slowest
+area, perhaps with links to the top two or three weighted by learned shares (the long axis).
+[96](../experiments/96-association-area.md) found the same thing from the other side: a
+second area beside the top one was the wrong partner.
+
 ## Acetylcholine and norepinephrine: modes of the hippocampus
 
 **Acetylcholine** (medial septum and diagonal band, which also pace theta) switches between

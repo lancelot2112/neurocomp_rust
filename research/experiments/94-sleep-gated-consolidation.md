@@ -58,3 +58,34 @@ Nothing becomes a default.
 - Exempt newly consolidated kernels from the sleep pass's merging for a while.
 - Prioritise replay by dopamine (novelty and reward) instead of the familiarity-band rule
   (`band < 4`): the dopamine–novelty loop, next.
+
+## Addendum: why the slow cortex never answers
+
+A diagnostic (`OWNDIAG`) prints what the column itself predicts at test answers (hippocampus
+teaches cortex, `LEARNING=three SLOW_P=0.25 SLEEP_P=1`, gate open, seed 0). At all 1,000
+answers it predicts **"cat"**, the commonest word after "the" ("the cat slept"), whatever the
+question:
+
+> ["mary", "smith", "went", "to", "the"]: column says "cat", answer bedroom
+
+The mix's report agrees across runs: "column alone 0.0% right". The mixed answer equals the
+cerebellum's accuracy (49.0 vs 48.7, 65.9 vs 65.9). So under three learning systems every
+answer comes from the cerebellum, and nothing consolidation adds to the slow column reaches
+an answer.
+
+The cause is the column's competition, not plasticity or where replay goes. The general
+kernel "the → cat" has the most evidence and wins the winner-take-all at every "the". The
+place kernels that replay grows are specific and young, and they never win.
+
+The two leads above:
+- **memory's frames:** moot. These entries run `POLICIES=nomemory`, so the replayed row has
+  no memory frames and matches what the cortex has at test.
+- **merging:** secondary. It only removes a kernel that a more general, at least as reliable
+  kernel with the same output covers.
+
+**Next.** Let consolidated, context-specific kernels compete fairly. Two candidates:
+- **Specificity:** a matched kernel that reads more of the context outranks a general one
+  once it is reliable (the existing `TRUST` rule, depth over reliability above a floor).
+- **Replay as evidence:** each replay in which a kernel predicts the trace's answer counts as
+  a hit, so consolidated kernels arrive with the evidence they need.
+

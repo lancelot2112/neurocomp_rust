@@ -1210,6 +1210,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         a.column.l23.set_growth_probability(Some(assoc_p));
         a
     });
+    let mut own_diag = [0usize; 3]; // OWNDIAG, test answers: all, the column decodes a word, any bits
     let mut assoc_in: Option<BitVector> = None; // this step's input, for learning
     let mut assoc_word: Option<usize> = None; // this step's proposal
     let mut assoc_conf: Q16 = 0;
@@ -4834,6 +4835,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // (source, key, proposed words): 0 column, 1 memory, 2 top-down
                     let mut proposals: Vec<(u8, u64, Vec<usize>)> = Vec::new();
                     let own = enc.decode(&out);
+                    if std::env::var("OWNDIAG").is_ok() && testing && t + 1 == s.answer_at {
+                        own_diag[0] += 1;
+                        own_diag[1] += own.is_some() as usize;
+                        own_diag[2] += (out.count_ones() > 0) as usize;
+                        if own_diag[0] <= 8 {
+                            eprintln!("  OWNDIAG {:?}: column says {:?} ({} bits), answer {}", &s.words[s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1)..=t], own.map(|w| vocab[w]), out.count_ones(), vocab[next]);
+                        }
+                    }
                     // the cortex's class: every word in its possible continuations
                     let class_words = |bv: &BitVector| -> Vec<usize> { (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).collect() };
                     let novel = class_vote && bind && fam_band < 4;
@@ -6584,6 +6593,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        if std::env::var("OWNDIAG").is_ok() {
+            eprintln!("  OWNDIAG seed {seed}: at {} test answers the column decoded a word at {} and output any bits at {}", own_diag[0], own_diag[1], own_diag[2]);
         }
         if let Some(a) = assoc.as_ref() {
             eprintln!("  ASSOC seed {seed}: {} kernels; {} replays taught it; at test answers it proposed a word at {} and was right at {}", a.column.l23.kernels().len(), assoc_stats[2], assoc_stats[0], assoc_stats[1]);

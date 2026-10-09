@@ -121,3 +121,7 @@ basal and apical frames, kernels reading both win by a trace of confirmed coinci
 the thalamic mix weighs sources by burst rates instead of word-keyed tables. It is not yet a
 replacement: a rate per source loses the context the tables held. Bursts should vote per
 moment.
+
+Two-compartment layer 5 cells ([99](../experiments/99-two-compartment-layer5.md)) are the first
+learned replacement for the winner ranking that gains on average under three systems (+2.8):
+a cell bursts on its input and its context together, and a burst overrides the ranked habit.

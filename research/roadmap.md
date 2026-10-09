@@ -353,7 +353,11 @@ slot codes bound to content in the hippocampus, recalled by slot.
      matches the sentence, not the item. Next: the held item as a query of its own (pattern
      completion from the item and this story's place), "open" as unresolved in this story;
      built (query, soft retrieval, routed channel): retrieval works, the column does not
-     use the answer; next, the answer into the higher area's context;
+     use the answer; the answer into the higher area's context (no gain: the task never
+     tested binding, every error is the season); a flexible learned hold
+     ([91](experiments/91-learned-working-memory-hold.md)) finds the season policy on one
+     seed of five. Next: recall-tagged credit for the hold, one offer per sentence by
+     surprise, attach as context not content;
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and
      a heard slot the column learns to use.
 

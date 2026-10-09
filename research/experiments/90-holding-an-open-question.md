@@ -210,7 +210,9 @@ Held-out errors on seed 0 (500 answers):
    That explains why none of them showed a gain, whatever the path.
 2. **The real deficit is the season**, stated once at the story's start. Every error is the
    family's place for another season.
-3. **The self-taught hold found that.** Learning from the answer alone, the basal ganglia
+3. **The self-taught hold found that** (but see [91](91-learned-working-memory-hold.md):
+   with the hand-set take-over gate and word-id key removed, it finds it on one seed of
+   five, and the mean falls). Learning from the answer alone, the basal ganglia
    hold the season word and store it with chosen later sentences, and season errors fall
    from 154 to 113. The gain (+6.6 points) holds on all three seeds. Holding without
    storing does nothing, so the gain comes through the hippocampus: later events carry the

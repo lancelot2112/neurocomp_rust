@@ -97,3 +97,9 @@ Without the restate operator and the oracle:
 Built in [90](../experiments/90-holding-an-open-question.md): negative. Recall at the
 question matches the sentence ("lucy went to the …" from earlier stories), not the held
 item's facts.
+
+Removed after [91](../experiments/91-learned-working-memory-hold.md): every oracle and hand
+rule of the question and hold line (`QUESTION_ACT` and its operators and subject controls,
+`QHOLD=oracle|novel`, `QATTACH=oracle|all`, the take-over gate, the word-id key for attach).
+What is left is learned, apart from the query trigger.
+

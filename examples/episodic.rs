@@ -1751,6 +1751,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // L5_GROW=1: cells grown as needed (up to L5_CELLS) instead of a random-context pool
         if std::env::var("L5_GROW").is_ok() { PrimedLayer5::grown(BITS / 64, 16, n) } else { PrimedLayer5::new(BITS / 64, 16, n) }
     });
+    // L23=primed: the column's L2/3 prediction from two-compartment primed cells (input on the
+    // basal dendrites, context on the tuft; spikes and bursts both predict); L23_GROW=1: grown
+    // as needed; L23_CELLS cells (default 16384)
+    let mut primed23: Option<PrimedLayer5> = std::env::var("L23").map_or(false, |v| v == "primed").then(|| {
+        let n = std::env::var("L23_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(16384);
+        if std::env::var("L23_GROW").is_ok() { PrimedLayer5::grown(BITS / 64, 16, n) } else { PrimedLayer5::new(BITS / 64, 16, n) }
+    });
+    let mut l23_stats = [0usize; 2]; // predictions by primed cells, by the old kernels
     let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
     let mut src_burst: HashMap<u8, Q16> = HashMap::default();
     let mut gate_theta: Q16 = ONE / 2;
@@ -2456,6 +2464,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             if let Some(l) = primed5.as_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
+                            if let Some(l) = primed23.as_mut() {
+                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
                             sleep_column += 1;
@@ -2503,6 +2514,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
                             if let Some(l) = primed5.as_mut() {
+                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
+                            if let Some(l) = primed23.as_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
                             column.l23.set_growth_probability(three.then_some(slow_p));
@@ -4867,6 +4881,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         column.set_output(out.clone(), c);
                     }
                 }
+                // L23=primed: L2/3 as two-compartment primed cells: whenever one fires (spike or
+                // burst) it is the column's prediction; the old kernels speak only when none fires
+                if let Some(l) = primed23.as_mut() {
+                    match l.predict(&input, BITS) {
+                        Some((o, c, _)) => {
+                            out = o;
+                            column.set_output(out.clone(), c);
+                            l23_stats[0] += 1;
+                        }
+                        None => l23_stats[1] += 1,
+                    }
+                }
                 // L5=primed: the same, with priming (PrimedLayer5): a burst overrides L2/3
                 if let Some(l) = primed5.as_mut() {
                     if let Some((o, c, true)) = l.predict(&input, BITS) {
@@ -5780,6 +5806,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
                         if let Some(l) = primed5.as_mut() {
+                            l.learn(&input, &enc.codes[next], &mut rng);
+                        }
+                        if let Some(l) = primed23.as_mut() {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
                         if let Some(sc) = slow.as_mut() {
@@ -6757,6 +6786,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        if let Some(l) = primed23.as_ref() {
+            eprintln!(
+                "  L23 seed {seed}: primed, {} committed cells; context threshold {:.2}; bursts {}, spikes {}, nothing {}; the old kernels predicted {} of {} steps; commitments {}, freed {}",
+                l.committed(), to_f32(l.threshold()), l.stats[0], l.stats[1], l.stats[2], l23_stats[1], l23_stats[0] + l23_stats[1], l.stats[3], l.stats[4]
+            );
         }
         if let Some(l) = primed5.as_ref() {
             eprintln!(

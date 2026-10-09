@@ -1498,6 +1498,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // hippocampus indexes it), and at every sleep the replayed trace teaches the column too,
     // with its growth probability raised to p while it sleeps (low acetylcholine: the slow
     // cortex learns readily from replay, slowly while awake: SLOW_P under LEARNING=three).
+    // REPLAY_PREDICT=1: a replayed trace is predicted before it is learned. Learning credits
+    // hits and misses to the kernels that matched at the last prediction, and grows from the
+    // last winner; without it, replay was credited against the last awake step's matches.
+    let replay_predict = std::env::var("REPLAY_PREDICT").is_ok();
     let sleep_p: Option<Q16> = std::env::var("SLEEP_P").ok().and_then(|v| v.parse::<f64>().ok()).map(q16);
     let mut trace_rows: Vec<BitVector> = Vec::new(); // the column's input at each trace's answer
     // DA=1: the dopamine–novelty loop (Lisman & Grace 2005). Each consolidation trace carries
@@ -2381,12 +2385,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let gate = a.column.l23.growth_gate();
                             a.column.l23.set_growth_gate(None);
                             a.column.l23.set_growth_probability(Some(ONE));
+                            if replay_predict {
+                                a.predict(&x);
+                            }
                             a.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                             a.column.l23.add_replay(&x, &enc.codes[*ans]);
                             a.column.l23.set_growth_probability(Some(assoc_p));
                             a.column.l23.set_growth_gate(gate);
                             assoc_stats[2] += 1;
                         } else {
+                            if replay_predict {
+                                area.predict(&x);
+                            }
                             area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                             area.column.l23.add_replay(&x, &enc.codes[*ans]);
                         }
@@ -2397,6 +2407,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let gate = column.l23.growth_gate();
                             column.l23.set_growth_gate(None);
                             column.l23.set_growth_probability(Some(p));
+                            if replay_predict {
+                                column.predict(row);
+                            }
                             column.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
@@ -2417,11 +2430,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let gate = a.column.l23.growth_gate();
                             a.column.l23.set_growth_gate(None);
                             a.column.l23.set_growth_probability(Some(ONE));
+                            if replay_predict {
+                                a.predict(&x);
+                            }
                             a.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                             a.column.l23.set_growth_probability(Some(assoc_p));
                             a.column.l23.set_growth_gate(gate);
                             assoc_stats[2] += 1;
                         } else {
+                            if replay_predict {
+                                area.predict(&x);
+                            }
                             area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                         }
                         replayed += 1;
@@ -2431,6 +2450,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             let gate = column.l23.growth_gate();
                             column.l23.set_growth_gate(None);
                             column.l23.set_growth_probability(Some(p));
+                            if replay_predict {
+                                column.predict(row);
+                            }
                             column.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);

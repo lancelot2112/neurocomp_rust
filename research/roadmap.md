@@ -358,6 +358,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
      ([91](experiments/91-learned-working-memory-hold.md)) finds the season policy on one
      seed of five. Next: recall-tagged credit for the hold, one offer per sentence by
      surprise, attach as context not content;
+  5. **the hippocampus as an index that reinstates the cortical state** (Teyler & Rudy):
+     events stored with the higher area's state, recall reinstating it as context
+     ([concept](concepts/hippocampal-functions.md#an-index-to-the-cortex-not-a-store-of-vectors));
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and
      a heard slot the column learns to use.
 

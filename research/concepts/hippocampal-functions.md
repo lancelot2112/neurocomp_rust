@@ -27,6 +27,46 @@ counterpart (or absence) in this codebase.
 | **Replay / consolidation** | Hippocampal replay trains neocortex slowly (complementary learning systems, [McClelland, McNaughton & O'Reilly 1995](../related-work.md#hippocampus-and-entorhinal-cortex)) | Replay into a cortical semantic store: [17](../experiments/17-consolidation.md) (facts survive after the hippocampus forgets them) | Slow, interleaved cortical learning; prioritised replay; updating facts. |
 | **Indexing** | The hippocampus stores an index to distributed cortical patterns ([Teyler & DiScenna 1986](../related-work.md#hippocampus-and-entorhinal-cortex)) | Episodes store the word codes themselves | Store a pointer (sparse index code) bound to cortical codes; pairs naturally with expansion. |
 
+## An index to the cortex, not a store of vectors
+
+**What the literature says.**
+- **Index theory** (Teyler & DiScenna 1986; Teyler & Rudy 2007). The hippocampus stores a
+  sparse *index* of an experience: a CA3 pattern linked to the distributed cortical pattern
+  that was active at encoding. It does not store the experience itself. Retrieval completes
+  the index, and the index *reinstates* the cortical pattern. The content of a memory is
+  generated in the cortex; the hippocampus brings it back.
+- **Evidence of reinstatement.** Recall reactivates the sensory regions active at encoding
+  (Wheeler, Petersen & Buckner 2000). Single neurons that fired during an episode fire again
+  when it is freely recalled (Gelbard-Sagiv et al. 2008).
+- **Re-experiencing needs it.** Reliving a past event, as opposed to knowing that it
+  happened, needs the hippocampus (Tulving's autonoetic consciousness).
+- **The input is the cortical state, summarised.** The hippocampus does not receive raw
+  sensory vectors. Its input comes through the entorhinal cortex, which collects converging,
+  already processed output of association cortex: perirhinal cortex for items and objects,
+  parahippocampal cortex for place and context. Its output returns by the same route, so
+  what it stores and returns is a compressed summary of the cortical state.
+
+**What ours does.**
+- The engram store keeps word-in-slot binding ids and the story's earlier bindings: a
+  near-symbolic transcript of the sentence, not an index into the cortical state.
+- Recall returns words, which the harness decodes and places somewhere: votes, the
+  rollout, an entorhinal slot.
+- The cortical state at encoding is kept in two places, but neither is used when reading:
+  - `MEM_CONTEXT` stores the higher area's slow state with each episode;
+  - generative replay keeps the state per row (`row_state`).
+
+**Why it matters.** In [90](../experiments/90-holding-an-open-question.md)–[91](../experiments/91-learned-working-memory-hold.md)
+every error was the story's season, stated once at the start. With an index and
+reinstatement, recalling any event of this story would bring back the cortical state it was
+stored in, the season context included. The learned hold that chose to keep the season was
+a workaround for that missing reinstatement.
+
+**To build.**
+- Each event stored with its entorhinal summary of the cortical state: the higher area's
+  slow state plus the words.
+- On recall, that state reinstated into the higher area as context (the path of
+  [90](../experiments/90-holding-an-open-question.md)'s `QAREA`), not decoded into words.
+
 ## Novelty should come from prediction, not frequency
 Habituation (`novel`) and the rarity cue (`rarest`) force novelty from per-bit
 frequency counts. That is why they need sparse random codes, fragile constants, and

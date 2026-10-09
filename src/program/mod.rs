@@ -62,3 +62,6 @@ pub use boundary::BoundaryCell;
 
 pub mod layer5;
 pub use layer5::{Layer5, PrimedLayer5};
+
+pub mod bitcells;
+pub use bitcells::BitCells;

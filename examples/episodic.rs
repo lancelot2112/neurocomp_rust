@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{BoundaryCell, Layer5, PrimedLayer5, Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{BitCells, BoundaryCell, Layer5, PrimedLayer5, Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1778,9 +1778,23 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             l.set_interneurons(true);
         }
     }
-    let mut l23_stats = [0usize; 2];
+    let mut l23_stats = [0usize; 2]; // predictions by primed cells, by the old kernels
+    // L5_SYN=bitwise: the primed layers as BitCells (cells are masks; learning is mask
+    // arithmetic), in place of PrimedLayer5
+    let bitwise = std::env::var("L5_SYN").map_or(false, |v| v == "bitwise");
+    let mut bit23: Option<BitCells> = (bitwise && primed23.is_some()).then(|| BitCells::new(BITS / 64, 16, std::env::var("L23_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(16384)));
+    let mut bit5: Option<BitCells> = (bitwise && primed5.is_some()).then(|| BitCells::new(BITS / 64, 16, std::env::var("L5_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(8192)));
+    if bitwise {
+        primed23 = None;
+        primed5 = None;
+        if std::env::var("INTERNEURONS").is_ok() {
+            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                l.set_interneurons(true);
+            }
+        }
+    }
     let burst_vote = std::env::var("BURST_VOTE").is_ok();
-    let burst_key = std::env::var("BURST_KEY").is_ok(); // predictions by primed cells, by the old kernels
+    let burst_key = std::env::var("BURST_KEY").is_ok();
     let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
     let mut src_burst: HashMap<u8, Q16> = HashMap::default();
     let mut gate_theta: Q16 = ONE / 2;
@@ -2489,6 +2503,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             if let Some(l) = primed23.as_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
+                            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
                             sleep_column += 1;
@@ -2539,6 +2556,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
                             if let Some(l) = primed23.as_mut() {
+                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
+                            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
                             column.l23.set_growth_probability(three.then_some(slow_p));
@@ -4910,6 +4930,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 // L23=primed: L2/3 as two-compartment primed cells: whenever one fires (spike or
                 // burst) it is the column's prediction; the old kernels speak only when none fires
+                if let Some(l) = bit23.as_mut() {
+                    match l.predict(&input, BITS) {
+                        Some((o, c, burst)) => {
+                            out = o;
+                            column.set_output(out.clone(), c);
+                            l23_stats[0] += 1;
+                            col_state = Some((burst, c));
+                            if burst {
+                                col_burst = Some(c);
+                            }
+                        }
+                        None => l23_stats[1] += 1,
+                    }
+                }
                 if let Some(l) = primed23.as_mut() {
                     match l.predict(&input, BITS) {
                         Some((o, c, burst)) => {
@@ -4925,6 +4959,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 // L5=primed: the same, with priming (PrimedLayer5): a burst overrides L2/3
+                if let Some(l) = bit5.as_mut() {
+                    if let Some((o, c, true)) = l.predict(&input, BITS) {
+                        out = o;
+                        column.set_output(out.clone(), c);
+                        col_burst = Some(c);
+                        col_state = Some((true, c));
+                    }
+                }
                 if let Some(l) = primed5.as_mut() {
                     if let Some((o, c, true)) = l.predict(&input, BITS) {
                         out = o;
@@ -5857,6 +5899,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
                         if let Some(l) = primed23.as_mut() {
+                            l.learn(&input, &enc.codes[next], &mut rng);
+                        }
+                        for l in bit23.iter_mut().chain(bit5.iter_mut()) {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
                         if let Some(sc) = slow.as_mut() {
@@ -6834,6 +6879,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        for (name, l) in [("L23", bit23.as_ref()), ("L5", bit5.as_ref())] {
+            if let Some(l) = l {
+                eprintln!(
+                    "  {name} seed {seed}: bitwise, {} committed cells; context threshold {:.2}; bursts {}, spikes {}, nothing {}; commitments {}, freed {}",
+                    l.committed(), to_f32(l.threshold()), l.stats[0], l.stats[1], l.stats[2], l.stats[3], l.stats[4]
+                );
+            }
         }
         if let Some(l) = primed23.as_ref() {
             eprintln!(

@@ -1744,6 +1744,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
     let mut src_burst: HashMap<u8, Q16> = HashMap::default();
     let mut gate_theta: Q16 = ONE / 2;
+    let gate_on_surprise = std::env::var("GATE_ON").map_or(false, |v| v == "surprise");
     let mut gate_stats = [0usize; 4]; // at test answers: gated, passed, cerebellum fallback, ungated
     let mut bound_stats = [0usize; 3]; // at test: boundaries, of them at ".", periods
     let bound_kind: Q16 = q16(std::env::var("BOUNDARY_KIND").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.5));
@@ -5096,7 +5097,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // whether it was confirmed (activity, not learning: at test too)
                     if burst_gate && !inner[t + 1] && !reciting && !replaying {
                         let hits: Vec<bool> = proposals.iter().map(|p| p.2.contains(&next)).collect();
-                        if hits.iter().any(|&h| h) && hits.iter().any(|&h| !h) {
+                        // GATE_ON=surprise: only where the column's own prediction missed, the
+                        // moments the gate has to decide
+                        let moment = !gate_on_surprise || own != Some(next);
+                        if moment && hits.iter().any(|&h| h) && hits.iter().any(|&h| !h) {
                             for (p, &h) in proposals.iter().zip(&hits) {
                                 let b = src_burst.entry(p.0).or_insert(ONE / 2);
                                 *b = if h { *b + (ONE - (*b).min(ONE)) / 4 } else { *b - *b / 4 };

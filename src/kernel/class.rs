@@ -170,6 +170,11 @@ struct PredictiveState {
     growth_trust: Option<Rate>,
     /// Winner ranking: within a depth, more matched input bits before reliability.
     specific: bool,
+    /// Competition by evidence (`set_evidence_competition`): each output's evidence is the
+    /// sum over its matched kernels of reliability × the learned gain of the kernel's depth.
+    evidence: bool,
+    /// Per depth: (matched kernels that predicted the target, matched kernels judged).
+    depth_gain: Vec<(u32, u32)>,
     last_hits: Vec<usize>,    // matching kernels confirmed by the last target (credit)
     last_misses: Vec<usize>,  // matching kernels contradicted by the last target (blame)
     /// Fast inhibitory loop (see `set_fast_inhibition`). None = off.
@@ -571,6 +576,8 @@ impl KernelClass<SimpleKernel> {
             trust_floor: None,
             growth_trust: None,
             specific: false,
+            evidence: false,
+            depth_gain: Vec::new(),
             last_hits: Vec::new(),
             last_misses: Vec::new(),
             fast: None,
@@ -726,6 +733,17 @@ impl KernelClass<SimpleKernel> {
             }
         }
         st.touched.clear();
+        if st.evidence {
+            let free: Vec<usize> = st.last_matches.iter().copied().filter(|&k| st.fast.as_ref().map_or(true, |f| !f.inhibits(k))).collect();
+            let ev = self.evidence_winner(&free);
+            let st = self.predictive.as_mut().expect("predictive");
+            best = match (best, ev) {
+                (Some((key, _)), Some(w)) => Some((key, w)),
+                (b, _) => b,
+            };
+            let _ = st;
+        }
+        let st = self.predictive.as_mut().expect("predictive");
 
         if let (Some(key), Some(memo)) = (memo_key, st.memo.as_mut()) {
             if memo.len() > 500_000 {
@@ -763,6 +781,11 @@ impl KernelClass<SimpleKernel> {
     /// The rate is in `Q16`.
     pub fn peek_scored(&self, input: &BitVector) -> Option<(BitVector, Q16)> {
         let matched = self.matching(input)?;
+        if self.predictive.as_ref().map_or(false, |st| st.evidence) {
+            let ks: Vec<usize> = matched.iter().map(|&(k, _)| k as usize).collect();
+            let w = self.evidence_winner(&ks)?;
+            return Some((self.active_kernels[w].output_vector(), Rate::of(&self.active_kernels[w].stats).q16()));
+        }
         matched
             .iter()
             .map(|&(k, c)| {
@@ -771,6 +794,25 @@ impl KernelClass<SimpleKernel> {
             })
             .max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))
             .map(|((_, _, rel, _), k)| (self.active_kernels[k].output_vector(), rel.q16()))
+    }
+
+    /// The winner by evidence among `matched` kernels (see `set_evidence_competition`).
+    fn evidence_winner(&self, matched: &[usize]) -> Option<usize> {
+        let st = self.predictive.as_ref()?;
+        let gain = |d: usize| -> u64 { st.depth_gain.get(d).map_or(ONE as u64 / 2, |&(h, n)| ratio(h as u64 + 1, n as u64 + 2) as u64) };
+        let mut by_out: crate::det::HashMap<&[u32], (u64, (Rate, std::cmp::Reverse<usize>))> = crate::det::HashMap::default();
+        for &k in matched {
+            let kern = &self.active_kernels[k];
+            let r = Rate::of(&kern.stats);
+            let e = (r.q16() as u64 * gain(kern.context_frames as usize)) >> 16;
+            let slot = by_out.entry(kern.output_set.as_slice()).or_insert((0, (r, std::cmp::Reverse(k))));
+            slot.0 += e;
+            if (r, std::cmp::Reverse(k)) > slot.1 {
+                slot.1 = (r, std::cmp::Reverse(k));
+            }
+        }
+        // the most evidence; ties to the more reliable representative, then the older kernel
+        by_out.into_values().max_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1))).map(|(_, (_, std::cmp::Reverse(k)))| k)
     }
 
     /// Every kernel matching `input`: (its context depth, its smoothed hit rate in `Q16`,
@@ -984,6 +1026,23 @@ impl KernelClass<SimpleKernel> {
             st.specific = on;
             st.version += 1;
         }
+    }
+
+    /// Competition by evidence instead of the ranking (depth, then reliability): every
+    /// matched kernel adds evidence for its output, its reliability times the gain of its
+    /// depth, and the output with the most evidence wins (its most reliable kernel is the
+    /// one credited). A depth's gain is learned: how often the kernels of that depth that
+    /// matched were right.
+    pub fn set_evidence_competition(&mut self, on: bool) {
+        if let Some(st) = self.predictive.as_mut() {
+            st.evidence = on;
+            st.version += 1;
+        }
+    }
+
+    /// The learned gain of each depth (`Q16`), for reports.
+    pub fn depth_gains(&self) -> Vec<Q16> {
+        self.predictive.as_ref().map_or(Vec::new(), |st| st.depth_gain.iter().map(|&(h, n)| ratio(h as u64 + 1, n as u64 + 2)).collect())
     }
 
     /// Growth: a matching kernel that predicted the target blocks same-depth growth only
@@ -1833,6 +1892,22 @@ impl KernelClass<SimpleKernel> {
         let matches = st.last_matches.clone();
         let trust_floor = st.growth_trust;
         let mut depth_has_target = vec![false; cfg.max_frames + 2];
+        if st.evidence {
+            if st.depth_gain.len() < cfg.max_frames + 2 {
+                st.depth_gain.resize(cfg.max_frames + 2, (0, 0));
+            }
+            for &m in &matches {
+                let k = &self.active_kernels[m];
+                let d = (k.context_frames as usize).min(st.depth_gain.len() - 1);
+                let g = &mut st.depth_gain[d];
+                g.0 += predicts(k, target) as u32;
+                g.1 += 1;
+                if g.1 >= 1 << 20 {
+                    g.0 >>= 1;
+                    g.1 >>= 1;
+                }
+            }
+        }
         let mut expected: Option<(usize, Rate)> = None;
         for &m in &matches {
             let k = &self.active_kernels[m];

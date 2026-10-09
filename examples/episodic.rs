@@ -1040,6 +1040,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // SPECIFIC=1: within a depth, the kernel that matched more of the input wins before
     // reliability is compared (consolidated, context-specific kernels over general ones)
     class.set_specificity(std::env::var("SPECIFIC").is_ok());
+    // COMPETE=evidence: the column's winner by evidence (each output's matched kernels'
+    // reliability × their depth's learned gain), not by the ranking depth-then-reliability
+    class.set_evidence_competition(std::env::var("COMPETE").map_or(false, |v| v == "evidence"));
     // STICKY=f: credit-tagged synapses (input bits that carried the correctly predicted
     // word) need f times as many silent confirmations before pruning
     if let Some(f) = std::env::var("STICKY").ok().and_then(|v| v.parse().ok()) {
@@ -6631,6 +6634,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        if std::env::var("COMPETE").map_or(false, |v| v == "evidence") {
+            eprintln!("  COMPETE seed {seed}: learned depth gains {:?}", column.l23.depth_gains().iter().map(|&g| (to_f32(g) * 100.0).round() / 100.0).collect::<Vec<_>>());
         }
         if std::env::var("OWNDIAG").is_ok() {
             eprintln!("  OWNDIAG seed {seed}: at {} test answers the column decoded a word at {} and output any bits at {}; matched kernels {} (a place {}, the answer {}); some matched kernel proposes the answer at {} answers", own_diag[0], own_diag[1], own_diag[2], own_diag_k[0], own_diag_k[1], own_diag_k[2], own_diag_k[3]);

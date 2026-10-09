@@ -913,6 +913,20 @@ impl EpisodicCircuit for EngramStore {
     fn advance_time(&mut self) {}
 
     /// A story ended: move one step on the grid (the next story is a new place).
+    fn recall_here(&self, cue: &[usize]) -> Option<(u32, Vec<usize>)> {
+        let here = place_key(&self.phase);
+        let mut best: Option<(u32, usize)> = None;
+        for &s in self.place.get(&here)? {
+            let Some(r) = self.row(s).filter(|r| r.place == here) else { continue };
+            let o = cue.iter().filter(|&&i| r.what.binary_search(&(i as u32)).is_ok()).count();
+            if o > 0 && best.map_or(true, |(bs, bo)| o > bo || (o == bo && s > bs)) {
+                best = Some((s, o));
+            }
+        }
+        let (s, _) = best?;
+        Some((s, self.content_words(&self.row(s)?.what)))
+    }
+
     fn end_sequence(&mut self) {
         self.prev_episode_rows = std::mem::take(&mut *self.episode_rows.borrow_mut());
         self.move_by(1);
@@ -1039,6 +1053,21 @@ mod tests {
         // and recall of one's own words returns only those
         m.set_recall_sources(2);
         assert_eq!(m.row_source(m.recall_peek(&event(&[1, 2])).ca3[0]), Some(1));
+    }
+
+    #[test]
+    fn recall_here_finds_the_item_in_this_episode_only() {
+        let mut m = EngramStore::new(EngramConfig::default());
+        m.store(&event(&[5, 1, 2])); // an earlier story: the item with another fact
+        m.end_sequence();
+        m.store(&event(&[3, 4])); // this story: unrelated
+        m.store(&event(&[5, 6, 7])); // this story: the item with its fact
+        m.store(&event(&[8, 9]));
+        let (row, words) = m.recall_here(&event(&[5])).expect("found here");
+        assert_eq!(m.row(row).unwrap().what, event(&[5, 6, 7]).iter().map(|&i| i as u32).collect::<Vec<_>>());
+        assert!(!words.is_empty());
+        m.end_sequence();
+        assert!(m.recall_here(&event(&[5])).is_none(), "a new story has nothing bound to the item yet");
     }
 
     #[test]

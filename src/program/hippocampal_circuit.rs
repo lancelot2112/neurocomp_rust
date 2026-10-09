@@ -587,6 +587,13 @@ pub trait EpisodicCircuit {
     fn recent_episode(&self, _max: usize) -> Vec<Vec<usize>> {
         Vec::new()
     }
+    /// Context-dependent recall: among the events stored at the current place (the episode
+    /// being read) only, the one holding the most of `cue`'s ids, latest on a tie; its row
+    /// and the words of its content. A query by an item ("what was bound to lucy here?"),
+    /// apart from the recall that matches the sentence being read. Default: none.
+    fn recall_here(&self, _cue: &[usize]) -> Option<(u32, Vec<usize>)> {
+        None
+    }
     /// The row the latest store wrote or strengthened (for a caller that keeps something
     /// per row, e.g. the cortical state it was stored in).
     fn last_row(&self) -> Option<u32> {

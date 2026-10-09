@@ -1586,7 +1586,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let qhold_learned = qhold.as_deref() == Some("learned");
     let qattach = std::env::var("QATTACH").ok();
     let qattach_learned = qattach.as_deref() == Some("learned");
-    let mut held_item: Option<(usize, Q16)> = None; // the held word and its novelty when taken
+    let mut held_item: Option<(usize, Q16)> = None;
+    // QQUERY=1 (with QHOLD, HC_EC): the held item as a recall query of its own. When the held
+    // item is read again, it cues the hippocampus alone, among the current story's events
+    // only (context-dependent recall, `recall_here`): pattern completion from the item to the
+    // event it was stored with. The event's words join the entorhinal feedback for the rest
+    // of the sentence, and the event counts as used for the answer's credit.
+    let qquery = std::env::var("QQUERY").is_ok();
+    let mut query_ec: Option<(u32, BitVector)> = None; // the query's event and its words' codes
+    let mut query_stats = [0usize; 3]; // test, held-out: queries, an event found, the event holds the stranger's surname // the held word and its novelty when taken
     let mut hold_stats = [0usize; 4]; // test, held-out: stories with an item held, the stranger held, events attached, attached events recalled for the answer // test, held out: restatements by sentence start and k
     let mut restated = 0usize;
     let mut q_stats = [0usize; 4]; // test, held-out stories: questions asked, restatements, restatements naming the stranger's sentence ("the person"), answers right after a restatement
@@ -3004,6 +3012,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         rolled_surname = None;
         open_q = None;
         held_item = None;
+        query_ec = None;
         open_band = 7;
         restated = 0;
         restate_pending.clear();
@@ -3255,6 +3264,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             if take {
                                 held_item = Some((ids[t], nov));
                             }
+                        }
+                    }
+                    // the held item read again: it queries what was stored with it here
+                    if let (true, Some((hw, _)), Some(hc), false) = (qquery, held_item, bind_hc.as_ref(), replaying) {
+                        let start = s.words[..t].iter().rposition(|w| *w == ".").map_or(0, |p| p + 1);
+                        if ids[t] == hw && !ids[..start].is_empty() && ids[..start].contains(&hw) {
+                            let found = hc.recall_here(&sparse_binding(&enc.codes[hw], hw, HELD_FIELD, false));
+                            if testing && s.held_out {
+                                query_stats[0] += 1;
+                                query_stats[1] += found.is_some() as usize;
+                            }
+                            query_ec = found.map(|(row, words)| {
+                                let mut v = BitVector::new(BITS, Some(0));
+                                for &w in words.iter().filter(|&&w| w != hw && w < vocab.len()) {
+                                    v.or_mut(&enc.codes[w]);
+                                }
+                                if testing && s.held_out {
+                                    query_stats[2] += words.iter().any(|&w| SURNAMES.contains(&vocab.get(w).copied().unwrap_or(""))) as usize;
+                                }
+                                (row, v)
+                            });
                         }
                     }
                 }
@@ -4109,6 +4139,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             };
                             if t + 1 == s.answer_at {
                                 answer_rows = r.ca1.clone();
+                                if let Some((qr, _)) = query_ec.as_ref() {
+                                    answer_rows.push(*qr);
+                                }
                             }
                             if hc_surprise && !reuse {
                                 gated_steps[1] += 1;
@@ -4398,7 +4431,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 // HC_EC: the recall, decoded by CA1, returns as entorhinal feedback in its slot,
                 // passed in proportion to the feedforward sweep's uncertainty
-                let input = match (hc_ec, bind_raw.as_ref().filter(|_| !(testing && bind_lesion))) {
+                let empty_raw = BitVector::new(BITS, Some(0));
+                let raw_now = bind_raw.as_ref().filter(|_| !(testing && bind_lesion));
+                let input = match (hc_ec, raw_now.or(query_ec.as_ref().map(|_| &empty_raw))) {
                     (true, Some(raw)) => {
                         let ov = |i: usize| enc.codes[i].as_words().iter().zip(raw.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                         let mut cands: Vec<(u32, usize)> = (0..vocab.len()).map(|i| (ov(i), i)).filter(|x| x.0 >= 24).collect();
@@ -4406,6 +4441,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let mut ec = BitVector::new(BITS, Some(0));
                         for &(_, i) in cands.iter().take(3) {
                             ec.or_mut(&enc.codes[i]);
+                        }
+                        // QQUERY: what the held item's own query found, added to the feedback
+                        if let Some((_, q)) = query_ec.as_ref().filter(|_| !(testing && bind_lesion)) {
+                            ec.or_mut(q);
                         }
                         if ec.count_ones() == 0 {
                             input
@@ -5550,6 +5589,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 bound_fired = false;
             }
             if ids[t] == full_stop {
+                query_ec = None;
                 // one-shot: the whole sentence (or its unpredicted part) is one episode.
                 // Persist: test questions are not stored, or the first anchor question
                 // would leak its own answer to every later one.
@@ -6288,7 +6328,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             );
         }
         if qhold.is_some() {
-            eprintln!("  QHOLD seed {seed}: in held-out test stories, an item held at {} answers ({} the stranger); {} events stored with it, {} of them recalled for the answer", hold_stats[0], hold_stats[1], hold_stats[2], hold_stats[3]);
+            eprintln!("  QHOLD seed {seed}: in held-out test stories, an item held at {} answers ({} the stranger); {} events stored with it, {} of them recalled for the answer; queries {} (an event found {}, holding a surname {})", hold_stats[0], hold_stats[1], hold_stats[2], hold_stats[3], query_stats[0], query_stats[1], query_stats[2]);
         }
         if question_act.is_some() {
             let mut qc: Vec<_> = q_choice.iter().collect();

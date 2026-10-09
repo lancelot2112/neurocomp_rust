@@ -178,3 +178,52 @@ the cortex already keeps context: the higher area's working context, as hippocam
 reaches association cortex rather than the primary area. That is the next build to test,
 with the oracle hold and attach as the upper bound first.
 
+## Addendum 3: the answer in the higher area, and what the task was really testing
+
+**Build** (`QAREA`): the queried event is reinstated in the higher areas' sentence context,
+as `COOPERATE` already does with the semantic store's content. It is not sent to the
+column's row. The hippocampus's output reaches association cortex through the entorhinal
+cortex, so this is a wiring choice, not a rule. A diagnostic (`QERR`) splits held-out
+answers by what they got wrong, and `QHOLD` reports what was held.
+
+**Results** (learned routing, soft query, three seeds; routing alone: 68.3):
+
+| Hold / attach | Held-out | Mean | What happened |
+|---|---|---|---|
+| oracle / oracle (upper bound) | 70.2 / 67.6 / 67.6 | 68.5 | the stranger's fact reinstated in every story: no gain |
+| oracle / learned | 69.4 / 23.0 / 24.0 | | collapses on two seeds: with little attached here, soft retrieval falls back to lucy's facts from earlier stories, with other families |
+| **learned / learned** | **76.8 / 75.0 / 72.8** | **74.9** | holds the **season** word in every story (no stranger, no query) |
+| learned hold only, no attach (seed 0) | 69.2 | | holding alone does nothing |
+
+Held-out errors on seed 0 (500 answers):
+
+| Version | Right | Right family, wrong season | Wrong family |
+|---|---|---|---|
+| routing alone | 346 | 154 | 0 |
+| oracle hold and attach, answer in the area | 351 | 149 | 0 |
+| learned hold and attach | 384 | 113 | 3 |
+
+1. **The task never tested binding.** Without any question act, the network never names the
+   other family's place: it already finds the stranger's family. Most likely this is a
+   shortcut in the task's design: "the person is a …" always carries the stranger's fact.
+   Every binding mechanism of 89–90 could only help with something that was not wrong.
+   That explains why none of them showed a gain, whatever the path.
+2. **The real deficit is the season**, stated once at the story's start. Every error is the
+   family's place for another season.
+3. **The self-taught hold found that.** Learning from the answer alone, the basal ganglia
+   hold the season word and store it with chosen later sentences, and season errors fall
+   from 154 to 113. The gain (+6.6 points) holds on all three seeds. Holding without
+   storing does nothing, so the gain comes through the hippocampus: later events carry the
+   season, and recall brings it back near the question. This is the first behaviour in
+   88–90 that the network chose for itself and that helped.
+4. **Soft retrieval's fallback is a liability when names recur with different facts.** An
+   item that this story binds weakly recalls what it meant in other stories.
+
+**Next.**
+- Confirm the learned hold at five seeds and on suite entries where long-range context
+  matters (story boundary, saccades, season distance).
+- For binding itself, a task that cannot be solved by such a shortcut. For example, two
+  strangers in a story, each named in a fact that only its position or order distinguishes.
+- Report the hold's choice in the context terms of the audit: it is keyed by novelty band,
+  not by word, so it generalises.
+

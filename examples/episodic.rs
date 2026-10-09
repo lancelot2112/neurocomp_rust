@@ -1772,7 +1772,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let mut l23_stats = [0usize; 2];
-    let burst_vote = std::env::var("BURST_VOTE").is_ok(); // predictions by primed cells, by the old kernels
+    let burst_vote = std::env::var("BURST_VOTE").is_ok();
+    let burst_key = std::env::var("BURST_KEY").is_ok(); // predictions by primed cells, by the old kernels
     let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
     let mut src_burst: HashMap<u8, Q16> = HashMap::default();
     let mut gate_theta: Q16 = ONE / 2;
@@ -4888,6 +4889,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 out.or_mut(column.predict(&input));
                 // the column's burst this step (its strength), for BURST_VOTE
                 let mut col_burst: Option<Q16> = None;
+                // the primed column's state this step: (burst?, priming), for BURST_KEY
+                let mut col_state: Option<(bool, Q16)> = None;
                 // L5=two: a burst of a two-compartment cell (input and context together)
                 // overrides L2/3's habit; without a burst L2/3 speaks, and where it has
                 // nothing to say the mix falls to the other sources (the cerebellum)
@@ -4906,6 +4909,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             out = o;
                             column.set_output(out.clone(), c);
                             l23_stats[0] += 1;
+                            col_state = Some((burst, c));
                             if burst {
                                 col_burst = Some(c);
                             }
@@ -4919,6 +4923,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         out = o;
                         column.set_output(out.clone(), c);
                         col_burst = Some(c);
+                        col_state = Some((true, c));
                     }
                 }
                 // the slow cortex's prediction (SLOW_CORTEX)
@@ -5005,7 +5010,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             proposals.push((7, ctx + bucket(column.confidence()), cw));
                         }
                     } else if let Some(w) = own {
-                        proposals.push((0, ctx + bucket(column.confidence()), vec![w]));
+                        // BURST_KEY: the column's reliability is learned per burst state (burst
+                        // or spike × priming band), not per word pair
+                        let key = match (burst_key, col_state) {
+                            (true, Some((b, p))) => (1u64 << 61) | ((b as u64) << 4) | bucket(p),
+                            (true, None) => 1u64 << 61 | 1 << 5,
+                            _ => ctx + bucket(column.confidence()),
+                        };
+                        proposals.push((0, key, vec![w]));
                     }
                     if let (Some(w), true) = (cb_word, cerebellum.is_some()) {
                         if std::env::var("CBDIAG").is_ok() && testing && t + 1 == s.answer_at && cb_stats[0] < 8 {

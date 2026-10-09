@@ -41,6 +41,7 @@
 
 use crate::bitvec::BitVector;
 use crate::fixed::{Q16, ONE};
+use crate::program::layer5::BitMasks;
 use rand::seq::SliceRandom;
 
 #[derive(Clone, Copy, Default)]
@@ -65,6 +66,9 @@ struct Cell {
     trace: u32,
     misses: u16,
     bursty: u32,
+    /// present basal synapses, active apical synapses (kept as the masks change)
+    nb: u32,
+    na: u32,
     prime: Q16,
     prime_tick: u64,
     wired_tick: u64,
@@ -81,9 +85,10 @@ pub struct BitCells {
     frame_words: usize,
     sample: usize,
     cells: Vec<Cell>,
-    /// per row bit: bitset over cells with a synapse there
-    presence: Vec<Vec<u64>>,
-    cell_words: usize,
+    /// The axons' view, kept in step with the cells' masks one bit at a time: per row bit, a
+    /// bitset over cells for each synapse state (basal active, apical active, basal silent),
+    /// summed by bit-sliced counters to count every cell at once.
+    tables: BitMasks,
     tick: u64,
     theta: Q16,
     interneurons: bool,
@@ -94,15 +99,6 @@ pub struct BitCells {
     pub stats: [u64; 5],
 }
 
-/// A random mask with each bit set with probability 2^-k.
-fn rmask<R: rand::Rng + ?Sized>(rng: &mut R, k: u32) -> u64 {
-    let mut m = u64::MAX;
-    for _ in 0..k {
-        m &= rng.next_u64();
-    }
-    m
-}
-
 impl BitCells {
     pub fn new(frame_words: usize, sample: usize, cells: usize) -> Self {
         let c = Cell { trace: ONE / 2, ..Default::default() };
@@ -110,8 +106,7 @@ impl BitCells {
             frame_words,
             sample,
             cells: vec![c; cells],
-            presence: Vec::new(),
-            cell_words: cells.div_ceil(64).max(1),
+            tables: BitMasks::new(cells),
             tick: 0,
             theta: ONE * 4 / 5,
             interneurons: false,
@@ -179,38 +174,28 @@ impl BitCells {
         (b, a)
     }
 
-    fn set_presence(&mut self, bit: u32, c: usize, on: bool) {
-        let b = bit as usize;
-        if self.presence.len() <= b {
-            self.presence.resize(b + 1, Vec::new());
-        }
-        let m = &mut self.presence[b];
-        if m.is_empty() {
-            if !on {
-                return;
-            }
-            m.resize(self.cell_words, 0);
-        }
-        if on {
-            m[c / 64] |= 1 << (c % 64);
+    /// A compartment's segment of cell `c` changed from `before` to `after` (same word):
+    /// the tables and the cell's synapse counts follow, bit by bit.
+    fn update_tables(&mut self, c: usize, apical: bool, before: Seg, after: Seg) {
+        let w = before.w.max(after.w);
+        let states: [(usize, u64, u64); 2] = if apical {
+            [(1, before.active, after.active), (1, 0, 0)]
         } else {
-            m[c / 64] &= !(1 << (c % 64));
+            [(0, before.active, after.active), (2, before.silent & !before.active, after.silent & !after.active)]
+        };
+        for (table, b, a) in states {
+            let mut d = b ^ a;
+            while d != 0 {
+                let k = d.trailing_zeros();
+                self.tables.set(w * 64 + k, c, table, a >> k & 1 == 1);
+                d &= d - 1;
+            }
         }
-    }
-
-    /// Clear presence for bits of `before` that `after` no longer has (one word).
-    fn update_presence(&mut self, c: usize, w: u32, before: u64, after: u64) {
-        let mut gone = before & !after;
-        while gone != 0 {
-            let k = gone.trailing_zeros();
-            self.set_presence(w * 64 + k, c, false);
-            gone &= gone - 1;
-        }
-        let mut new = after & !before;
-        while new != 0 {
-            let k = new.trailing_zeros();
-            self.set_presence(w * 64 + k, c, true);
-            new &= new - 1;
+        let cell = &mut self.cells[c];
+        if apical {
+            cell.na = cell.na + after.active.count_ones() - before.active.count_ones();
+        } else {
+            cell.nb = cell.nb + after.present().count_ones() - before.present().count_ones();
         }
     }
 
@@ -221,58 +206,28 @@ impl BitCells {
     }
 
     fn evaluate(&self, row: &BitVector) -> Eval {
-        let words = row.as_words();
-        let mut touched = vec![0u64; self.cell_words];
-        for (wi, &x) in words.iter().enumerate() {
-            let mut x = x;
-            while x != 0 {
-                let b = wi * 64 + x.trailing_zeros() as usize;
-                if let Some(m) = self.presence.get(b).filter(|m| !m.is_empty()) {
-                    for (t, &v) in touched.iter_mut().zip(m.iter()) {
-                        *t |= v;
-                    }
-                }
-                x &= x - 1;
-            }
-        }
+        let (counts, list) = self.tables.count(row, self.cells.len());
         let (mut fired, mut free_primed) = (Vec::new(), Vec::new());
-        for (tw, &t) in touched.iter().enumerate() {
-            let mut t = t;
-            while t != 0 {
-                let c = tw * 64 + t.trailing_zeros() as usize;
-                t &= t - 1;
-                if c >= self.cells.len() {
-                    continue;
+        for c in list {
+            let c = c as usize;
+            let (b, a, bs) = counts[c];
+            let cell = &self.cells[c];
+            let p = if cell.na == 0 { 0 } else { (((a as u64) << 16) / cell.na as u64) as Q16 }.max(self.carried(c)).min(ONE);
+            let theta = self.theta_for(c);
+            if cell.out.is_empty() {
+                if p >= theta && cell.na > 0 {
+                    free_primed.push((c, p));
                 }
-                let cell = &self.cells[c];
-                let (mut a, mut na) = (0u32, 0u32);
-                for s in &cell.apical {
-                    a += (words.get(s.w as usize).copied().unwrap_or(0) & s.active).count_ones();
-                    na += s.active.count_ones();
-                }
-                let p = if na == 0 { 0 } else { (((a as u64) << 16) / na as u64) as Q16 }.max(self.carried(c)).min(ONE);
-                let theta = self.theta_for(c);
-                if cell.out.is_empty() {
-                    if p >= theta && na > 0 {
-                        free_primed.push((c, p));
-                    }
-                    continue;
-                }
-                let (mut b, mut bs, mut nb) = (0u32, 0u32, 0u32);
-                for s in &cell.basal {
-                    let x = words.get(s.w as usize).copied().unwrap_or(0);
-                    b += (x & s.active).count_ones();
-                    bs += (x & s.silent & !s.active).count_ones();
-                    nb += s.present().count_ones();
-                }
-                if nb == 0 {
-                    continue;
-                }
-                let need = (nb * 4).div_ceil(5).max(1);
-                let eff = b + if p >= theta { bs } else { 0 };
-                if eff >= need {
-                    fired.push((c, p, p >= theta));
-                }
+                continue;
+            }
+            // a committed cell fires only on its input side
+            if cell.nb == 0 || b + bs == 0 {
+                continue;
+            }
+            let need = (cell.nb * 4).div_ceil(5).max(1);
+            let eff = b as u32 + if p >= theta { bs as u32 } else { 0 };
+            if eff >= need {
+                fired.push((c, p, p >= theta));
             }
         }
         Eval { fired, free_primed }
@@ -326,26 +281,47 @@ impl BitCells {
         }
     }
 
-    /// Apply a mask operation to every segment of one compartment of cell `c`:
-    /// `op(seg, input word)` returns the new seg; presence follows.
-    fn apply<F: FnMut(Seg, u64) -> Seg>(&mut self, c: usize, apical: bool, row: &[u64], mut op: F) {
-        let n = if apical { self.cells[c].apical.len() } else { self.cells[c].basal.len() };
-        for i in 0..n {
-            let s = if apical { self.cells[c].apical[i] } else { self.cells[c].basal[i] };
-            let x = row.get(s.w as usize).copied().unwrap_or(0);
-            let t = op(s, x);
-            let t = Seg { sticky: t.sticky & t.present(), ..t };
-            if apical {
-                self.cells[c].apical[i] = t;
-            } else {
-                self.cells[c].basal[i] = t;
-            }
-            if s.present() != t.present() {
-                self.update_presence(c, s.w, s.present(), t.present());
-            }
+    /// One synapse event: among the bits `cand(seg, input word)` of cell `c`'s compartment,
+    /// the `n`-th (modulo their number) is changed by `f(seg, its bit)`.
+    fn change<C: Fn(&Seg, u64) -> u64, F: FnOnce(&mut Seg, u64)>(&mut self, c: usize, apical: bool, row: &[u64], n: u32, cand: C, f: F) {
+        let segs = if apical { &self.cells[c].apical } else { &self.cells[c].basal };
+        let x = |s: &Seg| row.get(s.w as usize).copied().unwrap_or(0);
+        let total: u32 = segs.iter().map(|s| cand(s, x(s)).count_ones()).sum();
+        if total == 0 {
+            return;
         }
+        let mut n = n % total;
+        let mut at = None;
+        for (i, s) in segs.iter().enumerate() {
+            let mut m = cand(s, x(s));
+            let k = m.count_ones();
+            if n < k {
+                for _ in 0..n {
+                    m &= m - 1;
+                }
+                at = Some((i, m & m.wrapping_neg()));
+                break;
+            }
+            n -= k;
+        }
+        let Some((i, bit)) = at else { return };
         let segs = if apical { &mut self.cells[c].apical } else { &mut self.cells[c].basal };
-        segs.retain(|s| s.present() != 0);
+        let before = segs[i];
+        f(&mut segs[i], bit);
+        segs[i].sticky &= segs[i].present();
+        let after = segs[i];
+        if after.present() == 0 {
+            segs.remove(i);
+        }
+        self.update_tables(c, apical, before, after);
+    }
+
+    /// Grow a synapse on `bit` if the cell lacks it (at most 2 × sample): silent on the
+    /// basal side, active on the tuft.
+    fn grow_one(&mut self, c: usize, apical: bool, bit: u32) {
+        if (self.n_present(c, apical) as usize) < 2 * self.sample && !self.has(c, apical, bit) {
+            self.add_synapse(c, apical, bit, apical);
+        }
     }
 
     fn n_present(&self, c: usize, apical: bool) -> u32 {
@@ -367,12 +343,14 @@ impl BitCells {
         if segs[i].present() >> k & 1 == 1 {
             return;
         }
+        let before = segs[i];
         if active {
             segs[i].active |= 1 << k;
         } else {
             segs[i].silent |= 1 << k;
         }
-        self.set_presence(bit, c, true);
+        let after = segs[i];
+        self.update_tables(c, apical, before, after);
     }
 
     fn has(&self, c: usize, apical: bool, bit: u32) -> bool {
@@ -380,25 +358,11 @@ impl BitCells {
         segs.binary_search_by_key(&(bit / 64), |s| s.w).map_or(false, |i| segs[i].present() >> (bit % 64) & 1 == 1)
     }
 
-    /// Grow one synapse onto an active input the cell lacks (at most 2 × sample).
-    fn grow<R: rand::Rng + ?Sized>(&mut self, c: usize, apical: bool, active: &[u32], rng: &mut R) {
-        if self.n_present(c, apical) as usize >= 2 * self.sample {
-            return;
-        }
-        for _ in 0..4 {
-            let Some(&b) = active.choose(rng) else { return };
-            if !self.has(c, apical, b) {
-                self.add_synapse(c, apical, b, apical);
-                return;
-            }
-        }
-    }
-
     fn free(&mut self, c: usize) {
         for apical in [false, true] {
             let segs = if apical { std::mem::take(&mut self.cells[c].apical) } else { std::mem::take(&mut self.cells[c].basal) };
             for s in segs {
-                self.update_presence(c, s.w, s.present(), 0);
+                self.update_tables(c, apical, s, Seg { w: s.w, ..Default::default() });
             }
         }
         let cell = &mut self.cells[c];
@@ -413,7 +377,7 @@ impl BitCells {
     fn wire<R: rand::Rng + ?Sized>(&mut self, c: usize, apical: &[u32], rng: &mut R) {
         let old = std::mem::take(&mut self.cells[c].apical);
         for s in old {
-            self.update_presence(c, s.w, s.present(), 0);
+            self.update_tables(c, true, s, Seg { w: s.w, ..Default::default() });
         }
         let pick: Vec<u32> = apical.choose_multiple(rng, self.sample.min(apical.len())).copied().collect();
         for b in pick {
@@ -437,37 +401,50 @@ impl BitCells {
         let w = self.winner(&e);
         let mut confirmed = false;
         if let Some((wc, _, burst)) = w {
+            // one plasticity event: one random word; its bytes index the synapses changed
+            // and its high bits gate the rarer changes
+            let r = rng.next_u64();
+            let byte = |i: u32| ((r >> (8 * i)) & 0xff) as u32;
             if predicts(&self.cells[wc]) {
                 confirmed = true;
                 let cell = &mut self.cells[wc];
                 cell.trace += (ONE - cell.trace.min(ONE)) / 2;
                 cell.misses = 0;
-                let confirm = |s: Seg, x: u64, rng: &mut R| -> Seg {
-                    let promote = s.silent & x & rmask(rng, 1);
-                    let active = s.active | promote;
-                    let silent = s.silent & !promote;
-                    let sticky = s.sticky | (active & x & rmask(rng, 3));
-                    let prune = (active | silent) & !x & !sticky & rmask(rng, 4);
-                    Seg { w: s.w, active: active & !prune, silent: silent & !prune, sticky }
-                };
-                self.apply(wc, false, &words, |s, x| confirm(s, x, rng));
-                if burst {
-                    self.apply(wc, true, &words, |s, x| confirm(s, x, rng));
+                for (apical, base) in [(false, 0u32), (true, 3u32)] {
+                    if apical && !burst {
+                        continue;
+                    }
+                    // promote one active silent synapse
+                    self.change(wc, apical, &words, byte(base), |s, x| s.silent & x, |s, m| {
+                        s.silent &= !m;
+                        s.active |= m;
+                    });
+                    // consolidate one active synapse (1/4)
+                    if (r >> (48 + base)) & 3 == 0 {
+                        self.change(wc, apical, &words, byte(base + 1), |s, x| s.active & x & !s.sticky, |s, m| s.sticky |= m);
+                    }
+                    // prune one unused synapse (1/2)
+                    if (r >> (52 + base)) & 1 == 0 {
+                        self.change(wc, apical, &words, byte(base + 2), |s, x| s.present() & !x & !s.sticky, |s, m| {
+                            s.active &= !m;
+                            s.silent &= !m;
+                        });
+                    }
                 }
-                if rmask(rng, 2) & 1 == 1 {
-                    self.grow(wc, false, &basal, rng);
+                // grow one synapse onto an active input the cell lacks (1/4)
+                if (r >> 58) & 3 == 0 && !basal.is_empty() {
+                    let b = basal[((r >> 16) & 0xffff) as usize % basal.len()];
+                    self.grow_one(wc, false, b);
                 }
-                if burst && rmask(rng, 2) & 1 == 1 {
-                    self.grow(wc, true, &apical, rng);
+                if burst && (r >> 60) & 3 == 0 && !apical.is_empty() {
+                    let b = apical[((r >> 32) & 0xffff) as usize % apical.len()];
+                    self.grow_one(wc, true, b);
                 }
-                // lateral inhibition on the losing primed cells
+                // lateral inhibition: each losing primed cell loses one active tuft synapse
                 let out = self.cells[wc].out.clone();
                 let losers: Vec<usize> = e.fired.iter().filter(|&&(c, p, _)| c != wc && p > 0 && self.cells[c].out != out).map(|x| x.0).collect();
-                for c in losers {
-                    self.apply(c, true, &words, |s, x| {
-                        let prune = s.active & x & !s.sticky & rmask(rng, 3);
-                        Seg { active: s.active & !prune, ..s }
-                    });
+                for (j, c) in losers.into_iter().enumerate() {
+                    self.change(c, true, &words, byte(j as u32 % 8), |s, x| s.active & x & !s.sticky, |s, m| s.active &= !m);
                 }
             } else {
                 let cell = &mut self.cells[wc];
@@ -475,11 +452,12 @@ impl BitCells {
                 cell.misses = cell.misses.saturating_add(1);
                 let fail = cell.misses >= 4 && cell.trace < ONE / 8;
                 if burst {
-                    self.apply(wc, true, &words, |s, x| {
-                        let prune = s.active & x & !s.sticky & rmask(rng, 2);
-                        let unstick = s.sticky & x & rmask(rng, 3);
-                        Seg { active: s.active & !prune, sticky: s.sticky & !unstick, ..s }
-                    });
+                    // this context did not make it right: one active tuft synapse pruned,
+                    // and (1/2) one sticky one unstuck
+                    self.change(wc, true, &words, byte(0), |s, x| s.active & x & !s.sticky, |s, m| s.active &= !m);
+                    if (r >> 48) & 1 == 0 {
+                        self.change(wc, true, &words, byte(1), |s, x| s.sticky & x, |s, m| s.sticky &= !m);
+                    }
                 }
                 if fail {
                     self.free(wc);
@@ -573,8 +551,8 @@ mod tests {
     }
 
     #[test]
-    fn presence_matches_synapses() {
-        // after much learning, the presence bitsets equal the cells' synapses exactly
+    fn tables_match_synapses() {
+        // after much learning, the tables' counts equal counts taken from the cells' masks
         let mut l = BitCells::new(1, 8, 64);
         let mut rng = rand::rngs::StdRng::seed_from_u64(7);
         for step in 0..2000usize {
@@ -582,11 +560,20 @@ mod tests {
             l.predict(&r, 64);
             l.learn(&r, &target((step * 7) % 5), &mut rng);
         }
-        for (b, m) in l.presence.iter().enumerate() {
-            for c in 0..l.cells.len() {
-                let marked = !m.is_empty() && m[c / 64] >> (c % 64) & 1 == 1;
-                let has = l.has(c, false, b as u32) || l.has(c, true, b as u32);
-                assert_eq!(marked, has, "bit {b} cell {c}");
+        for input in 0..4 {
+            for ctx in 0..3 {
+                let r = row(input, ctx);
+                let (counts, _) = l.tables.count(&r, l.cells.len());
+                for (c, cell) in l.cells.iter().enumerate() {
+                    let x = |s: &Seg| r.as_words()[s.w as usize];
+                    let b: u32 = cell.basal.iter().map(|s| (x(s) & s.active).count_ones()).sum();
+                    let bs: u32 = cell.basal.iter().map(|s| (x(s) & s.silent & !s.active).count_ones()).sum();
+                    let a: u32 = cell.apical.iter().map(|s| (x(s) & s.active).count_ones()).sum();
+                    assert_eq!((counts[c].0 as u32, counts[c].1 as u32, counts[c].2 as u32), (b, a, bs), "cell {c}");
+                    let nb: u32 = cell.basal.iter().map(|s| s.present().count_ones()).sum();
+                    let na: u32 = cell.apical.iter().map(|s| s.active.count_ones()).sum();
+                    assert_eq!((cell.nb, cell.na), (nb, na), "cell {c} counts");
+                }
             }
         }
         assert!(l.committed() > 0);

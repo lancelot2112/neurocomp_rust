@@ -378,13 +378,13 @@ const SILENT: u8 = 0x40;
 const STICKY: u8 = 0x01;
 
 /// Bit planes of the counters: counts up to 31 per compartment.
-const PLANES: usize = 5;
+pub(crate) const PLANES: usize = 5;
 
 /// Connected synapses as bitsets: for each row bit, one bitset over cells per compartment.
 /// Counting adds the bitsets of the active row bits into bit-sliced counters (a ripple of
 /// AND/XOR over whole words), so 64 cells are counted per instruction and the loops
 /// vectorize; no per-synapse branches.
-struct BitMasks {
+pub(crate) struct BitMasks {
     words: usize,
     basal: Vec<Vec<u64>>,
     apical: Vec<Vec<u64>>,
@@ -392,11 +392,11 @@ struct BitMasks {
 }
 
 impl BitMasks {
-    fn new(cells: usize) -> Self {
+    pub(crate) fn new(cells: usize) -> Self {
         Self { words: cells.div_ceil(64).max(1), basal: Vec::new(), apical: Vec::new(), silent: Vec::new() }
     }
 
-    fn grow_to(&mut self, cells: usize) {
+    pub(crate) fn grow_to(&mut self, cells: usize) {
         let need = cells.div_ceil(64).max(1);
         if need > self.words {
             let w = need.max(self.words * 2);
@@ -410,7 +410,7 @@ impl BitMasks {
     }
 
     /// table: 0 basal (active), 1 apical (active), 2 basal silent
-    fn set(&mut self, bit: u32, cell: usize, table: usize, on: bool) {
+    pub(crate) fn set(&mut self, bit: u32, cell: usize, table: usize, on: bool) {
         let words = self.words;
         let table = match table {
             0 => &mut self.basal,
@@ -448,7 +448,7 @@ impl BitMasks {
     }
 
     /// Per-cell (basal, apical, basal silent) counts of active synapses, and the touched cells.
-    fn count(&self, row: &BitVector, cells: usize) -> (Vec<(u16, u16, u16)>, Vec<u32>) {
+    pub(crate) fn count(&self, row: &BitVector, cells: usize) -> (Vec<(u16, u16, u16)>, Vec<u32>) {
         let w = self.words;
         let mut pb: [Vec<u64>; PLANES] = std::array::from_fn(|_| vec![0u64; w]);
         let mut pa: [Vec<u64>; PLANES] = std::array::from_fn(|_| vec![0u64; w]);

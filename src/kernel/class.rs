@@ -1460,6 +1460,11 @@ impl KernelClass<SimpleKernel> {
         }
     }
 
+    /// The growth gate now set (None: off), so a caller can open it for a while and restore it.
+    pub fn growth_gate(&self) -> Option<(u32, u16)> {
+        self.predictive.as_ref().and_then(|st| st.growth_gate)
+    }
+
     /// Growth events suppressed by the gate so far.
     pub fn gated_growth(&self) -> usize {
         self.predictive.as_ref().map_or(0, |st| st.gated)

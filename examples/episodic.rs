@@ -2336,9 +2336,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         area.column.l23.add_replay(&x, &enc.codes[*ans]);
                         replayed += 1;
                         if let (Some(p), Some(row)) = (sleep_p, trace_rows.get(i).filter(|r| r.count_ones() > 0)) {
+                            // asleep, the column's plasticity is open: growth probability p,
+                            // no uncertainty gate
+                            let gate = column.l23.growth_gate();
+                            column.l23.set_growth_gate(None);
                             column.l23.set_growth_probability(Some(p));
                             column.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             column.l23.set_growth_probability(three.then_some(slow_p));
+                            column.l23.set_growth_gate(gate);
                             sleep_column += 1;
                         }
                     }
@@ -2352,9 +2357,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         area.learn(&x, &enc.codes[*ans], &mut sleep_rng);
                         replayed += 1;
                         if let (Some(p), Some(row)) = (sleep_p, trace_rows.get(i).filter(|r| r.count_ones() > 0)) {
+                            // asleep, the column's plasticity is open: growth probability p,
+                            // no uncertainty gate
+                            let gate = column.l23.growth_gate();
+                            column.l23.set_growth_gate(None);
                             column.l23.set_growth_probability(Some(p));
                             column.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             column.l23.set_growth_probability(three.then_some(slow_p));
+                            column.l23.set_growth_gate(gate);
                             sleep_column += 1;
                         }
                     }

@@ -115,3 +115,9 @@ a vote with a learned gain per depth (mixed), learned routing of the row (worse)
 boundary cell for the period trigger (finds the sentence untold; costs two entries). The next
 step is a burst gate: the row split into apical (context) and basal (input) frames, and a
 source or kernel trusted when the two agree and the input confirms it.
+
+The burst gate was built in [98](../experiments/98-burst-gate.md): the column's row split into
+basal and apical frames, kernels reading both win by a trace of confirmed coincidences, and
+the thalamic mix weighs sources by burst rates instead of word-keyed tables. It is not yet a
+replacement: a rate per source loses the context the tables held. Bursts should vote per
+moment.

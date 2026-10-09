@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{BoundaryCell, Layer5, Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{BoundaryCell, Layer5, PrimedLayer5, Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1744,6 +1744,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // L5=two: layer 5 two-compartment cells (basal: the input and previous input; apical:
     // the context frames) whose bursts override L2/3 (Layer5); L5_MAX cells at most
     let mut layer5: Option<Layer5> = std::env::var("L5").map_or(false, |v| v == "two").then(|| Layer5::new(BITS / 64, 16, 0.8, std::env::var("L5_MAX").ok().and_then(|v| v.parse().ok()).unwrap_or(50_000)));
+    // L5=primed: two popcounts, the tuft primes and the input triggers (PrimedLayer5); a pool
+    // of L5_CELLS cells wired to random contexts
+    let mut primed5: Option<PrimedLayer5> = std::env::var("L5").map_or(false, |v| v == "primed").then(|| PrimedLayer5::new(BITS / 64, 16, std::env::var("L5_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(8192)));
     let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
     let mut src_burst: HashMap<u8, Q16> = HashMap::default();
     let mut gate_theta: Q16 = ONE / 2;
@@ -2446,6 +2449,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             if let Some(l) = layer5.as_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
+                            if let Some(l) = primed5.as_mut() {
+                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
                             sleep_column += 1;
@@ -2490,6 +2496,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                             column.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             if let Some(l) = layer5.as_mut() {
+                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
+                            if let Some(l) = primed5.as_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
                             column.l23.set_growth_probability(three.then_some(slow_p));
@@ -4854,6 +4863,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         column.set_output(out.clone(), c);
                     }
                 }
+                // L5=primed: the same, with priming (PrimedLayer5): a burst overrides L2/3
+                if let Some(l) = primed5.as_mut() {
+                    if let Some((o, c, true)) = l.predict(&input, BITS) {
+                        out = o;
+                        column.set_output(out.clone(), c);
+                    }
+                }
                 // the slow cortex's prediction (SLOW_CORTEX)
                 if let Some(sc) = slow.as_mut() {
                     let mut so = BitVector::new(BITS, Some(0));
@@ -5757,6 +5773,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if page {
                         column.learn(&input, &enc.codes[next], &mut rng);
                         if let Some(l) = layer5.as_mut() {
+                            l.learn(&input, &enc.codes[next], &mut rng);
+                        }
+                        if let Some(l) = primed5.as_mut() {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
                         if let Some(sc) = slow.as_mut() {
@@ -6734,6 +6753,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        if let Some(l) = primed5.as_ref() {
+            eprintln!(
+                "  L5 seed {seed}: primed, {} committed cells; context threshold {:.2}; bursts won {}, spikes {}, nothing fired {}; commitments {}, freed {}",
+                l.committed(), to_f32(l.threshold()), l.stats[0], l.stats[1], l.stats[2], l.stats[3], l.stats[4]
+            );
         }
         if let Some(l) = layer5.as_ref() {
             eprintln!("  L5 seed {seed}: {} cells; a burst decided {} predictions, none at {}; grown {}, recycled {}", l.cells(), l.stats[0], l.stats[1], l.stats[2], l.stats[3]);

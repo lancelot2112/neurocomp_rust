@@ -102,6 +102,11 @@ pub struct BitCells {
     /// self-calibrating rates and thresholds (`set_meta`), and the area's error rate
     meta: bool,
     err: Q16,
+    /// consolidation into sticky synapses (`set_sticky`)
+    sticky_on: bool,
+    /// how many trailing frames of the row are basal (input side): 1 (the previous input),
+    /// 2 when a further input frame (L2/3's prediction) is appended (`set_basal_tail`)
+    basal_tail: usize,
     sst: Q16,
     vip: Q16,
     cached: Option<(Vec<u64>, Eval)>,
@@ -123,6 +128,8 @@ impl BitCells {
             id_index: false,
             meta: false,
             err: 0,
+            sticky_on: true,
+            basal_tail: 1,
             sst: ONE / 2,
             vip: 0,
             cached: None,
@@ -148,6 +155,16 @@ impl BitCells {
     ///   synapses (at most 95%: it fires more selectively), a confirmed one lowers it by
     ///   1/128 (at least 50%).
     /// Starting at k = 2 and 80%, the fixed rates and threshold are where it begins.
+    /// Consolidation on or off: off, no synapse ever becomes sticky.
+    pub fn set_sticky(&mut self, on: bool) {
+        self.sticky_on = on;
+    }
+
+    /// The number of trailing frames on the input (basal) side (see the field).
+    pub fn set_basal_tail(&mut self, n: usize) {
+        self.basal_tail = n.max(1);
+    }
+
     pub fn set_meta(&mut self, on: bool) {
         self.meta = on;
     }
@@ -198,7 +215,7 @@ impl BitCells {
 
     fn is_basal_word(&self, w: usize, frames: usize) -> bool {
         let f = w / self.frame_words.max(1);
-        f == 0 || f + 1 >= frames
+        f == 0 || f + self.basal_tail >= frames
     }
 
     /// Active row bits split into (basal, apical).
@@ -477,7 +494,9 @@ impl BitCells {
                     });
                     // consolidate one active synapse (1/4)
                     if gate(48 + base, k) {
-                        self.change(wc, apical, &words, byte(base + 1), |s, x| s.active & x & !s.sticky, |s, m| s.sticky |= m);
+                        if self.sticky_on {
+                            self.change(wc, apical, &words, byte(base + 1), |s, x| s.active & x & !s.sticky, |s, m| s.sticky |= m);
+                        }
                     }
                     // prune one unused synapse (1/2)
                     if gate(52 + base, k - 1) {

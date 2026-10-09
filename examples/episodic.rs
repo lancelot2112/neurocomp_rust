@@ -1783,7 +1783,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut l23_stats = [0usize; 2]; // predictions by primed cells, by the old kernels
     // L5_SYN=bitwise: the primed layers as BitCells (cells are masks; learning is mask
     // arithmetic), in place of PrimedLayer5
-    let bitwise = std::env::var("L5_SYN").map_or(false, |v| v == "bitwise");
+    // Default (experiment 105): the primed layers are BitCells (fully bitwise, self-calibrating);
+    // L5_SYN=strength (or bits) keeps PrimedLayer5
+    let bitwise = std::env::var("L5_SYN").map_or(true, |v| v == "bitwise");
+    let l5_out = bitwise && std::env::var("L5_OUT").is_ok();
     let mut bit23: Option<BitCells> = (bitwise && primed23.is_some()).then(|| BitCells::new(BITS / 64, 16, std::env::var("L23_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(16384)));
     let mut bit5: Option<BitCells> = (bitwise && primed5.is_some()).then(|| BitCells::new(BITS / 64, 16, std::env::var("L5_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(8192)));
     if bitwise {
@@ -1795,9 +1798,22 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         // L5_META=1: each cell's learning rate and threshold calibrate from its own outcomes
-        if std::env::var("L5_META").is_ok() {
+        if std::env::var("L5_META").map_or(true, |v| v != "0") {
             for l in bit23.iter_mut().chain(bit5.iter_mut()) {
                 l.set_meta(true);
+            }
+        }
+        // L5_STICKY=0: no consolidation into sticky synapses
+        if std::env::var("L5_STICKY").map_or(false, |v| v == "0") {
+            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                l.set_sticky(false);
+            }
+        }
+        // L5_OUT=1: L2/3's prediction is part of layer 5's input side, and only layer 5 reaches
+        // the thalamus
+        if l5_out {
+            for l in bit5.iter_mut() {
+                l.set_basal_tail(2);
             }
         }
         // L5_IDX=id: plasticity indexed by the cell's id and the step, no random draw
@@ -2517,8 +2533,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             if let Some(l) = primed23.as_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
-                            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                            for l in bit23.iter_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
+                            if let Some(l) = bit5.as_mut() {
+                                // replay: L2/3's prediction for the replayed row, on layer 5's input side
+                                let r5 = l5_out.then(|| with_frame(row, &column.l23.peek(row).unwrap_or_else(|| BitVector::new(BITS, Some(0)))));
+                                l.learn(r5.as_ref().unwrap_or(row), &enc.codes[*ans], &mut sleep_rng);
                             }
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
@@ -2572,8 +2593,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             if let Some(l) = primed23.as_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
-                            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                            for l in bit23.iter_mut() {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                            }
+                            if let Some(l) = bit5.as_mut() {
+                                // replay: L2/3's prediction for the replayed row, on layer 5's input side
+                                let r5 = l5_out.then(|| with_frame(row, &column.l23.peek(row).unwrap_or_else(|| BitVector::new(BITS, Some(0)))));
+                                l.learn(r5.as_ref().unwrap_or(row), &enc.codes[*ans], &mut sleep_rng);
                             }
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
@@ -4973,8 +4999,26 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
                 // L5=primed: the same, with priming (PrimedLayer5): a burst overrides L2/3
+                // L5_OUT: layer 5 reads L2/3's prediction on its input side, and its output (spike or
+                // burst) is all the thalamus receives from the column; silent layer 5, no output
+                let row5: Option<BitVector> = l5_out.then(|| with_frame(&input, &out));
                 if let Some(l) = bit5.as_mut() {
-                    if let Some((o, c, true)) = l.predict(&input, BITS) {
+                    if let Some(r5) = row5.as_ref() {
+                        match l.predict(r5, BITS) {
+                            Some((o, c, burst)) => {
+                                out = o;
+                                column.set_output(out.clone(), c);
+                                col_state = Some((burst, c));
+                                if burst {
+                                    col_burst = Some(c);
+                                }
+                            }
+                            None => {
+                                out = BitVector::new(BITS, Some(0));
+                                column.set_output(out.clone(), 0);
+                            }
+                        }
+                    } else if let Some((o, c, true)) = l.predict(&input, BITS) {
                         out = o;
                         column.set_output(out.clone(), c);
                         col_burst = Some(c);
@@ -5915,8 +5959,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if let Some(l) = primed23.as_mut() {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
-                        for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                        for l in bit23.iter_mut() {
                             l.learn(&input, &enc.codes[next], &mut rng);
+                        }
+                        if let Some(l) = bit5.as_mut() {
+                            l.learn(row5.as_ref().unwrap_or(&input), &enc.codes[next], &mut rng);
                         }
                         if let Some(sc) = slow.as_mut() {
                             sc.feedback(&input, &enc.codes[next], &mut slow_rng);
@@ -7639,6 +7686,13 @@ fn route_row(word: &BitVector, channels: &[(usize, BitVector)], shares: &[u64], 
 /// The column's L4 row from a current word and its middle frames: the hand layout
 /// (`assemble`), or under ROUTE the routed one, each frame and the previous input a channel
 /// (source = its index in the hand layout) passed whole.
+/// `row` with `frame` appended as one more frame.
+fn with_frame(row: &BitVector, frame: &BitVector) -> BitVector {
+    let mut w = row.as_words().to_vec();
+    w.extend_from_slice(frame.as_words());
+    BitVector::from_words(w)
+}
+
 fn l4_row(column: &CorticalColumn, current: &BitVector, frames: &[BitVector], route: Option<&[usize]>) -> BitVector {
     match route {
         None => column.assemble(current, frames),

@@ -1374,6 +1374,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // the narrator of each stored hippocampal event (who told it)
     let mut row_narrator: HashMap<u32, u16> = HashMap::default();
     let mut row_state: HashMap<u32, Vec<u32>> = HashMap::default(); // engram row → higher-area state
+    // REINSTATE=1 (with HIER, HIPPO_SELF, SPARSE_BIND, engram): the hippocampus as an index
+    // to the cortex (Teyler & Rudy). Each event is stored with the cortical state it was read
+    // in (the higher area's slow context: the entorhinal summary), and at every step the
+    // current sentence's content cues the hippocampus, with a bonus of REINSTATE_BONUS
+    // (default 8) for this story's events (context-dependent retrieval, `recall_soft`). The
+    // cortical states stored with the best events (up to 4) are reinstated in the higher
+    // areas' context, beside their own: recall brings back the state, not words.
+    let reinstate = std::env::var("REINSTATE").is_ok();
+    let reinstate_bonus: usize = std::env::var("REINSTATE_BONUS").ok().and_then(|v| v.parse().ok()).unwrap_or(8);
+    let mut row_cortex: HashMap<u32, BitVector> = HashMap::default(); // engram row → the cortical state it was stored in
+    let mut reinstate_stats = [0u64; 3]; // test steps: reinstated, from this story's events only, bits reinstated
     // engram row → the words of its story before its sentence (what was read up to it)
     let mut row_prefix: HashMap<u32, Vec<usize>> = HashMap::default();
     // stories queued for replay through the reading steps (INFER_REPLAY, read mode)
@@ -3842,6 +3853,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         hier_pending = learn.then(|| cands[i].clone());
                     }
                 }
+                // REINSTATE: what the hippocampus brings back is the cortical state it indexed
+                let surprising_r = match (reinstate && hier && !bind_sentence_pairs.is_empty() && !(testing && bind_lesion), bind_hc.as_ref()) {
+                    (true, Some(hc)) => {
+                        let cue: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                        let (rows, _) = hc.recall_soft(&cue, reinstate_bonus, 4);
+                        let mut x = surprising.clone();
+                        let mut n = 0u64;
+                        for r in &rows {
+                            if let Some(st) = row_cortex.get(r) {
+                                x.or_mut(st);
+                                n += 1;
+                            }
+                        }
+                        if testing && n > 0 {
+                            reinstate_stats[0] += 1;
+                            reinstate_stats[2] += x.count_ones() as u64;
+                        }
+                        x
+                    }
+                    _ => surprising.clone(),
+                };
                 if hier {
                     // the chain, top down: each upper area predicts from its window and the
                     // prediction of the area above it
@@ -3849,7 +3881,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     gated_steps[2 + !hier_skip as usize] += hier_surprise as usize;
                     let mut above: Option<BitVector> = None;
                     for i in (0..upper.len()).rev() {
-                        let hin_u = upper[i].input_with(&sentence_plus, &surprising, if chain_mix { None } else { above.as_ref() });
+                        let hin_u = upper[i].input_with(&sentence_plus, &surprising_r, if chain_mix { None } else { above.as_ref() });
                         let p = if hier_skip { BitVector::new(BITS, Some(0)) } else { upper[i].predict(&hin_u) };
                         upper_pred[i] = (p.count_ones() > 0).then(|| p.clone());
                         if testing && t + 1 == s.answer_at {
@@ -3868,9 +3900,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             role_now = roles.observe(&expect, !testing, &mut role_rng);
                             role_now.map_or(empty, |c| roles.code(c).clone())
                         };
-                        area.input_lead(&lead, &sentence_plus, &surprising)
+                        area.input_lead(&lead, &sentence_plus, &surprising_r)
                     } else {
-                        area.input_with(&sentence_plus, &surprising, if chain_mix { None } else { above.as_ref() })
+                        area.input_with(&sentence_plus, &surprising_r, if chain_mix { None } else { above.as_ref() })
                     };
                     let td = if hier_skip { BitVector::new(BITS, Some(0)) } else { area.predict(&hin) };
                     if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
@@ -5615,6 +5647,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 }
                                 if let Some(r) = hc.last_row() {
                                     row_narrator.insert(r, narrator + 1);
+                                    if reinstate && hier {
+                                        row_cortex.insert(r, area.state(&BitVector::new(BITS, Some(0))));
+                                    }
                                 }
                                 // the cortical state this event was read in (the higher area's
                                 // slow state at the sentence's start), kept per row for replay
@@ -6283,6 +6318,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if question() {
             eprintln!("  QERR seed {seed}: held-out answers: right {}, the family's place for another season {}, the other family's place for this season {}, other {}, no place {}", q_err[0], q_err[1], q_err[2], q_err[3], q_err[4]);
+        }
+        if reinstate {
+            eprintln!("  REINSTATE seed {seed}: at test, a cortical state reinstated at {} steps (mean {} bits of context with it)", reinstate_stats[0], reinstate_stats[2] / reinstate_stats[0].max(1));
         }
         if qhold.is_some() {
             eprintln!("  QHOLD seed {seed}: in held-out test stories, an item held at {} answers ({} the stranger); {} events stored with it, {} of them recalled for the answer; queries {} (an event found {}, holding a surname {}); held: {:?}", hold_stats[0], hold_stats[1], hold_stats[2], hold_stats[3], query_stats[0], query_stats[1], query_stats[2], { let mut v: Vec<_> = held_words.iter().collect(); v.sort_by(|a, b| b.1.cmp(a.1)); v.into_iter().take(8).collect::<Vec<_>>() });

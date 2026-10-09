@@ -1476,6 +1476,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // cortex learns readily from replay, slowly while awake: SLOW_P under LEARNING=three).
     let sleep_p: Option<Q16> = std::env::var("SLEEP_P").ok().and_then(|v| v.parse::<f64>().ok()).map(q16);
     let mut trace_rows: Vec<BitVector> = Vec::new(); // the column's input at each trace's answer
+    // DA=1: the dopamine–novelty loop (Lisman & Grace 2005). Each consolidation trace carries
+    // a dopamine level: the hippocampus's novelty for the event when it is laid down (CA1's
+    // mismatch, through the subiculum–accumbens–pallidum–VTA loop back to the hippocampus),
+    // plus 1/4 if the answer was right (reward). Replay samples traces in proportion to it,
+    // instead of the familiarity-band rule (band < 4).
+    let da_on = std::env::var("DA").is_ok();
+    let mut trace_da: Vec<Q16> = Vec::new();
+    let mut da_stats = [0u64; 3]; // traces, Σ dopamine (Q16), traces replayed
     let mut sleep_column = 0usize; // replays taught to the column
     // CONSOLIDATE_STEPS=1: besides each training story's answer, every word the network
     // failed to predict in a novel sentence (familiarity band < 4) leaves a trace, so
@@ -2324,11 +2332,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 words.extend_from_slice(state.as_words());
                 BitVector::from_words(words)
             };
-            let novel: Vec<usize> = (0..traces.len()).filter(|&i| traces[i].3 < 4).collect();
+            // which traces replay: the novel ones (band < 4), or with DA those the dopamine
+            // tag selects (each with probability its level)
+            let novel: Vec<usize> = if da_on {
+                let v: Vec<usize> = (0..traces.len()).filter(|&i| chance(&mut sleep_rng, trace_da.get(i).copied().unwrap_or(0))).collect();
+                da_stats[2] += v.len() as u64;
+                v
+            } else {
+                (0..traces.len()).filter(|&i| traces[i].3 < 4).collect()
+            };
             if consolidate_interleave {
                 // interleaved: the novel traces mixed with as many familiar ones, shuffled each
                 // round; every replay also feeds sleep generalisation, which then runs
-                let familiar: Vec<usize> = (0..traces.len()).filter(|&i| traces[i].3 >= 4).collect();
+                let familiar: Vec<usize> = (0..traces.len()).filter(|&i| !novel.contains(&i)).collect();
                 let mut order: Vec<usize> = novel.clone();
                 order.extend(familiar.choose_multiple(&mut sleep_rng, novel.len()).copied());
                 for _ in 0..reps {
@@ -5101,6 +5117,20 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     if sleep_p.is_some() {
                         trace_rows.push(input.clone());
                     }
+                    if da_on {
+                        let nov = match bind_hc.as_ref() {
+                            Some(hc) if !bind_sentence_pairs.is_empty() => {
+                                let cue: Vec<usize> = bind_sentence_pairs.iter().flat_map(|&(w, c)| sparse_binding(&enc.codes[w], w, c, false)).collect();
+                                hc.novelty(&cue)
+                            }
+                            _ => if fam_band < 4 { ONE } else { 0 },
+                        };
+                        let reward = if enc.decode(&out) == Some(next) { ONE / 4 } else { 0 };
+                        let da = (nov / 2 + reward + if nov > 0 { ONE / 4 } else { 0 }).min(ONE);
+                        trace_da.push(da);
+                        da_stats[0] += 1;
+                        da_stats[1] += da as u64;
+                    }
                 } else if bind && consolidate_steps && !testing && !replaying && fam_band < 4 && enc.decode(&out) != Some(next) && s.words[t + 1] != "." {
                     let input = if consolidate_assoc {
                         let start = s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1);
@@ -5116,6 +5146,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     };
                     if sleep_p.is_some() {
                         trace_rows.push(BitVector::new(BITS, Some(0))); // (no row: not replayed to the column)
+                    }
+                    if da_on {
+                        trace_da.push(if fam_band < 4 { ONE } else { 0 });
                     }
                     traces.push((input, bind_list.clone(), next, fam_band));
                 }
@@ -6476,6 +6509,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+        }
+        if da_on {
+            eprintln!("  DA seed {seed}: {} traces, mean dopamine {:.2}; {} chosen for replay over all sleeps", da_stats[0], da_stats[1] as f64 / (da_stats[0].max(1) as f64 * ONE as f64), da_stats[2]);
         }
         if consolidate.is_some() {
             eprintln!("  CONSOLIDATE seed {seed}: {} replays of novel episodes to the higher area; {} to the column (sleep-gated)", replayed, sleep_column);

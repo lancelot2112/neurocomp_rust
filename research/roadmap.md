@@ -362,8 +362,9 @@ slot codes bound to content in the hippocampus, recalled by slot.
      events stored with the higher area's state, recall reinstating it as context
      ([concept](concepts/hippocampal-functions.md#an-index-to-the-cortex-not-a-store-of-vectors));
      built ([92](experiments/92-reinstatement.md)): +1.4 on the question task, destructive when
-     other stories' states are reinstated, neutral when restricted to this story. Next, an
-     acetylcholine-like mode from the hippocampus's novelty (encode vs retrieve) and a
+     other stories' states are reinstated, neutral when restricted to this story. An
+     acetylcholine-like mode from the episode's novelty (built) gates it safely without a
+     rule; next, its signal from the same retrieval that reinstates; then a
      norepinephrine-like gain (salience tag, adaptive exploration)
      ([neuromodulation](concepts/hippocampal-functions.md#acetylcholine-and-norepinephrine-modes-of-the-hippocampus));
   4. a learned trigger for inner speech (the rollout's selectivity, not its hand rule), and

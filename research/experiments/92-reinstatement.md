@@ -81,3 +81,48 @@ the hippocampus), so it is kept as an option.
 - **Reinstate the event's own state, not the window's.** Store the state the event was
   *part of*, including its own surprising words, and reinstate only the best event, so a
   known person's sentence does not bring its family along with the stranger's.
+
+## Addendum: an acetylcholine-like mode from the hippocampus's novelty
+
+**Build** (`ACH=1`; [neuromodulation](../concepts/hippocampal-functions.md#acetylcholine-and-norepinephrine-modes-of-the-hippocampus)).
+Each step's recall gives a novelty signal. A tonic level follows it, moving a quarter of the
+way each step.
+- **High level (novel input), encoding mode:** recall's pull on the cortex is weakened. Only
+  a share 1 − ACh of the reinstated state and of the entorhinal feedback passes.
+- **Low level (familiar input), retrieval mode:** both pass.
+
+Storage already follows novelty: a familiar event strengthens its row, a new one is
+appended. Two novelty signals were tried:
+- **Content:** CA1's mismatch, 1 − how much of the cue the best event covers.
+- **Episode** (`row_here` on the engram store): content recalled from *another* story counts
+  as full novelty ("seen, but not here"), and content from this story counts as CA1's
+  mismatch. The hippocampus detects associative novelty of this kind, such as a known object
+  in an unknown place.
+
+**Results** (soft reinstatement, `REINSTATE=1`; held-out):
+
+| | Suite, seeds 0–1 (engram store / inference read / relations) | Question task, five seeds | ACh at test |
+|---|---|---|---|
+| recorded / routing alone | 67.4 / 45.6 / 62.8 | 68.6 | |
+| reinstatement | 35.0 / 10.1 / 31.5 | 70.0 | |
+| + ACh, content novelty | 44.4 / 12.9 / 37.3 | 70.6 | 0.00–0.10 |
+| + ACh, episode novelty | **66.4 / 46.8 / 62.6** | 68.7 | 0.93–1.00 |
+
+1. **Content novelty barely moves.** A sentence's words ("lucy went to the") are always
+   covered by some old event, so everything looks familiar.
+2. **Episode novelty is a self-computed safety gate.** At test the suite's stories are new
+   episodes, so the mode holds reinstatement back, and the damage of soft reinstatement is
+   gone without a "this story only" rule. On two entries (inference read, relations) the
+   level was not updated by their recall path and stayed at its starting value, so their
+   reinstatement was held back by that default.
+3. **On the question task it also removes the gain** (70.0 → 68.7, and the other-family errors
+   with it). The signal comes from the sentence recall, whose best match is usually an old
+   story's question, so the input looks novel here. Meanwhile the reinstatement draws on this
+   story's events through its own, place-weighted retrieval. Signal and content come from
+   different recalls.
+
+**Next.** Take the mode's signal from the same retrieval that reinstates. When the
+place-weighted retrieval finds this story's events, the context is familiar, so reinstate.
+When it finds none, or only other stories', encode. One recall, one decision. The update
+should also run on every recall path, not one.
+

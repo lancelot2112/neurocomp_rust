@@ -1761,6 +1761,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // INTERNEURONS=1: SST and VIP cells set the primed layers' context threshold (instead of
     // the gain rule)
     // L5_VEC=1: the primed layers count with bitsets and bit-sliced counters (same counts)
+    // L5_SYN=bits: the primed layers' synapses as bits (absent, silent, active, sticky), no
+    // strengths (PrimedLayer5::set_bit_synapses); set before the backend is built
+    if std::env::var("L5_SYN").map_or(false, |v| v == "bits") {
+        for l in primed5.iter_mut().chain(primed23.iter_mut()) {
+            l.set_bit_synapses(true);
+        }
+    }
     if std::env::var("L5_VEC").is_ok() {
         for l in primed5.iter_mut().chain(primed23.iter_mut()) {
             l.set_vectorized(true);

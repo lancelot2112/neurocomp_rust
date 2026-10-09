@@ -335,6 +335,8 @@ pub struct PrimedLayer5 {
     /// Vectorized counting (`set_vectorized`): per row bit, bitsets over cells of its
     /// connected synapses, summed into bit-sliced counters.
     masks: Option<BitMasks>,
+    /// synapses as bits (`set_bit_synapses`): active, silent and sticky flags, no strengths
+    bit_synapses: bool,
     /// cells whose synapses changed this step (re-synced into the masks)
     dirty: Vec<usize>,
     tick: u64,
@@ -358,7 +360,7 @@ struct PCell {
     /// how much this cell has burst recently (`Q16`): its Martinotti (SST) cells' drive
     bursty: u32,
     /// connected synapses (basal, apical), kept current as learning changes them
-    conn: (u16, u16),
+    conn: (u16, u16, u16),
     prime: Q16,
     prime_tick: u64,
     wired_tick: u64,
@@ -366,6 +368,14 @@ struct PCell {
 }
 
 const CONNECTED: u8 = 128;
+
+// Bit synapses (`set_bit_synapses`): a synapse's state is its flags, no strength.
+/// active (AMPA): always counts (≥ CONNECTED, so it counts as connected everywhere)
+const AMPA: u8 = 0x80;
+/// silent (NMDA only): counts only when the cell is depolarized (primed)
+const SILENT: u8 = 0x40;
+/// consolidated: resists pruning
+const STICKY: u8 = 0x01;
 
 /// Bit planes of the counters: counts up to 31 per compartment.
 const PLANES: usize = 5;
@@ -378,18 +388,19 @@ struct BitMasks {
     words: usize,
     basal: Vec<Vec<u64>>,
     apical: Vec<Vec<u64>>,
+    silent: Vec<Vec<u64>>,
 }
 
 impl BitMasks {
     fn new(cells: usize) -> Self {
-        Self { words: cells.div_ceil(64).max(1), basal: Vec::new(), apical: Vec::new() }
+        Self { words: cells.div_ceil(64).max(1), basal: Vec::new(), apical: Vec::new(), silent: Vec::new() }
     }
 
     fn grow_to(&mut self, cells: usize) {
         let need = cells.div_ceil(64).max(1);
         if need > self.words {
             let w = need.max(self.words * 2);
-            for m in self.basal.iter_mut().chain(self.apical.iter_mut()) {
+            for m in self.basal.iter_mut().chain(self.apical.iter_mut()).chain(self.silent.iter_mut()) {
                 if !m.is_empty() {
                     m.resize(w, 0);
                 }
@@ -398,9 +409,14 @@ impl BitMasks {
         }
     }
 
-    fn set(&mut self, bit: u32, cell: usize, apical: bool, on: bool) {
+    /// table: 0 basal (active), 1 apical (active), 2 basal silent
+    fn set(&mut self, bit: u32, cell: usize, table: usize, on: bool) {
         let words = self.words;
-        let table = if apical { &mut self.apical } else { &mut self.basal };
+        let table = match table {
+            0 => &mut self.basal,
+            1 => &mut self.apical,
+            _ => &mut self.silent,
+        };
         let b = bit as usize;
         if table.len() <= b {
             table.resize(b + 1, Vec::new());
@@ -431,18 +447,19 @@ impl BitMasks {
         }
     }
 
-    /// Per-cell (basal, apical) counts of connected active synapses, and the touched cells.
-    fn count(&self, row: &BitVector, cells: usize) -> (Vec<(u16, u16)>, Vec<u32>) {
+    /// Per-cell (basal, apical, basal silent) counts of active synapses, and the touched cells.
+    fn count(&self, row: &BitVector, cells: usize) -> (Vec<(u16, u16, u16)>, Vec<u32>) {
         let w = self.words;
         let mut pb: [Vec<u64>; PLANES] = std::array::from_fn(|_| vec![0u64; w]);
         let mut pa: [Vec<u64>; PLANES] = std::array::from_fn(|_| vec![0u64; w]);
+        let mut ps: [Vec<u64>; PLANES] = std::array::from_fn(|_| vec![0u64; w]);
         let mut touched = vec![0u64; w];
         let mut carry = vec![0u64; w];
         for (wi, &x) in row.as_words().iter().enumerate() {
             let mut x = x;
             while x != 0 {
                 let b = wi * 64 + x.trailing_zeros() as usize;
-                for (table, planes) in [(&self.basal, &mut pb), (&self.apical, &mut pa)] {
+                for (table, planes) in [(&self.basal, &mut pb), (&self.apical, &mut pa), (&self.silent, &mut ps)] {
                     if let Some(m) = table.get(b).filter(|m| !m.is_empty()) {
                         Self::add(planes, m, &mut carry);
                         for (t, &v) in touched.iter_mut().zip(m.iter()) {
@@ -453,7 +470,7 @@ impl BitMasks {
                 x &= x - 1;
             }
         }
-        let mut counts = vec![(0u16, 0u16); cells];
+        let mut counts = vec![(0u16, 0u16, 0u16); cells];
         let mut list = Vec::new();
         for (wi, &t) in touched.iter().enumerate() {
             let mut t = t;
@@ -462,8 +479,8 @@ impl BitMasks {
                 let c = wi * 64 + k;
                 let get = |planes: &[Vec<u64>; PLANES]| -> u16 { (0..PLANES).map(|i| (((planes[i][wi] >> k) & 1) as u16) << i).sum() };
                 if c < cells {
-                    let v = (get(&pb), get(&pa));
-                    if v != (0, 0) {
+                    let v = (get(&pb), get(&pa), get(&ps));
+                    if v != (0, 0, 0) {
                         counts[c] = v;
                         list.push(c as u32);
                     }
@@ -484,8 +501,8 @@ struct Eval {
 
 impl PrimedLayer5 {
     pub fn new(frame_words: usize, sample: usize, cells: usize) -> Self {
-        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, conn: (0, 0), prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
-        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), cached: None, masks: None, dirty: Vec::new(), interneurons: false, sst: ONE / 2, vip: 0, tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
+        let empty = PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, conn: (0, 0, 0), prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 };
+        Self { frame_words, sample, cells: vec![empty; cells], index: Vec::new(), cached: None, masks: None, bit_synapses: false, dirty: Vec::new(), interneurons: false, sst: ONE / 2, vip: 0, tick: 0, theta: ONE * 4 / 5, grow_cap: None, recent_apical: Vec::new(), stats: [0; 5] }
     }
 
     /// Cells grown as needed instead of a pool (the limit of a large reserve of silent cells
@@ -591,8 +608,8 @@ impl PrimedLayer5 {
     }
 
     /// Event-driven counting: each active row bit visits the synapses it contacts.
-    fn count_sparse(&self, row: &BitVector) -> (Vec<(u16, u16)>, Vec<u32>) {
-        let mut counts: Vec<(u16, u16)> = vec![(0, 0); self.cells.len()];
+    fn count_sparse(&self, row: &BitVector) -> (Vec<(u16, u16, u16)>, Vec<u32>) {
+        let mut counts: Vec<(u16, u16, u16)> = vec![(0, 0, 0); self.cells.len()];
         let mut touched: Vec<u32> = Vec::new();
         for (wi, &w) in row.as_words().iter().enumerate() {
             let mut w = w;
@@ -604,13 +621,17 @@ impl PrimedLayer5 {
                         let ap = code >> 15 == 1;
                         let pos = (code & 0x7fff) as usize;
                         let syn = if ap { &cell.apical } else { &cell.basal };
-                        if syn.get(pos).map_or(false, |s| s.1 >= CONNECTED) {
+                        let f = syn.get(pos).map_or(0, |s| s.1);
+                        let silent = !ap && f < CONNECTED && f & SILENT != 0;
+                        if f >= CONNECTED || silent {
                             let e = &mut counts[c as usize];
-                            if *e == (0, 0) {
+                            if *e == (0, 0, 0) {
                                 touched.push(c);
                             }
                             if ap {
                                 e.1 += 1;
+                            } else if silent {
+                                e.2 += 1;
                             } else {
                                 e.0 += 1;
                             }
@@ -623,12 +644,12 @@ impl PrimedLayer5 {
         (counts, touched)
     }
 
-    fn threshold_counts(&self, counts: Vec<(u16, u16)>, mut touched: Vec<u32>) -> Eval {
+    fn threshold_counts(&self, counts: Vec<(u16, u16, u16)>, mut touched: Vec<u32>) -> Eval {
         let mut fired = Vec::new();
         let mut free_primed = Vec::new();
         touched.sort_unstable();
         for c in touched {
-            let (b, a) = counts[c as usize];
+            let (b, a, bs) = counts[c as usize];
             let c = c as usize;
             let cell = &self.cells[c];
             let na = cell.conn.1.max(1) as u64;
@@ -640,6 +661,21 @@ impl PrimedLayer5 {
                 }
                 continue;
             }
+            let theta = self.theta_for(c);
+            if self.bit_synapses {
+                // silent synapses count only when the cell is depolarized (primed); the
+                // threshold is fixed: 80% of all basal synapses
+                let nb = (cell.conn.0 + cell.conn.2) as u64;
+                if nb == 0 {
+                    continue;
+                }
+                let need = (nb * 4).div_ceil(5);
+                let eff = b as u64 + if p >= theta { bs as u64 } else { 0 };
+                if eff >= need.max(1) {
+                    fired.push((c, p, p >= theta));
+                }
+                continue;
+            }
             let nb = cell.conn.0 as u64;
             if nb == 0 {
                 continue;
@@ -648,7 +684,7 @@ impl PrimedLayer5 {
             let frac = (ONE as u64 * 4 / 5) - (p as u64 * 3 / 10);
             let need = ((nb * frac) + (ONE as u64 - 1)) >> 16;
             if b as u64 >= need.max(1) {
-                fired.push((c, p, p >= self.theta_for(c)));
+                fired.push((c, p, p >= theta));
             }
         }
         Eval { fired, free_primed }
@@ -737,10 +773,110 @@ impl PrimedLayer5 {
         }
     }
 
+    /// Synapses as bits instead of strengths: each synapse is absent, **silent** (NMDA
+    /// only: it counts only when the cell is primed, the precondition), **active** (AMPA:
+    /// always counts) or active and **sticky** (consolidated: resists pruning). Learning moves
+    /// bits between these states with fixed probabilities; nothing is counted per synapse.
+    /// - a new cell's basal synapses are silent, so it fires only when its context primes it;
+    /// - a confirmed fire: active silent synapses become active (1/2), active synapses
+    ///   become sticky (1/8), unused non-sticky ones are pruned (1/16), and one silent
+    ///   synapse may grow onto an active input (1/4); after a burst the same on the tuft
+    ///   (new tuft synapses are active);
+    /// - a contradicted burst prunes active non-sticky tuft synapses (1/4) and unsticks
+    ///   active sticky ones (1/8);
+    /// - lateral inhibition: the losing primed cells prune active non-sticky tuft synapses (1/8).
+    /// The fire threshold is fixed (80% of all basal synapses): priming lowers it in effect
+    /// by letting silent synapses count.
+    pub fn set_bit_synapses(&mut self, on: bool) {
+        self.bit_synapses = on;
+    }
+
+    /// Learning on one compartment's bit synapses (see `set_bit_synapses`).
+    /// `confirm`: confirmed fire; else `prune_active` (probability as 1/n) of active
+    /// non-sticky synapses, `unstick` (1/n) of active sticky ones.
+    fn bit_learn<R: rand::Rng + ?Sized>(syn: &mut [(u32, u8)], active: &[u32], confirm: bool, prune_active: u32, unstick: u32, rng: &mut R) {
+        for s in syn.iter_mut() {
+            let on = active.binary_search(&s.0).is_ok();
+            let f = s.1;
+            if f & (AMPA | SILENT) == 0 {
+                continue; // absent (a pruned slot)
+            }
+            if confirm {
+                if on && f & SILENT != 0 && f < CONNECTED {
+                    if rng.gen_range(0..2) == 0 {
+                        s.1 = AMPA | (f & STICKY);
+                    }
+                } else if on && f >= CONNECTED {
+                    if rng.gen_range(0..8) == 0 {
+                        s.1 |= STICKY;
+                    }
+                } else if !on && f & STICKY == 0 && rng.gen_range(0..16) == 0 {
+                    s.1 = 0;
+                }
+            } else if on && f >= CONNECTED {
+                if f & STICKY == 0 {
+                    if prune_active > 0 && rng.gen_range(0..prune_active) == 0 {
+                        s.1 = 0;
+                    }
+                } else if unstick > 0 && rng.gen_range(0..unstick) == 0 {
+                    s.1 &= !STICKY;
+                }
+            }
+        }
+    }
+
+    /// Grow one synapse of cell `c` (basal or apical) onto an active row bit it lacks,
+    /// reusing a pruned slot if there is one (at most 2 × sample synapses).
+    fn bit_grow<R: rand::Rng + ?Sized>(&mut self, c: usize, apical_side: bool, active: &[u32], rng: &mut R) {
+        let cap = 2 * self.sample;
+        let syn = if apical_side { &self.cells[c].apical } else { &self.cells[c].basal };
+        let have: Vec<u32> = syn.iter().filter(|s| s.1 & (AMPA | SILENT) != 0).map(|s| s.0).collect();
+        let cands: Vec<u32> = active.iter().copied().filter(|b| !have.contains(b)).collect();
+        let Some(&b) = cands.choose(rng) else { return };
+        let flags = if apical_side { AMPA } else { SILENT };
+        let slot = syn.iter().position(|s| s.1 & (AMPA | SILENT) == 0);
+        let pos = match slot {
+            Some(pos) => {
+                let old = syn[pos].0;
+                self.index_remove(c, old);
+                if let Some(m) = self.masks.as_mut() {
+                    m.set(old, c, if apical_side { 1 } else { 0 }, false);
+                    m.set(old, c, 2, false);
+                }
+                // other synapses of this cell on the old bit lost their index entry too
+                let (bs, aps): (Vec<(usize, u32)>, Vec<(usize, u32)>) = (
+                    self.cells[c].basal.iter().enumerate().filter(|(i, s)| s.0 == old && !(!apical_side && *i == pos)).map(|(i, s)| (i, s.0)).collect(),
+                    self.cells[c].apical.iter().enumerate().filter(|(i, s)| s.0 == old && !(apical_side && *i == pos)).map(|(i, s)| (i, s.0)).collect(),
+                );
+                for (i, bit) in bs {
+                    self.index_add(c, bit, false, i);
+                }
+                for (i, bit) in aps {
+                    self.index_add(c, bit, true, i);
+                }
+                pos
+            }
+            None if syn.len() < cap => syn.len(),
+            None => return,
+        };
+        let syn = if apical_side { &mut self.cells[c].apical } else { &mut self.cells[c].basal };
+        if pos == syn.len() {
+            syn.push((b, flags));
+        } else {
+            syn[pos] = (b, flags);
+        }
+        self.index_add(c, b, apical_side, pos);
+        self.dirty.push(c);
+    }
+
     /// Recount cell `c`'s connected synapses.
     fn refresh(&mut self, c: usize) {
         let cell = &mut self.cells[c];
-        cell.conn = (cell.basal.iter().filter(|s| s.1 >= CONNECTED).count() as u16, cell.apical.iter().filter(|s| s.1 >= CONNECTED).count() as u16);
+        cell.conn = (
+            cell.basal.iter().filter(|s| s.1 >= CONNECTED).count() as u16,
+            cell.apical.iter().filter(|s| s.1 >= CONNECTED).count() as u16,
+            cell.basal.iter().filter(|s| s.1 < CONNECTED && s.1 & SILENT != 0).count() as u16,
+        );
     }
 
     /// Write cell `c`'s connected synapses into the masks.
@@ -748,10 +884,11 @@ impl PrimedLayer5 {
         if let Some(m) = self.masks.as_mut() {
             m.grow_to(self.cells.len());
             for &(b, p) in &self.cells[c].basal {
-                m.set(b, c, false, p >= CONNECTED);
+                m.set(b, c, 0, p >= CONNECTED);
+                m.set(b, c, 2, p < CONNECTED && p & SILENT != 0);
             }
             for &(b, p) in &self.cells[c].apical {
-                m.set(b, c, true, p >= CONNECTED);
+                m.set(b, c, 1, p >= CONNECTED);
             }
         }
     }
@@ -761,12 +898,13 @@ impl PrimedLayer5 {
         if let Some(m) = self.masks.as_mut() {
             if basal {
                 for &(b, _) in &self.cells[c].basal {
-                    m.set(b, c, false, false);
+                    m.set(b, c, 0, false);
+                    m.set(b, c, 2, false);
                 }
             }
             if apical {
                 for &(b, _) in &self.cells[c].apical {
-                    m.set(b, c, true, false);
+                    m.set(b, c, 1, false);
                 }
             }
         }
@@ -785,7 +923,7 @@ impl PrimedLayer5 {
         cell.trace = ONE / 2;
         cell.misses = 0;
         cell.prime = 0;
-        cell.conn = (0, 0);
+        cell.conn = (0, 0, 0);
         self.stats[4] += 1;
     }
 
@@ -798,7 +936,7 @@ impl PrimedLayer5 {
         }
         let mut pick: Vec<u32> = apical.choose_multiple(rng, self.sample.min(apical.len())).copied().collect();
         pick.sort_unstable();
-        self.cells[c].apical = pick.iter().map(|&b| (b, CONNECTED + 32)).collect();
+        self.cells[c].apical = pick.iter().map(|&b| (b, if self.bit_synapses { AMPA } else { CONNECTED + 32 })).collect();
         self.cells[c].wired_tick = self.tick;
         for (i, b) in pick.into_iter().enumerate() {
             self.index_add(c, b, true, i);
@@ -813,6 +951,7 @@ impl PrimedLayer5 {
             return;
         }
         let (basal, apical) = self.split(row);
+        let bits = self.bit_synapses;
         let e = match self.cached.take() {
             Some((words, e)) if words == row.as_words() => e,
             _ => self.evaluate(row),
@@ -828,22 +967,45 @@ impl PrimedLayer5 {
                 cell.used_tick = self.tick;
                 cell.trace += (ONE - cell.trace.min(ONE)) / 2;
                 cell.misses = 0;
-                Self::hebb(&mut cell.basal, &basal, 12, 6);
-                if burst {
-                    Self::hebb(&mut cell.apical, &apical, 12, 6);
+                if self.bit_synapses {
+                    Self::bit_learn(&mut cell.basal, &basal, true, 0, 0, rng);
+                    if burst {
+                        Self::bit_learn(&mut cell.apical, &apical, true, 0, 0, rng);
+                    }
+                } else {
+                    Self::hebb(&mut cell.basal, &basal, 12, 6);
+                    if burst {
+                        Self::hebb(&mut cell.apical, &apical, 12, 6);
+                    }
                 }
                 // lateral inhibition: the other primed cells that fired, predicting otherwise
                 let out = cell.out.clone();
                 for &(c, p, _) in &e.fired {
                     if c != wc && p > 0 && self.cells[c].out != out {
-                        Self::depress(&mut self.cells[c].apical, &apical, 12);
+                        if self.bit_synapses {
+                            Self::bit_learn(&mut self.cells[c].apical, &apical, false, 8, 0, rng);
+                        } else {
+                            Self::depress(&mut self.cells[c].apical, &apical, 12);
+                        }
+                    }
+                }
+                if self.bit_synapses {
+                    if rng.gen_range(0..4) == 0 {
+                        self.bit_grow(wc, false, &basal, rng);
+                    }
+                    if burst && rng.gen_range(0..4) == 0 {
+                        self.bit_grow(wc, true, &apical, rng);
                     }
                 }
             } else {
                 cell.trace -= cell.trace / 2;
                 cell.misses = cell.misses.saturating_add(1);
                 if burst {
-                    Self::depress(&mut cell.apical, &apical, 24);
+                    if self.bit_synapses {
+                        Self::bit_learn(&mut cell.apical, &apical, false, 4, 8, rng);
+                    } else {
+                        Self::depress(&mut cell.apical, &apical, 24);
+                    }
                 }
                 if cell.misses >= 4 && cell.trace < ONE / 8 {
                     self.free(wc);
@@ -877,7 +1039,7 @@ impl PrimedLayer5 {
                 } else if let Some(f) = self.cells.iter().position(|c| c.out.is_empty()) {
                     f
                 } else {
-                    self.cells.push(PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, conn: (0, 0), prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 });
+                    self.cells.push(PCell { basal: Vec::new(), apical: Vec::new(), out: Vec::new(), trace: ONE / 2, misses: 0, bursty: 0, conn: (0, 0, 0), prime: 0, prime_tick: 0, wired_tick: 0, used_tick: 0 });
                     self.cells.len() - 1
                 };
                 self.wire(slot, &ctx, rng);
@@ -896,7 +1058,7 @@ impl PrimedLayer5 {
                 }
                 let tick = self.tick;
                 let cell = &mut self.cells[slot];
-                cell.basal = pick.iter().map(|&b| (b, CONNECTED + 32)).collect();
+                cell.basal = pick.iter().map(|&b| (b, if bits { SILENT } else { CONNECTED + 32 })).collect();
                 cell.out = out;
                 cell.trace = ONE / 2;
                 cell.used_tick = tick;
@@ -921,7 +1083,7 @@ impl PrimedLayer5 {
                     }
                 }
                 let cell = &mut self.cells[c];
-                cell.basal = pick.iter().map(|&b| (b, CONNECTED + 32)).collect();
+                cell.basal = pick.iter().map(|&b| (b, if bits { SILENT } else { CONNECTED + 32 })).collect();
                 cell.out = out;
                 cell.trace = ONE / 2;
                 self.stats[3] += 1;
@@ -999,6 +1161,76 @@ mod primed_tests {
         let mut g = rand::rngs::StdRng::seed_from_u64(5);
         for step in 0..3000 {
             // rows of 3 frames × 256 bits, ~12 active bits per frame from a small vocabulary
+            let mut row = BitVector::new(768, Some(0));
+            for f in 0..3 {
+                let w = g.gen_range(0..12usize);
+                for i in 0..12 {
+                    row.bit_set(f * 256 + (w * 37 + i * 13) % 256);
+                }
+            }
+            let mut target = BitVector::new(256, Some(0));
+            let w = g.gen_range(0..12usize);
+            for i in 0..12 {
+                target.bit_set((w * 37 + i * 13) % 256);
+            }
+            let pa = a.predict(&row, 256).map(|(o, c, x)| (o.as_words().to_vec(), c, x));
+            let pb = b.predict(&row, 256).map(|(o, c, x)| (o.as_words().to_vec(), c, x));
+            assert_eq!(pa, pb, "step {step}");
+            a.learn(&row, &target, &mut ra);
+            b.learn(&row, &target, &mut rb);
+        }
+        assert!(a.committed() > 0);
+    }
+
+    #[test]
+    fn bit_synapses_learn_input_in_context() {
+        let row = |input: usize, ctx: usize| {
+            let mut v = BitVector::new(192, Some(0));
+            for i in 0..8 {
+                v.bit_set(input * 8 + i);
+                v.bit_set(64 + ctx * 8 + i);
+                v.bit_set(128 + i);
+            }
+            v
+        };
+        let target = |w: usize| {
+            let mut v = BitVector::new(64, Some(0));
+            for i in 0..8 {
+                v.bit_set(w * 8 + i);
+            }
+            v
+        };
+        for vec in [false, true] {
+            let mut l5 = PrimedLayer5::new(1, 8, 64);
+            l5.set_bit_synapses(true);
+            l5.set_vectorized(vec);
+            let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+            for _ in 0..400 {
+                for (ctx, out) in [(0, 2), (1, 3)] {
+                    let r = row(1, ctx);
+                    l5.predict(&r, 64);
+                    l5.learn(&r, &target(out), &mut rng);
+                }
+            }
+            let (o, _, burst) = l5.predict(&row(1, 0), 64).unwrap();
+            assert!(burst);
+            assert_eq!(o.as_words(), target(2).as_words());
+            let (o, _, _) = l5.predict(&row(1, 1), 64).unwrap();
+            assert_eq!(o.as_words(), target(3).as_words());
+        }
+    }
+
+    #[test]
+    fn bit_synapses_vectorized_matches_event_driven() {
+        use rand::Rng;
+        let mut a = PrimedLayer5::new(4, 8, 256);
+        let mut b = PrimedLayer5::new(4, 8, 256);
+        a.set_bit_synapses(true);
+        b.set_bit_synapses(true);
+        b.set_vectorized(true);
+        let (mut ra, mut rb) = (rand::rngs::StdRng::seed_from_u64(9), rand::rngs::StdRng::seed_from_u64(9));
+        let mut g = rand::rngs::StdRng::seed_from_u64(5);
+        for step in 0..3000 {
             let mut row = BitVector::new(768, Some(0));
             for f in 0..3 {
                 let w = g.gen_range(0..12usize);

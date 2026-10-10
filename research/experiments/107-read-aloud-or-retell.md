@@ -413,12 +413,67 @@ the reward, no global baseline), it learned the task.
   is silent.
 - **Invented stories run to the 40-word limit** (ended by themselves 0–4%).
 
+## A striatum that learns when to give credit
+Until here every gate had a hand-written credit rule: what counts as reward, when it comes, and
+which choice gets it. Each gate needed its own fix, and the hippocampal hold, whose payoff comes
+30 words later, never learned. All four gates now share one striatum
+([`src/program/striatum.rs`](../../src/program/striatum.rs)), an actor-critic that learns credit
+timing by temporal-difference learning (Schultz, Dayan & Montague 1997).
+
+**The striatum:**
+- **State is a pattern, not a word number:** what the prefrontal cortex holds, the association
+  area's assembly for the last sound, and mode signals (book in view, retrieving, something
+  held). Each bit has its own synapses, so similar states share what they learned.
+- **One critic, one dopamine signal:** δ = reward + γ·V(next state) − V(state), with γ = 0.97,
+  applied through eligibility traces (λ = 0.8).
+- **The only reward is a word that comes out right.**
+- **The gates are actor channels:**
+  - reach for the book;
+  - hold where an episode begins;
+  - reinstate what is held;
+  - load what was heard into working memory.
+
+  A unit test carries a payoff back three steps to the choice that earned it.
+
+**The teacher now waits** (up to three pauses) before starting, and the network may reach during
+the wait. Before this, exploration tried reaching at random points mid-task, where a book opened
+at its first word disagrees with a teacher already at word 18, so reaching looked worse than
+never reaching.
+
+**Two bugs on the way:**
+- **Learning too slow:** eligibility was divided by the number of active bits, while values are
+  means, so learning was about 70 times too slow.
+- **Reinstating at every sound:** reinstating while already retrieving only starts the sequence
+  over. It is now allowed only when not retrieving.
+
+**Results** (3,000 trials, with invention):
+
+| | All learned | Start held by the driver (oracle) |
+|---|---|---|
+| reach after "read it" / "tell it" | 100% / 100% | 100% / 100% |
+| read, same story / another book | **73.7 / 74.6** | 76.0 / 73.7 |
+| read, prefrontal content removed | 13.7 | 65.9 |
+| tell, book closed | 0.0 (silent 100%) | 65.0 |
+| tell, another book (story's / book's) | 35.4 / 63.8 | 53.2 / 56.5 |
+
+With reinstating only when not retrieving (all learned): reading 64.2 / 62.0, retelling still
+silent; reinstatements fell from 125,207 to 64,614 over the run, holds rose from 1,356 to 2,782.
+
+**Findings:**
+- **Reading is the best yet, and depends on the instruction:** 74% of words right with every
+  gate learned, and 14% without the prefrontal content.
+- **The reach is learned from the outcome,** but now it reaches under "tell" too. Opening another
+  book costs a retelling little when the cortex can lean on memory.
+- **The hippocampal gates are not learned yet.** The striatum reinstates far too often, and a
+  mismatch while listening ends retrieval, so it reinstates again. Recall stays near 1%.
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.
 - **Let the cortex learn from replay,** and find why retelling falls silent with the index.
-- **Give the hippocampal gates the reach's credit:** each choice (hold, reinstate, wait) valued
-  in its context from the trial's outcome, through an eligibility trace.
+- **The hippocampal gates under TD:** reinstating should cost something (it stops the hippocampus
+  taking in what is new), and the hold needs the boundary that begins a story to be distinct in
+  the state.
 - **Which book:** a shelf of several books, reached by a cue the network holds ("the fox one"),
   their places remembered by the index.
 - **Credit for the gate per instruction.** Compare the reward with what the same trial type

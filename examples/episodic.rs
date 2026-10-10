@@ -34,7 +34,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::{chance, q16, q16x, ratio as ratio_q, to_f32, Q16, ONE};
 use neurocomp::kernel::{GrowthConfig, KernelClass, SimpleKernel};
-use neurocomp::program::{BitCells, BoundaryCell, Layer5, PrimedLayer5, Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
+use neurocomp::program::{Layer4, BitCells, BoundaryCell, Layer5, PrimedLayer5, Curiosity, Dedup, EngramConfig, BeliefRule, EngramStore, EpisodicCircuit, MotorArea, OutputBuffer, PhonologicalLoop, RelationStore, VocalTract, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Autoassociative, BasalGanglia, Ca3FloatMemory, Ca3Memory, CorticalColumn, AreaContext, CorticothalamicGate, DentateGyrus, RoleArea, SourceMix, HigherArea, EpisodicMemory, Gate, PfcGate, RelayChannel, RouteScores, Thalamus, WorkingMemory};
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, SeedableRng};
@@ -1885,6 +1885,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut relay = neurocomp::program::ThalamicRelay::new();
     // L5_GROW=l23: layer 5 grows a cell whenever L2/3 grows a kernel (up to L5_GROW_CAP cells)
     let l5_grow23 = std::env::var("L5_GROW").map_or(false, |v| v == "l23");
+    // L4=1: layer 4 recodes the input (word code from the core thalamus) for layer 2/3's basal
+    // side (Layer4: learned k-winners-take-all); L4_K winners (default 32)
+    let mut layer4: Option<Layer4> = std::env::var("L4").is_ok().then(|| Layer4::new(BITS, BITS, 16, std::env::var("L4_K").ok().and_then(|v| v.parse().ok()).unwrap_or(32), seed.wrapping_add(99)));
+    let mut l4_rng = StdRng::seed_from_u64(seed.wrapping_add(4404));
+    // L23_REC=1: layer 2/3's recurrent input: the cells it fired at the previous step (projected
+    // into one frame) replace the pasted previous-word frame
+    let l23_rec = std::env::var("L23_REC").is_ok();
+    let mut rec_prev = BitVector::new(BITS, Some(0));
     let l5_grow_cap: usize = std::env::var("L5_GROW_CAP").ok().and_then(|v| v.parse().ok()).unwrap_or(65_536);
     let mut l23_grown_prev = 0usize;
     let mut thal = neurocomp::program::ThalamicGate::new();
@@ -2599,7 +2607,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
                             for l in bit23.iter_mut() {
-                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                                // replay: layer 4's code of the replayed input; no recurrent state
+                                let mut r = row.clone();
+                                if let Some(l4) = layer4.as_ref() {
+                                    r = replace_frame(&r, 0, &l4.encode(&BitVector::from_words(row.as_words()[..BITS / 64].to_vec())));
+                                }
+                                if l23_rec {
+                                    let last = r.as_words().len() / (BITS / 64) - 1;
+                                    r = replace_frame(&r, last, &BitVector::new(BITS, Some(0)));
+                                }
+                                l.learn(&r, &enc.codes[*ans], &mut sleep_rng);
                             }
                             if let Some(l) = bit5.as_mut() {
                                 // replay: L2/3's prediction for the replayed row, on layer 5's input side
@@ -2662,7 +2679,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 l.learn(row, &enc.codes[*ans], &mut sleep_rng);
                             }
                             for l in bit23.iter_mut() {
-                                l.learn(row, &enc.codes[*ans], &mut sleep_rng);
+                                // replay: layer 4's code of the replayed input; no recurrent state
+                                let mut r = row.clone();
+                                if let Some(l4) = layer4.as_ref() {
+                                    r = replace_frame(&r, 0, &l4.encode(&BitVector::from_words(row.as_words()[..BITS / 64].to_vec())));
+                                }
+                                if l23_rec {
+                                    let last = r.as_words().len() / (BITS / 64) - 1;
+                                    r = replace_frame(&r, last, &BitVector::new(BITS, Some(0)));
+                                }
+                                l.learn(&r, &enc.codes[*ans], &mut sleep_rng);
                             }
                             if let Some(l) = bit5.as_mut() {
                                 // replay: L2/3's prediction for the replayed row, on layer 5's input side
@@ -5044,8 +5070,29 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 // L23=primed: L2/3 as two-compartment primed cells: whenever one fires (spike or
                 // burst) it is the column's prediction; the old kernels speak only when none fires
+                // layer 2/3's row: layer 4's code on its input side (L4), its own previous activity
+                // in place of the previous word (L23_REC)
+                let l23_row: BitVector = if bit23.is_some() && (layer4.is_some() || l23_rec) {
+                    let mut r = input.clone();
+                    if let Some(l4) = layer4.as_mut() {
+                        let first = BitVector::from_words(input.as_words()[..BITS / 64].to_vec());
+                        let code = if testing { l4.encode(&first) } else { l4.encode_learn(&first, &mut l4_rng) };
+                        r = replace_frame(&r, 0, &code);
+                    }
+                    if l23_rec {
+                        let last = r.as_words().len() / (BITS / 64) - 1;
+                        r = replace_frame(&r, last, &rec_prev);
+                    }
+                    r
+                } else {
+                    input.clone()
+                };
                 if let Some(l) = bit23.as_mut() {
-                    match l.predict(&input, BITS) {
+                    let fired = l.predict(&l23_row, BITS);
+                    if l23_rec {
+                        rec_prev = pons(&l.last_fired());
+                    }
+                    match fired {
                         Some((o, c, burst)) => {
                             out = o;
                             column.set_output(out.clone(), c);
@@ -6105,7 +6152,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
                         for l in bit23.iter_mut() {
-                            l.learn(&input, &enc.codes[next], &mut rng);
+                            l.learn(&l23_row, &enc.codes[next], &mut rng);
                         }
                         if let Some(l) = bit5.as_mut() {
                             l.learn(&l5_row, &enc.codes[next], &mut rng);
@@ -7889,6 +7936,14 @@ fn pons(cells: &[usize]) -> BitVector {
         }
     }
     v
+}
+
+/// `row` with frame number `i` replaced by `frame`.
+fn replace_frame(row: &BitVector, i: usize, frame: &BitVector) -> BitVector {
+    let fw = BITS / 64;
+    let mut w = row.as_words().to_vec();
+    w[i * fw..(i + 1) * fw].copy_from_slice(&frame.as_words()[..fw]);
+    BitVector::from_words(w)
 }
 
 /// `row` with `frame` inserted before its last frame (a context frame: the tuft's side).

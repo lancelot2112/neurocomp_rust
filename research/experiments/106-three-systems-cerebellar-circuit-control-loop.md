@@ -184,7 +184,31 @@ the rollout's absence: without any completion, five of six entries lose 13–19 
 
 A first try on 4,500 words of Alice: held-out next word right 7.4%, the same as always saying
 ",". Writing from "alice was" gave a memorised fragment ("the fire, and washing her face and
-she's such a nice soft"), then silence: a silent step leaves the plan unchanged.
+she's such a nice soft"), then silence: a silent step left the input unchanged. Now a silent
+step hears its own plan (an efference copy).
+
+Full runs (seed 0; vocabulary of the 3,000 commonest words; the last tenth held out, learning
+off):
+
+| Text | Words read | Reading, last stretch | Held-out | Always "," | Layer 2/3 proposals (right) | Layer 5 | Cerebellum |
+|---|---|---|---|---|---|---|---|
+| Alice | 28,054 | 9.8% | **9.8%** | 8.4% | 784 of 3,117 (9.8%) | 133 (12.0%) | 3,117 (11.4%) |
+| Tiny Shakespeare | 225,130 | 10.0% | **6.3%** | 8.3% | 223 of 25,014 (0.9%) | 0 | 25,014 (6.3%) |
+
+Written text quotes training sentences, then loops on one:
+- *Alice* ("alice was"): "alice was sitting next to see if he would deny it usually … how to
+  see if he would deny it usually … and went down on one knee. here, the miserable hatter
+  dropped his teacup and went down on one knee. here, the miserable hatter dropped his teacup
+  and …".
+- *Shakespeare* ("the king"): "the king so bold to me, in the eldest sister. nor is your firm
+  resolve unknown to me, in the eldest sister. nor is your firm resolve unknown to me, …".
+
+Two problems show:
+- **The cortex does not generalise.** Its cells are conjunctions of a context seen once. On new
+  text they rarely fire (Shakespeare: layer 2/3 on 0.9% of held-out words, layer 5 never), so
+  only the cerebellum votes.
+- **Nothing stops a loop.** No cell tires, so a recurrent attractor repeats the same sentence.
+  Firing adaptation (cells that fired recently are harder to fire) is the plausible fix.
 
 ## Findings
 1. **Separating the systems costs ~11 points for now,** because the slow learners need more
@@ -205,4 +229,4 @@ she's such a nice soft"), then silence: a silent step leaves the plan unchanged.
 - The bitwise gate and the relay (with and without layer 5 growth) on the three-system default.
 - More training data (10,000 and 30,000 stories).
 - Saccade loop fixes (a richer context, a self-calibrating cost).
-- The prose driver at full length on Alice, then Tiny Shakespeare.
+- The prose driver: adaptation against loops; cells that generalise (partial-match firing).

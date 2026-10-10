@@ -5,8 +5,8 @@
 //!   fibres), here the column's input row.
 //! - **Granule cells:** a fixed random expansion, not learned. Each granule cell has four
 //!   dendrites, each on a random mossy fibre (as real granule cells have about four), and fires
-//!   when at least `k` of them are active. Golgi cells adjust `k` by feedback inhibition so that
-//!   about `target` of the granule layer is active: the expansion stays sparse whatever the
+//!   when at least `k` of them are active (k ≥ 2: a coincidence). Golgi cells raise `k` by
+//!   feedback inhibition when more than about `target` of the granule layer is active: the expansion stays sparse whatever the
 //!   input density (Marr 1969; Albus 1971).
 //! - **Purkinje cells:** one per output bit. Every parallel fibre (granule axon) starts with a
 //!   potent synapse on every Purkinje cell. A Purkinje cell's drive is the number of active
@@ -229,7 +229,9 @@ impl CerebellarCircuit {
         if self.density > self.target * 2 && self.k < 4 {
             self.k += 1;
             self.density = self.target;
-        } else if self.density < self.target / 2 && self.k > 1 {
+        } else if self.density < self.target / 2 && self.k > 2 {
+            // never below two: a granule cell fires on a coincidence of inputs (a conjunction),
+            // not on any one input
             self.k -= 1;
             self.density = self.target;
         }

@@ -34,7 +34,9 @@
 //!
 //! Options: RT_TRAIN (trials, default 3000), RT_TEST (default 300), RT_GATE=fixed (diagnosis:
 //! the instruction word is always loaded, no gate), RT_TELL=apart (the teacher never retells
-//! with the book open at the same story), RT_TRACE, SEED.
+//! with the book open at the same story), RT_PRACTICE (share of training tasks done by the
+//! network in its own voice, the teacher's word the target; default 0), RT_HC_TIME=1 (a time
+//! code in the hippocampal cue), RT_TRACE, SEED.
 
 mod common;
 
@@ -221,7 +223,10 @@ impl Net {
     /// conjunctive cells would give. A conjunction is rarely repeated, so its bits keep their
     /// drive under the hippocampus's presynaptic scaling (single words and a reused context,
     /// written thousands of times, are scaled to nothing).
-    fn hc_context(prev: Option<&BitVector>, prev2: Option<&BitVector>, silence: &BitVector, story: u64) -> Vec<usize> {
+    ///
+    /// With `pos` (RT_HC_TIME=1), 32 more bits from the story and the position in the telling,
+    /// as time cells give: a cue whose last words were wrong still matches in time.
+    fn hc_context(prev: Option<&BitVector>, prev2: Option<&BitVector>, silence: &BitVector, story: u64, pos: Option<usize>) -> Vec<usize> {
         let mut h: u64 = story.wrapping_mul(0x9E37_79B9_7F4A_7C15);
         for (k, v) in [prev.unwrap_or(silence), prev2.unwrap_or(silence)].into_iter().enumerate() {
             for w in v.as_words() {
@@ -237,6 +242,14 @@ impl Net {
                 BITS + (x % CTX_SPACE as u64) as usize
             })
             .collect();
+        if let Some(t) = pos {
+            let h = story.wrapping_mul(0xA24B_AED4_963E_E407) ^ (t as u64 + 1).wrapping_mul(0x9FB2_1C65_1E98_DF25);
+            c.extend((0..ACTIVE as u64).map(|i| {
+                let mut x = (h ^ i.wrapping_mul(0xD6E8_FEB8_6659_FD93)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                x ^= x >> 31;
+                BITS + (x % CTX_SPACE as u64) as usize
+            }));
+        }
         c.sort_unstable();
         c.dedup();
         c
@@ -348,6 +361,10 @@ fn main() {
     let mut net = Net::new(seed);
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let tell_apart = std::env::var("RT_TELL").map_or(false, |v| v == "apart");
+    let time = std::env::var("RT_HC_TIME").map_or(false, |v| v == "1");
+    // RT_PRACTICE: the share of training tasks the network does itself, hearing its own words,
+    // with the teacher's word as the target (practice with correction)
+    let practice_p: f64 = env("RT_PRACTICE", 0.0);
     let (n_train, n_test): (usize, usize) = (env("RT_TRAIN", 3000), env("RT_TEST", 300));
     println!("vocabulary {}; {} training trials, {} test trials; gate {}", vocab.len(), n_train, n_test, if fixed_gate { "fixed (diagnosis)" } else { "learned" });
     let t0 = std::time::Instant::now();
@@ -355,6 +372,7 @@ fn main() {
     let mut res = [[Tally::default(); 3]; 2];
     let mut res_noinstr = [[Tally::default(); 3]; 2];
     let mut train_right = (0usize, 0usize);
+    let mut practice_right = (0usize, 0usize);
     // the hippocampal recall's own accuracy while telling: (recalled the wanted word, steps)
     let mut hc_right = (0usize, 0usize);
     let mut hc_bits = 0usize;
@@ -379,7 +397,7 @@ fn main() {
             let w = id(s[t]);
             let heard = &ear.codes[w];
             net.hear_gate(w, heard, learn && !fixed_gate, &mut rng);
-            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx);
+            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             let rec = net.recall(&cue);
             let st = net.step(&zero(), heard, &rec, learn, &mut rng);
             if learn && t + 1 < s.len() {
@@ -393,7 +411,7 @@ fn main() {
             let (mut p1, mut p2): (Option<BitVector>, Option<BitVector>) = (None, None);
             let mut line = String::new();
             for t in 0..s.len().min(8) {
-                let r = net.hc.recall(&Net::hc_context(p1.as_ref(), p2.as_ref(), &silence, story_ctx));
+                let r = net.hc.recall(&Net::hc_context(p1.as_ref(), p2.as_ref(), &silence, story_ctx, time.then_some(t)));
                 let mut v = zero();
                 for &b in r.ec.iter().filter(|&&b| b < BITS) {
                     v.bit_set(b);
@@ -435,12 +453,13 @@ fn main() {
         }
         // 3. the task: the teacher does it (training), or the network does (test)
         let target: &Vec<&str> = if read { &p } else { &s };
+        let practice = learn && rng.gen_bool(practice_p);
         let mut prev: Option<BitVector> = None;
         let mut prev2: Option<BitVector> = None;
         let mut tally = Tally::default();
         for t in 0..target.len() {
             let seen = p.get(t).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero);
-            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx);
+            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             let rec = net.recall(&cue);
             let heard = prev.clone().unwrap_or_else(zero);
             let st = net.step(&seen, &heard, &rec, learn, &mut rng);
@@ -465,12 +484,29 @@ fn main() {
                 train_right.0 += right as usize;
                 train_right.1 += 1;
                 net.learn(&st, &ear.codes[want], &mut rng);
-                if !fixed_gate {
-                    net.gate.reward(if right { ONE as i32 } else { 0 }, &mut rng);
+                if practice {
+                    // the network says it and hears itself; the teacher's word is the target
+                    let said = motor.plan(&st.plan).and_then(|m| tract.articulate(&m));
+                    practice_right.0 += (said == Some(want)) as usize;
+                    practice_right.1 += 1;
+                    if !fixed_gate {
+                        net.gate.reward(if said == Some(want) { ONE as i32 } else { 0 }, &mut rng);
+                    }
+                    match said {
+                        Some(w) => {
+                            prev2 = prev.replace(ear.codes[w].clone());
+                            net.hear_gate(w, &ear.codes[w], !fixed_gate, &mut rng);
+                        }
+                        None => prev2 = prev.replace(st.plan.clone()),
+                    }
+                } else {
+                    if !fixed_gate {
+                        net.gate.reward(if right { ONE as i32 } else { 0 }, &mut rng);
+                    }
+                    // the teacher's word is heard
+                    prev2 = prev.replace(ear.codes[want].clone());
+                    net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
                 }
-                // the teacher's word is heard
-                prev2 = prev.replace(ear.codes[want].clone());
-                net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
             } else {
                 let said = motor.plan(&st.plan).and_then(|m| tract.articulate(&m));
                 if trace > 0 && book == Book::Closed && !read && t < 6 {
@@ -516,12 +552,14 @@ fn main() {
         }
         if learn && (trial + 1) % 500 == 0 {
             println!(
-                "  trial {:>5}: words planned right {:.1}% over the last 500 trials ({:.0} s)",
+                "  trial {:>5}: words planned right {:.1}% over the last 500 trials, said right in practice {:.1}% ({:.0} s)",
                 trial + 1,
                 100.0 * train_right.0 as f64 / train_right.1.max(1) as f64,
+                100.0 * practice_right.0 as f64 / practice_right.1.max(1) as f64,
                 t0.elapsed().as_secs_f64()
             );
             train_right = (0, 0);
+            practice_right = (0, 0);
         }
     }
     let pct = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;

@@ -756,7 +756,9 @@ fn main() {
             striatum.begin(&state, $explore);
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
-                    if held && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
+                    // reinstating is possible only when not already retrieving (it would only
+                    // start the sequence over)
+                    if held && !retr && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
                         x.reinstate();
                     } else if $fired && striatum.choose(CH_HOLD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
                         x.hold();

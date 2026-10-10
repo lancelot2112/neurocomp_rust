@@ -54,7 +54,7 @@ pub struct Layer5 {
 impl Layer5 {
     /// `frame_words`: words per frame of the row; `sample`: synapses per compartment;
     /// `match_fraction`: share of a compartment's synapses that must be active.
-    pub fn new(frame_words: usize, sample: usize, match_fraction: f64, max_cells: usize) -> Self {
+    pub fn new(frame_words: usize, sample: usize, match_fraction: f64, max_cells: usize) -> Self { // float: config
         Self {
             frame_words,
             sample,

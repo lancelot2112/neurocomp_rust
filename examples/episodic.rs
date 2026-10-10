@@ -1100,19 +1100,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // CB=circuit: the cerebellum as its own circuit (granule expansion, Purkinje depression;
     // CerebellarCircuit) instead of a cortical kernel class; CB_GRANULES granule cells
     let mut cerebellum: Option<Cb> = three.then(|| {
-        if std::env::var("CB").map_or(false, |v| v == "circuit") {
-            let g = std::env::var("CB_GRANULES").ok().and_then(|v| v.parse().ok()).unwrap_or(32768);
+        // Default (experiment 106): the cerebellar circuit; CB=kernels restores the cortical kernel
+        // class used as a cerebellum before
+        if std::env::var("CB").map_or(true, |v| v != "kernels") {
+            let g = std::env::var("CB_GRANULES").ok().and_then(|v| v.parse().ok()).unwrap_or(262_144);
             // CB_TARGET=n: about 1/n of the granule layer active (Golgi inhibition's set point)
-            let t = std::env::var("CB_TARGET").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(64);
+            let t = std::env::var("CB_TARGET").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(256);
             let mut c = neurocomp::program::CerebellarCircuit::new(g, BITS, ONE / t, seed.wrapping_add(77));
             // CB_LTP=k: restoration with probability 2^-k (0: always); CB_QUIET=q: a Purkinje cell
             // is quiet below 1/q of the active granule cells' drive
             c.set_rates(
                 std::env::var("CB_LTP").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
-                std::env::var("CB_QUIET").ok().and_then(|v| v.parse().ok()).unwrap_or(4),
+                std::env::var("CB_QUIET").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
             );
             // CB_CROSS=1: each granule cell's dendrites on different frames (sources)
-            c.set_cross_frames(std::env::var("CB_CROSS").is_ok());
+            c.set_cross_frames(std::env::var("CB_CROSS").map_or(true, |v| v != "0"));
             Cb::Circuit(c)
         } else {
             Cb::Kernels(neurocomp::program::Cerebellum::new(BITS, make_l23(None)))
@@ -1127,7 +1129,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut pons_prev = BitVector::new(BITS, Some(0));
     // CB_L1=1: the cerebellum's output (deep nuclei → motor thalamus) reaches layer 5's tuft (layer
     // 1) as context: it primes the cortex rather than only voting
-    let cb_l1 = std::env::var("CB_L1").is_ok();
+    let cb_l1 = std::env::var("CB_L1").map_or(true, |v| v != "0");
     let mut cb_word: Option<usize> = None;
     let mut cb_conf: Q16 = 0;
     let mut cb_stats = [0usize; 2]; // test answers: proposed, right
@@ -1835,7 +1837,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
         }
         // L5_STICK=tag: stickiness by synaptic tagging and capture
-        if std::env::var("L5_STICK").map_or(false, |v| v == "tag") {
+        // default (experiment 106); L5_STICK=gate restores the random consolidation gate
+        if std::env::var("L5_STICK").map_or(true, |v| v == "tag") {
             for l in bit23.iter_mut().chain(bit5.iter_mut()) {
                 l.set_tag_capture(true);
             }
@@ -1861,6 +1864,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
     }
     let burst_vote = std::env::var("BURST_VOTE").is_ok();
+    // THAL=bits: each source's reliability in the main vote from a bitwise thalamic gate
+    // reading the context pattern (ThalamicGate), not from word-pair tables
+    let thal_bits = std::env::var("THAL").map_or(false, |v| v == "bits");
+    let mut thal = neurocomp::program::ThalamicGate::new();
+    let mut thal_rng = StdRng::seed_from_u64(seed.wrapping_add(4242));
     let burst_key = std::env::var("BURST_KEY").is_ok();
     let burst_gate = std::env::var("GATE").map_or(false, |v| v == "burst");
     let mut src_burst: HashMap<u8, Q16> = HashMap::default();
@@ -5296,7 +5304,18 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     // BURST_VOTE: a bursting column votes with the burst's own evidence (its
                     // strength now), not the word-keyed reliability learned for the old column
+                    // the thalamic gate's context: the current and the previous input (layer 6)
+                    let tctx: Option<BitVector> = thal_bits.then(|| {
+                        let fw = BITS / 64;
+                        let w = input.as_words();
+                        let mut c = w[..fw].to_vec();
+                        c.extend_from_slice(&w[w.len() - fw..]);
+                        BitVector::from_words(c)
+                    });
                     let burst_weight = |src: u8, key: u64| -> u32 {
+                        if let Some(c) = tctx.as_ref() {
+                            return mix.weight_of_rate(thal.rate(src, (key % 8) as u8, c));
+                        }
                         match (burst_vote, src, col_burst) {
                             (true, 0, Some(c)) => mix.weight_of_rate(c),
                             _ => mix.weight(src, key),
@@ -5383,6 +5402,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         for (src, key, ws) in &proposals {
                             for &w in ws {
                                 mix.record(*src, *key, w == next);
+                            }
+                            if let Some(c) = tctx.as_ref() {
+                                thal.record(*src, (*key % 8) as u8, c, ws.contains(&next), &mut thal_rng);
                             }
                         }
                         // the frame gate's record (HIER_TRUST_GATE): the same outcomes, under a

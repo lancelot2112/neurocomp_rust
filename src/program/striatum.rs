@@ -1,54 +1,86 @@
-//! The striatum as an actor–critic that learns when to give credit (temporal-difference
-//! learning; Sutton & Barto; Schultz, Dayan & Montague 1997).
+//! The striatum, the basal ganglia's input nucleus, as bit cells (an actor–critic made of
+//! spiny projection neurons; three-factor learning).
 //!
-//! - **State is a pattern:** the active bits of whatever the striatum sees (the prefrontal
-//!   content, an association-area assembly, the cortex's ongoing activity, mode signals). Each
-//!   bit is a cortical input with its own synapses, so states that share bits share what they
-//!   learned. The bits come in groups (one per input pathway): each group counts by its own
-//!   mean, so a large group (the cortex's activity) does not drown a small one (a mode signal).
-//! - **The critic** (patch / ventral striatum) learns the state's value: the sum over groups of
-//!   the mean weight of each group's active inputs.
-//! - **Actors** (matrix / dorsal striatum): one channel per gate (e.g. reach, hold, reinstate,
-//!   load into working memory), each with a few actions. An action's preference in a state is
-//!   the mean weight of the state's inputs on that action's cells (a fixed hash of input bit,
-//!   channel and action picks the synapse). The best action is released; with exploration, a
-//!   random one at a small rate.
-//! - **Dopamine is the temporal-difference error:** δ = reward + γ·V(next state) − V(state).
-//!   Credit arrives when the outlook changes, not when a rule says so: a choice whose payoff
-//!   comes many steps later is credited because the critic learns that it raises the value of
-//!   what follows.
-//! - **Eligibility traces** (λ): the inputs of recent states and the synapses of recent choices
-//!   stay eligible, decaying by λ each step, so one dopamine signal reaches them all.
-//!
-//! Integer arithmetic: weights and values in `Q16`.
+//! - **Inputs** are the active bits of the pathways the striatum sees (layer 5 and layer 2/3 of
+//!   the cortex, working memory, the hippocampus's output, the senses), given as groups, one per
+//!   pathway. Nothing else: no hand-made features.
+//! - **Spiny cells are popcount units.** Each has `SYN` synapses on input bits and fires when at
+//!   least `THETA` of them are active (the up state needs many coincident inputs). A cell is
+//!   recruited for a state by sampling its synapses from one active pathway (corticostriatal
+//!   projections are topographic), so it becomes a detector for states like that one.
+//! - **Channels and actions:** each action of each channel has a population of D1 cells (the
+//!   direct, "go" pathway) and of D2 cells (the indirect, "no-go" pathway). An action's drive is
+//!   the number of its D1 cells firing minus its D2 cells firing, plus a little noise; the
+//!   output nuclei (GPi / SNr) release the strongest (action 0, the default, wins ties).
+//! - **The critic:** striosome cells, which project to the dopamine neurons. A state's value is
+//!   the number of striosome cells firing, each worth `UNIT` of reward.
+//! - **Dopamine is the temporal-difference error,** δ = reward + V(next) − V(state), in integers.
+//! - **Learning is three-factor and structural.** A state and the choices made in it stay
+//!   eligible for `WINDOW` steps, their credit halving per step back (a synaptic tag). A burst
+//!   (δ > 0) recruits striosome cells for the eligible states (their value was too low) and D1
+//!   cells for the chosen actions, and removes D2 cells that fired for them; a dip (δ < 0) does
+//!   the reverse. The number of cells changed follows |δ| / `UNIT`, rounded at random.
 
 use rand::Rng;
 
-use crate::fixed::{Q16, ONE};
+use crate::fixed::ONE;
+
+/// Synapses per cell, and how many must be active for it to fire.
+const SYN: usize = 12;
+const THETA: usize = 8;
+/// Reward per striosome cell firing.
+const UNIT: i32 = (ONE / 2) as i32;
+/// Steps a state and its choices stay eligible.
+const WINDOW: usize = 8;
+/// Cells per population at most.
+const CAP: usize = 4096;
+
+#[derive(Clone)]
+struct Cell {
+    syn: [u32; SYN],
+}
+
+#[derive(Default)]
+struct Pool {
+    cells: Vec<Cell>,
+}
+
+impl Pool {
+    fn firing(&self, active: &dyn Fn(u32) -> bool) -> Vec<usize> {
+        self.cells.iter().enumerate().filter(|(_, c)| c.syn.iter().filter(|&&s| active(s)).count() >= THETA).map(|(i, _)| i).collect()
+    }
+}
+
+/// One eligible step: the state's groups, the striosome cells that fired, and the choices made
+/// (channel, action, D1 and D2 cells that fired for it).
+#[derive(Clone)]
+struct Step {
+    groups: Vec<Vec<u32>>,
+    striosome: Vec<usize>,
+    choices: Vec<(usize, usize, Vec<usize>, Vec<usize>)>,
+}
 
 pub struct Striatum {
-    size: usize,
-    critic: Vec<i32>,
-    actor: Vec<i32>,
-    /// γ and λ, in `Q16`
-    pub gamma: Q16,
-    pub lambda: Q16,
-    /// learning rate: a step of δ >> `shift` for each eligible synapse
-    pub shift: u32,
-    /// exploration rate, in `Q16`
-    pub explore: Q16,
-    /// the current state's inputs (bits, by group) and value
-    state: Vec<Vec<usize>>,
+    /// striosome cells (the critic)
+    striosome: Pool,
+    /// channel → action → (D1 pool, D2 pool)
+    actors: Vec<Vec<(Pool, Pool)>>,
+    /// the input bitset (input bits hashed into `space` bits) of the current state
+    space: usize,
+    active: Vec<u64>,
+    /// recent steps, newest last
+    recent: Vec<Step>,
     value: i32,
-    /// reward gathered since the current state began
     reward: i32,
-    /// eligible synapses with their eligibility (`Q16`): (critic or actor, index, weight)
-    trace: Vec<(bool, usize, u32)>,
     started: bool,
+    /// exploration noise: each action's drive gets 0..=`noise` added
+    pub noise: u32,
     /// (TD errors applied, sum of |δ|) for reports
     pub stats: (u64, u64),
     /// the latest TD error (`Q16`), for reports
     pub last_delta: i32,
+    /// cells recruited and removed
+    pub changes: (u64, u64),
 }
 
 fn mix(x: u64) -> u64 {
@@ -59,116 +91,134 @@ fn mix(x: u64) -> u64 {
 }
 
 impl Striatum {
-    /// `size` synapses per table (critic, actors).
-    pub fn new(size: usize) -> Self {
+    /// The input space has `space` bits (a multiple of 64); input bits are hashed into it.
+    pub fn new(space: usize) -> Self {
         Self {
-            size,
-            critic: vec![0; size],
-            actor: vec![0; size],
-            gamma: ONE * 97 / 100,
-            lambda: ONE * 8 / 10,
-            shift: 4,
-            explore: ONE / 10,
-            state: Vec::new(),
+            striosome: Pool::default(),
+            actors: Vec::new(),
+            space,
+            active: vec![0; space / 64],
+            recent: Vec::new(),
             value: 0,
             reward: 0,
-            trace: Vec::new(),
             started: false,
+            noise: 1,
             stats: (0, 0),
             last_delta: 0,
+            changes: (0, 0),
         }
     }
 
-    fn critic_syn(&self, b: usize) -> usize {
-        (mix(b as u64 ^ 0xC717) % self.size as u64) as usize
+    fn hash(&self, b: usize) -> u32 {
+        (mix(b as u64 ^ 0x57A7) % self.space as u64) as u32
     }
 
-    fn actor_syn(&self, b: usize, channel: usize, action: usize) -> usize {
-        (mix(b as u64 ^ ((channel as u64 + 1) << 40) ^ ((action as u64 + 1) << 52)) % self.size as u64) as usize
+    fn is_active(&self, s: u32) -> bool {
+        self.active[s as usize / 64] >> (s % 64) & 1 == 1
     }
 
-    fn mean(&self, table: &[i32], syns: &[usize]) -> i32 {
-        if syns.is_empty() {
-            return 0;
+    fn ensure(&mut self, channel: usize, n: usize) {
+        while self.actors.len() <= channel {
+            self.actors.push(Vec::new());
         }
-        (syns.iter().map(|&s| table[s] as i64).sum::<i64>() / syns.len() as i64) as i32
+        let ch = &mut self.actors[channel];
+        while ch.len() < n {
+            ch.push((Pool::default(), Pool::default()));
+        }
     }
 
-    /// The value the critic gives a state (its active bits by group), in `Q16`: the sum of the
-    /// groups' mean weights.
-    pub fn value_of_groups(&self, state: &[Vec<usize>]) -> i32 {
-        state.iter().map(|g| self.mean(&self.critic, &g.iter().map(|&b| self.critic_syn(b)).collect::<Vec<_>>())).sum()
+    /// A cell for a state: synapses sampled from one of its pathways (one with enough bits).
+    fn recruit<R: Rng>(groups: &[Vec<u32>], rng: &mut R) -> Option<Cell> {
+        let live: Vec<&Vec<u32>> = groups.iter().filter(|g| g.len() >= THETA).collect();
+        if live.is_empty() {
+            return None;
+        }
+        let g = live[rng.gen_range(0..live.len())];
+        let mut syn = [0u32; SYN];
+        for s in syn.iter_mut() {
+            *s = g[rng.gen_range(0..g.len())];
+        }
+        Some(Cell { syn })
     }
 
-    /// The value of a state given as one group of bits.
-    pub fn value_of(&self, state: &[usize]) -> i32 {
-        self.value_of_groups(&[state.to_vec()])
-    }
-
-    /// An action's preference in a state (bits by group), in `Q16`.
-    pub fn preference_groups(&self, state: &[Vec<usize>], channel: usize, action: usize) -> i32 {
-        state.iter().map(|g| self.mean(&self.actor, &g.iter().map(|&b| self.actor_syn(b, channel, action)).collect::<Vec<_>>())).sum()
-    }
-
-    /// An action's preference in a state given as one group of bits.
-    pub fn preference(&self, state: &[usize], channel: usize, action: usize) -> i32 {
-        self.preference_groups(&[state.to_vec()], channel, action)
-    }
-
-    /// The eligibility of each synapse of a group: the value is a sum of group means, so with
-    /// `n` groups each synapse moves by 1/n of the step to move the value by the step.
-    fn per_synapse(&self) -> u32 {
-        ONE / self.state.iter().filter(|g| !g.is_empty()).count().max(1) as u32
-    }
-
-    /// Apply one dopamine signal `delta` to every eligible synapse.
-    fn learn(&mut self, delta: i32) {
+    /// Apply one dopamine signal to the eligible steps (newest first, credit halving per step).
+    fn learn<R: Rng>(&mut self, delta: i32, rng: &mut R) {
         self.stats.0 += 1;
-        self.last_delta = delta;
         self.stats.1 += delta.unsigned_abs() as u64;
-        for &(is_critic, i, e) in &self.trace {
-            let step = ((delta as i64 * e as i64) >> 16) >> self.shift;
-            let w = if is_critic { &mut self.critic[i] } else { &mut self.actor[i] };
-            *w = (*w as i64 + step).clamp(-(64 * ONE as i64), 64 * ONE as i64) as i32;
-        }
-    }
-
-    /// A new state (its active bits, `learn`: update): the dopamine signal for the step that
-    /// ends here is the reward gathered + γ·V(this state) − V(the previous state).
-    pub fn begin(&mut self, state: &[usize], learn: bool) {
-        self.begin_groups(&[state.to_vec()], learn);
-    }
-
-    /// A new state given as groups of bits (one per input pathway).
-    pub fn begin_groups(&mut self, state: &[Vec<usize>], learn: bool) {
-        let v = self.value_of_groups(state);
-        if self.started && learn {
-            let delta = self.reward + ((self.gamma as i64 * v as i64) >> 16) as i32 - self.value;
-            self.learn(delta);
-        }
-        // decay the traces, then make this state's inputs eligible
-        let l = self.lambda as u64;
-        let g = self.gamma as u64;
-        for t in self.trace.iter_mut() {
-            t.2 = ((t.2 as u64 * l * g) >> 32) as u32;
-        }
-        self.trace.retain(|t| t.2 > ONE / 64);
-        self.state = state.to_vec();
-        let e = self.per_synapse();
-        for g in state {
-            for &b in g {
-                let s = self.critic_syn(b);
-                self.trace.push((true, s, e));
+        self.last_delta = delta;
+        let mut weight = ONE as u64;
+        for k in (0..self.recent.len()).rev() {
+            // cells to change for this step: |δ| / UNIT × its credit, rounded at random
+            let amount = delta.unsigned_abs() as u64 * weight / UNIT as u64;
+            let mut n = (amount >> 16) as usize;
+            if rng.gen_range(0..ONE as u64) < (amount & 0xFFFF) {
+                n += 1;
             }
+            weight /= 2;
+            if n == 0 {
+                continue;
+            }
+            let st = self.recent[k].clone();
+            // the critic: a burst adds striosome cells for this state, a dip removes some that fired
+            if delta > 0 {
+                for _ in 0..n {
+                    if self.striosome.cells.len() < CAP {
+                        if let Some(c) = Self::recruit(&st.groups, rng) {
+                            self.striosome.cells.push(c);
+                            self.changes.0 += 1;
+                        }
+                    }
+                }
+            } else {
+                remove(&mut self.striosome, &st.striosome, n, rng, &mut self.changes.1);
+            }
+            // the actors: a burst adds go cells and removes no-go cells for the chosen actions;
+            // a dip adds no-go cells and removes go cells
+            for (ch, a, d1, d2) in st.choices {
+                let (go, nogo) = &mut self.actors[ch][a];
+                let (grow, shrink, fired) = if delta > 0 { (go, nogo, d2) } else { (nogo, go, d1) };
+                for _ in 0..n {
+                    if grow.cells.len() < CAP {
+                        if let Some(c) = Self::recruit(&st.groups, rng) {
+                            grow.cells.push(c);
+                            self.changes.0 += 1;
+                        }
+                    }
+                }
+                remove(shrink, &fired, n, rng, &mut self.changes.1);
+            }
+        }
+    }
+
+    /// The value of the current state (`Q16`): striosome cells firing × `UNIT`.
+    fn value_now(&self) -> i32 {
+        self.striosome.firing(&|s| self.is_active(s)).len() as i32 * UNIT
+    }
+
+    /// A new state, as groups of active input bits (one per pathway); `learn`: update. The
+    /// dopamine for the step that ends here is the reward gathered + V(this state) − V(the
+    /// previous one).
+    pub fn begin_groups<R: Rng>(&mut self, state: &[Vec<usize>], learn: bool, rng: &mut R) {
+        self.active.iter_mut().for_each(|w| *w = 0);
+        let groups: Vec<Vec<u32>> = state.iter().map(|g| g.iter().map(|&b| self.hash(b)).collect()).collect();
+        for g in &groups {
+            for &s in g {
+                self.active[s as usize / 64] |= 1 << (s % 64);
+            }
+        }
+        let v = self.value_now();
+        if self.started && learn {
+            let delta = self.reward + v - self.value;
+            self.learn(delta, rng);
+        }
+        let striosome = self.striosome.firing(&|s| self.is_active(s));
+        self.recent.push(Step { groups, striosome, choices: Vec::new() });
+        if self.recent.len() > WINDOW {
+            self.recent.remove(0);
         }
         self.value = v;
         self.reward = 0;
         self.started = true;
-    }
-
-    /// (the current state's value, the preference for action 1 over 0 on `channel`), for reports.
-    pub fn debug_now(&self, channel: usize) -> (i32, i32) {
-        (self.value, self.preference_groups(&self.state, channel, 1) - self.preference_groups(&self.state, channel, 0))
     }
 
     /// Reward (`Q16`) for the current step.
@@ -176,39 +226,81 @@ impl Striatum {
         self.reward += r;
     }
 
-    /// Choose one of `n` actions on `channel` in the current state (action 0 is the default:
-    /// it wins ties). With `rng`, explore. The choice becomes eligible.
+    /// Each action's drive on `channel` now: D1 cells firing − D2 cells firing.
+    pub fn drives(&mut self, channel: usize, n: usize) -> Vec<i32> {
+        self.ensure(channel, n);
+        let ch = &self.actors[channel];
+        let act = |s: u32| self.is_active(s);
+        (0..n).map(|a| ch[a].0.firing(&act).len() as i32 - ch[a].1.firing(&act).len() as i32).collect()
+    }
+
+    /// Choose one of `n` actions on `channel` (action 0, the default, wins ties). With `rng`,
+    /// each drive gets a little noise (exploration). The choice becomes eligible.
     pub fn choose<R: Rng>(&mut self, channel: usize, n: usize, rng: Option<&mut R>) -> usize {
-        let prefs: Vec<i32> = (0..n).map(|a| self.preference_groups(&self.state, channel, a)).collect();
+        let mut d = self.drives(channel, n);
+        if let Some(rng) = rng {
+            for x in d.iter_mut() {
+                *x += rng.gen_range(0..=self.noise) as i32;
+            }
+        }
         let mut best = 0;
         for a in 1..n {
-            if prefs[a] > prefs[best] {
+            if d[a] > d[best] {
                 best = a;
             }
         }
-        if let Some(rng) = rng {
-            if rng.gen_range(0..ONE) < self.explore {
-                best = rng.gen_range(0..n);
-            }
-        }
-        let e = self.per_synapse();
-        let syns: Vec<usize> = self.state.iter().flatten().map(|&b| self.actor_syn(b, channel, best)).collect();
-        for s in syns {
-            self.trace.push((false, s, e));
+        let act = |s: u32| self.is_active(s);
+        let (go, nogo) = &self.actors[channel][best];
+        let (d1, d2) = (go.firing(&act), nogo.firing(&act));
+        if let Some(st) = self.recent.last_mut() {
+            st.choices.push((channel, best, d1, d2));
         }
         best
     }
 
-    /// The episode ends: the last step's dopamine is the reward − V(state) (nothing follows),
-    /// and the traces are cleared.
-    pub fn end(&mut self, learn: bool) {
+    /// (the current state's value, action 1's drive − action 0's on `channel`, both `Q16`), for
+    /// reports.
+    pub fn debug_now(&mut self, channel: usize) -> (i32, i32) {
+        let d = self.drives(channel, 2);
+        (self.value, (d[1] - d[0]) * ONE as i32)
+    }
+
+    /// The episode ends: the last dopamine is the reward − V(state), and eligibility clears.
+    pub fn end<R: Rng>(&mut self, learn: bool, rng: &mut R) {
         if self.started && learn {
             let delta = self.reward - self.value;
-            self.learn(delta);
+            self.learn(delta, rng);
         }
-        self.trace.clear();
+        self.recent.clear();
         self.started = false;
         self.reward = 0;
+    }
+
+    /// (striosome cells, go cells, no-go cells), for reports.
+    pub fn sizes(&self) -> (usize, usize, usize) {
+        let go = self.actors.iter().flatten().map(|p| p.0.cells.len()).sum();
+        let nogo = self.actors.iter().flatten().map(|p| p.1.cells.len()).sum();
+        (self.striosome.cells.len(), go, nogo)
+    }
+}
+
+/// Remove up to `n` of the cells that fired (`fired`, by index) from a pool, at random.
+fn remove<R: Rng>(pool: &mut Pool, fired: &[usize], n: usize, rng: &mut R, count: &mut u64) {
+    let mut f: Vec<usize> = fired.iter().copied().filter(|&i| i < pool.cells.len()).collect();
+    for _ in 0..n {
+        if f.is_empty() {
+            break;
+        }
+        let i = f.swap_remove(rng.gen_range(0..f.len()));
+        // the last cell moves into the removed one's place: fix its index
+        let last = pool.cells.len() - 1;
+        pool.cells.swap_remove(i);
+        for x in f.iter_mut() {
+            if *x == last {
+                *x = i;
+            }
+        }
+        *count += 1;
     }
 }
 
@@ -219,24 +311,43 @@ mod tests {
     use rand::SeedableRng;
 
     /// A delayed payoff: in state A the agent picks 0 or 1; three neutral steps follow; then a
-    /// reward comes only if it picked 1. TD learning must carry the credit back to the choice.
+    /// reward comes only if it picked 1. The credit must reach the choice.
     #[test]
     fn learns_a_delayed_payoff() {
         let mut st = Striatum::new(1 << 14);
         let mut rng = StdRng::seed_from_u64(1);
-        let a: Vec<usize> = (0..16).collect();
-        let mid = |k: usize| -> Vec<usize> { (100 * (k + 1)..100 * (k + 1) + 16).collect() };
-        for _ in 0..2000 {
-            st.begin(&a, true);
+        let a: Vec<Vec<usize>> = vec![(0..16).collect()];
+        let mid = |k: usize| -> Vec<Vec<usize>> { vec![(100 * (k + 1)..100 * (k + 1) + 16).collect()] };
+        for _ in 0..400 {
+            st.begin_groups(&a, true, &mut rng);
             let c = st.choose(0, 2, Some(&mut rng));
             for k in 0..3 {
-                st.begin(&mid(k), true);
+                st.begin_groups(&mid(k), true, &mut rng);
             }
             st.reward(if c == 1 { ONE as i32 } else { 0 });
-            st.end(true);
+            st.end(true, &mut rng);
         }
-        st.begin(&a, false);
-        assert!(st.preference(&a, 0, 1) > st.preference(&a, 0, 0));
+        st.begin_groups(&a, false, &mut rng);
         assert_eq!(st.choose::<StdRng>(0, 2, None), 1);
+    }
+
+    /// Two contexts, opposite best actions: the cells must learn each from its own pathway bits.
+    #[test]
+    fn learns_by_context() {
+        let mut st = Striatum::new(1 << 14);
+        let mut rng = StdRng::seed_from_u64(2);
+        let ctx = |k: usize| -> Vec<Vec<usize>> { vec![(1000 * k..1000 * k + 16).collect(), (5000..5016).collect()] };
+        for i in 0..800 {
+            let k = i % 2;
+            st.begin_groups(&ctx(k), true, &mut rng);
+            let c = st.choose(0, 2, Some(&mut rng));
+            st.reward(if c == k { ONE as i32 } else { 0 });
+            st.end(true, &mut rng);
+        }
+        for k in 0..2 {
+            st.begin_groups(&ctx(k), false, &mut rng);
+            assert_eq!(st.choose::<StdRng>(0, 2, None), k, "context {k}");
+            st.end(false, &mut rng);
+        }
     }
 }

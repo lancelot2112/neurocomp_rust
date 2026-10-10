@@ -415,31 +415,27 @@ impl Net {
     }
 }
 
-/// What the striatum sees, as groups of active bits (one per input pathway, each counting by
-/// its own mean): the prefrontal content; the association area's assemblies for the last sound
-/// and the one before (an auditory trace); the cortex's ongoing activity, layer 2/3's and layer
-/// 5's fired cells (the corticostriatal inputs); the mode signals; and the place the hippocampus
-/// recalled.
+/// What the striatum sees, as groups of active bits, one per input pathway (no hand-made
+/// features): working memory; the association area's assemblies for the last sound and the one
+/// before (an auditory trace); layer 2/3's and layer 5's fired cells (the corticostriatal
+/// inputs); the eye's layer 4 (a book in view is visual input); the hippocampus's output (recall
+/// reaching the cortex); the context held for the hippocampus; and the place cells it recalled.
+#[allow(clippy::too_many_arguments)]
 fn state_groups(
     pfc: &BitVector,
     heard: &BitVector,
     before: &BitVector,
     l23: &BitVector,
     l5: &BitVector,
-    flags: &[bool],
+    eye4: &BitVector,
+    recall: &BitVector,
+    held: &[usize],
     place: Option<usize>,
 ) -> Vec<Vec<usize>> {
     let off = |v: &BitVector, k: usize| ones(v).into_iter().map(|b| b + k * BITS).collect::<Vec<usize>>();
-    // a mode signal that is on has cells; one that is off has none (an absent signal must not
-    // carry the baseline value, or switching it on would look like a loss)
-    let mut mode = Vec::new();
-    for (i, &f) in flags.iter().enumerate() {
-        if f {
-            mode.extend((0..24).map(|k| 7 * BITS + i * 24 + k));
-        }
-    }
-    let where_ = place.map_or(Vec::new(), |k| (0..24).map(|j| 7 * BITS + 1024 + k * 24 + j).collect());
-    vec![off(pfc, 0), off(heard, 1), off(before, 2), off(l23, 3), off(l5, 4), mode, where_]
+    let held_ids = held.iter().map(|&c| 8 * BITS + c).collect();
+    let where_ = place.map_or(Vec::new(), |k| (0..16).map(|j| 8 * BITS + CTX_POOL + k * 16 + j).collect());
+    vec![off(pfc, 0), off(heard, 1), off(before, 2), off(l23, 3), off(l5, 4), off(eye4, 5), off(recall, 6), held_ids, where_]
 }
 
 /// The striatum's channels (one per gate).
@@ -797,9 +793,6 @@ fn main() {
     let mut striatum = Striatum::new(1 << 18);
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
-    striatum.gamma = ONE;
-    // RT_LAMBDA (default 0.8): how long a choice stays eligible (its decay per step, in hundredths)
-    striatum.lambda = ONE * env("RT_LAMBDA", 80u32) / 100;
     let mut shelf: Vec<Vec<&str>> = Vec::new();
     for k in 0..shelf_k {
         let b = shelf_book(&mut rng, &shelf, k);
@@ -846,7 +839,8 @@ fn main() {
     // part of what the striatum sees
     let mut last_assoc: BitVector = zero();
     let mut prev_assoc: BitVector = zero();
-    let mut book_seen = false;
+    // what the hippocampus last gave the cortex (its output, as the striatum sees it)
+    let mut last_recall = zero();
     // the place the hippocampus recalled for what is held (in "find" trials)
     let mut recalled_place: Option<usize> = None;
     macro_rules! hc_hear {
@@ -878,8 +872,10 @@ fn main() {
     macro_rules! td_step {
         ($fired:expr, $explore:expr) => {{
             let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.request, x.held.is_some()));
-            let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &[book_seen, retr, held], recalled_place);
-            striatum.begin_groups(&state, $explore);
+            let held_ctx = ix.as_ref().and_then(|x| x.held.clone()).unwrap_or_default();
+            let eye4 = if eye_now.count_ones() == 0 { zero() } else { net.l4e.encode(&eye_now) };
+            let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place);
+            striatum.begin_groups(&state, $explore, &mut rng);
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
                     // reinstating is possible only when not already retrieving (it would only
@@ -894,12 +890,14 @@ fn main() {
         }};
     }
     macro_rules! hc_recall {
-        ($cue:expr) => {
-            match ix.as_mut() {
+        ($cue:expr) => {{
+            let r = match ix.as_mut() {
                 Some(x) => x.recall(),
                 None => net.recall($cue),
-            }
-        };
+            };
+            last_recall = r.clone();
+            r
+        }};
     }
     // the index's boundary cell judges surprise against the plan
     macro_rules! hc_plan {
@@ -1127,7 +1125,7 @@ fn main() {
             }
         }
         let mut book_open = !reach_learned;
-        book_seen = book_open && !p.is_empty();
+
         let mut eye_pos = 0usize;
         let mut debug_right = 0usize;
         let mut reached_at: Option<usize> = None;
@@ -1173,7 +1171,7 @@ fn main() {
                         // hippocampus's context while it is in view
                         p = shelf[a - 1].clone();
                         book_open = true;
-                        book_seen = true;
+                        eye_now = p.first().map_or(zero(), |w| eye.codes[id(w)].clone());
                         reached_at = Some(a - 1);
                         if let Some(x) = ix.as_mut() {
                             x.reach_event();
@@ -1186,7 +1184,7 @@ fn main() {
                     // the world hands over the book, from its first word; the reach is an
                     // event boundary, and the striatum may hold where this new episode begins
                     book_open = true;
-                    book_seen = !p.is_empty();
+                    eye_now = p.first().map_or(zero(), |w| eye.codes[id(w)].clone());
                     reached_at = Some(0);
                     if let Some(x) = ix.as_mut() {
                         x.reach_event();
@@ -1348,7 +1346,6 @@ fn main() {
             }
         }
         // the trial ends: the last dopamine, and the traces clear
-        book_seen = false;
         if td_debug && learn && trial % 50 == 0 {
             println!(
                 "  td trial {trial}: {} book {:?}, reached at {:?}, words right {} of {}, value at task start {:.2}, reach pref there {:+.2}",
@@ -1366,7 +1363,7 @@ fn main() {
             read_by_reach[k].0 += debug_right;
             read_by_reach[k].1 += target.len();
         }
-        striatum.end(learn);
+        striatum.end(learn, &mut rng);
         recalled_place = None;
         if let Some(x) = ix.as_mut() {
             x.place = None;
@@ -1600,8 +1597,11 @@ fn main() {
         let heard_it = net.assoc_of(&zero(), &ear.codes[id(IT)], false, &mut rng);
         let mut pref = |v: &str| {
             let before = net.assoc_of(&zero(), &ear.codes[id(v)], false, &mut rng);
-            let st = state_groups(&zero(), &heard_it, &before, &zero(), &zero(), &[false, false, false], None);
-            (striatum.preference_groups(&st, CH_REACH, 1) - striatum.preference_groups(&st, CH_REACH, 0)) as f64 / ONE as f64
+            let st = state_groups(&ear.codes[id(v)], &heard_it, &before, &zero(), &zero(), &zero(), &zero(), &[], None);
+            striatum.begin_groups(&st, false, &mut rng);
+            let d = striatum.drives(CH_REACH, 2);
+            striatum.end(false, &mut rng);
+            (d[1] - d[0]) as f64
         };
         println!("\nreaching for the book (test, instruction held):{line} preference for reaching over waiting after \"read it\" {:+.2}, \"tell it\" {:+.2}", pref("read"), pref("tell"));
     }
@@ -1609,8 +1609,13 @@ fn main() {
         println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });
     }
     println!(
-        "\nstriatum: {} TD updates, mean |dopamine| {:.3}",
+        "\nstriatum: {} TD updates, mean |dopamine| {:.3}; cells: {} striosome, {} go, {} no-go ({} recruited, {} removed)",
         striatum.stats.0,
-        striatum.stats.1 as f64 / striatum.stats.0.max(1) as f64 / ONE as f64
+        striatum.stats.1 as f64 / striatum.stats.0.max(1) as f64 / ONE as f64,
+        striatum.sizes().0,
+        striatum.sizes().1,
+        striatum.sizes().2,
+        striatum.changes.0,
+        striatum.changes.1
     );
 }

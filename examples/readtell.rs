@@ -706,6 +706,7 @@ fn main() {
     let mut net = Net::new(seed);
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let td_debug = std::env::var("RT_TD_DEBUG").is_ok();
+    let reward_all = std::env::var("RT_REWARD").map_or(true, |v| v != "task");
     // RT_HC=index (default): the hippocampus as a growing index with learned event boundaries
     // (`IndexHc`); RT_HC=circuit: the fixed circuit cued by the driver's story context
     // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
@@ -839,6 +840,15 @@ fn main() {
             let rec = hc_recall!(&cue);
             let st = net.step(&zero(), heard, &rec, learn, 0, &mut rng);
             hc_plan!(st);
+            // the reward, with RT_REWARD=all (default): a heard word the cortex predicted (a
+            // sensory prediction error is a dopamine signal too), so a gate that spoils the
+            // prediction while listening pays for it at once. RT_REWARD=task: only words in the task
+            if learn && reward_all {
+                let next = if t + 1 < s.len() { &ear.codes[id(s[t + 1])] } else { &silence };
+                if overlap(&st.plan, next) >= 24 {
+                    striatum.reward(ONE as i32);
+                }
+            }
             if learn && t + 1 < s.len() {
                 net.learn(&st, &ear.codes[id(s[t + 1])], &mut rng);
             } else if learn && stop_learned {
@@ -894,7 +904,8 @@ fn main() {
         };
         let verb = if make { "make" } else if read { "read" } else { "tell" };
         let (mut ip, mut ip2): (Option<BitVector>, Option<BitVector>) = (None, None);
-        for (it, w) in ["now", verb, if make { "one" } else { IT }].into_iter().enumerate() {
+        let instr = ["now", verb, if make { "one" } else { IT }];
+        for (it, w) in instr.into_iter().enumerate() {
             let wi = id(w);
             let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
             hc_hear!(wi, &cue, store_all, learn, false);
@@ -904,6 +915,9 @@ fn main() {
             }
             let st = net.step(&zero(), &ear.codes[wi], &zero(), false, 0, &mut rng);
             hc_plan!(st);
+            if learn && reward_all && it + 1 < instr.len() && overlap(&st.plan, &ear.codes[id(instr[it + 1])]) >= 24 {
+                striatum.reward(ONE as i32);
+            }
         }
         if no_instr {
             net.wm.clear();

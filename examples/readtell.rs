@@ -33,7 +33,8 @@
 //!   command; the vocal tract says a word; the network hears it.
 //!
 //! Options: RT_TRAIN (trials, default 3000), RT_TEST (default 300), RT_GATE=fixed (diagnosis:
-//! the instruction word is always loaded, no gate), SEED.
+//! the instruction word is always loaded, no gate), RT_TELL=apart (the teacher never retells
+//! with the book open at the same story), RT_TRACE, SEED.
 
 mod common;
 
@@ -346,6 +347,7 @@ fn main() {
     motor.babble(&tract, &ear.codes, 3, &mut rng);
     let mut net = Net::new(seed);
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
+    let tell_apart = std::env::var("RT_TELL").map_or(false, |v| v == "apart");
     let (n_train, n_test): (usize, usize) = (env("RT_TRAIN", 3000), env("RT_TEST", 300));
     println!("vocabulary {}; {} training trials, {} test trials; gate {}", vocab.len(), n_train, n_test, if fixed_gate { "fixed (diagnosis)" } else { "learned" });
     let t0 = std::time::Instant::now();
@@ -403,7 +405,15 @@ fn main() {
         }
         // 2. the book and the instruction
         let read = rng.gen_bool(0.5);
-        let book = if read { [Book::Same, Book::Other][rng.gen_range(0..2)] } else { books[rng.gen_range(0..3)] };
+        // RT_TELL=apart: in training the teacher retells with the book closed or open at
+        // another story, never at the same one (the test keeps all three)
+        let book = if read {
+            [Book::Same, Book::Other][rng.gen_range(0..2)]
+        } else if tell_apart && !testing {
+            [Book::Other, Book::Closed][rng.gen_range(0..2)]
+        } else {
+            books[rng.gen_range(0..3)]
+        };
         let p = match book {
             Book::Same => s.clone(),
             Book::Other => story(&mut rng),

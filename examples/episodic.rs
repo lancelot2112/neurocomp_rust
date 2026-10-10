@@ -1695,6 +1695,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut inner_rng = StdRng::seed_from_u64(seed.wrapping_add(8181));
     let mut inner_pending: Option<(BitVector, bool, usize)> = None;
     let mut inner_choices = [0usize; 3];
+    // SACCADE_CTX=loop: saccades join the same control loop: the same activity context
+    // (confidence, the last vote's conflict, novelty, the prefrontal state) and the same basal
+    // ganglia (inner_bg) choose read on / look back / page top, rewarded by the next
+    // prediction minus a regression's cost
+    let sacc_loop = std::env::var("SACCADE_CTX").map_or(false, |v| v == "loop");
+    let mut sacc_loop_pending: Option<(BitVector, usize)> = None;
+    let mut last_vote_conflict = 0usize;
+    let mut last_fam_band = 7u64;
     let inner_when_definite = std::env::var("INNER_WHEN").map_or(false, |v| v == "definite");
     let inner_say_recall = std::env::var("INNER_SAY").map_or(false, |v| v == "recall");
     let mut phono = PhonologicalLoop::new();
@@ -3721,7 +3729,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             if let (true, Some(mode)) = (hier && t + 1 < ids.len(), saccade.as_deref()) {
                 let cur_start = s.words[..=t].iter().rposition(|w| *w == ".").map_or(0, |i| i + 1);
                 // the column's own confidence about the next word (peek, no top-down)
-                let peek_l4 = (sacc_conf || sacc_cortex).then(|| {
+                let peek_l4 = (sacc_conf || sacc_cortex || sacc_loop).then(|| {
                     let empty = BitVector::new(BITS, Some(0));
                     l4_row(&column, code, &vec![empty; l4_mid], route_on.then_some(&route_order[..]))
                 });
@@ -3752,6 +3760,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 let a = if mode == "oracle" {
                     if t + 1 == s.answer_at { 2 } else { 0 }
+                } else if sacc_loop {
+                    // the control loop's context: the column's confidence, the last vote's
+                    // conflict, novelty and the prefrontal state (no word ids)
+                    let conf = peek_l4.as_ref().and_then(|x| column.l23.peek_scored(x)).map_or(0, |(_, c)| c);
+                    let cb = if conf < Q_HALF { 0 } else if conf < Q_08 { 1 } else { 2 };
+                    let ctx = 3000 + cb + 3 * last_vote_conflict.min(3) + 12 * (last_fam_band < 4) as usize + 24 * held_item.is_some() as usize;
+                    let cands: Vec<BitVector> = (0..3).map(|a| step_code(ctx, 10 + a)).collect();
+                    let a = inner_bg.select(&cands, if testing { None } else { Some(&mut inner_rng) }).unwrap_or(0);
+                    sacc_loop_pending = Some((cands[a].clone(), a));
+                    a
                 } else {
                     let cands: Vec<BitVector> = if let Some(state) = state.as_ref() {
                         // candidate = the cortical state rotated by the candidate's own amount
@@ -5803,6 +5821,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                     traces.push((input, bind_list.clone(), next, fam_band));
                 }
+                // the control loop's saccade: the same dopamine, in the same basal ganglia
+                if let Some((code, a)) = sacc_loop_pending.take() {
+                    if !testing {
+                        let right = enc.decode(&out) == Some(next);
+                        let r = (if right { ONE as i32 } else { 0 } - if a > 0 { saccade_cost } else { 0 }).max(0);
+                        inner_bg.reward_candidate(&code, r, &mut inner_rng);
+                    }
+                }
+                last_vote_conflict = vote_conflict;
+                last_fam_band = fam_band;
                 // saccade reward: the prediction right, minus the cost of a regression
                 if let Some(a) = sacc_pending.take() {
                     if !testing {

@@ -338,6 +338,43 @@ cells (3.3 without).
   plans the right word 66% of the time while the teacher speaks.
 - **The learned gates still do not find the story's start** (recall 12%).
 
+## Why retelling fell silent, and the fix
+Retelling with the book closed was two-thirds silence. The traces showed the network starting
+with "… home ." and then "silence", though recall was right for the first words: the cortex was
+not using recall. Most of the time recall was noise. While a new story is heard, the
+hippocampus has nothing ahead of it to recall, so on nearly half the training steps its output
+was a wrong guess, and the cortex learned to ignore it.
+
+**Fixes:**
+1. **Recall reaches the cortex only in retrieval mode.** In encoding mode its output is
+   suppressed (Hasselmo), so what arrives is a memory being retrieved, never a guess
+   (`RT_HC_OUT=always` restores the old behaviour).
+2. **The network's own speech is not novelty** (corollary discharge damps the response to
+   self-made sounds), so a slip of its own does not end retrieval; only what others say can.
+3. **A step where nothing was said is heard as nothing,** not as the unsaid plan
+   (`RT_SILENT=efference` restores the old behaviour).
+
+The first fix carries it (3,000 trials, start held by the driver):
+
+| | Before | After |
+|---|---|---|
+| tell, book closed | 15.3 (silent 68%) | **73.9** (silent 4%) |
+| tell, another book (story's / book's) | 34.8 / 57.3 | **54.1** / 51.2 |
+| read, another book | 67.8 | 69.1 |
+
+> story: bob went to the shop . he saw a owl . the owl was big . bob gave the owl a cake . then bob went home .
+> said:  bob went to the school . he saw a fox . the school . she . bob went to the a shell . then bob went home .
+
+This is the best retelling so far: 52% with the circuit that held a copy of each word. With
+another book open the remembered story now wins.
+
+**The learned gates still fail:** retelling 1%, silent 90%. Their values barely differ between
+word pairs (0.1–0.25), and they reinstate at random, about 13 times a trial, so retrieval mode
+is rarely entered at the right moment.
+
+**Invented stories no longer end by themselves** (0%). Recall no longer reaches the cortex
+during invention, and the story runs on to the 40-word limit.
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.

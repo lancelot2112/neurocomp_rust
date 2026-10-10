@@ -47,7 +47,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::{
-    BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Gate, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
+    BasalGanglia, BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Gate, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
     PfcGate, ThalamicRelay, VocalTract, WorkingMemory,
 };
 use rand::rngs::StdRng;
@@ -407,6 +407,58 @@ impl Net {
     }
 }
 
+/// Reaching for a book: a basal-ganglia action, wait or reach, valued per context (the last two
+/// sounds heard, bound by rotation). Unlike the prefrontal gate, both choices are credited: the
+/// decisions of a trial form an eligibility trace (newest first, halving), and the trial's
+/// outcome (the share of words that came out right) is the reward: each choice's value in its
+/// context moves toward the outcomes it brought.
+struct ReachGate {
+    bg: BasalGanglia,
+    wait: BitVector,
+    reach: BitVector,
+}
+
+impl ReachGate {
+    fn new(seed: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed);
+        let all: Vec<usize> = (0..BITS).collect();
+        let mut code = || BitVector::from_bits(&all.choose_multiple(&mut rng, 32).copied().collect::<Vec<_>>(), BITS);
+        let (wait, reach) = (code(), code());
+        let mut bg = BasalGanglia::new(BITS);
+        bg.trace_len = 3;
+        bg.trace_decay = ONE / 2;
+        // each choice's value in its context moves toward the outcomes it brought (no global
+        // baseline: an average over all trials credits whatever was chosen where outcomes are
+        // good anyway)
+        bg.baseline_rate = None;
+        bg.gain = ONE;
+        Self { bg, wait, reach }
+    }
+
+    fn bound(code: &BitVector, key: usize) -> BitVector {
+        let mut c = code.clone();
+        c.rotl_mut((key * 131) % BITS);
+        c
+    }
+
+    /// Reach now? (`rng`: explore)
+    fn decide(&mut self, key: usize, rng: Option<&mut StdRng>) -> bool {
+        let cands = [Self::bound(&self.wait, key), Self::bound(&self.reach, key)];
+        self.bg.select(&cands, rng) == Some(1)
+    }
+
+    fn reward(&mut self, r: i32, rng: &mut StdRng) {
+        self.bg.reward(r, rng);
+    }
+
+    fn value(&self, key: usize) -> u32 {
+        self.bg.value(&Self::bound(&self.reach, key)) as u32
+    }
+}
+
+/// The key a reach gives the hold gate (beyond any word's).
+const REACH_KEY: usize = 100;
+
 /// The hippocampal context's cells are drawn from this many.
 const CTX_POOL: usize = 1 << 16;
 
@@ -632,6 +684,24 @@ impl IndexHc {
         }
     }
 
+    /// A reach (a motor act that brings a new scene, a book) is an event boundary: the context
+    /// moves on by half, and the hold gate may hold where this new episode begins.
+    fn reach_event(&mut self, explore: bool) {
+        self.boundaries += 1;
+        let c = self.ctx.clone();
+        self.drift(&c, self.ctx.len() / 2, 3);
+        if self.gates_off {
+            return;
+        }
+        let pair = self.last_word * 101 + REACH_KEY;
+        let g = if explore { self.hold_gate.decide(pair, Some(&mut self.rng)) } else { self.hold_gate.decide::<StdRng>(pair, None) };
+        if g == Gate::Load {
+            self.held = Some(self.ctx.clone());
+            self.retrieving = false;
+            self.holds += 1;
+        }
+    }
+
     fn reward(&mut self, r: i32) {
         self.hold_gate.reward(r, &mut self.rng);
         self.back_gate.reward(r, &mut self.rng);
@@ -686,6 +756,14 @@ fn main() {
     // not be said is not a sound, and the hippocampus, moving on along its links, carries the
     // next word. RT_SILENT=efference: the unsaid plan is heard as if said (the first version)
     let heard_plan = std::env::var("RT_SILENT").map_or(false, |v| v == "efference");
+    // RT_REACH=learned (default): a book stays shut until the network reaches for it, a motor
+    // act chosen by a basal-ganglia gate (keyed by the last two sounds heard, credited by the
+    // words said right); the world then hands it the book from its first word (a file retrieved),
+    // and the reach is an event boundary. RT_REACH=given: the book is open from the start.
+    let reach_learned = std::env::var("RT_REACH").map_or(true, |v| v != "given");
+    let mut reach_gate = ReachGate::new(seed.wrapping_add(19));
+    // per (instruction read/tell, book): (trials, reached, words before the reach), at test
+    let mut reach_stats = [[(0usize, 0usize, 0usize); 3]; 2];
     // RT_HC_STORE=all (default): the hippocampus stores every word heard (the instruction,
     // the task, its own speech), its novelty setting the strength; RT_HC_STORE=listen: only
     // the story as first heard
@@ -707,9 +785,12 @@ fn main() {
     // what the eye fixates now (the book's word in the task, else nothing): with the heard
     // word, the association area's input
     let mut eye_now = zero();
+    // the last two sounds heard (word ids; the pause is `quiet`): the reach gate's key
+    let mut heard_ids: (usize, usize) = (0, 0);
     macro_rules! hc_hear {
         ($w:expr, $cue:expr, $store:expr, $explore:expr, $own:expr) => {{
             let w: usize = $w;
+            heard_ids = (heard_ids.1, w);
             match ix.as_mut() {
                 Some(x) => {
                     let cells = net.assoc_of(&eye_now, &ear.codes[w], $explore, &mut rng);
@@ -828,6 +909,7 @@ fn main() {
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
             x.hear(quiet, &silence, &cells, false, learn, false);
         }
+        heard_ids = (heard_ids.1, quiet);
         let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
         // 2. the book and the instruction
         let make = make_on && rng.gen_bool(0.25);
@@ -936,8 +1018,27 @@ fn main() {
                 println!("  story rows end at {} (stored so far)", x.mem.rows());
             }
         }
+        let mut book_open = !reach_learned;
+        // this task's words that came out right (planned, or said in practice): the reach's reward
+        let mut task_score = (0usize, 0usize);
+        let mut eye_pos = 0usize;
+        let mut reached_at: Option<usize> = None;
         for t in 0..target.len() {
-            let seen = p.get(t).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero);
+            if !book_open {
+                let key = heard_ids.0 * 101 + heard_ids.1;
+                if reach_gate.decide(key, if learn { Some(&mut rng) } else { None }) {
+                    // the world hands over the book, from its first word
+                    book_open = true;
+                    reached_at = Some(t);
+                    if let Some(x) = ix.as_mut() {
+                        x.reach_event(learn);
+                    }
+                }
+            }
+            let seen = if book_open { p.get(eye_pos).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero) } else { zero() };
+            if book_open {
+                eye_pos += 1;
+            }
             eye_now = seen.clone();
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             let rec = hc_recall!(&cue);
@@ -990,6 +1091,8 @@ fn main() {
                     if !fixed_gate {
                         net.gate.reward(if ok { ONE as i32 } else { 0 }, &mut rng);
                     }
+                    task_score.0 += ok as usize;
+                    task_score.1 += 1;
 
                     if ix.is_some() {
                         // its own word was heard, then (if wrong) the teacher's
@@ -1009,6 +1112,8 @@ fn main() {
                     if !fixed_gate {
                         net.gate.reward(if right { ONE as i32 } else { 0 }, &mut rng);
                     }
+                    task_score.0 += right as usize;
+                    task_score.1 += 1;
 
                     // the teacher's word is heard
                     prev2 = prev.replace(ear.codes[want].clone());
@@ -1076,6 +1181,18 @@ fn main() {
                 println!("  boundaries in the task (instruction first): {}", task_log.iter().map(|&b| if b { '|' } else { '.' }).collect::<String>());
                 println!("  story: {}\n  said:  {}", s.join(" "), said_seq.join(" "));
                 println!("  retold: {:.0}% right; recall right on {}", 100.0 * tally.right as f64 / tally.words.max(1) as f64, trace_recall.iter().map(|&r| if r { '+' } else { '-' }).collect::<String>());
+            }
+        }
+        if learn && reach_learned && task_score.1 > 0 {
+            reach_gate.reward((task_score.0 as u64 * ONE as u64 / task_score.1 as u64) as i32, &mut rng);
+        }
+        if testing && !no_instr && !make && reach_learned {
+            let bi = books.iter().position(|b| *b == book).unwrap();
+            let r = &mut reach_stats[!read as usize][bi];
+            r.0 += 1;
+            if let Some(at) = reached_at {
+                r.1 += 1;
+                r.2 += at;
             }
         }
         if testing {
@@ -1215,6 +1332,23 @@ fn main() {
             n += 1;
         }
         println!("association area: a word seen and the same word heard share {:.1} of 32 cells on average; at least half for {:.1}% of words", ov as f64 / n as f64, pct(same, n));
+    }
+    if reach_learned {
+        let mut line = String::new();
+        for (ii, instr) in ["read", "tell"].iter().enumerate() {
+            for (bi, b) in ["same story", "other story", "closed"].iter().enumerate() {
+                let (n, r, d) = reach_stats[ii][bi];
+                if n > 0 {
+                    line += &format!(" {instr} ({b}): {:.0}% after {:.1} words;", pct(r, n), d as f64 / r.max(1) as f64);
+                }
+            }
+        }
+        let q = |v: u32| v as f64 / ONE as f64;
+        println!(
+            "\nreaching for the book (test, instruction held):{line} value of reaching after \"read it\" {:.2}, \"tell it\" {:.2}",
+            q(reach_gate.value(id("read") * 101 + id(IT))),
+            q(reach_gate.value(id("tell") * 101 + id(IT)))
+        );
     }
     if let Some(x) = &ix {
         let pairs: Vec<(&str, &str)> = vec![("tell", IT), ("read", IT), ("now", "tell"), ("now", "read"), ("home", "."), (".", "<pause>"), ("<pause>", "now"), ("the", "fox")];

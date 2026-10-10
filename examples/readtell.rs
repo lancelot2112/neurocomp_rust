@@ -36,7 +36,10 @@
 //! the instruction word is always loaded, no gate), RT_TELL=apart (the teacher never retells
 //! with the book open at the same story), RT_PRACTICE (share of training tasks done by the
 //! network in its own voice, the teacher's word the target; default 0), RT_HC_TIME=1 (a time
-//! code in the hippocampal cue), RT_TRACE, SEED.
+//! code in the hippocampal cue), RT_MAKE=1 (a third instruction, "now make one": the teacher
+//! makes up a new story; at test the network speaks freely, with RT_TEMP noise on the relay,
+//! default 30, and each invented story is judged for grammar, coherence and novelty),
+//! RT_TRACE, SEED.
 
 mod common;
 
@@ -113,7 +116,8 @@ const OTHER: [&str; 16] =
     ["went", "to", "the", "a", ".", "saw", "was", "gave", "found", "played", "with", "then", "home", "now", "read", "tell"];
 const IT: &str = "it";
 
-fn vocabulary() -> Vec<&'static str> {
+/// The words; with `make`, also "make" and "one" (the instruction "now make one").
+fn vocabulary(make: bool) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = Vec::new();
     for (n, p) in NAMES {
         v.push(n);
@@ -124,7 +128,43 @@ fn vocabulary() -> Vec<&'static str> {
     for list in [&PLACES[..], &ANIMALS, &ADJS, &FOODS, &THINGS, &OTHER, &[IT]] {
         v.extend_from_slice(list);
     }
+    if make {
+        v.extend_from_slice(&["make", "one"]);
+    }
     v
+}
+
+/// A sentence's form, if it is one the stories use: (form, name, pronoun, animal).
+fn sentence_form<'a>(w: &[&'a str]) -> Option<(usize, Option<&'a str>, Option<&'a str>, Option<&'a str>)> {
+    let is = |x: &str, list: &[&str]| list.contains(&x);
+    let name = |x: &str| NAMES.iter().any(|n| n.0 == x);
+    let pron = |x: &str| x == "he" || x == "she";
+    match w {
+        [n, "went", "to", "the", pl] if name(n) && is(pl, &PLACES) => Some((0, Some(*n), None, None)),
+        [p, "saw", "a", a] if pron(p) && is(a, &ANIMALS) => Some((1, None, Some(*p), Some(*a))),
+        ["the", a, "was", j] if is(a, &ANIMALS) && is(j, &ADJS) => Some((2, None, None, Some(*a))),
+        [n, "gave", "the", a, "a", f] if name(n) && is(a, &ANIMALS) && is(f, &FOODS) => Some((3, Some(*n), None, Some(*a))),
+        [p, "found", "a", t] if pron(p) && is(t, &THINGS) => Some((4, None, Some(*p), None)),
+        [p, "played", "with", "the", a] if pron(p) && is(a, &ANIMALS) => Some((5, None, Some(*p), Some(*a))),
+        ["then", n, "went", "home"] if name(n) => Some((6, Some(*n), None, None)),
+        _ => None,
+    }
+}
+
+/// Judge an invented story: (sentences, grammatical sentences, starts and ends as a story,
+/// coherent: one name, its pronoun, one animal).
+fn judge(words: &[&str]) -> (usize, usize, bool, bool) {
+    let sentences: Vec<&[&str]> = words.split(|w| *w == ".").filter(|x| !x.is_empty()).collect();
+    let forms: Vec<_> = sentences.iter().map(|x| sentence_form(x)).collect();
+    let ok = forms.iter().filter(|f| f.is_some()).count();
+    let framed = forms.first().map_or(false, |f| matches!(f, Some((0, ..)))) && forms.last().map_or(false, |f| matches!(f, Some((6, ..)))) && words.last() == Some(&".");
+    let names: std::collections::BTreeSet<&str> = forms.iter().flatten().filter_map(|f| f.1).collect();
+    let prons: std::collections::BTreeSet<&str> = forms.iter().flatten().filter_map(|f| f.2).collect();
+    let animals: std::collections::BTreeSet<&str> = forms.iter().flatten().filter_map(|f| f.3).collect();
+    let coherent = names.len() == 1
+        && prons.iter().all(|p| NAMES.iter().any(|n| names.contains(n.0) && n.1 == *p))
+        && animals.len() <= 1;
+    (sentences.len(), ok, framed, coherent)
 }
 
 fn story(rng: &mut StdRng) -> Vec<&'static str> {
@@ -269,7 +309,8 @@ impl Net {
 
     /// See `eye` (or nothing), hear `ear` (or nothing), with `recall` from the hippocampus;
     /// form the plan for the word to say.
-    fn step(&mut self, eye: &BitVector, ear: &BitVector, recall: &BitVector, learn: bool, rng: &mut StdRng) -> Step {
+    /// `temp`: noise on the relay's weights (0–100), for free speech.
+    fn step(&mut self, eye: &BitVector, ear: &BitVector, recall: &BitVector, learn: bool, temp: u32, rng: &mut StdRng) -> Step {
         let e4 = if eye.count_ones() == 0 { zero() } else if learn { self.l4e.encode_learn(eye, rng) } else { self.l4e.encode(eye) };
         let a4 = if ear.count_ones() == 0 { zero() } else if learn { self.l4a.encode_learn(ear, rng) } else { self.l4a.encode(ear) };
         let pfc = self.wm.content();
@@ -298,7 +339,10 @@ impl Net {
         let mut score = vec![0u32; BITS];
         for (src, drv, pat) in &props {
             let agrees = *src != 2 && overlap(pat, &cb_out) >= 16;
-            let w = self.relay.weight(*src, *drv, &ctx, agrees) as u64;
+            let mut w = self.relay.weight(*src, *drv, &ctx, agrees) as u64;
+            if temp > 0 {
+                w = w * (100 + rng.gen_range(0..=temp) as u64) / 100;
+            }
             for b in ones(pat) {
                 score[b] += (w >> 4) as u32 + 1;
             }
@@ -349,7 +393,10 @@ struct Tally {
 fn main() {
     let seed: u64 = env("SEED", 0);
     let mut rng = StdRng::seed_from_u64(seed);
-    let vocab = vocabulary();
+    // RT_MAKE=1: a third instruction, "now make one": the teacher makes up a new story
+    let make_on = std::env::var("RT_MAKE").map_or(false, |v| v == "1");
+    let make_temp: u32 = env("RT_TEMP", 30);
+    let vocab = vocabulary(make_on);
     let id = |w: &str| vocab.iter().position(|v| *v == w).unwrap();
     let ear = Encoder::new(vocab.len(), BITS, ACTIVE, &mut rng);
     let eye = Encoder::new(vocab.len(), BITS, ACTIVE, &mut rng);
@@ -373,6 +420,10 @@ fn main() {
     let mut res_noinstr = [[Tally::default(); 3]; 2];
     let mut train_right = (0usize, 0usize);
     let mut practice_right = (0usize, 0usize);
+    // invented stories at test: (the story heard just before, what it said); every story the
+    // network heard or saw in training
+    let mut invented: Vec<(Vec<&str>, Vec<&str>)> = Vec::new();
+    let mut heard_stories: std::collections::HashSet<String> = std::collections::HashSet::new();
     // the hippocampal recall's own accuracy while telling: (recalled the wanted word, steps)
     let mut hc_right = (0usize, 0usize);
     let mut hc_bits = 0usize;
@@ -399,7 +450,7 @@ fn main() {
             net.hear_gate(w, heard, learn && !fixed_gate, &mut rng);
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             let rec = net.recall(&cue);
-            let st = net.step(&zero(), heard, &rec, learn, &mut rng);
+            let st = net.step(&zero(), heard, &rec, learn, 0, &mut rng);
             if learn && t + 1 < s.len() {
                 net.learn(&st, &ear.codes[id(s[t + 1])], &mut rng);
             }
@@ -422,10 +473,13 @@ fn main() {
             println!("  probe right after hearing:{line}");
         }
         // 2. the book and the instruction
-        let read = rng.gen_bool(0.5);
+        let make = make_on && rng.gen_bool(0.25);
+        let read = !make && rng.gen_bool(0.5);
         // RT_TELL=apart: in training the teacher retells with the book closed or open at
         // another story, never at the same one (the test keeps all three)
-        let book = if read {
+        let book = if make {
+            Book::Closed
+        } else if read {
             [Book::Same, Book::Other][rng.gen_range(0..2)]
         } else if tell_apart && !testing {
             [Book::Other, Book::Closed][rng.gen_range(0..2)]
@@ -437,22 +491,58 @@ fn main() {
             Book::Other => story(&mut rng),
             Book::Closed => Vec::new(),
         };
-        for w in ["now", if read { "read" } else { "tell" }, IT] {
+        let verb = if make { "make" } else if read { "read" } else { "tell" };
+        for w in ["now", verb, if make { "one" } else { IT }] {
             let wi = id(w);
             if fixed_gate {
-                if w == "read" || w == "tell" {
+                if w == verb {
                     net.wm.load(0, &ear.codes[wi]);
                 }
             } else {
                 net.hear_gate(wi, &ear.codes[wi], learn, &mut rng);
             }
-            net.step(&zero(), &ear.codes[wi], &zero(), false, &mut rng);
+            net.step(&zero(), &ear.codes[wi], &zero(), false, 0, &mut rng);
         }
         if no_instr {
             net.wm.clear();
         }
         // 3. the task: the teacher does it (training), or the network does (test)
-        let target: &Vec<&str> = if read { &p } else { &s };
+        if make && testing {
+            // free speech: the network makes one up, hearing itself, until it ends a story
+            if !no_instr {
+                let mut said_words: Vec<&str> = Vec::new();
+                let (mut prev, mut prev2): (Option<BitVector>, Option<BitVector>) = (None, None);
+                for t in 0..40 {
+                    let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
+                    let rec = net.recall(&cue);
+                    let heard = prev.clone().unwrap_or_else(zero);
+                    let st = net.step(&zero(), &heard, &rec, false, make_temp, &mut rng);
+                    match motor.plan(&st.plan).and_then(|m| tract.articulate(&m)) {
+                        Some(w) => {
+                            said_words.push(vocab[w]);
+                            prev2 = prev.replace(ear.codes[w].clone());
+                        }
+                        None => {
+                            said_words.push("…");
+                            prev2 = prev.replace(st.plan.clone());
+                        }
+                    }
+                    if said_words.ends_with(&["home", "."]) {
+                        break;
+                    }
+                }
+                invented.push((s.clone(), said_words));
+            }
+            continue;
+        }
+        // the teacher's new story, when asked to make one
+        let q = if make { story(&mut rng) } else { Vec::new() };
+        if learn {
+            heard_stories.insert(s.join(" "));
+            heard_stories.insert(p.join(" "));
+            heard_stories.insert(q.join(" "));
+        }
+        let target: &Vec<&str> = if make { &q } else if read { &p } else { &s };
         let practice = learn && rng.gen_bool(practice_p);
         let mut prev: Option<BitVector> = None;
         let mut prev2: Option<BitVector> = None;
@@ -462,9 +552,9 @@ fn main() {
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             let rec = net.recall(&cue);
             let heard = prev.clone().unwrap_or_else(zero);
-            let st = net.step(&seen, &heard, &rec, learn, &mut rng);
+            let st = net.step(&seen, &heard, &rec, learn, 0, &mut rng);
             let want = id(target[t]);
-            if !read {
+            if !read && !make {
                 hc_right.0 += (overlap(&rec, &ear.codes[want]) >= 16) as usize;
                 hc_right.1 += 1;
                 hc_bits += rec.count_ones() as usize;
@@ -473,7 +563,7 @@ fn main() {
                     hc_train.1 += 1;
                 }
             }
-            if learn && trial + 500 >= n_train {
+            if learn && !make && trial + 500 >= n_train {
                 let bi = books.iter().position(|b| *b == book).unwrap();
                 let c = &mut by_cond[!read as usize][bi];
                 c.0 += (overlap(&st.plan, &ear.codes[want]) >= 24) as usize;
@@ -590,6 +680,34 @@ fn main() {
         pct(hc_train.0, hc_train.1),
         pct(by_cond[0][0].0, by_cond[0][0].1), pct(by_cond[0][1].0, by_cond[0][1].1),
         pct(by_cond[1][0].0, by_cond[1][0].1), pct(by_cond[1][1].0, by_cond[1][1].1), pct(by_cond[1][2].0, by_cond[1][2].1));
+    if make_on {
+        let n = invented.len();
+        let (mut sent, mut ok, mut framed, mut well, mut coherent, mut novel, mut copied, mut len) = (0, 0, 0, 0, 0, 0, 0, 0);
+        for (heard, w) in &invented {
+            let (a, b, f, c) = judge(w);
+            sent += a;
+            ok += b;
+            framed += f as usize;
+            well += (f && a == b) as usize;
+            coherent += (f && c && a == b) as usize;
+            novel += (f && a == b && !heard_stories.contains(&w.join(" "))) as usize;
+            copied += (w == heard) as usize;
+            len += w.len();
+        }
+        println!(
+            "\ninvented stories (\"now make one\", relay noise {make_temp}): {n}; {:.1} words long on average; sentences grammatical {:.1}%; begin and end as a story {:.1}%; and every sentence grammatical {:.1}%; well formed and coherent (one name, its pronoun, one animal) {:.1}%; well formed and never heard in training {:.1}%; a copy of the story just heard {:.1}%",
+            len as f64 / n.max(1) as f64,
+            pct(ok, sent),
+            pct(framed, n),
+            pct(well, n),
+            pct(coherent, n),
+            pct(novel, n),
+            pct(copied, n)
+        );
+        for (_, w) in invented.iter().take(8) {
+            println!("  {}", w.join(" "));
+        }
+    }
     let (rd, tl) = (net.gate.value(Gate::Load, id("read")), net.gate.value(Gate::Load, id("tell")));
     let (nw, it, the) = (net.gate.value(Gate::Load, id("now")), net.gate.value(Gate::Load, id(IT)), net.gate.value(Gate::Load, id("the")));
     let q = |v: u32| v as f64 / ONE as f64;

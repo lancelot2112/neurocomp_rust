@@ -196,7 +196,16 @@ impl Net {
             pons: zero(),
             wm: WorkingMemory::new(BITS, 1),
             gate: PfcGate::new(BITS, 1, ONE * 9 / 10, seed.wrapping_add(11)),
-            hc: Hippocampus::new(HippocampusConfig::new(2 * BITS, seed.wrapping_add(300))),
+            hc: {
+                // RT_HC_DECAY (per-store decay of every weight, default 0.999), RT_HC_CENTER=1
+                // (homeostatic centering of CA3's drive), RT_HC_SCALE=1 (presynaptic scaling
+                // on every pathway)
+                let mut cfg = HippocampusConfig::new(2 * BITS, seed.wrapping_add(300));
+                cfg.decay = env("RT_HC_DECAY", 0.999f32);
+                cfg.center = std::env::var("RT_HC_CENTER").is_ok();
+                cfg.scale_all = std::env::var("RT_HC_SCALE").is_ok();
+                Hippocampus::new(cfg)
+            },
         }
     }
 

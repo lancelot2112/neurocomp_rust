@@ -382,8 +382,8 @@ const CTX_POOL: usize = 1 << 16;
 /// The hippocampus as an index (`IndexMemory`, after Teyler & DiScenna): one row per event,
 /// grown as needed, forgotten when unused.
 /// - **The context is driven by what is heard** (the temporal context model, Howard & Kahana
-///   2002): each sound replaces a few of the context's 32 cells with cells set by that sound (its
-///   auditory code) and the cell it replaces; a learned event boundary (`BoundaryCell`, from the cortex's
+///   2002): each sound replaces a few of the context's 32 cells with cells set by layer 4's
+///   response to it and the cell it replaces; a learned event boundary (`BoundaryCell`, from the cortex's
 ///   surprise) replaces half. The same words heard again from the same start give the same
 ///   contexts; a wrong word changes only a few cells.
 /// - **A row's keys are the context in force; it points into the cortex:** it holds the ear's
@@ -471,8 +471,9 @@ impl IndexHc {
     }
 
     /// A sound is heard (`key` its word, `code` its sensory code, `cells` its layer 4 cells):
-    /// store it under the context in force (if `store`), move the context on, learn the
-    /// boundary cell from the surprise, and at a boundary let the gates hold and reinstate.
+    /// store a pointer to the layer 4 cells under the context in force (if `store`), move the
+    /// context on with those cells, learn the boundary cell (its input: layer 4) from the
+    /// cortex's surprise at the sound, and at a boundary let the gates hold and reinstate.
     fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, store: bool, explore: bool) {
         let surprise = ONE - (overlap(&self.plan, code).min(ACTIVE as u32) * ONE / ACTIVE as u32);
         self.boundary.learn(surprise);
@@ -480,13 +481,13 @@ impl IndexHc {
         if store && !cells.is_empty() {
             self.mem.store_split(&self.ctx, &[], &cells);
         }
-        let sound = ones(code);
-        self.drift(&sound, 4, 1);
+        // the context moves on with layer 4's cells, not the raw sound
+        self.drift(&cells, 4, 1);
         let pair = self.last_word * 101 + key;
         self.last_word = key;
-        if self.boundary.observe(&sound) {
+        if self.boundary.observe(&cells) {
             self.boundaries += 1;
-            self.drift(&sound, self.ctx.len() / 2, 2);
+            self.drift(&cells, self.ctx.len() / 2, 2);
             let decide = |g: &mut PfcGate, rng: &mut StdRng| if explore { g.decide(pair, Some(rng)) } else { g.decide::<StdRng>(pair, None) };
             // reinstate what is held (the context where a held episode began), or go on
             if self.held.is_some() && decide(&mut self.back_gate, &mut self.rng) == Gate::Load {
@@ -556,12 +557,13 @@ fn main() {
     // the story as first heard
     let store_all = std::env::var("RT_HC_STORE").map_or(true, |v| v != "listen");
     let mut net = Net::new(seed);
-    // RT_HC=index (default): the hippocampus as a growing index with learned event boundaries
-    // (`IndexHc`); RT_HC=circuit: the fixed circuit cued by the driver's story context
+    // RT_HC=index (in progress, recall still poor): the hippocampus as a growing index with
+    // learned event boundaries (`IndexHc`); RT_HC=circuit (the default for now): the fixed
+    // circuit cued by the driver's story context
     // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
     // reinstated when the task begins, instead of by the learned gates
     let ix_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle");
-    let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
+    let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(false, |v| v == "index").then(|| IndexHc::new(seed));
     // the hippocampus hears word `w`: the index learns its boundary and (with `store`) stores
     // the event; the circuit stores it with `cue` when `store`
     macro_rules! hc_hear {

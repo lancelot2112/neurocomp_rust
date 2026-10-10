@@ -1142,6 +1142,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // CB_L1=1: the cerebellum's output (deep nuclei → motor thalamus) reaches layer 5's tuft (layer
     // 1) as context: it primes the cortex rather than only voting
     let cb_l1 = std::env::var("CB_L1").map_or(true, |v| v != "0");
+    // RN=1: the red nucleus (parvocellular): the cortex's intended word reaches the inferior olive
+    // on steps the network produces itself, so the cerebellum also learns what it says
+    let rn_on = std::env::var("RN").is_ok();
+    let mut rn_steps = 0usize;
     let mut cb_word: Option<usize> = None;
     let mut cb_conf: Q16 = 0;
     let mut cb_stats = [0usize; 2]; // test answers: proposed, right
@@ -6167,6 +6171,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         if let (Some(cb), Some(x)) = (cerebellum.as_mut(), cb_input.take()) {
                             cb.learn(&x, &enc.codes[next], &mut cb_rng);
                         }
+                    } else if let (true, Some(cb), Some(x), Some(meant)) = (rn_on, cerebellum.as_mut(), cb_input.take(), efference[t + 1]) {
+                        // RN=1, the intention path: on a step the network produced itself (inner
+                        // speech, speaking), the red nucleus carries the cortex's intended word
+                        // to the olive, which compares it with the cerebellum's prediction: the
+                        // cerebellum learns a forward model of what the network says
+                        cb.learn(&x, &enc.codes[meant], &mut cb_rng);
+                        rn_steps += 1;
                     }
                     // the top-down go/no-go's reward (HIER_SURPRISE=learned): consulting is worth
                     // what the frame changed, against the column's own prediction without it
@@ -6751,6 +6762,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  HC_EC seed {seed}: entorhinal feedback at {} steps ({} at test), mean share passed {:.0}%", hc_ec_stats[0], hc_ec_stats[2], 100.0 * hc_ec_stats[1] as f64 / (hc_ec_stats[0].max(1) as f64 * ONE as f64));
         }
         if let Some(cb) = cerebellum.as_ref() {
+            if rn_on {
+                eprintln!("  RN seed {seed}: the cerebellum learned the intended word on {rn_steps} self-produced steps");
+            }
             eprintln!("  LEARNING seed {seed}: slow cortex {} kernels, cerebellum {} kernels{}; at test answers the cerebellum proposed a word at {} and was right at {} ({:.1}%)", column.l23.live(), cb.live(), cb.describe(), cb_stats[0], cb_stats[1], 100.0 * cb_stats[1] as f64 / cb_stats[0].max(1) as f64);
         }
         if let Some(sc) = slow.as_ref() {

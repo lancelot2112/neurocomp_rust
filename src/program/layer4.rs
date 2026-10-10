@@ -24,6 +24,9 @@ pub struct Layer4 {
     syn: Vec<Vec<u32>>,
     /// per input bit: the cells with a synapse on it
     index: Vec<Vec<u32>>,
+    /// settling plasticity (`set_settling`): per cell, how often it has won
+    settle: bool,
+    wins: Vec<u32>,
 }
 
 impl Layer4 {
@@ -50,7 +53,14 @@ impl Layer4 {
             }
             syn.push(s);
         }
-        Self { in_bits, cells, k, syn, index }
+        Self { in_bits, cells, k, syn, index, settle: false, wins: vec![0; cells] }
+    }
+
+    /// Settling plasticity: a cell's chance to move a synapse halves with each doubling of its
+    /// wins past 64 (1/4, then 1/8 after 128 wins, 1/16 after 256, ...), as sensory tuning
+    /// settles with experience, so what other areas point to in layer 4 stays put.
+    pub fn set_settling(&mut self, on: bool) {
+        self.settle = on;
     }
 
     /// The winners for `input` (at most `k`, most driven first; ties to the lower cell).
@@ -94,7 +104,15 @@ impl Layer4 {
         for &c in &winners {
             out.bit_set(c as usize);
             let r = rng.next_u64();
-            if r & 3 != 0 || on.is_empty() {
+            // the chance to learn: 1/4, or with settling 2^-(2 + log2(wins / 64))
+            let k = if self.settle {
+                let w = &mut self.wins[c as usize];
+                *w = w.saturating_add(1);
+                2 + (32 - (*w / 64).leading_zeros()).min(14)
+            } else {
+                2
+            };
+            if r & ((1u64 << k) - 1) != 0 || on.is_empty() {
                 continue;
             }
             let s = &self.syn[c as usize];

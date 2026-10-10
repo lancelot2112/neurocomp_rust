@@ -225,12 +225,18 @@ impl Net {
             l.set_clustered(std::env::var("RT_CLUSTER").map_or(true, |v| v != "0"));
             l
         };
+        // RT_L4_SETTLE=0: layer 4 keeps learning at full rate (default: it settles with experience)
+        let l4 = |sd: u64| {
+            let mut l = Layer4::new(BITS, BITS, 16, ACTIVE, sd);
+            l.set_settling(std::env::var("RT_L4_SETTLE").map_or(true, |v| v != "0"));
+            l
+        };
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
         cb.set_rates(2, 0);
         cb.set_cross_frames(true);
         Self {
-            l4e: Layer4::new(BITS, BITS, 16, ACTIVE, seed.wrapping_add(98)),
-            l4a: Layer4::new(BITS, BITS, 16, ACTIVE, seed.wrapping_add(99)),
+            l4e: l4(seed.wrapping_add(98)),
+            l4a: l4(seed.wrapping_add(99)),
             // [eye L4 | PFC (tuft) | cerebellum (tuft) | ear L4 | recall | own previous activity]
             l23: mk(16384, 3),
             // [eye L4 | PFC (tuft) | cerebellum (tuft) | ear L4 | layer 2/3's prediction]
@@ -421,6 +427,8 @@ struct IndexHc {
     holds: usize,
     reinstated: usize,
     relearned: usize,
+    replayed: usize,
+    relearned_asleep: usize,
     recalls: usize,
     debug: bool,
     had_prev: usize,
@@ -453,6 +461,8 @@ impl IndexHc {
             holds: 0,
             reinstated: 0,
             relearned: 0,
+            replayed: 0,
+            relearned_asleep: 0,
             recalls: 0,
             debug: false,
             had_prev: 0,
@@ -636,6 +646,8 @@ fn main() {
     // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
     // reinstated when the task begins, instead of by the learned gates
     let ix_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle");
+    let sleep_every: usize = env("RT_SLEEP_EVERY", 10);
+    let replays: usize = env("RT_REPLAY", 3);
     let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle;
@@ -1009,6 +1021,33 @@ fn main() {
             slot.said_book += tally.said_book;
             slot.silent += tally.silent;
         }
+        // sleep: every RT_SLEEP_EVERY training trials (default 10), the index replays RT_REPLAY
+        // chains (default 3, up to 30 rows each, by strength). Each pointer is reinstated in the
+        // cortex, which completes it; the row is relearned to the layer 4 assembly that the
+        // completion evokes now, if it keeps at least half the pointed cells (so the index
+        // follows layer 4's drift between uses)
+        if learn && sleep_every > 0 && (trial + 1) % sleep_every == 0 {
+            if let Some(x) = ix.as_mut() {
+                for _ in 0..replays {
+                    let chain = x.mem.replay_prioritized(&mut rng, |_| 1, 30);
+                    for r in chain {
+                        let (Some(&row), false) = (r.ca3.first(), r.ec.is_empty()) else { continue };
+                        let mut frame = zero();
+                        for &b in r.ec.iter().filter(|&&b| b < BITS) {
+                            frame.bit_set(b);
+                        }
+                        let st = net.step(&zero(), &zero(), &frame, false, 0, &mut rng);
+                        let now = ones(&net.l4a.encode(&st.plan));
+                        let kept = r.ec.iter().filter(|c| now.binary_search(c).is_ok()).count();
+                        x.replayed += 1;
+                        if kept * 2 >= r.ec.len() && now != r.ec {
+                            x.mem.reconsolidate(row, &now);
+                            x.relearned_asleep += 1;
+                        }
+                    }
+                }
+            }
+        }
         if learn && (trial + 1) % 500 == 0 {
             println!(
                 "  trial {:>5}: words planned right {:.1}% over the last 500 trials, said right in practice {:.1}% ({:.0} s)",
@@ -1081,7 +1120,7 @@ fn main() {
     if let Some(x) = &ix {
         let (live, evicted, work) = x.mem.report();
         println!(
-            "\nhippocampal index: {} rows stored ({} live, {} forgotten), {} postings visited per recall; {} learned event boundaries ({:.1} per trial); an episode's start held {} times, reinstated {} times; rows relearned on recall {}; recalls {} (after a recall {}, followed the link {})",
+            "\nhippocampal index: {} rows stored ({} live, {} forgotten), {} postings visited per recall; {} learned event boundaries ({:.1} per trial); an episode's start held {} times, reinstated {} times; rows relearned on recall {}; asleep: {} replayed, {} relearned; recalls {} (after a recall {}, followed the link {})",
             x.mem.rows(),
             live,
             evicted,
@@ -1091,6 +1130,8 @@ fn main() {
             x.holds,
             x.reinstated,
             x.relearned,
+            x.replayed,
+            x.relearned_asleep,
             x.recalls,
             x.had_prev,
             x.followed

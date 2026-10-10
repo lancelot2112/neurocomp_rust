@@ -300,10 +300,50 @@ by the driver, `RT_IX_HOLD=oracle`, a diagnosis):
 - **Invention lost its learned stop:** stories end by themselves only 14–22% of the time, against
   92% with the circuit.
 
+## Indexing a higher area: where eye and ear converge
+In the brain the hippocampus talks to association cortex, not to primary sensory layers. Here
+the index pointed to the ear's layer 4: the lowest level, tied to one sense and the quickest to
+drift.
+
+**The association area** (`Net::assoc_of`) is a competitive layer (k-winners-take-all, learned)
+over the eye's and the ear's layer 4. When reading aloud, the word seen and the word heard arrive
+together, and its cells grow synapses on both, so either sense alone comes to evoke the same
+assembly. The index now points to these assemblies, and the context is driven by them. Layer 4
+is no longer indexed.
+
+**A rule needed for convergence** (`Layer4::set_pathways`): a winner moves a synapse away only if
+its own input pathway was active. Without it, listening (the ear alone) moved every cell's eye
+synapses to the ear, and the pairings learned while reading were unlearned: an absent sense was
+taken as evidence against it. With it, after 400 trials a word seen and heard share 10.9 of 32
+cells (3.3 without).
+
+**Results** (3,000 trials, with invention):
+
+| | Learned gates | Oracle hold | Index on layer 4, oracle (above) |
+|---|---|---|---|
+| a word seen and heard share (of 32 cells) | 12.8 | 13.2 | – |
+| words sharing at least half | 34% | 41% | – |
+| recall right at test | 12% | **86%** | 89% |
+| tell, book closed | 1.2 (silent 77%) | 15.3 (silent 68%) | 36.4 |
+| tell, another book (story's / book's) | 31.3 / 62.7 | 34.8 / 57.3 | 40.8 / 73.9 |
+| read, another book | **80.4** | 67.8 | 56.3 |
+
+**Findings:**
+- **The higher area can be indexed:** recall from its assemblies is as good as from layer 4 (86%
+  against 89%).
+- **It is only partly cross-modal yet.** A word seen and heard share about 13 of 32 cells.
+- **Reading improved,** to 80% on an unheard book with the learned gates.
+- **Retelling with the book closed fell** (36 → 15% with the oracle), mostly to silence. The
+  network says "silence", the learned end of an utterance, on two thirds of those words, though it
+  plans the right word 66% of the time while the teacher speaks.
+- **The learned gates still do not find the story's start** (recall 12%).
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.
-- **Let the cortex learn from replay,** and restore the learned stop with the index.
+- **Let the cortex learn from replay,** and find why retelling falls silent with the index.
+- **Context from reaching for a book:** a learned action that fetches a book (a new episode, a
+  natural boundary) instead of a stream of words.
 - **Credit for the gate per instruction.** Compare the reward with what the same trial type
   usually earns, not the overall average, so holding "tell" is credited.
 - **Seeds 1–4** for every column.

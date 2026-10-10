@@ -27,6 +27,8 @@ pub struct Layer4 {
     /// settling plasticity (`set_settling`): per cell, how often it has won
     settle: bool,
     wins: Vec<u32>,
+    /// input pathways (`set_pathways`): the input's frame size in bits (0: one pathway)
+    frame_bits: usize,
 }
 
 impl Layer4 {
@@ -53,7 +55,7 @@ impl Layer4 {
             }
             syn.push(s);
         }
-        Self { in_bits, cells, k, syn, index, settle: false, wins: vec![0; cells] }
+        Self { in_bits, cells, k, syn, index, settle: false, wins: vec![0; cells], frame_bits: 0 }
     }
 
     /// Settling plasticity: a cell's chance to move a synapse halves with each doubling of its
@@ -61,6 +63,14 @@ impl Layer4 {
     /// settles with experience, so what other areas point to in layer 4 stays put.
     pub fn set_settling(&mut self, on: bool) {
         self.settle = on;
+    }
+
+    /// The input is several pathways (frames of `frame_bits` bits, e.g. eye and ear): a
+    /// synapse is moved away only if its own pathway was active, so a silent pathway (a sense
+    /// that is absent) is not taken as evidence against the synapses on it. Cells that learned
+    /// a pairing (a word seen and heard together) keep both halves when one sense comes alone.
+    pub fn set_pathways(&mut self, frame_bits: usize) {
+        self.frame_bits = frame_bits;
     }
 
     /// The winners for `input` (at most `k`, most driven first; ties to the lower cell).
@@ -116,7 +126,9 @@ impl Layer4 {
                 continue;
             }
             let s = &self.syn[c as usize];
-            let off: Vec<usize> = (0..s.len()).filter(|&i| !input.bit_get(s[i] as usize)).collect();
+            let fb = self.frame_bits;
+            let live = |b: u32| fb == 0 || on.iter().any(|&o| o as usize / fb == b as usize / fb);
+            let off: Vec<usize> = (0..s.len()).filter(|&i| !input.bit_get(s[i] as usize) && live(s[i])).collect();
             let gain: Vec<u32> = on.iter().copied().filter(|b| s.binary_search(b).is_err()).collect();
             if off.is_empty() || gain.is_empty() {
                 continue;

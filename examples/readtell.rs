@@ -194,6 +194,8 @@ fn story(rng: &mut StdRng) -> Vec<&'static str> {
 struct Net {
     l4e: Layer4,
     l4a: Layer4,
+    /// the association area: eye and ear converge (`assoc_of`); what the index points to
+    assoc: Layer4,
     l23: BitCells,
     l5: BitCells,
     cb: CerebellarCircuit,
@@ -237,6 +239,13 @@ impl Net {
         Self {
             l4e: l4(seed.wrapping_add(98)),
             l4a: l4(seed.wrapping_add(99)),
+            assoc: {
+                let mut l = Layer4::new(2 * BITS, BITS, 16, ACTIVE, seed.wrapping_add(97));
+                // eye and ear are two pathways: an absent sense does not unlearn its synapses
+                l.set_pathways(BITS);
+                l.set_settling(std::env::var("RT_L4_SETTLE").map_or(true, |v| v != "0"));
+                l
+            },
             // [eye L4 | PFC (tuft) | cerebellum (tuft) | ear L4 | recall | own previous activity]
             l23: mk(16384, 3),
             // [eye L4 | PFC (tuft) | cerebellum (tuft) | ear L4 | layer 2/3's prediction]
@@ -262,6 +271,22 @@ impl Net {
                 cfg.decay_writes = std::env::var("RT_HC_WRITES").map_or(true, |v| v != "lifetime");
                 Hippocampus::new(cfg)
             },
+        }
+    }
+
+    /// The association area's assembly for what is seen (`eye`, a visual word code, or nothing)
+    /// and heard (`ear`, a sound code, or nothing): a competitive layer (k-winners-take-all,
+    /// learned when `learn`) over the two layer 4s. Seen and heard together when reading aloud,
+    /// a word's cells grow synapses on both, so either sense alone comes to evoke the same
+    /// assembly.
+    fn assoc_of(&mut self, eye: &BitVector, ear: &BitVector, learn: bool, rng: &mut StdRng) -> BitVector {
+        let e4 = if eye.count_ones() == 0 { zero() } else { self.l4e.encode(eye) };
+        let a4 = if ear.count_ones() == 0 { zero() } else { self.l4a.encode(ear) };
+        let row = frames(&[&e4, &a4]);
+        if learn {
+            self.assoc.encode_learn(&row, rng)
+        } else {
+            self.assoc.encode(&row)
         }
     }
 
@@ -665,12 +690,15 @@ fn main() {
     }
     // the hippocampus hears word `w`: the index learns its boundary and (with `store`) stores
     // the event; the circuit stores it with `cue` when `store`
+    // what the eye fixates now (the book's word in the task, else nothing): with the heard
+    // word, the association area's input
+    let mut eye_now = zero();
     macro_rules! hc_hear {
         ($w:expr, $cue:expr, $store:expr, $explore:expr) => {{
             let w: usize = $w;
             match ix.as_mut() {
                 Some(x) => {
-                    let cells = net.l4a.encode(&ear.codes[w]);
+                    let cells = net.assoc_of(&eye_now, &ear.codes[w], $explore, &mut rng);
                     x.hear(w, &ear.codes[w], &cells, $store, $explore);
                 }
                 None => {
@@ -783,7 +811,7 @@ fn main() {
         }
         // the teacher pauses: silence is heard (a sound, and a natural event boundary)
         if let Some(x) = ix.as_mut() {
-            let cells = net.l4a.encode(&silence);
+            let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
             x.hear(quiet, &silence, &cells, false, learn);
         }
         let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
@@ -895,6 +923,7 @@ fn main() {
         }
         for t in 0..target.len() {
             let seen = p.get(t).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero);
+            eye_now = seen.clone();
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             let rec = hc_recall!(&cue);
             let heard = prev.clone().unwrap_or_else(zero);
@@ -902,7 +931,7 @@ fn main() {
             hc_plan!(st);
             let want = id(target[t]);
             // what recall should give: the wanted word's sound (circuit) or its layer 4 cells (index)
-            let want_rec = if ix.is_some() { net.l4a.encode(&ear.codes[want]) } else { ear.codes[want].clone() };
+            let want_rec = if ix.is_some() { net.assoc_of(&zero(), &ear.codes[want], false, &mut rng) } else { ear.codes[want].clone() };
             if !read && !make {
                 trace_recall.push(overlap(&rec, &want_rec) >= 16);
                 hc_right.0 += (overlap(&rec, &want_rec) >= 16) as usize;
@@ -1006,6 +1035,7 @@ fn main() {
                 }
             }
         }
+        eye_now = zero();
         if learn && stop_learned && !target.is_empty() {
             // the task is done and the teacher falls silent: silence is the next sound
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(target.len()));
@@ -1016,7 +1046,7 @@ fn main() {
         }
         if let Some(x) = ix.as_mut() {
             // the pause after the task
-            let cells = net.l4a.encode(&silence);
+            let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
             x.hear(quiet, &silence, &cells, false, learn);
             let task_log: Vec<bool> = x.log.drain(..).map(|l| l.0).collect();
             if trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr {
@@ -1052,7 +1082,7 @@ fn main() {
                             frame.bit_set(b);
                         }
                         let st = net.step(&zero(), &zero(), &frame, false, 0, &mut rng);
-                        let now = ones(&net.l4a.encode(&st.plan));
+                        let now = ones(&net.assoc_of(&zero(), &st.plan, false, &mut rng));
                         let kept = r.ec.iter().filter(|c| now.binary_search(c).is_ok()).count();
                         x.replayed += 1;
                         if kept * 2 >= r.ec.len() && now != r.ec {
@@ -1151,6 +1181,19 @@ fn main() {
             x.had_prev,
             x.followed
         );
+    }
+    {
+        // is the association area cross-modal? the assembly a word evokes seen and heard
+        let (mut same, mut n, mut ov) = (0usize, 0usize, 0u32);
+        for w in 0..vocab.len() {
+            let seen = net.assoc_of(&eye.codes[w], &zero(), false, &mut rng);
+            let heard = net.assoc_of(&zero(), &ear.codes[w], false, &mut rng);
+            let o = overlap(&seen, &heard);
+            same += (o >= 16) as usize;
+            ov += o;
+            n += 1;
+        }
+        println!("association area: a word seen and the same word heard share {:.1} of 32 cells on average; at least half for {:.1}% of words", ov as f64 / n as f64, pct(same, n));
     }
     if let Some(x) = &ix {
         let pairs: Vec<(&str, &str)> = vec![("tell", IT), ("read", IT), ("now", "tell"), ("now", "read"), ("home", "."), (".", "<pause>"), ("<pause>", "now"), ("the", "fox")];

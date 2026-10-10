@@ -257,6 +257,35 @@ impl IndexMemory {
         }
     }
 
+    /// Reconsolidation: give `row` a new output (what it points to), as when a recalled
+    /// memory is re-stored with what the cortex now completes it to. Its keys are unchanged.
+    pub fn reconsolidate(&mut self, row: u32, out: &[usize]) {
+        if let Some(r) = self.rows.get_mut(row as usize) {
+            if !r.dead {
+                let mut o = out.to_vec();
+                o.sort_unstable();
+                o.dedup();
+                r.out = o;
+            }
+        }
+    }
+
+    /// The successor of `row` and how many of its keys `cue` shares (None if it has none, or
+    /// it is forgotten).
+    pub fn successor_match(&self, row: u32, cue: &[usize]) -> Option<(u32, u32)> {
+        let n = self.rows.get(row as usize)?.next?;
+        let r = &self.rows[n as usize];
+        if self.strength(r) == 0 {
+            return None;
+        }
+        Some((n, cue.iter().filter(|&&c| r.keys.binary_search(&(c as u32)).is_ok()).count() as u32))
+    }
+
+    /// What `row` points to now (empty if forgotten).
+    pub fn out_of(&self, row: u32) -> &[usize] {
+        self.rows.get(row as usize).filter(|r| !r.dead).map_or(&[], |r| &r.out[..])
+    }
+
     /// Rows stored so far (live or forgotten).
     pub fn rows(&self) -> usize {
         self.rows.len()

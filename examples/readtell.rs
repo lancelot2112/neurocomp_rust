@@ -386,11 +386,19 @@ const CTX_POOL: usize = 1 << 16;
 ///   response to it and the cell it replaces; a learned event boundary (`BoundaryCell`, from the cortex's
 ///   surprise) replaces half. The same words heard again from the same start give the same
 ///   contexts; a wrong word changes only a few cells.
-/// - **A row's keys are the context in force; it points into the cortex:** it holds the ear's
-///   layer 4 cells active when the next sound was heard. Recall is "which row had this
-///   context", and reinstates those cells; the cortex says the word.
-/// - **Order:** each row also links to the next; when no row matches, the successor of the last
-///   row recalled is given.
+/// - **A row's keys are the context in force; it points to a cortical assembly,** never to the
+///   content: the ear's layer 4 cells active when the next sound was heard. Recall is "which
+///   row had this context"; it reinstates those cells, layer 2/3 completes the assembly, and the
+///   cortex says the word. Content comes back through the cortex (or by rereading).
+/// - **Retrieval mode:** while a held episode is reinstated, nothing new is stored, so its own
+///   retelling does not overwrite the memory it reads (Hasselmo's separate encoding and
+///   retrieval modes); holding a new episode's start ends it.
+/// - **Reconsolidation:** when the cortex completes a recalled pointer to an assembly that
+///   still holds at least half the pointed cells, the row is relearned to the assembly as it is
+///   now, so the index follows layer 4's drift.
+/// - **Order:** each row also links to the next. Recall expects the successor of the row just
+///   recalled (CA3's sequence bias) and gives it unless another row matches the cue better by
+///   12 of 32 cells; when nothing matches, the successor anyway.
 /// - **The prefrontal cortex holds and reinstates context:** at a boundary one learned gate may
 ///   hold the context where the new episode begins, and another may reinstate the held context
 ///   as the current one (keyed by the last two words, credited by the words said right). "Tell
@@ -405,10 +413,22 @@ struct IndexHc {
     held: Option<Vec<usize>>,
     last_word: usize,
     last_recalled: Option<u32>,
+    /// the row recalled since the last sound heard, to relearn if the cortex completes it
+    to_reconsolidate: Option<u32>,
+    retrieving: bool,
     plan: BitVector,
     boundaries: usize,
     holds: usize,
     reinstated: usize,
+    relearned: usize,
+    recalls: usize,
+    debug: bool,
+    had_prev: usize,
+    followed: usize,
+    /// diagnosis: the gates do nothing (the driver holds and reinstates)
+    gates_off: bool,
+    /// diagnosis: (boundary fired, recalled row) per heard sound, while tracing
+    pub log: Vec<(bool, Option<u32>)>,
     rng: StdRng,
 }
 
@@ -426,43 +446,75 @@ impl IndexHc {
             held: None,
             last_word: 0,
             last_recalled: None,
+            to_reconsolidate: None,
+            retrieving: false,
             plan: zero(),
             boundaries: 0,
             holds: 0,
             reinstated: 0,
+            relearned: 0,
+            recalls: 0,
+            debug: false,
+            had_prev: 0,
+            followed: 0,
+            gates_off: false,
+            log: Vec::new(),
             rng,
         }
     }
 
-    /// The context moves on with a sound: `n` of its cells, chosen by the sound, are replaced
-    /// by cells set by the sound and the cell replaced (a fixed random projection).
-    fn drift(&mut self, sound: &[usize], n: usize, salt: u64) {
-        let mut h: u64 = 0x51_7CC1_B727_220A ^ salt;
-        for &b in sound {
-            h = (h ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            h ^= h >> 29;
-        }
-        let len = self.ctx.len();
-        for k in 0..n as u64 {
-            let mut x = (h ^ k.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)).wrapping_mul(0xD6E8_FEB8_6659_FD93);
-            x ^= x >> 31;
-            let slot = (x % len as u64) as usize;
-            let mut y = (x ^ (self.ctx[slot] as u64).wrapping_mul(0xA24B_AED4_963E_E407)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    /// The context moves on with layer 4's response: `n` of its 32 cells are replaced, each by
+    /// one layer 4 cell. The cells that act are the `n` with the smallest hash (min-hash), so a
+    /// layer 4 response that drifted by a cell or two moves the context almost the same way:
+    /// each acting cell picks a slot and sets it from itself and the cell it replaces (a fixed
+    /// random projection).
+    fn drift(&mut self, cells: &[usize], n: usize, salt: u64) {
+        let mix = |x: u64| {
+            let mut y = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
             y ^= y >> 29;
-            self.ctx[slot] = (y % CTX_POOL as u64) as usize;
+            y = y.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+            y ^ (y >> 31)
+        };
+        let mut acting: Vec<(u64, usize)> = cells.iter().map(|&c| (mix(c as u64 ^ salt.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)), c)).collect();
+        acting.sort_unstable();
+        let len = self.ctx.len() as u64;
+        for &(h, c) in acting.iter().take(n) {
+            let slot = (h % len) as usize;
+            self.ctx[slot] = (mix(c as u64 ^ (self.ctx[slot] as u64).rotate_left(21) ^ salt) % CTX_POOL as u64) as usize;
         }
     }
 
     /// What the hippocampus reinstates now: the layer 4 cells stored under the context most
     /// like the current one; else the successor of the last row recalled.
     fn recall(&mut self) -> BitVector {
-        let mut r = self.mem.recall(&self.ctx);
+        // the sequence bias (CA3's recurrent links): the successor of the row just recalled is
+        // expected, and is recalled whenever the cue still matches it well enough
+        // expected, and is recalled unless another row matches the cue clearly better (by 12 of
+        // 32 cells): the context finds where a sequence starts and corrects large jumps; the
+        // links carry it on through boundaries that fall differently the second time
+        let best = self.mem.recall(&self.ctx);
+        let best_overlap = best.strength / 16;
+        let follow = self.last_recalled.and_then(|l| self.mem.successor_match(l, &self.ctx)).filter(|&(_, o)| best.ec.is_empty() || o + 12 > best_overlap);
+        self.recalls += 1;
+        if self.debug {
+            let sm = self.last_recalled.and_then(|l| self.mem.successor_match(l, &self.ctx));
+            println!("    recall: last {:?} successor {:?} best row {:?} overlap {} -> follow {}", self.last_recalled, sm, best.ca3.first(), best_overlap, follow.is_some());
+        }
+        self.had_prev += self.last_recalled.is_some() as usize;
+        let mut r = match follow {
+            Some(_) => {
+                self.followed += 1;
+                self.mem.successor(self.last_recalled.unwrap())
+            }
+            None => best,
+        };
         if r.ec.is_empty() {
             if let Some(l) = self.last_recalled {
                 r = self.mem.successor(l);
             }
         }
         self.last_recalled = r.ca3.first().copied();
+        self.to_reconsolidate = self.last_recalled;
         let mut v = zero();
         for &b in r.ec.iter().filter(|&&b| b < BITS) {
             v.bit_set(b);
@@ -478,25 +530,47 @@ impl IndexHc {
         let surprise = ONE - (overlap(&self.plan, code).min(ACTIVE as u32) * ONE / ACTIVE as u32);
         self.boundary.learn(surprise);
         let cells = ones(cells);
-        if store && !cells.is_empty() {
+        // reconsolidation: the row just recalled pointed to an assembly; if what the cortex
+        // completed and what was then heard is that assembly (at least half its pointed cells
+        // still in it), the row is relearned to the assembly as it is now
+        if let Some(r) = self.to_reconsolidate.take() {
+            let old = self.mem.out_of(r);
+            if !old.is_empty() && old != &cells[..] {
+                let kept = old.iter().filter(|c| cells.binary_search(c).is_ok()).count();
+                if kept * 2 >= old.len() {
+                    self.mem.reconsolidate(r, &cells);
+                    self.relearned += 1;
+                }
+            }
+        }
+        // retrieval mode: while a held episode is being reinstated, nothing new is stored
+        // (encoding and retrieval are separate modes, Hasselmo)
+        if store && !self.retrieving && !cells.is_empty() {
             self.mem.store_split(&self.ctx, &[], &cells);
         }
         // the context moves on with layer 4's cells, not the raw sound
         self.drift(&cells, 4, 1);
         let pair = self.last_word * 101 + key;
         self.last_word = key;
-        if self.boundary.observe(&cells) {
+        let fired = self.boundary.observe(&cells);
+        self.log.push((fired, self.last_recalled));
+        if fired {
             self.boundaries += 1;
             self.drift(&cells, self.ctx.len() / 2, 2);
+            if self.gates_off {
+                return;
+            }
             let decide = |g: &mut PfcGate, rng: &mut StdRng| if explore { g.decide(pair, Some(rng)) } else { g.decide::<StdRng>(pair, None) };
             // reinstate what is held (the context where a held episode began), or go on
             if self.held.is_some() && decide(&mut self.back_gate, &mut self.rng) == Gate::Load {
                 self.ctx = self.held.clone().unwrap();
                 self.last_recalled = None;
+                self.retrieving = true;
                 self.reinstated += 1;
             } else if decide(&mut self.hold_gate, &mut self.rng) == Gate::Load {
                 // hold where this new episode begins
                 self.held = Some(self.ctx.clone());
+                self.retrieving = false;
                 self.holds += 1;
             }
         }
@@ -557,13 +631,15 @@ fn main() {
     // the story as first heard
     let store_all = std::env::var("RT_HC_STORE").map_or(true, |v| v != "listen");
     let mut net = Net::new(seed);
-    // RT_HC=index (in progress, recall still poor): the hippocampus as a growing index with
-    // learned event boundaries (`IndexHc`); RT_HC=circuit (the default for now): the fixed
-    // circuit cued by the driver's story context
+    // RT_HC=index (default): the hippocampus as a growing index with learned event boundaries
+    // (`IndexHc`); RT_HC=circuit: the fixed circuit cued by the driver's story context
     // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
     // reinstated when the task begins, instead of by the learned gates
     let ix_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle");
-    let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(false, |v| v == "index").then(|| IndexHc::new(seed));
+    let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
+    if let Some(x) = ix.as_mut() {
+        x.gates_off = ix_oracle;
+    }
     // the hippocampus hears word `w`: the index learns its boundary and (with `store`) stores
     // the event; the circuit stores it with `cue` when `store`
     macro_rules! hc_hear {
@@ -649,6 +725,7 @@ fn main() {
                 if t == 0 && ix_oracle {
                     let x = ix.as_mut().unwrap();
                     x.held = Some(x.ctx.clone());
+                    x.retrieving = false;
                 }
                 hc_hear!(w, &cue, true, learn);
             }
@@ -681,6 +758,7 @@ fn main() {
             }
             println!("  probe right after hearing:{line}");
         }
+        let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
         // 2. the book and the instruction
         let make = make_on && rng.gen_bool(0.25);
         let read = !make && rng.gen_bool(0.5);
@@ -725,6 +803,7 @@ fn main() {
                 if let Some(h) = x.held.clone() {
                     x.ctx = h;
                     x.last_recalled = None;
+                    x.retrieving = true;
                 }
             }
         }
@@ -779,6 +858,13 @@ fn main() {
         let mut prev: Option<BitVector> = None;
         let mut prev2: Option<BitVector> = None;
         let mut tally = Tally::default();
+        let mut trace_recall: Vec<bool> = Vec::new();
+        if let Some(x) = ix.as_mut() {
+            x.debug = trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr;
+            if x.debug {
+                println!("  story rows end at {} (stored so far)", x.mem.rows());
+            }
+        }
         for t in 0..target.len() {
             let seen = p.get(t).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero);
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
@@ -790,6 +876,7 @@ fn main() {
             // what recall should give: the wanted word's sound (circuit) or its layer 4 cells (index)
             let want_rec = if ix.is_some() { net.l4a.encode(&ear.codes[want]) } else { ear.codes[want].clone() };
             if !read && !make {
+                trace_recall.push(overlap(&rec, &want_rec) >= 16);
                 hc_right.0 += (overlap(&rec, &want_rec) >= 16) as usize;
                 hc_right.1 += 1;
                 hc_bits += rec.count_ones() as usize;
@@ -903,6 +990,16 @@ fn main() {
             let st = net.step(&zero(), &heard, &rec, true, 0, &mut rng);
             net.learn(&st, &silence, &mut rng);
         }
+        if let Some(x) = ix.as_mut() {
+            let task_log: Vec<bool> = x.log.drain(..).map(|l| l.0).collect();
+            if trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr {
+                trace -= 1;
+                let marks = |l: &[bool], w: &[&str]| w.iter().zip(l.iter().chain(std::iter::repeat(&false))).map(|(w, &b)| if b { format!("{w}|") } else { w.to_string() }).collect::<Vec<_>>().join(" ");
+                println!("  boundaries while listening: {}", marks(&listen_log, &s));
+                println!("  boundaries in the task (instruction first): {}", task_log.iter().map(|&b| if b { '|' } else { '.' }).collect::<String>());
+                println!("  retold: {:.0}% right; recall right on {}", 100.0 * tally.right as f64 / tally.words.max(1) as f64, trace_recall.iter().map(|&r| if r { '+' } else { '-' }).collect::<String>());
+            }
+        }
         if testing {
             let bi = books.iter().position(|b| *b == book).unwrap();
             let slot = if no_instr { &mut res_noinstr[!read as usize][bi] } else { &mut res[!read as usize][bi] };
@@ -984,7 +1081,7 @@ fn main() {
     if let Some(x) = &ix {
         let (live, evicted, work) = x.mem.report();
         println!(
-            "\nhippocampal index: {} rows stored ({} live, {} forgotten), {} postings visited per recall; {} learned event boundaries ({:.1} per trial); an episode's start held {} times, reinstated {} times",
+            "\nhippocampal index: {} rows stored ({} live, {} forgotten), {} postings visited per recall; {} learned event boundaries ({:.1} per trial); an episode's start held {} times, reinstated {} times; rows relearned on recall {}; recalls {} (after a recall {}, followed the link {})",
             x.mem.rows(),
             live,
             evicted,
@@ -992,7 +1089,11 @@ fn main() {
             x.boundaries,
             x.boundaries as f64 / (n_train + 2 * n_test) as f64,
             x.holds,
-            x.reinstated
+            x.reinstated,
+            x.relearned,
+            x.recalls,
+            x.had_prev,
+            x.followed
         );
     }
     if practice_p > 0.0 {

@@ -65,3 +65,6 @@ pub use layer5::{Layer5, PrimedLayer5};
 
 pub mod bitcells;
 pub use bitcells::BitCells;
+
+pub mod cerebellar_circuit;
+pub use cerebellar_circuit::CerebellarCircuit;

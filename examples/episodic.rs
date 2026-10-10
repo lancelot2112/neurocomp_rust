@@ -1097,7 +1097,27 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             class.set_growth_gate(None);
         }
     }
-    let mut cerebellum: Option<neurocomp::program::Cerebellum> = three.then(|| neurocomp::program::Cerebellum::new(BITS, make_l23(None)));
+    // CB=circuit: the cerebellum as its own circuit (granule expansion, Purkinje depression;
+    // CerebellarCircuit) instead of a cortical kernel class; CB_GRANULES granule cells
+    let mut cerebellum: Option<Cb> = three.then(|| {
+        if std::env::var("CB").map_or(false, |v| v == "circuit") {
+            let g = std::env::var("CB_GRANULES").ok().and_then(|v| v.parse().ok()).unwrap_or(32768);
+            // CB_TARGET=n: about 1/n of the granule layer active (Golgi inhibition's set point)
+            let t = std::env::var("CB_TARGET").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(64);
+            let mut c = neurocomp::program::CerebellarCircuit::new(g, BITS, ONE / t, seed.wrapping_add(77));
+            // CB_LTP=k: restoration with probability 2^-k (0: always); CB_QUIET=q: a Purkinje cell
+            // is quiet below 1/q of the active granule cells' drive
+            c.set_rates(
+                std::env::var("CB_LTP").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
+                std::env::var("CB_QUIET").ok().and_then(|v| v.parse().ok()).unwrap_or(4),
+            );
+            // CB_CROSS=1: each granule cell's dendrites on different frames (sources)
+            c.set_cross_frames(std::env::var("CB_CROSS").is_ok());
+            Cb::Circuit(c)
+        } else {
+            Cb::Kernels(neurocomp::program::Cerebellum::new(BITS, make_l23(None)))
+        }
+    });
     let mut cb_rng = StdRng::seed_from_u64(seed.wrapping_add(5151));
     let mut cb_input: Option<BitVector> = None; // the mossy-fibre input of this step, for learning
     let mut cb_word: Option<usize> = None;
@@ -4436,7 +4456,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // feedforward sweep, from a copy of its input (cortex → pons → mossy fibres)
                 // its candidates (every matching kernel's prediction), as the column's
                 // expectation is the union of its own
-                let cb_union: Option<BitVector> = cerebellum.as_ref().map(|cb| cb.kernels.peek_union(&input, BITS));
+                let cb_union: Option<BitVector> = cerebellum.as_ref().map(|cb| cb.peek_union(&input));
                 let cb_early: Option<BitVector> = cerebellum.as_mut().map(|cb| {
                     let p = cb.predict(&input).clone();
                     cb_word = enc.decode(&p);
@@ -6566,7 +6586,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             eprintln!("  HC_EC seed {seed}: entorhinal feedback at {} steps ({} at test), mean share passed {:.0}%", hc_ec_stats[0], hc_ec_stats[2], 100.0 * hc_ec_stats[1] as f64 / (hc_ec_stats[0].max(1) as f64 * ONE as f64));
         }
         if let Some(cb) = cerebellum.as_ref() {
-            eprintln!("  LEARNING seed {seed}: slow cortex {} kernels, cerebellum {} kernels; at test answers the cerebellum proposed a word at {} and was right at {} ({:.1}%)", column.l23.live(), cb.live(), cb_stats[0], cb_stats[1], 100.0 * cb_stats[1] as f64 / cb_stats[0].max(1) as f64);
+            eprintln!("  LEARNING seed {seed}: slow cortex {} kernels, cerebellum {} kernels{}; at test answers the cerebellum proposed a word at {} and was right at {} ({:.1}%)", column.l23.live(), cb.live(), cb.describe(), cb_stats[0], cb_stats[1], 100.0 * cb_stats[1] as f64 / cb_stats[0].max(1) as f64);
         }
         if let Some(sc) = slow.as_ref() {
             eprintln!("  SLOWCORTEX seed {seed}: {} kernels (the column {}); at test answers it proposed a word at {} and was right at {} ({:.1}%)", sc.live(), column.l23.live(), slow_stats[0], slow_stats[1], 100.0 * slow_stats[1] as f64 / slow_stats[0].max(1) as f64);
@@ -7696,6 +7716,52 @@ fn route_row(word: &BitVector, channels: &[(usize, BitVector)], shares: &[u64], 
 /// The column's L4 row from a current word and its middle frames: the hand layout
 /// (`assemble`), or under ROUTE the routed one, each frame and the previous input a channel
 /// (source = its index in the hand layout) passed whole.
+/// The cerebellum: the cortical kernel class relabelled (the old design) or its own circuit.
+enum Cb {
+    Kernels(neurocomp::program::Cerebellum),
+    Circuit(neurocomp::program::CerebellarCircuit),
+}
+
+impl Cb {
+    fn predict(&mut self, input: &BitVector) -> &BitVector {
+        match self {
+            Cb::Kernels(c) => c.predict(input),
+            Cb::Circuit(c) => c.predict(input),
+        }
+    }
+    fn confidence(&self) -> Q16 {
+        match self {
+            Cb::Kernels(c) => c.confidence(),
+            Cb::Circuit(c) => c.confidence(),
+        }
+    }
+    fn learn<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, target: &BitVector, rng: &mut R) {
+        match self {
+            Cb::Kernels(c) => c.learn(input, target, rng),
+            Cb::Circuit(c) => c.learn(input, target, rng),
+        }
+    }
+    /// every candidate it would offer for `input` (the kernels' union; the circuit's output)
+    fn peek_union(&self, input: &BitVector) -> BitVector {
+        match self {
+            Cb::Kernels(c) => c.kernels.peek_union(input, BITS),
+            Cb::Circuit(c) => c.peek(input),
+        }
+    }
+    fn describe(&self) -> String {
+        match self {
+            Cb::Kernels(_) => String::new(),
+            Cb::Circuit(c) => format!(" (circuit: Golgi threshold {}, granule activity {:.4})", c.golgi_k(), to_f32(c.density())),
+        }
+    }
+    fn live(&self) -> usize {
+        match self {
+            Cb::Kernels(c) => c.live(),
+            Cb::Circuit(c) => c.live(),
+        }
+    }
+}
+
 /// `row` with `frame` appended as one more frame.
 fn with_frame(row: &BitVector, frame: &BitVector) -> BitVector {
     let mut w = row.as_words().to_vec();

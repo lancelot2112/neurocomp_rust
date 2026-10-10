@@ -271,24 +271,27 @@ fn main() {
     let temp: u32 = env("PROSE_TEMP", 20);
     let prompt = std::env::var("PROSE_PROMPT").unwrap_or_else(|_| "alice was".into());
     let mut said: Vec<String> = Vec::new();
-    let mut cur = 0usize;
+    // what the network hears next: the word it said, or, when nothing came out, its own plan
+    // (an efference copy, as in inner speech), so a silent step still moves it on
+    let mut heard = enc.codes[0].clone();
     for w in tokens(&prompt) {
-        cur = *index.get(w.as_str()).unwrap_or(&0);
-        net.step(&enc.codes[cur], false, temp, &mut rng);
+        heard = enc.codes[*index.get(w.as_str()).unwrap_or(&0)].clone();
+        net.step(&heard, false, temp, &mut rng);
         said.push(w);
     }
     let mut silent = 0;
     for _ in 0..env("PROSE_GEN", 200usize) {
-        let st = net.step(&enc.codes[cur], false, temp, &mut rng);
+        let st = net.step(&heard, false, temp, &mut rng);
         let word = motor.plan(&st.plan).and_then(|m| tract.articulate(&m));
         match word {
             Some(w) => {
                 said.push(vocab[w].clone());
-                cur = w;
+                heard = enc.codes[w].clone();
             }
             None => {
                 silent += 1;
                 said.push("…".into());
+                heard = st.plan.clone();
             }
         }
     }

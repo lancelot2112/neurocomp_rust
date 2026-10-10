@@ -50,6 +50,8 @@ struct Seg {
     active: u64,
     silent: u64,
     sticky: u64,
+    /// tagged: confirmed at the cell's last confirmed fire (synaptic tagging, `set_tag_capture`)
+    tag: u64,
 }
 
 impl Seg {
@@ -104,6 +106,8 @@ pub struct BitCells {
     err: Q16,
     /// consolidation into sticky synapses (`set_sticky`)
     sticky_on: bool,
+    /// stickiness by tagging and capture (`set_tag_capture`)
+    tag_capture: bool,
     /// how many trailing frames of the row are basal (input side): 1 (the previous input),
     /// 2 when a further input frame (L2/3's prediction) is appended (`set_basal_tail`)
     basal_tail: usize,
@@ -129,6 +133,7 @@ impl BitCells {
             meta: false,
             err: 0,
             sticky_on: true,
+            tag_capture: false,
             basal_tail: 1,
             sst: ONE / 2,
             vip: 0,
@@ -158,6 +163,26 @@ impl BitCells {
     /// Consolidation on or off: off, no synapse ever becomes sticky.
     pub fn set_sticky(&mut self, on: bool) {
         self.sticky_on = on;
+    }
+
+    /// Stickiness from the data, by synaptic tagging and capture (Frey & Morris 1997): a
+    /// confirmed fire tags the synapses it confirmed (one more mask); a synapse is captured
+    /// into the sticky state only when it is confirmed again while still tagged, active in two
+    /// consecutive confirmed fires of its cell. A contradicted fire clears the tags of the
+    /// synapses that were active. No random consolidation gate: stable contexts consolidate,
+    /// changing ones do not.
+    pub fn set_tag_capture(&mut self, on: bool) {
+        self.tag_capture = on;
+    }
+
+    /// Set (or clear) the tags of cell `c`'s compartment: tags = active synapses on active
+    /// inputs (`keep`), or tags cleared on active inputs (`!keep`).
+    fn retag(&mut self, c: usize, apical: bool, row: &[u64], keep: bool) {
+        let segs = if apical { &mut self.cells[c].apical } else { &mut self.cells[c].basal };
+        for s in segs.iter_mut() {
+            let x = row.get(s.w as usize).copied().unwrap_or(0);
+            s.tag = if keep { s.active & x } else { s.tag & !x };
+        }
     }
 
     /// The number of trailing frames on the input (basal) side (see the field).
@@ -372,6 +397,7 @@ impl BitCells {
         let before = segs[i];
         f(&mut segs[i], bit);
         segs[i].sticky &= segs[i].present();
+        segs[i].tag &= segs[i].present();
         let after = segs[i];
         if after.present() == 0 {
             segs.remove(i);
@@ -493,7 +519,13 @@ impl BitCells {
                         s.active |= m;
                     });
                     // consolidate one active synapse (1/4)
-                    if gate(48 + base, k) {
+                    if self.tag_capture {
+                        // capture one synapse confirmed again while tagged, then re-tag
+                        if self.sticky_on {
+                            self.change(wc, apical, &words, byte(base + 1), |s, x| s.active & x & s.tag & !s.sticky, |s, m| s.sticky |= m);
+                        }
+                        self.retag(wc, apical, &words, true);
+                    } else if gate(48 + base, k) {
                         if self.sticky_on {
                             self.change(wc, apical, &words, byte(base + 1), |s, x| s.active & x & !s.sticky, |s, m| s.sticky |= m);
                         }
@@ -535,6 +567,10 @@ impl BitCells {
                     // this context did not make it right: one active tuft synapse pruned,
                     // and (1/2) one sticky one unstuck
                     self.change(wc, true, &words, byte(0), |s, x| s.active & x & !s.sticky, |s, m| s.active &= !m);
+                    if self.tag_capture {
+                        self.retag(wc, true, &words, false);
+                        self.retag(wc, false, &words, false);
+                    }
                     if gate(48, k - 1) {
                         self.change(wc, true, &words, byte(1), |s, x| s.sticky & x, |s, m| s.sticky &= !m);
                     }
@@ -651,6 +687,25 @@ mod tests {
         assert_eq!(o.as_words(), target(3).as_words());
         // confirmed cells settled: their rate exponent rose
         assert!(l.cells.iter().any(|c| c.k > 2));
+    }
+
+    #[test]
+    fn tag_and_capture_consolidates_repeated_confirmations() {
+        let mut l = BitCells::new(1, 8, 64);
+        l.set_meta(true);
+        l.set_tag_capture(true);
+        let mut rng = rand::rngs::StdRng::seed_from_u64(3);
+        for _ in 0..400 {
+            for (ctx, out) in [(0, 2), (1, 3)] {
+                let r = row(1, ctx);
+                l.predict(&r, 64);
+                l.learn(&r, &target(out), &mut rng);
+            }
+        }
+        let (o, _, _) = l.predict(&row(1, 0), 64).unwrap();
+        assert_eq!(o.as_words(), target(2).as_words());
+        // the stable pattern's synapses were captured
+        assert!(l.cells.iter().any(|c| c.basal.iter().any(|s| s.sticky != 0)));
     }
 
     #[test]

@@ -1787,6 +1787,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // L5_SYN=strength (or bits) keeps PrimedLayer5
     let bitwise = std::env::var("L5_SYN").map_or(true, |v| v == "bitwise");
     let l5_out = bitwise && std::env::var("L5_OUT").is_ok();
+    // L5_OUT=relay: as L5_OUT, but a silent layer 5 relays L2/3's prediction (the thick-tufted
+    // cells' regular firing on L2/3 drive) instead of sending nothing
+    let l5_relay = l5_out && std::env::var("L5_OUT").map_or(false, |v| v == "relay");
     let mut bit23: Option<BitCells> = (bitwise && primed23.is_some()).then(|| BitCells::new(BITS / 64, 16, std::env::var("L23_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(16384)));
     let mut bit5: Option<BitCells> = (bitwise && primed5.is_some()).then(|| BitCells::new(BITS / 64, 16, std::env::var("L5_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(8192)));
     if bitwise {
@@ -1801,6 +1804,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if std::env::var("L5_META").map_or(true, |v| v != "0") {
             for l in bit23.iter_mut().chain(bit5.iter_mut()) {
                 l.set_meta(true);
+            }
+        }
+        // L5_STICK=tag: stickiness by synaptic tagging and capture
+        if std::env::var("L5_STICK").map_or(false, |v| v == "tag") {
+            for l in bit23.iter_mut().chain(bit5.iter_mut()) {
+                l.set_tag_capture(true);
             }
         }
         // L5_STICKY=0: no consolidation into sticky synapses
@@ -5013,6 +5022,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     col_burst = Some(c);
                                 }
                             }
+                            None if l5_relay => {} // L2/3's prediction passes through
                             None => {
                                 out = BitVector::new(BITS, Some(0));
                                 column.set_output(out.clone(), 0);

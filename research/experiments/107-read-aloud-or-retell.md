@@ -600,6 +600,74 @@ out is that the prefrontal cortex updates on salient, surprising input, gated by
 (Braver & Cohen 2000). In "now read it" the verb is the unpredictable word, "now" and "it" are
 not, so a surprise-gated update would hold the verb with no gate to learn first.
 
+## A bitvec striatum
+**Why it was replaced.** The actor-critic's learning rule was generic, but most of what fed it
+was designed for this task:
+- what it saw: hand-picked input groups and three invented mode flags;
+- the actions;
+- when it decided;
+- the reward and where an episode ends;
+- integer weights averaged per group.
+
+Each fix to it (the flag encoding, the bits per flag, the group means) made it more so.
+
+**The striatum, as it is wired:**
+- **It is the basal ganglia's input nucleus.** Layer 5 of nearly all cortex and the thalamus
+  project to it. Its spiny cells (about 95%) are bistable and fire only on many coincident
+  inputs.
+- **Two pathways per action:** D1 cells, the direct "go" pathway, and D2 cells, the indirect
+  "no-go" pathway. They converge on GPi/SNr, which keep the thalamus inhibited until an action is
+  released.
+- **Striosomes project to the dopamine neurons** (the critic); the matrix is the actor.
+- **Learning is three-factor:** a synaptic tag (0.3–2 s, Yagishita et al. 2014) that dopamine
+  converts. A burst gives D1 synapses LTP and D2 synapses LTD; a dip the reverse.
+
+**The bitvec version** ([`src/program/striatum.rs`](../../src/program/striatum.rs)):
+- **Spiny cells are popcount units:** 12 synapses on input bits, firing at 8 active (the up
+  state). A cell is recruited for a state by sampling one active input pathway (topographic
+  input).
+- **Per action, a D1 and a D2 population.** The drive is D1 firing minus D2 firing, plus a little
+  noise; the strongest wins, and the default wins ties.
+- **Striosome cells are the critic:** value is the number firing, each worth half a word.
+  Dopamine is reward + V(next) − V(state), in integers.
+- **Learning is structural.** Recent states and choices stay eligible for 8 steps, credit
+  halving per step back. A burst recruits striosome and go cells and removes no-go cells that
+  fired; a dip the reverse. The number changed follows |δ|.
+- **Tests:** a delayed payoff, and opposite actions learned in two contexts.
+
+**Input is only real activity:**
+- working memory;
+- the last two sounds;
+- layer 2/3 and layer 5;
+- the eye's layer 4 ("a book in view" is visual input);
+- the hippocampus's output ("retrieving" is recall arriving);
+- the held context and the recalled place cells.
+
+The hand-made flags are gone.
+
+**Results** (3,000 trials, everything learned):
+
+| | |
+|---|---|
+| read, same story / another book | 69.5 / 65.2 |
+| reaches after "read it" / "tell it" | 100% / 100% |
+| tell, book closed | 3.8 (silent 95%) |
+| tell, another book (story's / book's) | 34.3 / 58.8 |
+| working memory holds the animal (find) | 72.4% |
+| find: right place | 22.2% (chance 25%) |
+| striatum cells | 4,071 striosome, 23,102 go, 15,422 no-go |
+
+**Findings:**
+- **Reaching is learned again.** The dopamine right after a reach is positive (+1.28 under
+  "read"), where the weighted critic gave −2.4 to −6.3.
+- **Working memory now holds what was asked for:** the animal, 72% of the time, against about 5%
+  before.
+- **Too much reaching:** it reaches under "tell" as well, so another book intrudes on a retelling.
+- **Retelling and finding are still not learned:** the hippocampal gates hold and reinstate at
+  the wrong moments (recall 0%), and the recalled place is at chance.
+- **The striatum churns:** about 1.8 million cells recruited and as many removed. Populations sit
+  at their cap, and the run is about twice as slow.
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.

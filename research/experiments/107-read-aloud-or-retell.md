@@ -113,10 +113,53 @@ hears its own words, these fall to 41–44% and 10–33%.
 5. **The hippocampus needs conjunctive context codes** to keep recalling over thousands of
    episodes. A reused context and single words lose their drive under its presynaptic scaling.
 
+## Practice in its own voice, and a time code
+Learned gate, `RT_TELL=apart`, 3,000 trials. Each cell is the share of words right; for "tell"
+with another story open, the story's word / the book's word.
+
+- **Practice** (`RT_PRACTICE=0.5`): in half the training tasks the network speaks and hears its
+  own words, with the teacher's word as the target. As built, that target is never heard: the
+  correction is an invisible oracle (see below).
+- **Time code** (`RT_HC_TIME=1`): 32 more bits in the hippocampal cue, from the story and the
+  position in the telling, as time cells give. A cue whose last words were wrong still matches
+  in time.
+
+| Asked | Book | Neither | Practice | Time code | Both |
+|---|---|---|---|---|---|
+| read | same story | 76.1 | 77.7 | 80.2 | 58.3 |
+| read | another story | 69.4 | 75.1 | 60.3 | 53.1 |
+| tell | same story | 71.5 | 69.7 | 80.3 | 57.2 |
+| tell | another story | 40.7 / 56.5 | 37.8 / 61.4 | **51.1** / 55.0 | 36.0 / 46.2 |
+| tell | closed | 33.1 | 16.2 | **48.9** | 44.0 |
+| | recall right at test | 86% | 65% | **97%** | 91% |
+| | gate's value of loading "tell" | 0.06 | 0.08 | **0.32** | 0.25 |
+
+- **The time code is what helps retelling:** with the book closed, 33 → 49% of words right. With
+  another book open, the story's word now comes about as often as the book's (51 / 55). Recall at
+  test reaches 97%, and the gate starts to value holding "tell" (0.32). Reading another book
+  falls (69 → 60): the remembered story now competes with the eye.
+- **Practice hurts.** Retelling with the book closed falls to 16%. Its own wrong words gave the
+  hippocampus wrong cues during training (recall right 68% instead of 95%), and the cortex learned
+  from those. With the time code, practice cost 4–22 points everywhere.
+
+**Not plausible as built.** Several triggers here are set by the driver, not learned or
+heard:
+- **The practice correction is never heard:** an invisible oracle. The plausible version: the
+  teacher says the correct word aloud, and the network learns from hearing it.
+- **The hippocampus stores only while listening.** It should store everything, gated by
+  novelty.
+- **The eye moves one word per step,** in lockstep with the teacher. It should be driven by
+  saccades from the learned control loop.
+- **The driver starts each story's context and counts the time code.** These should come from
+  learned event boundaries, with time cells that reset at a boundary.
+- **The driver ends an invented story** at "home ." or 40 words. The network should stop by a
+  learned go/no-go on speaking.
+- **The prefrontal gate keeps its values per word number,** where it should be keyed by the
+  heard pattern.
+
 ## Next
-- **Practice in its own voice.** In some training trials the network speaks and hears itself,
-  with the teacher's word as the target (scheduled sampling, as a child practises with
-  correction), so recall learns to recover from its own errors.
+- **Replace the hand-set triggers above,** starting with a heard correction in practice.
+- **Free invention** (`RT_MAKE=1`, "now make one"): built and smoke-tested; full run pending.
 - **Credit for the gate per instruction.** Compare the reward with what the same trial type
   usually earns, not the overall average, so holding "tell" is credited.
 - **Seeds 1–4** for every column.

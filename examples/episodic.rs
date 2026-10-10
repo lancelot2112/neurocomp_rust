@@ -1016,8 +1016,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // copy of the column's input (cortex → pons → mossy fibres) and whose prediction returns
     // through the thalamus (deep nuclei → thalamus → cortex) as a routed channel before the
     // cortex predicts (with ROUTE), and votes in the mix. The hippocampus is the third.
-    let three = std::env::var("LEARNING").map_or(false, |v| v == "three");
-    let slow_p: Q16 = q16(std::env::var("SLOW_P").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0 / 16.0));
+    // Default (experiment 106): three learning systems, separated: a slow cortex, the
+    // cerebellar circuit (fast, error-driven) and the hippocampus (one-shot). LEARNING=one
+    // restores the single fast cortex.
+    let three = std::env::var("LEARNING").map_or(true, |v| v != "one");
+    let slow_p: Q16 = q16(std::env::var("SLOW_P").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(if three { 0.25 } else { 1.0 / 16.0 }));
     let slow_gen: f32 = std::env::var("SLOW_GEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0.5);
     let make_l23 = |generalize: Option<f32>| -> KernelClass<SimpleKernel> {
     let mut class: KernelClass<SimpleKernel> = KernelClass::predictive(GrowthConfig {
@@ -1541,8 +1544,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // REPLAY_PREDICT=1: a replayed trace is predicted before it is learned. Learning credits
     // hits and misses to the kernels that matched at the last prediction, and grows from the
     // last winner; without it, replay was credited against the last awake step's matches.
-    let replay_predict = std::env::var("REPLAY_PREDICT").is_ok();
-    let sleep_p: Option<Q16> = std::env::var("SLEEP_P").ok().and_then(|v| v.parse::<f64>().ok()).map(q16);
+    // with three systems by default: replay predicts before it learns (94), and sleep opens the
+    // slow cortex's plasticity (SLEEP_P=1)
+    let replay_predict = std::env::var("REPLAY_PREDICT").map_or(three, |v| v != "0");
+    let sleep_p: Option<Q16> = std::env::var("SLEEP_P").ok().and_then(|v| v.parse::<f64>().ok()).or(three.then_some(1.0)).map(q16);
     let mut trace_rows: Vec<BitVector> = Vec::new(); // the column's input at each trace's answer
     // DA=1: the dopamine–novelty loop (Lisman & Grace 2005). Each consolidation trace carries
     // a dopamine level: the hippocampus's novelty for the event when it is laid down (CA1's
@@ -7874,7 +7879,7 @@ fn route_extra_slots() -> usize {
             // HC_EC: the entorhinal feedback slot; INNER_SLOT: the heard slot
             return std::env::var("HC_EC").is_ok() as usize + std::env::var("INNER_SLOT").is_ok() as usize;
         }
-        let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(false, |v| v == "three") as usize + std::env::var("QQUERY").is_ok() as usize;
+        let default = std::env::var("HC_ROUTE").is_ok() as usize + std::env::var("LEARNING").map_or(true, |v| v != "one") as usize + std::env::var("QQUERY").is_ok() as usize;
         std::env::var("ROUTE_EXTRA").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
     })
 }

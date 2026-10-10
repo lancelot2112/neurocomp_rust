@@ -252,6 +252,8 @@ impl Net {
                 cfg.decay = env("RT_HC_DECAY", 0.999f32);
                 cfg.center = std::env::var("RT_HC_CENTER").is_ok();
                 cfg.scale_all = std::env::var("RT_HC_SCALE").is_ok();
+                // RT_HC_WRITES=lifetime: familiarity counts that never decay (the first version)
+                cfg.decay_writes = std::env::var("RT_HC_WRITES").map_or(true, |v| v != "lifetime");
                 Hippocampus::new(cfg)
             },
         }

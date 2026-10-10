@@ -97,6 +97,10 @@ pub struct HippocampusConfig {
     /// before the k winners are chosen. The subtracted shares add up to the total drive,
     /// so crosstalk has mean zero; much-used cells no longer win by bulk. No division.
     pub center: bool,
+    /// The write counts behind presynaptic scaling decay with the weights: halved every
+    /// half-life of stores, so an input's familiarity is its recent use, not its lifetime
+    /// total (with lifetime counts, inputs reused over many episodes lose all their drive).
+    pub decay_writes: bool,
     pub seed: u64,
 }
 
@@ -123,6 +127,7 @@ impl HippocampusConfig {
             out_bits: 0,
             hashed_fan_out: None,
             center: false,
+            decay_writes: false,
             seed,
         }
     }
@@ -421,6 +426,11 @@ impl Hippocampus {
         self.novelty_sum.0 += novelty as u64;
         self.novelty_sum.1 += 1;
         self.stores += 1;
+        if self.cfg.decay_writes && self.stores % self.half_life == 0 {
+            for w in self.perforant_writes.iter_mut().chain(self.ca3_writes.iter_mut()) {
+                *w >>= 1;
+            }
+        }
         let (epoch, planes) = (self.epoch(), self.planes);
         let base = self.amounts[(self.stores % self.half_life) as usize] as u64;
         let factor = ONE as u64 + ((self.cfg.novelty_gain as u64 * novelty as u64) >> 16); // 1 + gain · novelty, Q16

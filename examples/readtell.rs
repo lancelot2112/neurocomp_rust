@@ -402,9 +402,26 @@ fn main() {
     let eye = Encoder::new(vocab.len(), BITS, ACTIVE, &mut rng);
     // the sound of silence: what the ear hears before anyone speaks
     let silence = Encoder::new(1, BITS, ACTIVE, &mut rng).codes[0].clone();
-    let tract = VocalTract::new(vocab.len(), BITS, ACTIVE, &mut rng);
+    let tract = VocalTract::new(vocab.len() + 1, BITS, ACTIVE, &mut rng);
     let mut motor = MotorArea::new(BITS);
-    motor.babble(&tract, &ear.codes, 3, &mut rng);
+    // RT_STOP=learned (default): silence is a sound the tract can make (closing the mouth),
+    // learned by babbling like the words; the teacher's silence after the last word is heard,
+    // so the network learns to predict the end, and stops by saying silence. RT_STOP=hand:
+    // the driver ends an invented story at "home ." (and silence is not a sound)
+    let stop_learned = std::env::var("RT_STOP").map_or(true, |v| v != "hand");
+    let quiet = vocab.len();
+    let sounds: Vec<BitVector> = ear.codes.iter().cloned().chain(stop_learned.then(|| silence.clone())).collect();
+    motor.babble(&tract, &sounds, 3, &mut rng);
+    // a word said: None for nothing said or (with the learned stop) silence
+    let say = |plan: &BitVector| motor.plan(plan).and_then(|m| tract.articulate(&m));
+    // RT_CORRECT=heard (default): in practice, a wrong word is followed by the teacher saying
+    // the right one aloud, which the network hears; RT_CORRECT=oracle: the teacher's word is
+    // the target without being heard (the first version)
+    let heard_correction = std::env::var("RT_CORRECT").map_or(true, |v| v != "oracle");
+    // RT_HC_STORE=all (default): the hippocampus stores every word heard (the instruction,
+    // the task, its own speech), its novelty setting the strength; RT_HC_STORE=listen: only
+    // the story as first heard
+    let store_all = std::env::var("RT_HC_STORE").map_or(true, |v| v != "listen");
     let mut net = Net::new(seed);
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let tell_apart = std::env::var("RT_TELL").map_or(false, |v| v == "apart");
@@ -420,6 +437,8 @@ fn main() {
     let mut res_noinstr = [[Tally::default(); 3]; 2];
     let mut train_right = (0usize, 0usize);
     let mut practice_right = (0usize, 0usize);
+    let mut corrections = 0usize;
+    let mut stopped_itself = 0usize;
     // invented stories at test: (the story heard just before, what it said); every story the
     // network heard or saw in training
     let mut invented: Vec<(Vec<&str>, Vec<&str>)> = Vec::new();
@@ -453,6 +472,9 @@ fn main() {
             let st = net.step(&zero(), heard, &rec, learn, 0, &mut rng);
             if learn && t + 1 < s.len() {
                 net.learn(&st, &ear.codes[id(s[t + 1])], &mut rng);
+            } else if learn && stop_learned {
+                // the teacher stops: silence is heard next
+                net.learn(&st, &silence, &mut rng);
             }
             net.hc.store_split(&ones(heard), &cue, &ones(heard));
             prev2 = prev.replace(heard.clone());
@@ -492,8 +514,14 @@ fn main() {
             Book::Closed => Vec::new(),
         };
         let verb = if make { "make" } else if read { "read" } else { "tell" };
-        for w in ["now", verb, if make { "one" } else { IT }] {
+        let (mut ip, mut ip2): (Option<BitVector>, Option<BitVector>) = (None, None);
+        for (it, w) in ["now", verb, if make { "one" } else { IT }].into_iter().enumerate() {
             let wi = id(w);
+            if store_all {
+                let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
+                net.hc.store_split(&ones(&ear.codes[wi]), &cue, &ones(&ear.codes[wi]));
+                ip2 = ip.replace(ear.codes[wi].clone());
+            }
             if fixed_gate {
                 if w == verb {
                     net.wm.load(0, &ear.codes[wi]);
@@ -512,14 +540,23 @@ fn main() {
             if !no_instr {
                 let mut said_words: Vec<&str> = Vec::new();
                 let (mut prev, mut prev2): (Option<BitVector>, Option<BitVector>) = (None, None);
+                let mut stopped = false;
                 for t in 0..40 {
                     let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
                     let rec = net.recall(&cue);
                     let heard = prev.clone().unwrap_or_else(zero);
                     let st = net.step(&zero(), &heard, &rec, false, make_temp, &mut rng);
-                    match motor.plan(&st.plan).and_then(|m| tract.articulate(&m)) {
+                    match say(&st.plan) {
+                        Some(w) if w == quiet => {
+                            // it says nothing more: the story is over
+                            stopped = true;
+                            break;
+                        }
                         Some(w) => {
                             said_words.push(vocab[w]);
+                            if store_all {
+                                net.hc.store_split(&ones(&ear.codes[w]), &cue, &ones(&ear.codes[w]));
+                            }
                             prev2 = prev.replace(ear.codes[w].clone());
                         }
                         None => {
@@ -527,10 +564,12 @@ fn main() {
                             prev2 = prev.replace(st.plan.clone());
                         }
                     }
-                    if said_words.ends_with(&["home", "."]) {
+                    if !stop_learned && said_words.ends_with(&["home", "."]) {
+                        stopped = true;
                         break;
                     }
                 }
+                stopped_itself += stopped as usize;
                 invented.push((s.clone(), said_words));
             }
             continue;
@@ -575,19 +614,32 @@ fn main() {
                 train_right.1 += 1;
                 net.learn(&st, &ear.codes[want], &mut rng);
                 if practice {
-                    // the network says it and hears itself; the teacher's word is the target
-                    let said = motor.plan(&st.plan).and_then(|m| tract.articulate(&m));
-                    practice_right.0 += (said == Some(want)) as usize;
+                    // the network says it and hears itself
+                    let said = say(&st.plan).filter(|&w| w != quiet);
+                    let ok = said == Some(want);
+                    practice_right.0 += ok as usize;
                     practice_right.1 += 1;
-                    if !fixed_gate {
-                        net.gate.reward(if said == Some(want) { ONE as i32 } else { 0 }, &mut rng);
+                    if let Some(w) = said {
+                        prev2 = prev.replace(ear.codes[w].clone());
+                        net.hear_gate(w, &ear.codes[w], !fixed_gate, &mut rng);
+                    } else {
+                        prev2 = prev.replace(st.plan.clone());
                     }
-                    match said {
-                        Some(w) => {
-                            prev2 = prev.replace(ear.codes[w].clone());
-                            net.hear_gate(w, &ear.codes[w], !fixed_gate, &mut rng);
+                    if heard_correction && !ok {
+                        // the teacher says the right word aloud, and it is heard
+                        prev2 = prev.replace(ear.codes[want].clone());
+                        net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
+                        corrections += 1;
+                    }
+                    // credit: no correction came (with the oracle: the unheard comparison)
+                    if !fixed_gate {
+                        net.gate.reward(if ok { ONE as i32 } else { 0 }, &mut rng);
+                    }
+                    if store_all {
+                        let w = if ok || heard_correction { Some(want) } else { said };
+                        if let Some(w) = w {
+                            net.hc.store_split(&ones(&ear.codes[w]), &cue, &ones(&ear.codes[w]));
                         }
-                        None => prev2 = prev.replace(st.plan.clone()),
                     }
                 } else {
                     if !fixed_gate {
@@ -596,9 +648,12 @@ fn main() {
                     // the teacher's word is heard
                     prev2 = prev.replace(ear.codes[want].clone());
                     net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
+                    if store_all {
+                        net.hc.store_split(&ones(&ear.codes[want]), &cue, &ones(&ear.codes[want]));
+                    }
                 }
             } else {
-                let said = motor.plan(&st.plan).and_then(|m| tract.articulate(&m));
+                let said = say(&st.plan).filter(|&w| w != quiet);
                 if trace > 0 && book == Book::Closed && !read && t < 6 {
                     trace -= (t == 5) as usize;
                     let near = ear.decode(&st.plan).map_or("-", |w| vocab[w]);
@@ -623,6 +678,9 @@ fn main() {
                         if !fixed_gate {
                             net.hear_gate(w, &ear.codes[w], false, &mut rng);
                         }
+                        if store_all {
+                            net.hc.store_split(&ones(&ear.codes[w]), &cue, &ones(&ear.codes[w]));
+                        }
                     }
                     None => {
                         tally.silent += 1;
@@ -630,6 +688,14 @@ fn main() {
                     }
                 }
             }
+        }
+        if learn && stop_learned && !target.is_empty() {
+            // the task is done and the teacher falls silent: silence is the next sound
+            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(target.len()));
+            let rec = net.recall(&cue);
+            let heard = prev.clone().unwrap_or_else(zero);
+            let st = net.step(&zero(), &heard, &rec, true, 0, &mut rng);
+            net.learn(&st, &silence, &mut rng);
         }
         if testing {
             let bi = books.iter().position(|b| *b == book).unwrap();
@@ -695,18 +761,22 @@ fn main() {
             len += w.len();
         }
         println!(
-            "\ninvented stories (\"now make one\", relay noise {make_temp}): {n}; {:.1} words long on average; sentences grammatical {:.1}%; begin and end as a story {:.1}%; and every sentence grammatical {:.1}%; well formed and coherent (one name, its pronoun, one animal) {:.1}%; well formed and never heard in training {:.1}%; a copy of the story just heard {:.1}%",
+            "\ninvented stories (\"now make one\", relay noise {make_temp}): {n}; {:.1} words long on average; sentences grammatical {:.1}%; begin and end as a story {:.1}%; and every sentence grammatical {:.1}%; well formed and coherent (one name, its pronoun, one animal) {:.1}%; well formed and never heard in training {:.1}%; a copy of the story just heard {:.1}%; ended by itself {:.1}%",
             len as f64 / n.max(1) as f64,
             pct(ok, sent),
             pct(framed, n),
             pct(well, n),
             pct(coherent, n),
             pct(novel, n),
-            pct(copied, n)
+            pct(copied, n),
+            pct(stopped_itself, n)
         );
         for (_, w) in invented.iter().take(8) {
             println!("  {}", w.join(" "));
         }
+    }
+    if practice_p > 0.0 {
+        println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });
     }
     let (rd, tl) = (net.gate.value(Gate::Load, id("read")), net.gate.value(Gate::Load, id("tell")));
     let (nw, it, the) = (net.gate.value(Gate::Load, id("now")), net.gate.value(Gate::Load, id(IT)), net.gate.value(Gate::Load, id("the")));

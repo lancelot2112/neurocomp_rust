@@ -1682,7 +1682,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // already speaking, novel sentence), rewarded at the answer less STEP_COST a step.
     // What is said is not chosen among sources: memory, the semantic store and the higher
     // area act only through the prediction they shaped.
-    let inner_speech = complete.as_deref().map_or(false, |m| m.starts_with("speech"));
+    // INNER_TRAIN=1: inner speech during training only, whatever the completion at test (so it can
+    // be measured on top of the rollout)
+    let inner_train = std::env::var("INNER_TRAIN").is_ok();
+    let inner_speech = inner_train || complete.as_deref().map_or(false, |m| m.starts_with("speech"));
     let inner_learned = std::env::var("INNER_GATE").map_or(false, |v| v == "learned");
     // INNER_GATE=pfc: inner speech driven by a control loop instead of rules. Monitoring (an
     // anterior-cingulate-like conflict signal: how many words the sources proposed in the
@@ -5600,7 +5603,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
                 // inner speech: surprised by the page, the network says its prediction to
                 // itself and hears it before reading on
-                if inner_speech && !replaying && !reciting && rolled < 4 && (testing || complete.as_deref() == Some("speech")) && t + 1 != s.answer_at && s.words[t + 1] != "." {
+                let inner_now = if inner_train { !testing } else { testing || complete.as_deref() == Some("speech") };
+                if inner_speech && !replaying && !reciting && rolled < 4 && inner_now && t + 1 != s.answer_at && s.words[t + 1] != "." {
                     // INNER_WHEN=definite: only where the column's own expectation holds one
                     // word (as the rollout's trigger), or while already speaking
                     let ex = column.l23.peek_union(&input, BITS);

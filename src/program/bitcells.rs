@@ -111,6 +111,9 @@ pub struct BitCells {
     /// how many trailing frames of the row are basal (input side): 1 (the previous input),
     /// 2 when a further input frame (L2/3's prediction) is appended (`set_basal_tail`)
     basal_tail: usize,
+    /// clustered input (`set_clustered`): a committing cell takes its synapses from one input
+    /// frame, as synapses from one pathway cluster on a dendritic branch
+    clustered: bool,
     sst: Q16,
     vip: Q16,
     cached: Option<(Vec<u64>, Eval)>,
@@ -135,6 +138,7 @@ impl BitCells {
             sticky_on: true,
             tag_capture: false,
             basal_tail: 1,
+            clustered: false,
             sst: ONE / 2,
             vip: 0,
             cached: None,
@@ -220,6 +224,14 @@ impl BitCells {
             let x = row.get(s.w as usize).copied().unwrap_or(0);
             s.tag = if keep { s.active & x } else { s.tag & !x };
         }
+    }
+
+    /// Clustered input: a committing cell samples its basal synapses from one active input
+    /// frame (chosen at random among those with activity) instead of the whole basal row, so
+    /// cells read one pathway each (eye, ear, memory, recurrent) and generalise across the
+    /// others (synaptic clustering by input: Kleindienst et al. 2011, Takahashi et al. 2012).
+    pub fn set_clustered(&mut self, on: bool) {
+        self.clustered = on;
     }
 
     /// The number of trailing frames on the input (basal) side (see the field).
@@ -640,7 +652,17 @@ impl BitCells {
         // commitment: the most primed free cell takes this input (silent basal synapses)
         if !confirmed && !basal.is_empty() {
             if let Some(&(c, _)) = e.free_primed.iter().max_by_key(|x| (x.1, std::cmp::Reverse(x.0))) {
-                let pick: Vec<u32> = basal.choose_multiple(rng, self.sample.min(basal.len())).copied().collect();
+                let pool: Vec<u32> = if self.clustered {
+                    // one active input frame, chosen at random
+                    let fbits = (self.frame_words * 64) as u32;
+                    let mut fs: Vec<u32> = basal.iter().map(|&b| b / fbits).collect();
+                    fs.dedup();
+                    let f = fs[rng.gen_range(0..fs.len())];
+                    basal.iter().copied().filter(|&b| b / fbits == f).collect()
+                } else {
+                    basal.clone()
+                };
+                let pick: Vec<u32> = pool.choose_multiple(rng, self.sample.min(pool.len())).copied().collect();
                 for b in pick {
                     self.add_synapse(c, false, b, false);
                 }

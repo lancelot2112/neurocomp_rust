@@ -415,19 +415,22 @@ impl Net {
     }
 }
 
-/// What the striatum sees: the prefrontal content, the association area's assembly for the last
-/// sound heard, and mode signals (each true flag 8 bits), as one pattern of active bits.
-fn state_bits(pfc: &BitVector, heard: &BitVector, flags: &[bool], place: Option<usize>) -> Vec<usize> {
+/// What the striatum sees: the prefrontal content, the association area's assemblies for the
+/// last sound heard and the one before, and mode signals (each true flag 24 bits), as one pattern
+/// of active bits.
+fn state_bits(pfc: &BitVector, heard: &BitVector, before: &BitVector, flags: &[bool], place: Option<usize>) -> Vec<usize> {
     let mut v = ones(pfc);
     v.extend(ones(heard).into_iter().map(|b| b + BITS));
+    // the sound before (the cortex keeps it active a moment: an auditory trace)
+    v.extend(ones(before).into_iter().map(|b| b + 3 * BITS));
     for (i, &f) in flags.iter().enumerate() {
         if f {
-            v.extend((0..8).map(|k| 2 * BITS + i * 8 + k));
+            v.extend((0..24).map(|k| 2 * BITS + i * 24 + k));
         }
     }
-    // the place the hippocampus recalled for what is held (8 bits per place)
+    // the place the hippocampus recalled for what is held (24 bits per place)
     if let Some(k) = place {
-        v.extend((0..8).map(|j| 2 * BITS + 64 + k * 8 + j));
+        v.extend((0..24).map(|j| 2 * BITS + 128 + k * 24 + j));
     }
     v
 }
@@ -457,11 +460,13 @@ const CONTENT_BASE: usize = CTX_POOL + 4096;
 ///   content: the ear's layer 4 cells active when the next sound was heard. Recall is "which
 ///   row had this context"; it reinstates those cells, layer 2/3 completes the assembly, and the
 ///   cortex says the word. Content comes back through the cortex (or by rereading).
-/// - **Retrieval mode:** while a reinstated episode keeps predicting what is heard, nothing new
-///   is stored, so its own retelling does not overwrite the memory it reads, and only then does
-///   recall reach the cortex (Hasselmo's separate encoding and retrieval modes). A mismatch in
-///   what is heard (novelty; its own speech does not count) returns it to encoding, as does
-///   holding a new episode's start.
+/// - **Retrieval mode:** the prefrontal cortex requests retrieval (reinstating; the nucleus
+///   reuniens route), and the hippocampus retrieves while the request stands and acetylcholine
+///   is low. Then nothing new is stored, so its own retelling does not overwrite the memory it
+///   reads, and only then does recall reach the cortex (Hasselmo's encoding and retrieval
+///   modes). Novelty, a mismatch between recall and what others say (its own speech does not
+///   count), raises acetylcholine, which holds it in encoding until it decays; holding a new
+///   episode's start withdraws the request.
 /// - **Reconsolidation:** when the cortex completes a recalled pointer to an assembly that
 ///   still holds at least half the pointed cells, the row is relearned to the assembly as it is
 ///   now, so the index follows layer 4's drift.
@@ -486,7 +491,12 @@ struct IndexHc {
     last_recalled: Option<u32>,
     /// the row recalled since the last sound heard, to relearn if the cortex completes it
     to_reconsolidate: Option<u32>,
-    retrieving: bool,
+    /// the prefrontal cortex's standing request to retrieve (through the nucleus reuniens):
+    /// set by reinstating, cleared by holding a new episode's start
+    request: bool,
+    /// acetylcholine (`Q16`): raised by novelty (the CA1 comparator's mismatch with what others
+    /// say, through the septum), decaying each step; high, it holds the hippocampus in encoding
+    ach: u32,
     /// the output reaches the cortex only in retrieval mode
     gate_output: bool,
     plan: BitVector,
@@ -520,7 +530,8 @@ impl IndexHc {
             last_word: 0,
             last_recalled: None,
             to_reconsolidate: None,
-            retrieving: false,
+            request: false,
+            ach: 0,
             gate_output: std::env::var("RT_HC_OUT").map_or(true, |v| v != "always"),
             plan: zero(),
             boundaries: 0,
@@ -593,7 +604,7 @@ impl IndexHc {
         let mut v = zero();
         // in encoding mode the hippocampus's output to the cortex is suppressed (Hasselmo): what
         // reaches the cortex is a memory being retrieved, never a guess during new input
-        if self.gate_output && !self.retrieving {
+        if self.gate_output && !self.retrieving() {
             return v;
         }
         for &b in r.ec.iter().filter(|&&b| b < BITS) {
@@ -610,6 +621,8 @@ impl IndexHc {
     /// `heard`: the content keys: the association area's assembly for what is seen while a
     /// book is in view, else for the sound alone.
     fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, heard: &BitVector, store: bool, own: bool) -> bool {
+        // acetylcholine decays each step (a quarter)
+        self.ach -= self.ach / 4;
         let surprise = ONE - (overlap(&self.plan, code).min(ACTIVE as u32) * ONE / ACTIVE as u32);
         self.boundary.learn(surprise);
         let cells = ones(cells);
@@ -624,15 +637,16 @@ impl IndexHc {
                 self.mem.reconsolidate(r, &cells);
                 self.relearned += 1;
             }
-            // a mismatch is novelty, and novelty returns the hippocampus to encoding; its own
-            // speech is not novel (corollary discharge damps the response to self-made sounds)
+            // a mismatch is novelty: it raises acetylcholine, which holds the hippocampus in
+            // encoding until it decays; its own speech is not novel (corollary discharge damps
+            // the response to self-made sounds)
             if !matched && !own {
-                self.retrieving = false;
+                self.ach += (ONE - self.ach.min(ONE)) / 2;
             }
         }
-        // retrieval mode: while a held episode is being reinstated, nothing new is stored
-        // (encoding and retrieval are separate modes, Hasselmo)
-        if store && !self.retrieving && !cells.is_empty() {
+        // retrieval mode (requested and acetylcholine low): nothing new is stored (encoding and
+        // retrieval are separate modes, Hasselmo)
+        if store && !self.retrieving() && !cells.is_empty() {
             // the keys: the context, the place (if a book from the shelf is in view), and the
             // content (the assembly), so the episode can be completed from any of them
             let mut keys = self.ctx.clone();
@@ -652,6 +666,12 @@ impl IndexHc {
             self.drift(&cells, self.ctx.len() / 2, 2);
         }
         fired
+    }
+
+    /// Retrieval mode: the prefrontal request stands and acetylcholine is low (Hasselmo: high
+    /// acetylcholine favours encoding, low favours retrieval).
+    fn retrieving(&self) -> bool {
+        self.request && self.ach < ONE / 2
     }
 
     /// A reach (a motor act that brings a new scene, a book) is an event boundary: the context
@@ -694,7 +714,7 @@ impl IndexHc {
     /// The prefrontal cortex holds the context in force: where this episode begins.
     fn hold(&mut self) {
         self.held = Some(self.ctx.clone());
-        self.retrieving = false;
+        self.request = false;
         self.holds += 1;
     }
 
@@ -703,7 +723,7 @@ impl IndexHc {
         if let Some(h) = self.held.clone() {
             self.ctx = h;
             self.last_recalled = None;
-            self.retrieving = true;
+            self.request = true;
             self.reinstated += 1;
         }
     }
@@ -768,6 +788,9 @@ fn main() {
     // the striatum: one critic, and an actor channel per gate (reach, hold, reinstate, load into
     // working memory); dopamine is the TD error, the reward the words that come out right
     let mut striatum = Striatum::new(1 << 18);
+    // a trial is a finite episode: no discounting within it (an extra step, such as the event a
+    // reach makes, costs nothing); the eligibility traces still decay by lambda
+    striatum.gamma = ONE;
     let mut shelf: Vec<Vec<&str>> = Vec::new();
     for k in 0..shelf_k {
         let b = shelf_book(&mut rng, &shelf, k);
@@ -777,6 +800,8 @@ fn main() {
     let mut find_stats = (0usize, 0usize, 0usize, 0usize, 0usize);
     // all "find" trials: (trials, working memory held the animal, recalled the right place, recalled a place)
     let mut find_diag = (0usize, 0usize, 0usize, 0usize);
+    // training read trials: words planned right without and with a reach
+    let mut read_by_reach = [(0usize, 0usize); 2];
     // per (instruction read/tell, book): (trials, reached, words before the reach), at test
     let mut reach_stats = [[(0usize, 0usize, 0usize); 3]; 2];
     // RT_HC_STORE=all (default): the hippocampus stores every word heard (the instruction,
@@ -786,7 +811,9 @@ fn main() {
     let mut net = Net::new(seed);
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let td_debug = std::env::var("RT_TD_DEBUG").is_ok();
-    let reward_all = std::env::var("RT_REWARD").map_or(true, |v| v != "task");
+    // the striatum's reward is the outcome: words said right in the task (the teacher's
+    // words); RT_REWARD=all also rewards every heard word the cortex predicted
+    let reward_all = std::env::var("RT_REWARD").map_or(false, |v| v == "all");
     // RT_HC=index (default): the hippocampus as a growing index with learned event boundaries
     // (`IndexHc`); RT_HC=circuit: the fixed circuit cued by the driver's story context
     // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
@@ -806,6 +833,7 @@ fn main() {
     // the association area's assembly for the last sound heard, and whether the book is open:
     // part of what the striatum sees
     let mut last_assoc: BitVector = zero();
+    let mut prev_assoc: BitVector = zero();
     let mut book_seen = false;
     // the place the hippocampus recalled for what is held (in "find" trials)
     let mut recalled_place: Option<usize> = None;
@@ -825,7 +853,7 @@ fn main() {
                     false
                 }
             };
-            last_assoc = cells;
+            prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, $explore);
             // the prefrontal gate: load what was just heard into working memory, or keep
             if !fixed_gate && striatum.choose(CH_LOAD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
@@ -837,8 +865,8 @@ fn main() {
     // reinstate what is held, or (at a boundary) hold where this episode begins
     macro_rules! td_step {
         ($fired:expr, $explore:expr) => {{
-            let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.retrieving, x.held.is_some()));
-            let state = state_bits(&net.wm.content(), &last_assoc, &[book_seen, retr, held], recalled_place);
+            let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.request, x.held.is_some()));
+            let state = state_bits(&net.wm.content(), &last_assoc, &prev_assoc, &[book_seen, retr, held], recalled_place);
             striatum.begin(&state, $explore);
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
@@ -918,16 +946,15 @@ fn main() {
                 if t == 0 && ix_oracle {
                     let x = ix.as_mut().unwrap();
                     x.held = Some(x.ctx.clone());
-                    x.retrieving = false;
+                    x.request = false;
                 }
                 hc_hear!(w, &cue, true, learn, false);
             }
             let rec = hc_recall!(&cue);
             let st = net.step(&zero(), heard, &rec, learn, 0, &mut rng);
             hc_plan!(st);
-            // the reward, with RT_REWARD=all (default): a heard word the cortex predicted (a
-            // sensory prediction error is a dopamine signal too), so a gate that spoils the
-            // prediction while listening pays for it at once. RT_REWARD=task: only words in the task
+            // with RT_REWARD=all, a heard word the cortex predicted is a reward too (the default
+            // rewards only outcomes; the cortex learns its predictions locally)
             if learn && reward_all {
                 let next = if t + 1 < s.len() { &ear.codes[id(s[t + 1])] } else { &silence };
                 if overlap(&st.plan, next) >= 24 {
@@ -964,7 +991,7 @@ fn main() {
         if ix.is_some() {
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
             let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
-            last_assoc = cells;
+            prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, learn);
         }
         let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
@@ -1019,7 +1046,7 @@ fn main() {
                 if let Some(h) = x.held.clone() {
                     x.ctx = h;
                     x.last_recalled = None;
-                    x.retrieving = true;
+                    x.request = true;
                 }
             }
         }
@@ -1110,10 +1137,10 @@ fn main() {
                 if ix.is_some() {
                     let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
                     let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
-                    last_assoc = cells;
+                    prev_assoc = std::mem::replace(&mut last_assoc, cells);
                     td_step!(fired, learn);
                 } else {
-                    last_assoc = net.assoc_of(&zero(), &silence, false, &mut rng);
+                    prev_assoc = std::mem::replace(&mut last_assoc, net.assoc_of(&zero(), &silence, false, &mut rng));
                     td_step!(false, learn);
                 }
                 if find {
@@ -1280,7 +1307,7 @@ fn main() {
             // the pause after the task
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
             let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
-            last_assoc = cells;
+            prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, learn);
             let task_log: Vec<bool> = ix.as_mut().unwrap().log.drain(..).map(|l| l.0).collect();
             if trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr {
@@ -1305,6 +1332,11 @@ fn main() {
                 debug_v0 as f64 / ONE as f64,
                 debug_p0 as f64 / ONE as f64
             );
+        }
+        if learn && read {
+            let k = reached_at.is_some() as usize;
+            read_by_reach[k].0 += debug_right;
+            read_by_reach[k].1 += target.len();
         }
         striatum.end(learn);
         recalled_place = None;
@@ -1435,6 +1467,13 @@ fn main() {
             println!("  {}", w.join(" "));
         }
     }
+    println!(
+        "\ntraining read trials, words planned right: without reaching {:.1}% of {}, after reaching {:.1}% of {}",
+        pct(read_by_reach[0].0, read_by_reach[0].1),
+        read_by_reach[0].1,
+        pct(read_by_reach[1].0, read_by_reach[1].1),
+        read_by_reach[1].1
+    );
     if shelf_k > 0 {
         println!(
             "\nfinding a book on the shelf ({} places; test, instruction held): {} trials; reached the right place {:.1}% (chance {:.1}%), reached a place {:.1}%; words read right {:.1}%",
@@ -1499,8 +1538,9 @@ fn main() {
         // the striatum's preference for reaching over waiting, holding "read" or "tell" and
         // having just heard "it"
         let heard_it = net.assoc_of(&zero(), &ear.codes[id(IT)], false, &mut rng);
-        let pref = |v: &str| {
-            let st = state_bits(&ear.codes[id(v)], &heard_it, &[false, false, false], None);
+        let mut pref = |v: &str| {
+            let before = net.assoc_of(&zero(), &ear.codes[id(v)], false, &mut rng);
+            let st = state_bits(&zero(), &heard_it, &before, &[false, false, false], None);
             (striatum.preference(&st, CH_REACH, 1) - striatum.preference(&st, CH_REACH, 0)) as f64 / ONE as f64
         };
         println!("\nreaching for the book (test, instruction held):{line} preference for reaching over waiting after \"read it\" {:+.2}, \"tell it\" {:+.2}", pref("read"), pref("tell"));

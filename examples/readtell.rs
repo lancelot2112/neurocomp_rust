@@ -422,9 +422,10 @@ const CTX_POOL: usize = 1 << 16;
 ///   row had this context"; it reinstates those cells, layer 2/3 completes the assembly, and the
 ///   cortex says the word. Content comes back through the cortex (or by rereading).
 /// - **Retrieval mode:** while a reinstated episode keeps predicting what is heard, nothing new
-///   is stored, so its own retelling does not overwrite the memory it reads (Hasselmo's separate
-///   encoding and retrieval modes). A mismatch (novelty) returns it to encoding, as does holding
-///   a new episode's start.
+///   is stored, so its own retelling does not overwrite the memory it reads, and only then does
+///   recall reach the cortex (Hasselmo's separate encoding and retrieval modes). A mismatch in
+///   what is heard (novelty; its own speech does not count) returns it to encoding, as does
+///   holding a new episode's start.
 /// - **Reconsolidation:** when the cortex completes a recalled pointer to an assembly that
 ///   still holds at least half the pointed cells, the row is relearned to the assembly as it is
 ///   now, so the index follows layer 4's drift.
@@ -450,6 +451,8 @@ struct IndexHc {
     /// the row recalled since the last sound heard, to relearn if the cortex completes it
     to_reconsolidate: Option<u32>,
     retrieving: bool,
+    /// the output reaches the cortex only in retrieval mode
+    gate_output: bool,
     plan: BitVector,
     boundaries: usize,
     holds: usize,
@@ -484,6 +487,7 @@ impl IndexHc {
             last_recalled: None,
             to_reconsolidate: None,
             retrieving: false,
+            gate_output: std::env::var("RT_HC_OUT").map_or(true, |v| v != "always"),
             plan: zero(),
             boundaries: 0,
             holds: 0,
@@ -554,6 +558,11 @@ impl IndexHc {
         self.last_recalled = r.ca3.first().copied();
         self.to_reconsolidate = self.last_recalled;
         let mut v = zero();
+        // in encoding mode the hippocampus's output to the cortex is suppressed (Hasselmo): what
+        // reaches the cortex is a memory being retrieved, never a guess during new input
+        if self.gate_output && !self.retrieving {
+            return v;
+        }
         for &b in r.ec.iter().filter(|&&b| b < BITS) {
             v.bit_set(b);
         }
@@ -564,7 +573,7 @@ impl IndexHc {
     /// store a pointer to the layer 4 cells under the context in force (if `store`), move the
     /// context on with those cells, learn the boundary cell (its input: layer 4) from the
     /// cortex's surprise at the sound, and at a boundary let the gates hold and reinstate.
-    fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, store: bool, explore: bool) {
+    fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, store: bool, explore: bool, own: bool) {
         let surprise = ONE - (overlap(&self.plan, code).min(ACTIVE as u32) * ONE / ACTIVE as u32);
         self.boundary.learn(surprise);
         let cells = ones(cells);
@@ -584,8 +593,9 @@ impl IndexHc {
             if !self.gates_off {
                 self.reward(if matched { ONE as i32 } else { 0 });
             }
-            // a mismatch is novelty, and novelty returns the hippocampus to encoding
-            if !matched {
+            // a mismatch is novelty, and novelty returns the hippocampus to encoding; its own
+            // speech is not novel (corollary discharge damps the response to self-made sounds)
+            if !matched && !own {
                 self.retrieving = false;
             }
         }
@@ -672,6 +682,10 @@ fn main() {
     // the right one aloud, which the network hears; RT_CORRECT=oracle: the teacher's word is
     // the target without being heard (the first version)
     let heard_correction = std::env::var("RT_CORRECT").map_or(true, |v| v != "oracle");
+    // after a step where nothing came out, the ear hears nothing (default): a plan that could
+    // not be said is not a sound, and the hippocampus, moving on along its links, carries the
+    // next word. RT_SILENT=efference: the unsaid plan is heard as if said (the first version)
+    let heard_plan = std::env::var("RT_SILENT").map_or(false, |v| v == "efference");
     // RT_HC_STORE=all (default): the hippocampus stores every word heard (the instruction,
     // the task, its own speech), its novelty setting the strength; RT_HC_STORE=listen: only
     // the story as first heard
@@ -694,12 +708,12 @@ fn main() {
     // word, the association area's input
     let mut eye_now = zero();
     macro_rules! hc_hear {
-        ($w:expr, $cue:expr, $store:expr, $explore:expr) => {{
+        ($w:expr, $cue:expr, $store:expr, $explore:expr, $own:expr) => {{
             let w: usize = $w;
             match ix.as_mut() {
                 Some(x) => {
                     let cells = net.assoc_of(&eye_now, &ear.codes[w], $explore, &mut rng);
-                    x.hear(w, &ear.codes[w], &cells, $store, $explore);
+                    x.hear(w, &ear.codes[w], &cells, $store, $explore, $own);
                 }
                 None => {
                     if $store {
@@ -778,7 +792,7 @@ fn main() {
                     x.held = Some(x.ctx.clone());
                     x.retrieving = false;
                 }
-                hc_hear!(w, &cue, true, learn);
+                hc_hear!(w, &cue, true, learn, false);
             }
             let rec = hc_recall!(&cue);
             let st = net.step(&zero(), heard, &rec, learn, 0, &mut rng);
@@ -790,7 +804,7 @@ fn main() {
                 net.learn(&st, &silence, &mut rng);
             }
             if ix.is_none() {
-                hc_hear!(w, &cue, true, learn);
+                hc_hear!(w, &cue, true, learn, false);
             }
             prev2 = prev.replace(heard.clone());
         }
@@ -812,7 +826,7 @@ fn main() {
         // the teacher pauses: silence is heard (a sound, and a natural event boundary)
         if let Some(x) = ix.as_mut() {
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            x.hear(quiet, &silence, &cells, false, learn);
+            x.hear(quiet, &silence, &cells, false, learn, false);
         }
         let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
         // 2. the book and the instruction
@@ -839,7 +853,7 @@ fn main() {
         for (it, w) in ["now", verb, if make { "one" } else { IT }].into_iter().enumerate() {
             let wi = id(w);
             let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
-            hc_hear!(wi, &cue, store_all, learn);
+            hc_hear!(wi, &cue, store_all, learn, false);
             ip2 = ip.replace(ear.codes[wi].clone());
             if fixed_gate {
                 if w == verb {
@@ -884,12 +898,12 @@ fn main() {
                         }
                         Some(w) => {
                             said_words.push(vocab[w]);
-                            hc_hear!(w, &cue, store_all, false);
+                            hc_hear!(w, &cue, store_all, false, true);
                             prev2 = prev.replace(ear.codes[w].clone());
                         }
                         None => {
                             said_words.push("…");
-                            prev2 = prev.replace(st.plan.clone());
+                            prev2 = if heard_plan { prev.replace(st.plan.clone()) } else { prev.take() };
                         }
                     }
                     if !stop_learned && said_words.ends_with(&["home", "."]) {
@@ -915,6 +929,7 @@ fn main() {
         let mut prev2: Option<BitVector> = None;
         let mut tally = Tally::default();
         let mut trace_recall: Vec<bool> = Vec::new();
+        let mut said_seq: Vec<&str> = Vec::new();
         if let Some(x) = ix.as_mut() {
             x.debug = trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr;
             if x.debug {
@@ -963,7 +978,7 @@ fn main() {
                         prev2 = prev.replace(ear.codes[w].clone());
                         net.hear_gate(w, &ear.codes[w], !fixed_gate, &mut rng);
                     } else {
-                        prev2 = prev.replace(st.plan.clone());
+                        prev2 = if heard_plan { prev.replace(st.plan.clone()) } else { prev.take() };
                     }
                     if heard_correction && !ok {
                         // the teacher says the right word aloud, and it is heard
@@ -979,15 +994,15 @@ fn main() {
                     if ix.is_some() {
                         // its own word was heard, then (if wrong) the teacher's
                         if let Some(w) = said {
-                            hc_hear!(w, &cue, store_all, true);
+                            hc_hear!(w, &cue, store_all, true, true);
                         }
                         if heard_correction && !ok {
-                            hc_hear!(want, &cue, store_all, true);
+                            hc_hear!(want, &cue, store_all, true, false);
                         }
                     } else if store_all {
                         let w = if ok || heard_correction { Some(want) } else { said };
                         if let Some(w) = w {
-                            hc_hear!(w, &cue, true, true);
+                            hc_hear!(w, &cue, true, true, false);
                         }
                     }
                 } else {
@@ -998,7 +1013,7 @@ fn main() {
                     // the teacher's word is heard
                     prev2 = prev.replace(ear.codes[want].clone());
                     net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
-                    hc_hear!(want, &cue, store_all, true);
+                    hc_hear!(want, &cue, store_all, true, false);
                 }
             } else {
                 let said = say(&st.plan).filter(|&w| w != quiet);
@@ -1017,6 +1032,11 @@ fn main() {
                     );
                 }
                 tally.words += 1;
+                said_seq.push(match say(&st.plan) {
+                    Some(w) if w == quiet => "<silence>",
+                    Some(w) => vocab[w],
+                    None => "…",
+                });
                 match said {
                     Some(w) => {
                         tally.right += (w == want) as usize;
@@ -1026,11 +1046,11 @@ fn main() {
                         if !fixed_gate {
                             net.hear_gate(w, &ear.codes[w], false, &mut rng);
                         }
-                        hc_hear!(w, &cue, store_all, false);
+                        hc_hear!(w, &cue, store_all, false, true);
                     }
                     None => {
                         tally.silent += 1;
-                        prev2 = prev.replace(st.plan.clone());
+                        prev2 = if heard_plan { prev.replace(st.plan.clone()) } else { prev.take() };
                     }
                 }
             }
@@ -1047,13 +1067,14 @@ fn main() {
         if let Some(x) = ix.as_mut() {
             // the pause after the task
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            x.hear(quiet, &silence, &cells, false, learn);
+            x.hear(quiet, &silence, &cells, false, learn, false);
             let task_log: Vec<bool> = x.log.drain(..).map(|l| l.0).collect();
             if trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr {
                 trace -= 1;
                 let marks = |l: &[bool], w: &[&str]| w.iter().zip(l.iter().chain(std::iter::repeat(&false))).map(|(w, &b)| if b { format!("{w}|") } else { w.to_string() }).collect::<Vec<_>>().join(" ");
                 println!("  boundaries while listening: {}", marks(&listen_log, &s));
                 println!("  boundaries in the task (instruction first): {}", task_log.iter().map(|&b| if b { '|' } else { '.' }).collect::<String>());
+                println!("  story: {}\n  said:  {}", s.join(" "), said_seq.join(" "));
                 println!("  retold: {:.0}% right; recall right on {}", 100.0 * tally.right as f64 / tally.words.max(1) as f64, trace_recall.iter().map(|&r| if r { '+' } else { '-' }).collect::<String>());
             }
         }

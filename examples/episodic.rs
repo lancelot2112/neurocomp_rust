@@ -1823,10 +1823,10 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // L5_GROW=1: cells grown as needed (up to L5_CELLS) instead of a random-context pool
         if std::env::var("L5_GROW").is_ok() { PrimedLayer5::grown(BITS / 64, 16, n) } else { PrimedLayer5::new(BITS / 64, 16, n) }
     });
-    // L23=primed: the column's L2/3 prediction from two-compartment primed cells (input on the
-    // basal dendrites, context on the tuft; spikes and bursts both predict); L23_GROW=1: grown
-    // as needed; L23_CELLS cells (default 16384)
-    let mut primed23: Option<PrimedLayer5> = std::env::var("L23").map_or(false, |v| v == "primed").then(|| {
+    // L23=primed (default; L23=kernels for the kernel layer 2/3): the column's L2/3 prediction
+    // from two-compartment primed cells (input on the basal dendrites, context on the tuft;
+    // spikes and bursts both predict); L23_GROW=1: grown as needed; L23_CELLS cells (default 16384)
+    let mut primed23: Option<PrimedLayer5> = std::env::var("L23").map_or(true, |v| v == "primed").then(|| {
         let n = std::env::var("L23_CELLS").ok().and_then(|v| v.parse().ok()).unwrap_or(16384);
         if std::env::var("L23_GROW").is_ok() { PrimedLayer5::grown(BITS / 64, 16, n) } else { PrimedLayer5::new(BITS / 64, 16, n) }
     });
@@ -1914,13 +1914,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let mut relay = neurocomp::program::ThalamicRelay::new();
     // L5_GROW=l23: layer 5 grows a cell whenever L2/3 grows a kernel (up to L5_GROW_CAP cells)
     let l5_grow23 = std::env::var("L5_GROW").map_or(false, |v| v == "l23");
-    // L4=1: layer 4 recodes the input (word code from the core thalamus) for layer 2/3's basal
-    // side (Layer4: learned k-winners-take-all); L4_K winners (default 32)
-    let mut layer4: Option<Layer4> = std::env::var("L4").is_ok().then(|| Layer4::new(BITS, BITS, 16, std::env::var("L4_K").ok().and_then(|v| v.parse().ok()).unwrap_or(32), seed.wrapping_add(99)));
+    // L4=1 (default; L4=0 off): layer 4 recodes the input (word code from the core thalamus) for
+    // layer 2/3's basal side (Layer4: learned k-winners-take-all); L4_K winners (default 32)
+    let mut layer4: Option<Layer4> = std::env::var("L4").map_or(true, |v| v != "0").then(|| Layer4::new(BITS, BITS, 16, std::env::var("L4_K").ok().and_then(|v| v.parse().ok()).unwrap_or(32), seed.wrapping_add(99)));
     let mut l4_rng = StdRng::seed_from_u64(seed.wrapping_add(4404));
-    // L23_REC=1: layer 2/3's recurrent input: the cells it fired at the previous step (projected
-    // into one frame) replace the pasted previous-word frame
-    let l23_rec = std::env::var("L23_REC").is_ok();
+    // L23_REC=1 (default; L23_REC=0 off): layer 2/3's recurrent input: the cells it fired at the
+    // previous step (projected into one frame) replace the pasted previous-word frame
+    let l23_rec = std::env::var("L23_REC").map_or(true, |v| v != "0");
     let mut rec_prev = BitVector::new(BITS, Some(0));
     let l5_grow_cap: usize = std::env::var("L5_GROW_CAP").ok().and_then(|v| v.parse().ok()).unwrap_or(65_536);
     let mut l23_grown_prev = 0usize;

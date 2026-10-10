@@ -115,7 +115,15 @@ Seed 0 (held-out):
 | + layer 4 | 32.4 | 34.2 |
 | **+ layer 4 + recurrence** | **41.6** | **49.2** |
 
-Recurrence is what makes the plausible layer 2/3 work. The full suite is running.
+On seed 0 recurrence is what made the plausible layer 2/3 work, but the full suite (25 entries,
+five seeds, against the three-system default) is neutral: **−0.15, 14 of 25 up**. The seed-0
+gains did not hold (family consolidated −1.1, hippocampus teaches cortex +1.5). Gains: one
+engram walk +5.2, slot memory +4.4, schema advantage +3.6, saccades +3.1. Losses: inference by
+reading −13.1, superposed evidence −4.8; the rest are within ±2.
+
+As the more plausible layer 2/3 at no average cost, **primed recurrent layer 2/3 with layer 4 is
+now the default** (`L23=kernels`, `L4=0`, `L23_REC=0` restore the old one). The regression
+table was re-recorded from this suite.
 
 ## 5. The thalamus
 - **A bitwise thalamic gate** ([`src/program/thalamic_gate.rs`](../../src/program/thalamic_gate.rs),
@@ -212,7 +220,8 @@ Two problems show:
 
 ## Findings
 1. **Separating the systems costs ~11 points for now,** because the slow learners need more
-   data. **Recurrent layer 2/3 is the first part to win back much of it** (seed 0: +14 and +11).
+   data. Recurrent layer 2/3 with layer 4 looked like it won much back on seed 0 (+14, +11),
+   but over five seeds it is neutral (−0.15); it is the default as the more plausible layer.
 2. **The cerebellar circuit learns better with a bigger expansion and a relative readout,** and
    biological changes to its olive (recovery without a teacher, a sparse synchronous olive)
    help on both entries tried. Its output helps most when it primes the cortex through layer 1.
@@ -220,11 +229,9 @@ Two problems show:
    +18.8, engram store +17.4 with the red nucleus) but is unstable across entries. The same
    holds for saccades on the loop (two seeds near perfect, one collapsed). The control loop's
    context is too coarse, and its costs need calibrating.
-4. **Tag and capture is the one change here measured on the full suite** and it gains (+0.8).
-   It is the default.
+4. **Tag and capture gains on the full suite (+0.8)** and is the default.
 
 ## Pending (running or queued)
-- Recurrent layer 2/3 + layer 4 on the full suite.
 - The olive changes at five seeds.
 - The bitwise gate and the relay (with and without layer 5 growth) on the three-system default.
 - More training data (10,000 and 30,000 stories).

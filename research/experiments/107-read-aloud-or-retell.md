@@ -375,12 +375,52 @@ is rarely entered at the right moment.
 **Invented stories no longer end by themselves** (0%). Recall no longer reaches the cortex
 during invention, and the story runs on to the 40-word limit.
 
+## Reaching for the book
+A book used to be handed over open. Now, by default, it stays shut until the network reaches for
+it (`RT_REACH=learned`):
+- **The reach is a motor act,** a basal-ganglia choice between waiting and reaching, keyed by the
+  last two sounds heard.
+- **The world answers it like a retrieved file:** the book, from its first word, now on the eye.
+- **The reach is an event boundary** for the hippocampus. The context moves on by half, and the
+  hold gate may hold the new book's start.
+- **Nothing says when to reach:** "read it" and "tell it" are just sounds, and a book open at the
+  wrong time intrudes on a retelling.
+
+**The credit had to be an action's own value.** The prefrontal gate's rule credits only the last
+load against an average over all trials, and it learned the reverse: always reach after "tell
+it", never after "read it". Retelling trials score well whatever the reach does, so whatever was
+chosen there gained. With each choice's value in its context moving toward the outcomes it
+brought (an eligibility trace over the trial's decisions, the trial's share of words right as
+the reward, no global baseline), it learned the task.
+
+**Results** (3,000 trials, with invention):
+
+| | Learned gates | Start held by the driver (oracle) |
+|---|---|---|
+| reached after "read it" | **100%, at once** | 100%, at once |
+| reached after "tell it" | **10–16%** | 100%, after a word |
+| value of reaching after "read it" / "tell it" | 0.81 / 0.56 | 0.81 / 0.74 |
+| read, same story / another book | 66.0 / 66.7 | 71.4 / 70.3 |
+| tell, book closed | 0.5 (silent 92%) | **61.8** |
+| tell, another book (story's / book's) | 1.2 / 0.3 | 47.1 / 22.1 |
+
+**Findings:**
+- **The reach is learned from the outcome:** it reaches to read and mostly waits to retell. The
+  same credit, each action's own value from what it brought, is what the hippocampal gates lack.
+- **With retrieval triggered (oracle), memory now beats an open book:** 47% of words from the
+  story against 22% from the book.
+- **The learned hippocampal gates still never enter retrieval** (recall 4%), so learned retelling
+  is silent.
+- **Invented stories run to the 40-word limit** (ended by themselves 0–4%).
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.
 - **Let the cortex learn from replay,** and find why retelling falls silent with the index.
-- **Context from reaching for a book:** a learned action that fetches a book (a new episode, a
-  natural boundary) instead of a stream of words.
+- **Give the hippocampal gates the reach's credit:** each choice (hold, reinstate, wait) valued
+  in its context from the trial's outcome, through an eligibility trace.
+- **Which book:** a shelf of several books, reached by a cue the network holds ("the fox one"),
+  their places remembered by the index.
 - **Credit for the gate per instruction.** Compare the reward with what the same trial type
   usually earns, not the overall average, so holding "tell" is credited.
 - **Seeds 1–4** for every column.

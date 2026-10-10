@@ -281,6 +281,20 @@ impl IndexMemory {
         Some((n, cue.iter().filter(|&&c| r.keys.binary_search(&(c as u32)).is_ok()).count() as u32))
     }
 
+    /// The live rows sharing an index with `cue`, with their weighted scores, best first (at
+    /// most `max`): the whole completion, not only its winner.
+    pub fn matches(&self, cue: &[usize], max: usize) -> Vec<(u32, u64)> {
+        let mut v: Vec<(u32, u64)> = self.scored(cue).into_iter().map(|(sc, r)| (r, sc)).collect();
+        v.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+        v.truncate(max);
+        v
+    }
+
+    /// The keys of `row` (empty if forgotten): its context, and whatever else it was stored with.
+    pub fn keys_of(&self, row: u32) -> &[u32] {
+        self.rows.get(row as usize).filter(|r| !r.dead).map_or(&[], |r| &r.keys[..])
+    }
+
     /// What `row` points to now (empty if forgotten).
     pub fn out_of(&self, row: u32) -> &[usize] {
         self.rows.get(row as usize).filter(|r| !r.dead).map_or(&[], |r| &r.out[..])

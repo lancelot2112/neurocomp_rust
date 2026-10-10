@@ -117,7 +117,7 @@ const OTHER: [&str; 16] =
 const IT: &str = "it";
 
 /// The words; with `make`, also "make" and "one" (the instruction "now make one").
-fn vocabulary(make: bool) -> Vec<&'static str> {
+fn vocabulary(make: bool, find: bool) -> Vec<&'static str> {
     let mut v: Vec<&'static str> = Vec::new();
     for (n, p) in NAMES {
         v.push(n);
@@ -131,7 +131,25 @@ fn vocabulary(make: bool) -> Vec<&'static str> {
     if make {
         v.extend_from_slice(&["make", "one"]);
     }
+    if find {
+        v.push("find");
+    }
     v
+}
+
+/// A story's animal (the one it is about: "... saw a <animal> .").
+fn animal_of(s: &[&'static str]) -> &'static str {
+    s[9]
+}
+
+/// A new book for the shelf, about an animal no other book there is about.
+fn shelf_book(rng: &mut StdRng, shelf: &[Vec<&'static str>], skip: usize) -> Vec<&'static str> {
+    loop {
+        let b = story(rng);
+        if !shelf.iter().enumerate().any(|(i, o)| i != skip && animal_of(o) == animal_of(&b)) {
+            return b;
+        }
+    }
 }
 
 /// A sentence's form, if it is one the stories use: (form, name, pronoun, animal).
@@ -399,13 +417,17 @@ impl Net {
 
 /// What the striatum sees: the prefrontal content, the association area's assembly for the last
 /// sound heard, and mode signals (each true flag 8 bits), as one pattern of active bits.
-fn state_bits(pfc: &BitVector, heard: &BitVector, flags: &[bool]) -> Vec<usize> {
+fn state_bits(pfc: &BitVector, heard: &BitVector, flags: &[bool], place: Option<usize>) -> Vec<usize> {
     let mut v = ones(pfc);
     v.extend(ones(heard).into_iter().map(|b| b + BITS));
     for (i, &f) in flags.iter().enumerate() {
         if f {
             v.extend((0..8).map(|k| 2 * BITS + i * 8 + k));
         }
+    }
+    // the place the hippocampus recalled for what is held (8 bits per place)
+    if let Some(k) = place {
+        v.extend((0..8).map(|j| 2 * BITS + 64 + k * 8 + j));
     }
     v
 }
@@ -415,9 +437,14 @@ const CH_REACH: usize = 0;
 const CH_HOLD: usize = 1;
 const CH_REINSTATE: usize = 2;
 const CH_LOAD: usize = 3;
+const CH_PLACE: usize = 4;
 
 /// The hippocampal context's cells are drawn from this many.
 const CTX_POOL: usize = 1 << 16;
+/// Place cells (16 per place on the shelf) and the content keys (association-area cells) come
+/// after the context's ids in the index's key space.
+const PLACE_BASE: usize = CTX_POOL;
+const CONTENT_BASE: usize = CTX_POOL + 4096;
 
 /// The hippocampus as an index (`IndexMemory`, after Teyler & DiScenna): one row per event,
 /// grown as needed, forgotten when unused.
@@ -453,6 +480,8 @@ struct IndexHc {
     ctx: Vec<usize>,
     boundary: BoundaryCell,
     held: Option<Vec<usize>>,
+    /// the place on the shelf whose book is in view (its place cells join every stored row)
+    place: Option<usize>,
     last_word: usize,
     last_recalled: Option<u32>,
     /// the row recalled since the last sound heard, to relearn if the cortex completes it
@@ -487,6 +516,7 @@ impl IndexHc {
             ctx,
             boundary: BoundaryCell::new(BITS, 3, 80),
             held: None,
+            place: None,
             last_word: 0,
             last_recalled: None,
             to_reconsolidate: None,
@@ -577,7 +607,9 @@ impl IndexHc {
     /// context on with those cells, learn the boundary cell (its input: layer 4) from the
     /// cortex's surprise at the sound, and at a boundary let the gates hold and reinstate.
     /// Returns whether an event boundary fired.
-    fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, store: bool, own: bool) -> bool {
+    /// `heard`: the content keys: the association area's assembly for what is seen while a
+    /// book is in view, else for the sound alone.
+    fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, heard: &BitVector, store: bool, own: bool) -> bool {
         let surprise = ONE - (overlap(&self.plan, code).min(ACTIVE as u32) * ONE / ACTIVE as u32);
         self.boundary.learn(surprise);
         let cells = ones(cells);
@@ -601,7 +633,14 @@ impl IndexHc {
         // retrieval mode: while a held episode is being reinstated, nothing new is stored
         // (encoding and retrieval are separate modes, Hasselmo)
         if store && !self.retrieving && !cells.is_empty() {
-            self.mem.store_split(&self.ctx, &[], &cells);
+            // the keys: the context, the place (if a book from the shelf is in view), and the
+            // content (the assembly), so the episode can be completed from any of them
+            let mut keys = self.ctx.clone();
+            if let Some(k) = self.place {
+                keys.extend((0..16).map(|j| PLACE_BASE + k * 16 + j));
+            }
+            keys.extend(ones(heard).into_iter().map(|c| CONTENT_BASE + c));
+            self.mem.store_split(&keys, &[], &cells);
         }
         // the context moves on with layer 4's cells, not the raw sound
         self.drift(&cells, 4, 1);
@@ -621,6 +660,35 @@ impl IndexHc {
         self.boundaries += 1;
         let c = self.ctx.clone();
         self.drift(&c, self.ctx.len() / 2, 3);
+    }
+
+    /// The entorhinal input now, the only way anything cues the hippocampus: the context cells,
+    /// the place cells (when a scene from the shelf is in view) and the content (the association
+    /// area's assembly for what is being heard).
+    fn ec(&self, content: &[usize]) -> Vec<usize> {
+        let mut v = self.ctx.clone();
+        if let Some(k) = self.place {
+            v.extend((0..16).map(|j| PLACE_BASE + k * 16 + j));
+        }
+        v.extend(content.iter().map(|&c| CONTENT_BASE + c));
+        v
+    }
+
+    /// Where was this seen? The hippocampus completes the entorhinal input (`content`: what is
+    /// active in the cortex now) and reads out the place component: each matching episode (up
+    /// to 256) votes for its place with its match score; episodes with no place vote nothing.
+    fn where_of(&self, content: &[usize]) -> Option<usize> {
+        let mut count = [0u64; 16];
+        for (row, score) in self.mem.matches(&self.ec(content), 256) {
+            for &k in self.mem.keys_of(row) {
+                let k = k as usize;
+                if k >= PLACE_BASE && k < PLACE_BASE + 16 * 16 && (k - PLACE_BASE) % 16 == 0 {
+                    count[(k - PLACE_BASE) / 16] += score;
+                }
+            }
+        }
+        let (best, n) = count.iter().enumerate().max_by_key(|x| (*x.1, std::cmp::Reverse(x.0)))?;
+        (*n > 0).then_some(best)
     }
 
     /// The prefrontal cortex holds the context in force: where this episode begins.
@@ -663,7 +731,10 @@ fn main() {
     // RT_MAKE=1: a third instruction, "now make one": the teacher makes up a new story
     let make_on = std::env::var("RT_MAKE").map_or(false, |v| v == "1");
     let make_temp: u32 = env("RT_TEMP", 30);
-    let vocab = vocabulary(make_on);
+    // RT_SHELF (default 4): books on a shelf at that many places; "now find the <animal>" asks
+    // for one (a quarter of the trials). 0: no shelf
+    let shelf_k: usize = env("RT_SHELF", 4);
+    let vocab = vocabulary(make_on, shelf_k > 0);
     let id = |w: &str| vocab.iter().position(|v| *v == w).unwrap();
     let ear = Encoder::new(vocab.len(), BITS, ACTIVE, &mut rng);
     let eye = Encoder::new(vocab.len(), BITS, ACTIVE, &mut rng);
@@ -697,6 +768,15 @@ fn main() {
     // the striatum: one critic, and an actor channel per gate (reach, hold, reinstate, load into
     // working memory); dopamine is the TD error, the reward the words that come out right
     let mut striatum = Striatum::new(1 << 18);
+    let mut shelf: Vec<Vec<&str>> = Vec::new();
+    for k in 0..shelf_k {
+        let b = shelf_book(&mut rng, &shelf, k);
+        shelf.push(b);
+    }
+    // "find" trials at test: (trials, reached the right place, reached a place, words, right)
+    let mut find_stats = (0usize, 0usize, 0usize, 0usize, 0usize);
+    // all "find" trials: (trials, working memory held the animal, recalled the right place, recalled a place)
+    let mut find_diag = (0usize, 0usize, 0usize, 0usize);
     // per (instruction read/tell, book): (trials, reached, words before the reach), at test
     let mut reach_stats = [[(0usize, 0usize, 0usize); 3]; 2];
     // RT_HC_STORE=all (default): the hippocampus stores every word heard (the instruction,
@@ -725,14 +805,19 @@ fn main() {
     let mut eye_now = zero();
     // the association area's assembly for the last sound heard, and whether the book is open:
     // part of what the striatum sees
-    let mut last_assoc: BitVector;
+    let mut last_assoc: BitVector = zero();
     let mut book_seen = false;
+    // the place the hippocampus recalled for what is held (in "find" trials)
+    let mut recalled_place: Option<usize> = None;
     macro_rules! hc_hear {
         ($w:expr, $cue:expr, $store:expr, $explore:expr, $own:expr) => {{
             let w: usize = $w;
             let cells = net.assoc_of(&eye_now, &ear.codes[w], $explore, &mut rng);
+            // the content keys: what is seen while a book is in view (the words at that place),
+            // else what is heard
+            let heard_only = if eye_now.count_ones() == 0 { cells.clone() } else { net.assoc_of(&eye_now, &zero(), false, &mut rng) };
             let fired = match ix.as_mut() {
-                Some(x) => x.hear(w, &ear.codes[w], &cells, $store, $own),
+                Some(x) => x.hear(w, &ear.codes[w], &cells, &heard_only, $store, $own),
                 None => {
                     if $store {
                         net.hc.store_split(&ones(&ear.codes[w]), $cue, &ones(&ear.codes[w]));
@@ -753,7 +838,7 @@ fn main() {
     macro_rules! td_step {
         ($fired:expr, $explore:expr) => {{
             let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.retrieving, x.held.is_some()));
-            let state = state_bits(&net.wm.content(), &last_assoc, &[book_seen, retr, held]);
+            let state = state_bits(&net.wm.content(), &last_assoc, &[book_seen, retr, held], recalled_place);
             striatum.begin(&state, $explore);
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
@@ -878,17 +963,24 @@ fn main() {
         // the teacher pauses: silence is heard (a sound, and a natural event boundary)
         if ix.is_some() {
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, false, false);
+            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
             last_assoc = cells;
             td_step!(fired, learn);
         }
         let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
         // 2. the book and the instruction
-        let make = make_on && rng.gen_bool(0.25);
-        let read = !make && rng.gen_bool(0.5);
+        // now and then a book on the shelf is replaced by a new one
+        if shelf_k > 0 && rng.gen_bool(0.1) {
+            let k = rng.gen_range(0..shelf_k);
+            shelf[k] = shelf_book(&mut rng, &shelf, k);
+        }
+        let find = shelf_k > 0 && rng.gen_bool(0.25);
+        let find_at = if find { rng.gen_range(0..shelf_k) } else { 0 };
+        let make = !find && make_on && rng.gen_bool(0.25);
+        let read = !find && !make && rng.gen_bool(0.5);
         // RT_TELL=apart: in training the teacher retells with the book closed or open at
         // another story, never at the same one (the test keeps all three)
-        let book = if make {
+        let book = if make || find {
             Book::Closed
         } else if read {
             [Book::Same, Book::Other][rng.gen_range(0..2)]
@@ -897,14 +989,14 @@ fn main() {
         } else {
             books[rng.gen_range(0..3)]
         };
-        let p = match book {
+        let mut p = match book {
             Book::Same => s.clone(),
             Book::Other => story(&mut rng),
             Book::Closed => Vec::new(),
         };
-        let verb = if make { "make" } else if read { "read" } else { "tell" };
+        let verb = if find { "find" } else if make { "make" } else if read { "read" } else { "tell" };
         let (mut ip, mut ip2): (Option<BitVector>, Option<BitVector>) = (None, None);
-        let instr = ["now", verb, if make { "one" } else { IT }];
+        let instr = ["now", verb, if find { animal_of(&shelf[find_at]) } else if make { "one" } else { IT }];
         for (it, w) in instr.into_iter().enumerate() {
             let wi = id(w);
             let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
@@ -977,7 +1069,6 @@ fn main() {
             heard_stories.insert(p.join(" "));
             heard_stories.insert(q.join(" "));
         }
-        let target: &Vec<&str> = if make { &q } else if read { &p } else { &s };
         let practice = learn && rng.gen_bool(practice_p);
         let mut prev: Option<BitVector> = None;
         let mut prev2: Option<BitVector> = None;
@@ -995,20 +1086,53 @@ fn main() {
         let mut eye_pos = 0usize;
         let mut debug_right = 0usize;
         let mut reached_at: Option<usize> = None;
+        // in "find" trials, where was the book about what is held? The hippocampus completes the
+        // episode from the content and gives the place, which joins what the striatum sees
+        recalled_place = None;
+        if find {
+            let held = net.wm.content();
+            // diagnosis: does working memory hold the animal asked for?
+            find_diag.0 += 1;
+            find_diag.1 += (overlap(&held, &ear.codes[id(animal_of(&shelf[find_at]))]) >= 24) as usize;
+            // the cue is the entorhinal input: what is active in the cortex now (the last word
+            // heard, the animal) with the context; working memory never cues it directly
+            if let Some(x) = ix.as_ref() {
+                recalled_place = x.where_of(&ones(&last_assoc));
+            }
+            find_diag.2 += (recalled_place == Some(find_at)) as usize;
+            find_diag.3 += recalled_place.is_some() as usize;
+        }
         // the teacher waits (up to three pauses) before starting; the network may reach for the
-        // book meanwhile. Once the teacher starts, it goes on whether the book is open or not.
+        // book meanwhile (in "find" trials: to one of the shelf's places). Once the teacher
+        // starts, it goes on whether a book is open or not.
         if !book_open {
             for _ in 0..3 {
                 if ix.is_some() {
                     let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-                    let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, false, false);
+                    let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
                     last_assoc = cells;
                     td_step!(fired, learn);
                 } else {
                     last_assoc = net.assoc_of(&zero(), &silence, false, &mut rng);
                     td_step!(false, learn);
                 }
-                if striatum.choose(CH_REACH, 2, if learn { Some(&mut rng) } else { None }) == 1 {
+                if find {
+                    let a = striatum.choose(CH_PLACE, shelf_k + 1, if learn { Some(&mut rng) } else { None });
+                    if a > 0 {
+                        // the book at that place, from its first word; its place joins the
+                        // hippocampus's context while it is in view
+                        p = shelf[a - 1].clone();
+                        book_open = true;
+                        book_seen = true;
+                        reached_at = Some(a - 1);
+                        if let Some(x) = ix.as_mut() {
+                            x.reach_event();
+                            x.place = Some(a - 1);
+                        }
+                        td_step!(true, learn);
+                        break;
+                    }
+                } else if striatum.choose(CH_REACH, 2, if learn { Some(&mut rng) } else { None }) == 1 {
                     // the world hands over the book, from its first word; the reach is an
                     // event boundary, and the striatum may hold where this new episode begins
                     book_open = true;
@@ -1023,6 +1147,9 @@ fn main() {
             }
         }
         let (debug_v0, debug_p0) = striatum.debug_now(CH_REACH);
+        // the teacher reads the book asked for in "find" trials
+        let find_target: Vec<&str> = if find { shelf[find_at].clone() } else { Vec::new() };
+        let target: &Vec<&str> = if find { &find_target } else if make { &q } else if read { &p } else { &s };
         for t in 0..target.len() {
             let seen = if book_open { p.get(eye_pos).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero) } else { zero() };
             if book_open {
@@ -1152,7 +1279,7 @@ fn main() {
         if ix.is_some() {
             // the pause after the task
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, false, false);
+            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
             last_assoc = cells;
             td_step!(fired, learn);
             let task_log: Vec<bool> = ix.as_mut().unwrap().log.drain(..).map(|l| l.0).collect();
@@ -1180,6 +1307,20 @@ fn main() {
             );
         }
         striatum.end(learn);
+        recalled_place = None;
+        if let Some(x) = ix.as_mut() {
+            x.place = None;
+        }
+        if find {
+            if testing && !no_instr {
+                find_stats.0 += 1;
+                find_stats.1 += (reached_at == Some(find_at)) as usize;
+                find_stats.2 += reached_at.is_some() as usize;
+                find_stats.3 += tally.words;
+                find_stats.4 += tally.right;
+            }
+            continue;
+        }
         if testing && !no_instr && !make && reach_learned {
             let bi = books.iter().position(|b| *b == book).unwrap();
             let r = &mut reach_stats[!read as usize][bi];
@@ -1294,6 +1435,24 @@ fn main() {
             println!("  {}", w.join(" "));
         }
     }
+    if shelf_k > 0 {
+        println!(
+            "\nfinding a book on the shelf ({} places; test, instruction held): {} trials; reached the right place {:.1}% (chance {:.1}%), reached a place {:.1}%; words read right {:.1}%",
+            shelf_k,
+            find_stats.0,
+            pct(find_stats.1, find_stats.0),
+            100.0 / shelf_k as f64,
+            pct(find_stats.2, find_stats.0),
+            pct(find_stats.4, find_stats.3)
+        );
+        println!(
+            "  over all {} find trials: working memory held the animal {:.1}%; the hippocampus recalled a place {:.1}%, the right one {:.1}%",
+            find_diag.0,
+            pct(find_diag.1, find_diag.0),
+            pct(find_diag.3, find_diag.0),
+            pct(find_diag.2, find_diag.0)
+        );
+    }
     if let Some(x) = &ix {
         let (live, evicted, work) = x.mem.report();
         println!(
@@ -1341,7 +1500,7 @@ fn main() {
         // having just heard "it"
         let heard_it = net.assoc_of(&zero(), &ear.codes[id(IT)], false, &mut rng);
         let pref = |v: &str| {
-            let st = state_bits(&ear.codes[id(v)], &heard_it, &[false, false, false]);
+            let st = state_bits(&ear.codes[id(v)], &heard_it, &[false, false, false], None);
             (striatum.preference(&st, CH_REACH, 1) - striatum.preference(&st, CH_REACH, 0)) as f64 / ONE as f64
         };
         println!("\nreaching for the book (test, instruction held):{line} preference for reaching over waiting after \"read it\" {:+.2}, \"tell it\" {:+.2}", pref("read"), pref("tell"));

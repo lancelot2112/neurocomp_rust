@@ -1684,6 +1684,17 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // area act only through the prediction they shaped.
     let inner_speech = complete.as_deref().map_or(false, |m| m.starts_with("speech"));
     let inner_learned = std::env::var("INNER_GATE").map_or(false, |v| v == "learned");
+    // INNER_GATE=pfc: inner speech driven by a control loop instead of rules. Monitoring (an
+    // anterior-cingulate-like conflict signal: how many words the sources proposed in the
+    // thalamic vote; the vote's confidence; hippocampal novelty) and the prefrontal state (already
+    // speaking; an item held in working memory) form the context of a basal-ganglia choice:
+    // silence, say the prediction, or say what recall offers. Dopamine at every step: did
+    // speaking turn the next page word from wrong to right (1), right to wrong (0), or neither (½)?
+    let inner_pfc = std::env::var("INNER_GATE").map_or(false, |v| v == "pfc");
+    let mut inner_bg = BasalGanglia::new(BITS);
+    let mut inner_rng = StdRng::seed_from_u64(seed.wrapping_add(8181));
+    let mut inner_pending: Option<(BitVector, bool, usize)> = None;
+    let mut inner_choices = [0usize; 3];
     let inner_when_definite = std::env::var("INNER_WHEN").map_or(false, |v| v == "definite");
     let inner_say_recall = std::env::var("INNER_SAY").map_or(false, |v| v == "recall");
     let mut phono = PhonologicalLoop::new();
@@ -5061,6 +5072,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 out.or_mut(column.predict(&input));
                 // the column's burst this step (its strength), for BURST_VOTE
                 let mut col_burst: Option<Q16> = None;
+                // the vote's conflict this step: how many different words the sources proposed
+                let mut vote_conflict = 0usize;
                 // layer 5's single spike this step (output, priming), for THAL=relay
                 let mut l5_spike: Option<(BitVector, Q16)> = None;
                 // the primed column's state this step: (burst?, priming), for BURST_KEY
@@ -5425,6 +5438,12 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             _ => mix.weight(src, key),
                         }
                     };
+                    vote_conflict = {
+                        let mut ws: Vec<usize> = proposals.iter().flat_map(|p| p.2.iter().copied()).collect();
+                        ws.sort_unstable();
+                        ws.dedup();
+                        ws.len()
+                    };
                     let votes: Vec<(usize, u32)> = if burst_gate {
                         let beta = |src: u8| src_burst.get(&src).copied().unwrap_or(ONE / 2);
                         let mut pass: Vec<&(u8, u64, Vec<usize>)> = proposals.iter().filter(|p| beta(p.0) >= gate_theta).collect();
@@ -5531,6 +5550,21 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
+                // INNER_GATE=pfc: dopamine for the last inner utterance, now that the page word it
+                // preceded is predicted
+                if let Some((code, base, target)) = inner_pending.take() {
+                    if next == target {
+                        let right = enc.decode(&out) == Some(target);
+                        let r = match (right, base) {
+                            (true, false) => ONE,
+                            (false, true) => 0,
+                            _ => ONE / 2,
+                        };
+                        inner_bg.reward_candidate(&code, r as i32, &mut inner_rng);
+                    } else {
+                        inner_pending = Some((code, base, target));
+                    }
+                }
                 if testing && bind && t + 1 == s.answer_at {
                     if let Some(w) = bind_answer {
                         bind_stats.0 += 1;
@@ -5567,17 +5601,52 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let ovo = |i: usize| enc.codes[i].as_words().iter().zip(o.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>();
                         (0..vocab.len()).filter(|&i| ovo(i) >= 24 && fits(i)).max_by_key(|&i| ovo(i))
                     });
-                    let said_vec = recalled.map(|w| enc.codes[w].clone()).unwrap_or_else(|| out.clone());
+                    let mut said_vec = recalled.map(|w| enc.codes[w].clone()).unwrap_or_else(|| out.clone());
                     // what is said must be of the kind the column expects here (the expectation
                     // gates the loop, as the thalamic gate did the rollout's offers)
-                    let said = enc.decode(&said_vec).filter(|&w| definite && fits(w) && w != next && vocab[w] != ".");
+                    let mut said = enc.decode(&said_vec).filter(|&w| definite && fits(w) && w != next && vocab[w] != ".");
+                    let mut pfc_code: Option<BitVector> = None;
+                    if inner_pfc && rolled > 0 {
+                        said = None; // one utterance per decision: no rule-driven continuation
+                    }
+                    if inner_pfc && rolled == 0 {
+                        // the control loop decides, with no rule on when or what
+                        let conf = mix_conf.unwrap_or_else(|| column.confidence());
+                        let cb = if conf < Q_HALF { 0 } else if conf < Q_08 { 1 } else { 2 };
+                        let ctx = 3000 + cb + 3 * vote_conflict.min(3) + 12 * (fam_band < 4) as usize + 24 * held_item.is_some() as usize;
+                        let recall_word = recalled.or_else(|| bind_answer.filter(|_| !(testing && bind_lesion)));
+                        let n = if recall_word.is_some() { 3 } else { 2 };
+                        let cands: Vec<BitVector> = (0..n).map(|a| step_code(ctx, a)).collect();
+                        let a = inner_bg.select(&cands, if testing { None } else { Some(&mut inner_rng) }).unwrap_or(0);
+                        inner_choices[a] += testing as usize;
+                        said = None;
+                        if a == 1 {
+                            said_vec = out.clone();
+                            said = enc.decode(&out).filter(|&w| vocab[w] != ".");
+                        } else if a == 2 {
+                            if let Some(w) = recall_word {
+                                said_vec = enc.codes[w].clone();
+                                said = Some(w).filter(|&w| vocab[w] != ".");
+                            }
+                        }
+                        if said.is_some() && !testing {
+                            pfc_code = Some(cands[a].clone());
+                        } else if !testing {
+                            // silence: neutral
+                            inner_bg.reward_candidate(&cands[a], (ONE / 2) as i32, &mut inner_rng);
+                        }
+                    }
                     if std::env::var("INNERDIAG").is_ok() && testing && s.held_out && NEW_NAMES.iter().any(|n| s.words[..=t].contains(n)) && inner_diag < 40 {
                         inner_diag += 1;
                         let start = if learned_bound { seg_start } else { s.words[..=t].iter().rposition(|x| *x == ".").map_or(0, |i| i + 1) };
                         eprintln!("  INNERDIAG {:?} | page {} | out {:?} recalled {:?} definite {definite} rolled {rolled} -> said {:?}", &s.words[start..=t], vocab[next], enc.decode(&out).map(|w| vocab[w]), bind_answer.map(|w| vocab[w]), said.map(|w| vocab[w]));
                     }
                     if let Some(w) = said {
-                        let go = if inner_learned {
+                        if let Some(code) = pfc_code.take() {
+                            // the reward comes once the page word this utterance precedes is predicted
+                            inner_pending = Some((code, enc.decode(&out) == Some(next), next));
+                        }
+                        let go = if inner_learned && !inner_pfc {
                             let c = mix_conf.unwrap_or_else(|| column.confidence());
                             let cb = if c < Q_HALF { 0 } else if c < Q_08 { 1 } else { 2 };
                             let ctx = 1000 + cb + 3 * (rolled > 0) as usize + 6 * (fam_band < 4) as usize;
@@ -7149,6 +7218,9 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         }
         if inner_speech {
             eprintln!("  INNER seed {seed}: at test, {} surprises where the network could speak, {} spoken to itself ({} in held-out stories)", inner_stats[0], inner_stats[1], inner_stats[2]);
+            if inner_pfc {
+                eprintln!("  INNER_PFC seed {seed}: at test the loop chose silence {}, the prediction {}, recall {}", inner_choices[0], inner_choices[1], inner_choices[2]);
+            }
         }
         for (name, l) in [("L23", bit23.as_ref()), ("L5", bit5.as_ref())] {
             if let Some(l) = l {

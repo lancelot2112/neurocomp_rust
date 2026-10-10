@@ -1120,6 +1120,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     });
     let mut cb_rng = StdRng::seed_from_u64(seed.wrapping_add(5151));
     let mut cb_input: Option<BitVector> = None; // the mossy-fibre input of this step, for learning
+    // CB_MOSSY=pons: the mossy fibres carry the current input (sensory) and the pontine recoding
+    // of layer 5's output at the previous step (cortex L5 → pons), not a copy of the cortex's
+    // input row
+    let cb_pons = std::env::var("CB_MOSSY").map_or(false, |v| v == "pons");
+    let mut pons_prev = BitVector::new(BITS, Some(0));
+    // CB_L1=1: the cerebellum's output (deep nuclei → motor thalamus) reaches layer 5's tuft (layer
+    // 1) as context: it primes the cortex rather than only voting
+    let cb_l1 = std::env::var("CB_L1").is_ok();
     let mut cb_word: Option<usize> = None;
     let mut cb_conf: Q16 = 0;
     let mut cb_stats = [0usize; 2]; // test answers: proposed, right
@@ -2567,8 +2575,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                             if let Some(l) = bit5.as_mut() {
                                 // replay: L2/3's prediction for the replayed row, on layer 5's input side
-                                let r5 = l5_out.then(|| with_frame(row, &column.l23.peek(row).unwrap_or_else(|| BitVector::new(BITS, Some(0)))));
-                                l.learn(r5.as_ref().unwrap_or(row), &enc.codes[*ans], &mut sleep_rng);
+                                // replay: no cerebellar output in the tuft, L2/3's prediction on the input side
+                                let empty = BitVector::new(BITS, Some(0));
+                                let b = if cb_l1 { insert_before_last(row, &empty) } else { row.clone() };
+                                let r5 = if l5_out { with_frame(&b, &column.l23.peek(row).unwrap_or_else(|| empty.clone())) } else { b };
+                                l.learn(&r5, &enc.codes[*ans], &mut sleep_rng);
                             }
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
@@ -2627,8 +2638,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             }
                             if let Some(l) = bit5.as_mut() {
                                 // replay: L2/3's prediction for the replayed row, on layer 5's input side
-                                let r5 = l5_out.then(|| with_frame(row, &column.l23.peek(row).unwrap_or_else(|| BitVector::new(BITS, Some(0)))));
-                                l.learn(r5.as_ref().unwrap_or(row), &enc.codes[*ans], &mut sleep_rng);
+                                // replay: no cerebellar output in the tuft, L2/3's prediction on the input side
+                                let empty = BitVector::new(BITS, Some(0));
+                                let b = if cb_l1 { insert_before_last(row, &empty) } else { row.clone() };
+                                let r5 = if l5_out { with_frame(&b, &column.l23.peek(row).unwrap_or_else(|| empty.clone())) } else { b };
+                                l.learn(&r5, &enc.codes[*ans], &mut sleep_rng);
                             }
                             column.l23.set_growth_probability(three.then_some(slow_p));
                             column.l23.set_growth_gate(gate);
@@ -4456,12 +4470,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // feedforward sweep, from a copy of its input (cortex → pons → mossy fibres)
                 // its candidates (every matching kernel's prediction), as the column's
                 // expectation is the union of its own
-                let cb_union: Option<BitVector> = cerebellum.as_ref().map(|cb| cb.peek_union(&input));
+                let mossy = if cb_pons && cerebellum.is_some() { with_frame(&BitVector::from_words(input.as_words()[..BITS / 64].to_vec()), &pons_prev) } else { input.clone() };
+                let cb_union: Option<BitVector> = cerebellum.as_ref().map(|cb| cb.peek_union(&mossy));
                 let cb_early: Option<BitVector> = cerebellum.as_mut().map(|cb| {
-                    let p = cb.predict(&input).clone();
+                    let p = cb.predict(&mossy).clone();
                     cb_word = enc.decode(&p);
                     cb_conf = cb.confidence();
-                    cb_input = Some(input.clone());
+                    cb_input = Some(mossy.clone());
                     p
                 });
                 if bind && !(testing && bind_lesion) {
@@ -5030,9 +5045,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 // L5=primed: the same, with priming (PrimedLayer5): a burst overrides L2/3
                 // L5_OUT: layer 5 reads L2/3's prediction on its input side, and its output (spike or
                 // burst) is all the thalamus receives from the column; silent layer 5, no output
-                let row5: Option<BitVector> = l5_out.then(|| with_frame(&input, &out));
+                // layer 5's row: the column's, with the cerebellum's output in its tuft (CB_L1)
+                // and L2/3's prediction on its input side (L5_OUT)
+                let l5_row: BitVector = {
+                    let b = if cb_l1 { insert_before_last(&input, cb_early.as_ref().unwrap_or(&BitVector::new(BITS, Some(0)))) } else { input.clone() };
+                    if l5_out {
+                        with_frame(&b, &out)
+                    } else {
+                        b
+                    }
+                };
+                let row5: Option<&BitVector> = l5_out.then_some(&l5_row);
                 if let Some(l) = bit5.as_mut() {
-                    if let Some(r5) = row5.as_ref() {
+                    if let Some(r5) = row5 {
                         match l.predict(r5, BITS) {
                             Some((o, c, burst)) => {
                                 out = o;
@@ -5048,11 +5073,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 column.set_output(out.clone(), 0);
                             }
                         }
-                    } else if let Some((o, c, true)) = l.predict(&input, BITS) {
+                    } else if let Some((o, c, true)) = l.predict(&l5_row, BITS) {
                         out = o;
                         column.set_output(out.clone(), c);
                         col_burst = Some(c);
                         col_state = Some((true, c));
+                    }
+                    // the pons: layer 5's firing cells, recoded for the cerebellum's next step
+                    if cb_pons {
+                        pons_prev = pons(&l.last_fired());
                     }
                 }
                 if let Some(l) = primed5.as_mut() {
@@ -5993,7 +6022,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }
                         if let Some(l) = bit5.as_mut() {
-                            l.learn(row5.as_ref().unwrap_or(&input), &enc.codes[next], &mut rng);
+                            l.learn(&l5_row, &enc.codes[next], &mut rng);
                         }
                         if let Some(sc) = slow.as_mut() {
                             sc.feedback(&input, &enc.codes[next], &mut slow_rng);
@@ -7760,6 +7789,31 @@ impl Cb {
             Cb::Circuit(c) => c.live(),
         }
     }
+}
+
+/// The pontine nuclei: each layer 5 cell projects to 8 fixed pseudo-random pontine bits (a
+/// fixed random recoding of the cortex's output for the mossy fibres).
+fn pons(cells: &[usize]) -> BitVector {
+    let mut v = BitVector::new(BITS, Some(0));
+    for &c in cells {
+        for i in 0..8u64 {
+            let mut h = (c as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ i.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+            h ^= h >> 31;
+            v.bit_set((h % BITS as u64) as usize);
+        }
+    }
+    v
+}
+
+/// `row` with `frame` inserted before its last frame (a context frame: the tuft's side).
+fn insert_before_last(row: &BitVector, frame: &BitVector) -> BitVector {
+    let fw = BITS / 64;
+    let w = row.as_words();
+    let cut = w.len().saturating_sub(fw);
+    let mut out = w[..cut].to_vec();
+    out.extend_from_slice(frame.as_words());
+    out.extend_from_slice(&w[cut..]);
+    BitVector::from_words(out)
 }
 
 /// `row` with `frame` appended as one more frame.

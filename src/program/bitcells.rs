@@ -335,6 +335,12 @@ impl BitCells {
         v
     }
 
+    /// The cells that fired (spike or burst) at the latest prediction: layer 5's output
+    /// population, as the pons receives it.
+    pub fn last_fired(&self) -> Vec<usize> {
+        self.cached.as_ref().map_or(Vec::new(), |(_, e)| e.fired.iter().map(|x| x.0).collect())
+    }
+
     /// The winner's output, its priming and whether it burst; None: nothing fired.
     pub fn predict(&mut self, row: &BitVector, out_bits: usize) -> Option<(BitVector, Q16, bool)> {
         self.tick += 1;

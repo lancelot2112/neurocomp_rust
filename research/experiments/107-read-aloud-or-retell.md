@@ -144,22 +144,89 @@ with another story open, the story's word / the book's word.
 
 **Not plausible as built.** Several triggers here are set by the driver, not learned or
 heard:
-- **The practice correction is never heard:** an invisible oracle. The plausible version: the
-  teacher says the correct word aloud, and the network learns from hearing it.
-- **The hippocampus stores only while listening.** It should store everything, gated by
-  novelty.
+- ~~**The practice correction is never heard**~~ (replaced: a heard correction).
+- ~~**The hippocampus stores only while listening**~~ (replaced: it stores everything).
 - **The eye moves one word per step,** in lockstep with the teacher. It should be driven by
   saccades from the learned control loop.
 - **The driver starts each story's context and counts the time code.** These should come from
   learned event boundaries, with time cells that reset at a boundary.
-- **The driver ends an invented story** at "home ." or 40 words. The network should stop by a
-  learned go/no-go on speaking.
+- ~~**The driver ends an invented story**~~ (replaced: a learned stop, by saying silence).
 - **The prefrontal gate keeps its values per word number,** where it should be keyed by the
   heard pattern.
 
+## Replacing three hand-set triggers, and free invention
+Every run here: learned gate, time code, `RT_TELL=apart`, 3,000 trials, and "now make one" in a
+quarter of the trials (`RT_MAKE=1`).
+
+**The three replacements:**
+1. **A heard correction** (`RT_CORRECT=heard`). In practice, a wrong word is followed by the
+   teacher saying the right one aloud. The network hears its own word, then the correction, and
+   learns only from what it hears; the gate is credited only when no correction came.
+2. **The hippocampus stores everything it hears** (`RT_HC_STORE=all`): the instruction, the
+   task, its own speech and the corrections. Its own novelty gating sets the strength.
+3. **A learned stop** (`RT_STOP=learned`). Silence is a sound the vocal tract makes (closing
+   the mouth), learned by babbling like the words. The teacher's silence after the last word is
+   heard, so the network learns to predict the end of an utterance. An invented story ends when
+   the network says silence.
+
+**Free invention** (`RT_MAKE=1`): after "now make one" the teacher makes up a new story. At test
+the network speaks freely, with noise on the relay's weights (30%), and each story is judged:
+- **grammar:** every sentence is one of the seven forms;
+- **story shape:** it starts as a story begins and ends "then N went home .";
+- **coherence:** one name, its pronoun, one animal;
+- **novelty:** never heard in training.
+
+**Storing everything broke the hippocampus at first.** It triples the stores, and the
+hippocampus scaled each input's drive by its *lifetime* write count. By 3,000 trials the context
+bits had lost their drive: recall while telling was 0% and every invented story was silence.
+
+The fix (`HippocampusConfig::decay_writes`): the write counts halve every half-life of stores, as
+the weights do, so familiarity is recent use. It is off by default in the library and on in this
+driver.
+
+| Asked | Book | A: heard correction | C: + store all, learned stop | D: as C, no practice |
+|---|---|---|---|---|
+| read | same story | 72.5 | 64.9 | **75.6** |
+| read | another story | **65.0** | 50.6 | 56.8 |
+| tell | another story (story's / book's word) | 44.6 / 60.7 | 45.4 / 47.6 | **52.7** / 55.3 |
+| tell | closed | 42.8 | 44.6 | **52.0** |
+| | recall right at test | 96% | 95% | 97% |
+| | tell closed, prefrontal content removed | 35.9 | 18.6 | 21.9 |
+| invention | ended by itself | 93% | 28% | 92% |
+| | sentences grammatical | 17% | 12% | 19% |
+| | well formed, coherent, new | 1.4% | 0% | 0% |
+
+C and D use the decaying write counts. B and the first C and D, without them, are not shown:
+the hippocampus failed as described.
+
+**Invented stories** (D, the first six):
+> … the owl . he found a hat . fox . went home .
+> … went home .
+> tom went home .
+> … went to the shop . he saw a fish . he saw a fish . he saw a owl … carrot a fish . he saw a fish . he found a fish . he saw a fish .
+
+From A (practice with the heard correction):
+> bob went to the park . … saw a fox . she saw a fox . she then bob went home .
+
+**Findings:**
+- **The heard correction removes practice's harm.** Retelling with the book closed is 42.8% with
+  it, against 16.2% with the unheard oracle. Practice still does not beat no practice (D: 52.0).
+- **Storing everything works once familiarity decays.** With the learned stop it gives the best
+  retelling yet: D, 52.0% with the book closed and 52.7% story words against 55.3% book words
+  with another book open. The instruction carries it: without the prefrontal content, retelling
+  falls to 22%.
+- **The learned stop works.** In A and D, 92–93% of invented stories end on their own, by the
+  network saying silence. In C, 28%.
+- **Invention is still poor.** Most stories are the shortest form ("tom went home .") or loop on
+  one sentence ("he saw a fish ."). Only 12–19% of sentences are grammatical, and no story was
+  well formed, coherent and new. A blank ("…") often replaces the name: the plan for the first
+  word is weak.
+
 ## Next
-- **Replace the hand-set triggers above,** starting with a heard correction in practice.
-- **Free invention** (`RT_MAKE=1`, "now make one"): built and smoke-tested; full run pending.
+- **Learned event boundaries and a hippocampal index** (in progress). The story's context and
+  the time code come from boundaries learned from the cortex's surprise. The hippocampus becomes
+  an index that grows a row per event: its keys are context and the order of events, and it
+  points to cortical cells instead of holding words.
 - **Credit for the gate per instruction.** Compare the reward with what the same trial type
   usually earns, not the overall average, so holding "tell" is credited.
 - **Seeds 1–4** for every column.

@@ -73,10 +73,94 @@ impl ThalamicGate {
     }
 }
 
+/// What drives a thalamic relay cell from a source.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Driver {
+    /// a layer 5 burst (input and context together): passes fully
+    Burst,
+    /// a layer 5 single spike (input alone): a depressing driver synapse, weak
+    Spike,
+    /// another source (memory, a higher area, the cerebellum) in its own confidence band
+    Tonic(u8),
+}
+
+/// The thalamic relay (`ThalamicRelay`): each source's weight in the vote is the product of
+/// - **driver strength:** a burst passes fully; a single spike passes at one half, and
+///   consecutive spikes depress the synapse further (1/2, 1/4, 1/8, …), as depressing driver
+///   synapses do; a tonic source passes fully;
+/// - **the learned context gate** (`ThalamicGate`, layer 6 context): the source's reliability
+///   in this context, per driver type;
+/// - **modulation by the cerebellum:** a proposal the cerebellum's deep nuclei also make is
+///   strengthened (a quarter of the remaining way to certainty).
+pub struct ThalamicRelay {
+    pub gate: ThalamicGate,
+    spike_run: u32,
+}
+
+impl Default for ThalamicRelay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ThalamicRelay {
+    pub fn new() -> Self {
+        Self { gate: ThalamicGate::new(), spike_run: 0 }
+    }
+
+    fn band(driver: Driver) -> u8 {
+        match driver {
+            Driver::Burst => 8,
+            Driver::Spike => 9,
+            Driver::Tonic(b) => b.min(7),
+        }
+    }
+
+    /// One step of layer 5's output: did it spike (without bursting)? Consecutive spikes
+    /// depress the driver synapse; a silent step or a burst lets it recover.
+    pub fn step(&mut self, spiked: bool) {
+        self.spike_run = if spiked { self.spike_run + 1 } else { 0 };
+    }
+
+    /// The weight (`Q16`) of a proposal from `source` with `driver`, in context `ctx`.
+    pub fn weight(&self, source: u8, driver: Driver, ctx: &BitVector, cerebellum_agrees: bool) -> Q16 {
+        let rate = self.gate.rate(source, Self::band(driver), ctx);
+        let drive: u64 = match driver {
+            Driver::Burst | Driver::Tonic(_) => ONE as u64,
+            Driver::Spike => (ONE as u64 / 2) >> self.spike_run.saturating_sub(1).min(3),
+        };
+        let mut w = ((rate as u64 * drive) >> 16) as Q16;
+        if cerebellum_agrees {
+            w += (ONE - w.min(ONE)) / 4;
+        }
+        w
+    }
+
+    /// Learn whether `source` (with `driver`) was right in context `ctx`.
+    pub fn record<R: rand::Rng + ?Sized>(&mut self, source: u8, driver: Driver, ctx: &BitVector, right: bool, rng: &mut R) {
+        self.gate.record(source, Self::band(driver), ctx, right, rng);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rand::SeedableRng;
+
+    #[test]
+    fn spikes_are_weak_and_depress() {
+        let r = ThalamicRelay::new();
+        let ctx = BitVector::from_bits(&(0..32).collect::<Vec<_>>(), 256);
+        let burst = r.weight(0, Driver::Burst, &ctx, false);
+        let spike = r.weight(0, Driver::Spike, &ctx, false);
+        assert!(spike < burst);
+        let mut r2 = ThalamicRelay::new();
+        r2.step(true);
+        r2.step(true);
+        r2.step(true);
+        assert!(r2.weight(0, Driver::Spike, &ctx, false) < spike);
+        assert!(r.weight(0, Driver::Spike, &ctx, true) > spike);
+    }
 
     #[test]
     fn learns_reliability_per_context() {

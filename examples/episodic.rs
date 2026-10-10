@@ -142,6 +142,8 @@ const SLOW_SRC: u8 = 12;
 const ASSOC_SRC: u8 = 15;
 /// The cerebellum's source id in the mix and its thalamic channel (LEARNING=three).
 const CB_SRC: u8 = 13;
+/// layer 5's single spikes as a driver of their own in the thalamic relay (THAL=relay)
+const L5_SPIKE_SRC: u8 = 16;
 const CB_CHANNEL: usize = 49;
 /// QQUERY with ROUTE: the held item's query answer as a routed channel.
 const Q_CHANNEL: usize = 50;
@@ -1876,6 +1878,15 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     // THAL=bits: each source's reliability in the main vote from a bitwise thalamic gate
     // reading the context pattern (ThalamicGate), not from word-pair tables
     let thal_bits = std::env::var("THAL").map_or(false, |v| v == "bits");
+    // THAL=relay: the thalamic relay: each source's weight = driver strength (burst, spike,
+    // tonic) × the learned context gate × cerebellar agreement (ThalamicRelay); layer 5's
+    // spikes reach the vote through it as weak drivers
+    let thal_relay = std::env::var("THAL").map_or(false, |v| v == "relay");
+    let mut relay = neurocomp::program::ThalamicRelay::new();
+    // L5_GROW=l23: layer 5 grows a cell whenever L2/3 grows a kernel (up to L5_GROW_CAP cells)
+    let l5_grow23 = std::env::var("L5_GROW").map_or(false, |v| v == "l23");
+    let l5_grow_cap: usize = std::env::var("L5_GROW_CAP").ok().and_then(|v| v.parse().ok()).unwrap_or(65_536);
+    let mut l23_grown_prev = 0usize;
     let mut thal = neurocomp::program::ThalamicGate::new();
     let mut thal_rng = StdRng::seed_from_u64(seed.wrapping_add(4242));
     let burst_key = std::env::var("BURST_KEY").is_ok();
@@ -5017,6 +5028,8 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 out.or_mut(column.predict(&input));
                 // the column's burst this step (its strength), for BURST_VOTE
                 let mut col_burst: Option<Q16> = None;
+                // layer 5's single spike this step (output, priming), for THAL=relay
+                let mut l5_spike: Option<(BitVector, Q16)> = None;
                 // the primed column's state this step: (burst?, priming), for BURST_KEY
                 let mut col_state: Option<(bool, Q16)> = None;
                 // L5=two: a burst of a two-compartment cell (input and context together)
@@ -5090,12 +5103,19 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 column.set_output(out.clone(), 0);
                             }
                         }
-                    } else if let Some((o, c, true)) = l.predict(&l5_row, BITS) {
-                        out = o;
-                        column.set_output(out.clone(), c);
-                        col_burst = Some(c);
-                        col_state = Some((true, c));
+                    } else {
+                        match l.predict(&l5_row, BITS) {
+                            Some((o, c, true)) => {
+                                out = o;
+                                column.set_output(out.clone(), c);
+                                col_burst = Some(c);
+                                col_state = Some((true, c));
+                            }
+                            Some((o, c, false)) => l5_spike = Some((o, c)),
+                            None => {}
+                        }
                     }
+                    relay.step(l5_spike.is_some());
                     // the pons: layer 5's firing cells, recoded for the cerebellum's next step
                     if cb_pons {
                         pons_prev = pons(&l.last_fired());
@@ -5201,6 +5221,13 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                             _ => ctx + bucket(column.confidence()),
                         };
                         proposals.push((0, key, vec![w]));
+                    }
+                    // THAL=relay: layer 5's spike as a weak driver of its own
+                    if let (true, Some((o, c))) = (thal_relay, l5_spike.as_ref()) {
+                        let ws = words_of(o);
+                        if !ws.is_empty() {
+                            proposals.push((L5_SPIKE_SRC, ctx + bucket(*c), ws));
+                        }
                     }
                     if let (Some(w), true) = (cb_word, cerebellum.is_some()) {
                         if std::env::var("CBDIAG").is_ok() && testing && t + 1 == s.answer_at && cb_stats[0] < 8 {
@@ -5314,14 +5341,28 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     // BURST_VOTE: a bursting column votes with the burst's own evidence (its
                     // strength now), not the word-keyed reliability learned for the old column
                     // the thalamic gate's context: the current and the previous input (layer 6)
-                    let tctx: Option<BitVector> = thal_bits.then(|| {
+                    let tctx: Option<BitVector> = (thal_bits || thal_relay).then(|| {
                         let fw = BITS / 64;
                         let w = input.as_words();
                         let mut c = w[..fw].to_vec();
                         c.extend_from_slice(&w[w.len() - fw..]);
                         BitVector::from_words(c)
                     });
-                    let burst_weight = |src: u8, key: u64| -> u32 {
+                    let driver = |src: u8, key: u64| -> neurocomp::program::Driver {
+                        use neurocomp::program::Driver;
+                        if src == 0 && col_burst.is_some() {
+                            Driver::Burst
+                        } else if src == L5_SPIKE_SRC {
+                            Driver::Spike
+                        } else {
+                            Driver::Tonic((key % 8) as u8)
+                        }
+                    };
+                    let burst_weight = |src: u8, key: u64, w: usize| -> u32 {
+                        if let (true, Some(c)) = (thal_relay, tctx.as_ref()) {
+                            let agrees = src != CB_SRC && cb_word == Some(w);
+                            return mix.weight_of_rate(relay.weight(src, driver(src, key), c, agrees));
+                        }
                         if let Some(c) = tctx.as_ref() {
                             return mix.weight_of_rate(thal.rate(src, (key % 8) as u8, c));
                         }
@@ -5350,7 +5391,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                         pass.iter().flat_map(|(src, _, ws)| ws.iter().map(|&w| (w, mix.weight_of_rate(beta(*src)))).collect::<Vec<_>>()).collect()
                     } else {
-                        proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, burst_weight(*src, *key))).collect::<Vec<_>>()).collect()
+                        proposals.iter().flat_map(|(src, key, ws)| ws.iter().map(|&w| (w, burst_weight(*src, *key, w))).collect::<Vec<_>>()).collect()
                     };
                     // the bud in shadow: would its vote have fixed or broken the mix's choice?
                     if let Some((src, key, ws)) = bud_prop {
@@ -5413,7 +5454,11 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 mix.record(*src, *key, w == next);
                             }
                             if let Some(c) = tctx.as_ref() {
-                                thal.record(*src, (*key % 8) as u8, c, ws.contains(&next), &mut thal_rng);
+                                if thal_relay {
+                                    relay.record(*src, driver(*src, *key), c, ws.contains(&next), &mut thal_rng);
+                                } else {
+                                    thal.record(*src, (*key % 8) as u8, c, ws.contains(&next), &mut thal_rng);
+                                }
                             }
                         }
                         // the frame gate's record (HIER_TRUST_GATE): the same outcomes, under a
@@ -6040,6 +6085,16 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     let page = !inner[t + 1];
                     if page {
                         column.learn(&input, &enc.codes[next], &mut rng);
+                        // L5_GROW=l23: L2/3 grew a kernel for this moment: layer 5 grows a cell too
+                        if l5_grow23 {
+                            let g = column.l23.grown();
+                            if g > l23_grown_prev {
+                                if let Some(l) = bit5.as_mut() {
+                                    l.grow_cell(&l5_row, &enc.codes[next], l5_grow_cap, &mut rng);
+                                }
+                            }
+                            l23_grown_prev = g;
+                        }
                         if let Some(l) = layer5.as_mut() {
                             l.learn(&input, &enc.codes[next], &mut rng);
                         }

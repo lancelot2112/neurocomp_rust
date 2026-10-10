@@ -142,6 +142,43 @@ impl BitCells {
         }
     }
 
+    /// Grow a cell for this moment (layer 5 growing with layer 2/3): its tuft wired to the
+    /// current context, its input synapses silent on the current input, `target` as its output.
+    /// A free cell is reused if there is one; otherwise a new cell is added, up to `cap` cells.
+    pub fn grow_cell<R: rand::Rng + ?Sized>(&mut self, row: &BitVector, target: &BitVector, cap: usize, rng: &mut R) -> bool {
+        let (basal, apical) = self.split(row);
+        if basal.is_empty() || apical.is_empty() || target.count_ones() == 0 {
+            return false;
+        }
+        let c = match self.cells.iter().position(|c| c.out.is_empty() && c.apical.is_empty()) {
+            Some(c) => c,
+            None if self.cells.len() < cap => {
+                self.cells.push(Cell { trace: ONE / 2, ..Default::default() });
+                self.tables.grow_to(self.cells.len());
+                self.cells.len() - 1
+            }
+            None => return false,
+        };
+        self.wire(c, &apical, rng);
+        let pick: Vec<u32> = basal.choose_multiple(rng, self.sample.min(basal.len())).copied().collect();
+        for b in pick {
+            self.add_synapse(c, false, b, false);
+        }
+        let mut out = Vec::new();
+        for (wi, &x) in target.as_words().iter().enumerate() {
+            let mut x = x;
+            while x != 0 {
+                out.push((wi * 64 + x.trailing_zeros() as usize) as u32);
+                x &= x - 1;
+            }
+        }
+        let cell = &mut self.cells[c];
+        cell.out = out;
+        cell.trace = ONE / 2;
+        self.stats[3] += 1;
+        true
+    }
+
     /// SST/VIP interneurons set the context threshold (see `PrimedLayer5::set_interneurons`).
     /// Take each plasticity event's index and gates from the cell's id plus the step
     /// counter instead of a random word: (id + step) mod 256 in every byte, so each cell

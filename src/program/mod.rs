@@ -70,4 +70,4 @@ pub mod cerebellar_circuit;
 pub use cerebellar_circuit::CerebellarCircuit;
 
 pub mod thalamic_gate;
-pub use thalamic_gate::ThalamicGate;
+pub use thalamic_gate::{Driver, ThalamicGate, ThalamicRelay};

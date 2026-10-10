@@ -74,3 +74,6 @@ pub use thalamic_gate::{Driver, ThalamicGate, ThalamicRelay};
 
 pub mod layer4;
 pub use layer4::Layer4;
+
+pub mod striatum;
+pub use striatum::Striatum;

@@ -47,8 +47,8 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::{
-    BasalGanglia, BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Gate, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
-    PfcGate, ThalamicRelay, VocalTract, WorkingMemory,
+    BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
+    Striatum, ThalamicRelay, VocalTract, WorkingMemory,
 };
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -203,7 +203,6 @@ struct Net {
     rec23: BitVector,
     pons: BitVector,
     wm: WorkingMemory,
-    gate: PfcGate,
     hc: Hippocampus,
 }
 
@@ -255,7 +254,6 @@ impl Net {
             rec23: zero(),
             pons: zero(),
             wm: WorkingMemory::new(BITS, 1),
-            gate: PfcGate::new(BITS, 1, ONE * 9 / 10, seed.wrapping_add(11)),
             hc: {
                 // RT_HC_DECAY (per-store decay of every weight, default 0.999), RT_HC_CENTER=1
                 // (homeostatic centering of CA3's drive), RT_HC_SCALE=1 (presynaptic scaling
@@ -397,67 +395,26 @@ impl Net {
             self.relay.record(*src, *drv, &st.ctx, overlap(pat, target) >= 16, rng);
         }
     }
+}
 
-    /// The prefrontal gate sees a heard word (`key`, its code `ear`): load it or keep.
-    fn hear_gate(&mut self, key: usize, ear: &BitVector, explore: bool, rng: &mut StdRng) {
-        let g = if explore { self.gate.decide(key, Some(rng)) } else { self.gate.decide::<StdRng>(key, None) };
-        if g == Gate::Load {
-            self.wm.load(0, ear);
+/// What the striatum sees: the prefrontal content, the association area's assembly for the last
+/// sound heard, and mode signals (each true flag 8 bits), as one pattern of active bits.
+fn state_bits(pfc: &BitVector, heard: &BitVector, flags: &[bool]) -> Vec<usize> {
+    let mut v = ones(pfc);
+    v.extend(ones(heard).into_iter().map(|b| b + BITS));
+    for (i, &f) in flags.iter().enumerate() {
+        if f {
+            v.extend((0..8).map(|k| 2 * BITS + i * 8 + k));
         }
     }
+    v
 }
 
-/// Reaching for a book: a basal-ganglia action, wait or reach, valued per context (the last two
-/// sounds heard, bound by rotation). Unlike the prefrontal gate, both choices are credited: the
-/// decisions of a trial form an eligibility trace (newest first, halving), and the trial's
-/// outcome (the share of words that came out right) is the reward: each choice's value in its
-/// context moves toward the outcomes it brought.
-struct ReachGate {
-    bg: BasalGanglia,
-    wait: BitVector,
-    reach: BitVector,
-}
-
-impl ReachGate {
-    fn new(seed: u64) -> Self {
-        let mut rng = StdRng::seed_from_u64(seed);
-        let all: Vec<usize> = (0..BITS).collect();
-        let mut code = || BitVector::from_bits(&all.choose_multiple(&mut rng, 32).copied().collect::<Vec<_>>(), BITS);
-        let (wait, reach) = (code(), code());
-        let mut bg = BasalGanglia::new(BITS);
-        bg.trace_len = 3;
-        bg.trace_decay = ONE / 2;
-        // each choice's value in its context moves toward the outcomes it brought (no global
-        // baseline: an average over all trials credits whatever was chosen where outcomes are
-        // good anyway)
-        bg.baseline_rate = None;
-        bg.gain = ONE;
-        Self { bg, wait, reach }
-    }
-
-    fn bound(code: &BitVector, key: usize) -> BitVector {
-        let mut c = code.clone();
-        c.rotl_mut((key * 131) % BITS);
-        c
-    }
-
-    /// Reach now? (`rng`: explore)
-    fn decide(&mut self, key: usize, rng: Option<&mut StdRng>) -> bool {
-        let cands = [Self::bound(&self.wait, key), Self::bound(&self.reach, key)];
-        self.bg.select(&cands, rng) == Some(1)
-    }
-
-    fn reward(&mut self, r: i32, rng: &mut StdRng) {
-        self.bg.reward(r, rng);
-    }
-
-    fn value(&self, key: usize) -> u32 {
-        self.bg.value(&Self::bound(&self.reach, key)) as u32
-    }
-}
-
-/// The key a reach gives the hold gate (beyond any word's).
-const REACH_KEY: usize = 100;
+/// The striatum's channels (one per gate).
+const CH_REACH: usize = 0;
+const CH_HOLD: usize = 1;
+const CH_REINSTATE: usize = 2;
+const CH_LOAD: usize = 3;
 
 /// The hippocampal context's cells are drawn from this many.
 const CTX_POOL: usize = 1 << 16;
@@ -495,8 +452,6 @@ struct IndexHc {
     mem: IndexMemory,
     ctx: Vec<usize>,
     boundary: BoundaryCell,
-    hold_gate: PfcGate,
-    back_gate: PfcGate,
     held: Option<Vec<usize>>,
     last_word: usize,
     last_recalled: Option<u32>,
@@ -520,7 +475,6 @@ struct IndexHc {
     gates_off: bool,
     /// diagnosis: (boundary fired, recalled row) per heard sound, while tracing
     pub log: Vec<(bool, Option<u32>)>,
-    rng: StdRng,
 }
 
 impl IndexHc {
@@ -532,8 +486,6 @@ impl IndexHc {
             mem: IndexMemory::new(cfg),
             ctx,
             boundary: BoundaryCell::new(BITS, 3, 80),
-            hold_gate: PfcGate::new(BITS, 1, ONE * 9 / 10, seed.wrapping_add(13)),
-            back_gate: PfcGate::new(BITS, 1, ONE * 9 / 10, seed.wrapping_add(17)),
             held: None,
             last_word: 0,
             last_recalled: None,
@@ -553,7 +505,6 @@ impl IndexHc {
             followed: 0,
             gates_off: false,
             log: Vec::new(),
-            rng,
         }
     }
 
@@ -625,7 +576,8 @@ impl IndexHc {
     /// store a pointer to the layer 4 cells under the context in force (if `store`), move the
     /// context on with those cells, learn the boundary cell (its input: layer 4) from the
     /// cortex's surprise at the sound, and at a boundary let the gates hold and reinstate.
-    fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, store: bool, explore: bool, own: bool) {
+    /// Returns whether an event boundary fired.
+    fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, store: bool, own: bool) -> bool {
         let surprise = ONE - (overlap(&self.plan, code).min(ACTIVE as u32) * ONE / ACTIVE as u32);
         self.boundary.learn(surprise);
         let cells = ones(cells);
@@ -640,11 +592,6 @@ impl IndexHc {
                 self.mem.reconsolidate(r, &cells);
                 self.relearned += 1;
             }
-            // the comparator's verdict (CA1: did the recalled row predict what was heard?) is
-            // the dopamine for the hippocampal gates (the hippocampus-VTA loop, Lisman & Grace)
-            if !self.gates_off {
-                self.reward(if matched { ONE as i32 } else { 0 });
-            }
             // a mismatch is novelty, and novelty returns the hippocampus to encoding; its own
             // speech is not novel (corollary discharge damps the response to self-made sounds)
             if !matched && !own {
@@ -658,7 +605,6 @@ impl IndexHc {
         }
         // the context moves on with layer 4's cells, not the raw sound
         self.drift(&cells, 4, 1);
-        let pair = self.last_word * 101 + key;
         self.last_word = key;
         let fired = self.boundary.observe(&cells);
         self.log.push((fired, self.last_recalled));
@@ -666,45 +612,32 @@ impl IndexHc {
             self.boundaries += 1;
             self.drift(&cells, self.ctx.len() / 2, 2);
         }
-        if self.gates_off {
-            return;
-        }
-        let decide = |g: &mut PfcGate, rng: &mut StdRng| if explore { g.decide(pair, Some(rng)) } else { g.decide::<StdRng>(pair, None) };
-        // on any sound (as PBWM gates do): reinstate what is held, the context where a held
-        // episode began; at a boundary, otherwise: hold where this new episode begins
-        if self.held.is_some() && decide(&mut self.back_gate, &mut self.rng) == Gate::Load {
-            self.ctx = self.held.clone().unwrap();
-            self.last_recalled = None;
-            self.retrieving = true;
-            self.reinstated += 1;
-        } else if fired && decide(&mut self.hold_gate, &mut self.rng) == Gate::Load {
-            self.held = Some(self.ctx.clone());
-            self.retrieving = false;
-            self.holds += 1;
-        }
+        fired
     }
 
     /// A reach (a motor act that brings a new scene, a book) is an event boundary: the context
-    /// moves on by half, and the hold gate may hold where this new episode begins.
-    fn reach_event(&mut self, explore: bool) {
+    /// moves on by half.
+    fn reach_event(&mut self) {
         self.boundaries += 1;
         let c = self.ctx.clone();
         self.drift(&c, self.ctx.len() / 2, 3);
-        if self.gates_off {
-            return;
-        }
-        let pair = self.last_word * 101 + REACH_KEY;
-        let g = if explore { self.hold_gate.decide(pair, Some(&mut self.rng)) } else { self.hold_gate.decide::<StdRng>(pair, None) };
-        if g == Gate::Load {
-            self.held = Some(self.ctx.clone());
-            self.retrieving = false;
-            self.holds += 1;
-        }
     }
 
-    fn reward(&mut self, r: i32) {
-        self.hold_gate.reward(r, &mut self.rng);
-        self.back_gate.reward(r, &mut self.rng);
+    /// The prefrontal cortex holds the context in force: where this episode begins.
+    fn hold(&mut self) {
+        self.held = Some(self.ctx.clone());
+        self.retrieving = false;
+        self.holds += 1;
+    }
+
+    /// The held context is reinstated as the current one, and retrieval begins.
+    fn reinstate(&mut self) {
+        if let Some(h) = self.held.clone() {
+            self.ctx = h;
+            self.last_recalled = None;
+            self.retrieving = true;
+            self.reinstated += 1;
+        }
     }
 }
 
@@ -761,7 +694,9 @@ fn main() {
     // words said right); the world then hands it the book from its first word (a file retrieved),
     // and the reach is an event boundary. RT_REACH=given: the book is open from the start.
     let reach_learned = std::env::var("RT_REACH").map_or(true, |v| v != "given");
-    let mut reach_gate = ReachGate::new(seed.wrapping_add(19));
+    // the striatum: one critic, and an actor channel per gate (reach, hold, reinstate, load into
+    // working memory); dopamine is the TD error, the reward the words that come out right
+    let mut striatum = Striatum::new(1 << 18);
     // per (instruction read/tell, book): (trials, reached, words before the reach), at test
     let mut reach_stats = [[(0usize, 0usize, 0usize); 3]; 2];
     // RT_HC_STORE=all (default): the hippocampus stores every word heard (the instruction,
@@ -769,6 +704,8 @@ fn main() {
     // the story as first heard
     let store_all = std::env::var("RT_HC_STORE").map_or(true, |v| v != "listen");
     let mut net = Net::new(seed);
+    let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
+    let td_debug = std::env::var("RT_TD_DEBUG").is_ok();
     // RT_HC=index (default): the hippocampus as a growing index with learned event boundaries
     // (`IndexHc`); RT_HC=circuit: the fixed circuit cued by the driver's story context
     // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
@@ -785,20 +722,44 @@ fn main() {
     // what the eye fixates now (the book's word in the task, else nothing): with the heard
     // word, the association area's input
     let mut eye_now = zero();
-    // the last two sounds heard (word ids; the pause is `quiet`): the reach gate's key
-    let mut heard_ids: (usize, usize) = (0, 0);
+    // the association area's assembly for the last sound heard, and whether the book is open:
+    // part of what the striatum sees
+    let mut last_assoc: BitVector;
+    let mut book_seen = false;
     macro_rules! hc_hear {
         ($w:expr, $cue:expr, $store:expr, $explore:expr, $own:expr) => {{
             let w: usize = $w;
-            heard_ids = (heard_ids.1, w);
-            match ix.as_mut() {
-                Some(x) => {
-                    let cells = net.assoc_of(&eye_now, &ear.codes[w], $explore, &mut rng);
-                    x.hear(w, &ear.codes[w], &cells, $store, $explore, $own);
-                }
+            let cells = net.assoc_of(&eye_now, &ear.codes[w], $explore, &mut rng);
+            let fired = match ix.as_mut() {
+                Some(x) => x.hear(w, &ear.codes[w], &cells, $store, $own),
                 None => {
                     if $store {
                         net.hc.store_split(&ones(&ear.codes[w]), $cue, &ones(&ear.codes[w]));
+                    }
+                    false
+                }
+            };
+            last_assoc = cells;
+            td_step!(fired, $explore);
+            // the prefrontal gate: load what was just heard into working memory, or keep
+            if !fixed_gate && striatum.choose(CH_LOAD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
+                net.wm.load(0, &ear.codes[w]);
+            }
+        }};
+    }
+    // a new step for the striatum (after a sound): the TD update, then the hippocampal gates:
+    // reinstate what is held, or (at a boundary) hold where this episode begins
+    macro_rules! td_step {
+        ($fired:expr, $explore:expr) => {{
+            let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.retrieving, x.held.is_some()));
+            let state = state_bits(&net.wm.content(), &last_assoc, &[book_seen, retr, held]);
+            striatum.begin(&state, $explore);
+            if let Some(x) = ix.as_mut() {
+                if !x.gates_off {
+                    if held && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
+                        x.reinstate();
+                    } else if $fired && striatum.choose(CH_HOLD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
+                        x.hold();
                     }
                 }
             }
@@ -820,7 +781,6 @@ fn main() {
             }
         };
     }
-    let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let tell_apart = std::env::var("RT_TELL").map_or(false, |v| v == "apart");
     let time = std::env::var("RT_HC_TIME").map_or(false, |v| v == "1");
     // RT_PRACTICE: the share of training tasks the network does itself, hearing its own words,
@@ -863,7 +823,6 @@ fn main() {
         for t in 0..s.len() {
             let w = id(s[t]);
             let heard = &ear.codes[w];
-            net.hear_gate(w, heard, learn && !fixed_gate, &mut rng);
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             if ix.is_some() {
                 // RT_IX_HOLD=oracle (diagnosis only): hold the context in force at the story's
@@ -905,11 +864,12 @@ fn main() {
             println!("  probe right after hearing:{line}");
         }
         // the teacher pauses: silence is heard (a sound, and a natural event boundary)
-        if let Some(x) = ix.as_mut() {
+        if ix.is_some() {
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            x.hear(quiet, &silence, &cells, false, learn, false);
+            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, false, false);
+            last_assoc = cells;
+            td_step!(fired, learn);
         }
-        heard_ids = (heard_ids.1, quiet);
         let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
         // 2. the book and the instruction
         let make = make_on && rng.gen_bool(0.25);
@@ -937,12 +897,8 @@ fn main() {
             let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
             hc_hear!(wi, &cue, store_all, learn, false);
             ip2 = ip.replace(ear.codes[wi].clone());
-            if fixed_gate {
-                if w == verb {
-                    net.wm.load(0, &ear.codes[wi]);
-                }
-            } else {
-                net.hear_gate(wi, &ear.codes[wi], learn, &mut rng);
+            if fixed_gate && w == verb {
+                net.wm.load(0, &ear.codes[wi]);
             }
             let st = net.step(&zero(), &ear.codes[wi], &zero(), false, 0, &mut rng);
             hc_plan!(st);
@@ -1019,22 +975,39 @@ fn main() {
             }
         }
         let mut book_open = !reach_learned;
-        // this task's words that came out right (planned, or said in practice): the reach's reward
-        let mut task_score = (0usize, 0usize);
+        book_seen = book_open && !p.is_empty();
         let mut eye_pos = 0usize;
+        let mut debug_right = 0usize;
         let mut reached_at: Option<usize> = None;
-        for t in 0..target.len() {
-            if !book_open {
-                let key = heard_ids.0 * 101 + heard_ids.1;
-                if reach_gate.decide(key, if learn { Some(&mut rng) } else { None }) {
-                    // the world hands over the book, from its first word
+        // the teacher waits (up to three pauses) before starting; the network may reach for the
+        // book meanwhile. Once the teacher starts, it goes on whether the book is open or not.
+        if !book_open {
+            for _ in 0..3 {
+                if ix.is_some() {
+                    let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
+                    let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, false, false);
+                    last_assoc = cells;
+                    td_step!(fired, learn);
+                } else {
+                    last_assoc = net.assoc_of(&zero(), &silence, false, &mut rng);
+                    td_step!(false, learn);
+                }
+                if striatum.choose(CH_REACH, 2, if learn { Some(&mut rng) } else { None }) == 1 {
+                    // the world hands over the book, from its first word; the reach is an
+                    // event boundary, and the striatum may hold where this new episode begins
                     book_open = true;
-                    reached_at = Some(t);
+                    book_seen = !p.is_empty();
+                    reached_at = Some(0);
                     if let Some(x) = ix.as_mut() {
-                        x.reach_event(learn);
+                        x.reach_event();
                     }
+                    td_step!(true, learn);
+                    break;
                 }
             }
+        }
+        let (debug_v0, debug_p0) = striatum.debug_now(CH_REACH);
+        for t in 0..target.len() {
             let seen = if book_open { p.get(eye_pos).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero) } else { zero() };
             if book_open {
                 eye_pos += 1;
@@ -1077,22 +1050,18 @@ fn main() {
                     practice_right.1 += 1;
                     if let Some(w) = said {
                         prev2 = prev.replace(ear.codes[w].clone());
-                        net.hear_gate(w, &ear.codes[w], !fixed_gate, &mut rng);
                     } else {
                         prev2 = if heard_plan { prev.replace(st.plan.clone()) } else { prev.take() };
                     }
                     if heard_correction && !ok {
                         // the teacher says the right word aloud, and it is heard
                         prev2 = prev.replace(ear.codes[want].clone());
-                        net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
                         corrections += 1;
                     }
-                    // credit: no correction came (with the oracle: the unheard comparison)
-                    if !fixed_gate {
-                        net.gate.reward(if ok { ONE as i32 } else { 0 }, &mut rng);
+                    // the reward: no correction came (with the oracle: the unheard comparison)
+                    if ok {
+                        striatum.reward(ONE as i32);
                     }
-                    task_score.0 += ok as usize;
-                    task_score.1 += 1;
 
                     if ix.is_some() {
                         // its own word was heard, then (if wrong) the teacher's
@@ -1109,15 +1078,13 @@ fn main() {
                         }
                     }
                 } else {
-                    if !fixed_gate {
-                        net.gate.reward(if right { ONE as i32 } else { 0 }, &mut rng);
+                    // the reward: the planned word was the one the teacher then said
+                    if right {
+                        striatum.reward(ONE as i32);
+                        debug_right += 1;
                     }
-                    task_score.0 += right as usize;
-                    task_score.1 += 1;
-
                     // the teacher's word is heard
                     prev2 = prev.replace(ear.codes[want].clone());
-                    net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
                     hc_hear!(want, &cue, store_all, true, false);
                 }
             } else {
@@ -1148,9 +1115,6 @@ fn main() {
                         tally.said_story += (w == id(s[t.min(s.len() - 1)]) && t < s.len()) as usize;
                         tally.said_book += p.get(t).map_or(false, |b| w == id(b)) as usize;
                         prev2 = prev.replace(ear.codes[w].clone());
-                        if !fixed_gate {
-                            net.hear_gate(w, &ear.codes[w], false, &mut rng);
-                        }
                         hc_hear!(w, &cue, store_all, false, true);
                     }
                     None => {
@@ -1169,11 +1133,13 @@ fn main() {
             let st = net.step(&zero(), &heard, &rec, true, 0, &mut rng);
             net.learn(&st, &silence, &mut rng);
         }
-        if let Some(x) = ix.as_mut() {
+        if ix.is_some() {
             // the pause after the task
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            x.hear(quiet, &silence, &cells, false, learn, false);
-            let task_log: Vec<bool> = x.log.drain(..).map(|l| l.0).collect();
+            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, false, false);
+            last_assoc = cells;
+            td_step!(fired, learn);
+            let task_log: Vec<bool> = ix.as_mut().unwrap().log.drain(..).map(|l| l.0).collect();
             if trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr {
                 trace -= 1;
                 let marks = |l: &[bool], w: &[&str]| w.iter().zip(l.iter().chain(std::iter::repeat(&false))).map(|(w, &b)| if b { format!("{w}|") } else { w.to_string() }).collect::<Vec<_>>().join(" ");
@@ -1183,9 +1149,21 @@ fn main() {
                 println!("  retold: {:.0}% right; recall right on {}", 100.0 * tally.right as f64 / tally.words.max(1) as f64, trace_recall.iter().map(|&r| if r { '+' } else { '-' }).collect::<String>());
             }
         }
-        if learn && reach_learned && task_score.1 > 0 {
-            reach_gate.reward((task_score.0 as u64 * ONE as u64 / task_score.1 as u64) as i32, &mut rng);
+        // the trial ends: the last dopamine, and the traces clear
+        book_seen = false;
+        if td_debug && learn && trial % 50 == 0 {
+            println!(
+                "  td trial {trial}: {} book {:?}, reached at {:?}, words right {} of {}, value at task start {:.2}, reach pref there {:+.2}",
+                verb,
+                books.iter().position(|b| *b == book),
+                reached_at,
+                debug_right,
+                target.len(),
+                debug_v0 as f64 / ONE as f64,
+                debug_p0 as f64 / ONE as f64
+            );
         }
+        striatum.end(learn);
         if testing && !no_instr && !make && reach_learned {
             let bi = books.iter().position(|b| *b == book).unwrap();
             let r = &mut reach_stats[!read as usize][bi];
@@ -1343,39 +1321,21 @@ fn main() {
                 }
             }
         }
-        let q = |v: u32| v as f64 / ONE as f64;
-        println!(
-            "\nreaching for the book (test, instruction held):{line} value of reaching after \"read it\" {:.2}, \"tell it\" {:.2}",
-            q(reach_gate.value(id("read") * 101 + id(IT))),
-            q(reach_gate.value(id("tell") * 101 + id(IT)))
-        );
-    }
-    if let Some(x) = &ix {
-        let pairs: Vec<(&str, &str)> = vec![("tell", IT), ("read", IT), ("now", "tell"), ("now", "read"), ("home", "."), (".", "<pause>"), ("<pause>", "now"), ("the", "fox")];
-        let wid = |w: &str| if w == "<pause>" { quiet } else { id(w) };
-        let q = |v: u32| v as f64 / ONE as f64;
-        let line = pairs
-            .iter()
-            .map(|(a, b)| {
-                let k = wid(a) * 101 + wid(b);
-                format!("{a} {b}: hold {:.2} reinstate {:.2}", q(x.hold_gate.value(Gate::Load, k) as u32), q(x.back_gate.value(Gate::Load, k) as u32))
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
-        println!("hippocampal gates, value of loading after: {line}");
+        // the striatum's preference for reaching over waiting, holding "read" or "tell" and
+        // having just heard "it"
+        let heard_it = net.assoc_of(&zero(), &ear.codes[id(IT)], false, &mut rng);
+        let pref = |v: &str| {
+            let st = state_bits(&ear.codes[id(v)], &heard_it, &[false, false, false]);
+            (striatum.preference(&st, CH_REACH, 1) - striatum.preference(&st, CH_REACH, 0)) as f64 / ONE as f64
+        };
+        println!("\nreaching for the book (test, instruction held):{line} preference for reaching over waiting after \"read it\" {:+.2}, \"tell it\" {:+.2}", pref("read"), pref("tell"));
     }
     if practice_p > 0.0 {
         println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });
     }
-    let (rd, tl) = (net.gate.value(Gate::Load, id("read")), net.gate.value(Gate::Load, id("tell")));
-    let (nw, it, the) = (net.gate.value(Gate::Load, id("now")), net.gate.value(Gate::Load, id(IT)), net.gate.value(Gate::Load, id("the")));
-    let q = |v: u32| v as f64 / ONE as f64;
     println!(
-        "\nprefrontal gate, value of loading: read {:.2}, tell {:.2}, now {:.2}, it {:.2}, the {:.2}",
-        q(rd as u32),
-        q(tl as u32),
-        q(nw as u32),
-        q(it as u32),
-        q(the as u32)
+        "\nstriatum: {} TD updates, mean |dopamine| {:.3}",
+        striatum.stats.0,
+        striatum.stats.1 as f64 / striatum.stats.0.max(1) as f64 / ONE as f64
     );
 }

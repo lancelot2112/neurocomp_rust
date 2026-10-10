@@ -46,10 +46,12 @@ use neurocomp::program::{
 };
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 
 const BITS: usize = 2048;
 const ACTIVE: usize = 32;
+/// The hippocampus's context space (after the BITS content bits).
+const CTX_SPACE: usize = 65_536;
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
     std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
@@ -200,7 +202,10 @@ impl Net {
                 // RT_HC_DECAY (per-store decay of every weight, default 0.999), RT_HC_CENTER=1
                 // (homeostatic centering of CA3's drive), RT_HC_SCALE=1 (presynaptic scaling
                 // on every pathway)
-                let mut cfg = HippocampusConfig::new(2 * BITS, seed.wrapping_add(300));
+                // input: the content (BITS) and the sparse context space; output: the content
+                let mut cfg = HippocampusConfig::new(BITS + CTX_SPACE, seed.wrapping_add(300));
+                cfg.out_bits = BITS;
+                cfg.hashed_fan_out = Some(env("RT_HC_FANOUT", 300usize));
                 cfg.decay = env("RT_HC_DECAY", 0.999f32);
                 cfg.center = std::env::var("RT_HC_CENTER").is_ok();
                 cfg.scale_all = std::env::var("RT_HC_SCALE").is_ok();
@@ -209,14 +214,28 @@ impl Net {
         }
     }
 
-    /// The hippocampus's cue and stored context: the last two words heard (the one before
-    /// shifted, so order counts) and the story's context, in the context half of its input.
-    fn hc_context(prev: Option<&BitVector>, prev2: Option<&BitVector>, story_ctx: &[usize]) -> Vec<usize> {
-        let mut c: Vec<usize> = prev.map(|p| ones(p).into_iter().map(|b| b + BITS).collect()).unwrap_or_default();
-        if let Some(p2) = prev2 {
-            c.extend(ones(p2).into_iter().map(|b| (b + 7) % BITS + BITS));
+    /// The hippocampus's cue and stored context: a sparse conjunctive code (64 of CTX_SPACE
+    /// bits, after the content half) set by the story's context and the last two sounds heard
+    /// (silence before anyone has spoken), through a fixed random projection, as entorhinal
+    /// conjunctive cells would give. A conjunction is rarely repeated, so its bits keep their
+    /// drive under the hippocampus's presynaptic scaling (single words and a reused context,
+    /// written thousands of times, are scaled to nothing).
+    fn hc_context(prev: Option<&BitVector>, prev2: Option<&BitVector>, silence: &BitVector, story: u64) -> Vec<usize> {
+        let mut h: u64 = story.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        for (k, v) in [prev.unwrap_or(silence), prev2.unwrap_or(silence)].into_iter().enumerate() {
+            for w in v.as_words() {
+                h = (h ^ w.rotate_left(17 * k as u32 + 5)).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+                h ^= h >> 29;
+            }
         }
-        c.extend(story_ctx.iter().map(|b| b + BITS));
+        let mut c: Vec<usize> = (0..2 * ACTIVE as u64)
+            .map(|i| {
+                let mut x = h ^ i.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+                x = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                x ^= x >> 31;
+                BITS + (x % CTX_SPACE as u64) as usize
+            })
+            .collect();
         c.sort_unstable();
         c.dedup();
         c
@@ -320,6 +339,8 @@ fn main() {
     let id = |w: &str| vocab.iter().position(|v| *v == w).unwrap();
     let ear = Encoder::new(vocab.len(), BITS, ACTIVE, &mut rng);
     let eye = Encoder::new(vocab.len(), BITS, ACTIVE, &mut rng);
+    // the sound of silence: what the ear hears before anyone speaks
+    let silence = Encoder::new(1, BITS, ACTIVE, &mut rng).codes[0].clone();
     let tract = VocalTract::new(vocab.len(), BITS, ACTIVE, &mut rng);
     let mut motor = MotorArea::new(BITS);
     motor.babble(&tract, &ear.codes, 3, &mut rng);
@@ -327,7 +348,6 @@ fn main() {
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let (n_train, n_test): (usize, usize) = (env("RT_TRAIN", 3000), env("RT_TEST", 300));
     println!("vocabulary {}; {} training trials, {} test trials; gate {}", vocab.len(), n_train, n_test, if fixed_gate { "fixed (diagnosis)" } else { "learned" });
-    let all: Vec<usize> = (0..2 * BITS).collect();
     let t0 = std::time::Instant::now();
     // results per (instruction read/tell, book), at test; and with the prefrontal content removed
     let mut res = [[Tally::default(); 3]; 2];
@@ -336,13 +356,20 @@ fn main() {
     // the hippocampal recall's own accuracy while telling: (recalled the wanted word, steps)
     let mut hc_right = (0usize, 0usize);
     let mut hc_bits = 0usize;
+    // the last 500 training trials (the teacher's words heard): recall right, and the plan
+    // right per (instruction, book)
+    let mut hc_train = (0usize, 0usize);
+    let mut trace: usize = env("RT_TRACE", 0);
+    let mut by_cond = [[(0usize, 0usize); 3]; 2];
     let books = [Book::Same, Book::Other, Book::Closed];
     for trial in 0..n_train + 2 * n_test {
         let testing = trial >= n_train;
         let no_instr = trial >= n_train + n_test;
         let learn = !testing;
         let s = story(&mut rng);
-        let story_ctx: Vec<usize> = all.choose_multiple(&mut rng, ACTIVE).copied().filter(|&b| b < BITS).take(16).collect();
+        // the story's context (a lateral-EC-like pattern as large as the two-word cue), new for
+        // each story told
+        let story_ctx: u64 = rng.next_u64();
         // 1. the teacher tells the story; the network predicts each next word and stores it
         let mut prev: Option<BitVector> = None;
         let mut prev2: Option<BitVector> = None;
@@ -350,14 +377,29 @@ fn main() {
             let w = id(s[t]);
             let heard = &ear.codes[w];
             net.hear_gate(w, heard, learn && !fixed_gate, &mut rng);
-            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &story_ctx);
+            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx);
             let rec = net.recall(&cue);
             let st = net.step(&zero(), heard, &rec, learn, &mut rng);
             if learn && t + 1 < s.len() {
                 net.learn(&st, &ear.codes[id(s[t + 1])], &mut rng);
             }
-            net.hc.store_event(&ones(heard), &cue);
+            net.hc.store_split(&ones(heard), &cue, &ones(heard));
             prev2 = prev.replace(heard.clone());
+        }
+        if trace > 0 && testing {
+            // probe: cue the hippocampus with the true preceding words, right after hearing
+            let (mut p1, mut p2): (Option<BitVector>, Option<BitVector>) = (None, None);
+            let mut line = String::new();
+            for t in 0..s.len().min(8) {
+                let r = net.hc.recall(&Net::hc_context(p1.as_ref(), p2.as_ref(), &silence, story_ctx));
+                let mut v = zero();
+                for &b in r.ec.iter().filter(|&&b| b < BITS) {
+                    v.bit_set(b);
+                }
+                line += &format!(" {}:{}/{}(s{})", s[t], overlap(&v, &ear.codes[id(s[t])]), v.count_ones(), r.strength);
+                p2 = p1.replace(ear.codes[id(s[t])].clone());
+            }
+            println!("  probe right after hearing:{line}");
         }
         // 2. the book and the instruction
         let read = rng.gen_bool(0.5);
@@ -388,7 +430,7 @@ fn main() {
         let mut tally = Tally::default();
         for t in 0..target.len() {
             let seen = p.get(t).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero);
-            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &story_ctx);
+            let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx);
             let rec = net.recall(&cue);
             let heard = prev.clone().unwrap_or_else(zero);
             let st = net.step(&seen, &heard, &rec, learn, &mut rng);
@@ -397,6 +439,16 @@ fn main() {
                 hc_right.0 += (overlap(&rec, &ear.codes[want]) >= 16) as usize;
                 hc_right.1 += 1;
                 hc_bits += rec.count_ones() as usize;
+                if learn && trial + 500 >= n_train {
+                    hc_train.0 += (overlap(&rec, &ear.codes[want]) >= 16) as usize;
+                    hc_train.1 += 1;
+                }
+            }
+            if learn && trial + 500 >= n_train {
+                let bi = books.iter().position(|b| *b == book).unwrap();
+                let c = &mut by_cond[!read as usize][bi];
+                c.0 += (overlap(&st.plan, &ear.codes[want]) >= 24) as usize;
+                c.1 += 1;
             }
             if learn {
                 let right = overlap(&st.plan, &ear.codes[want]) >= 24;
@@ -411,6 +463,20 @@ fn main() {
                 net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
             } else {
                 let said = motor.plan(&st.plan).and_then(|m| tract.articulate(&m));
+                if trace > 0 && book == Book::Closed && !read && t < 6 {
+                    trace -= (t == 5) as usize;
+                    let near = ear.decode(&st.plan).map_or("-", |w| vocab[w]);
+                    println!(
+                        "  trace t={t} want {:<7} plan bits {:>2} (nearest {:<7} overlap {:>2}) sources {:?} recall overlap {:>2} said {:?}",
+                        target[t],
+                        st.plan.count_ones(),
+                        near,
+                        overlap(&st.plan, &ear.codes[want]),
+                        st.props.iter().map(|x| x.0).collect::<Vec<_>>(),
+                        overlap(&rec, &ear.codes[want]),
+                        said.map(|w| vocab[w])
+                    );
+                }
                 tally.words += 1;
                 match said {
                     Some(w) => {
@@ -472,6 +538,10 @@ fn main() {
         }
     }
     println!("\nhippocampal recall held the wanted word on {:.1}% of telling steps (overlap at least 16 of 32 bits); {:.0} bits recalled on average", pct(hc_right.0, hc_right.1), hc_bits as f64 / hc_right.1.max(1) as f64);
+    println!("last 500 training trials, the teacher's words heard: recall right {:.1}% of telling steps; plan right: read same {:.1}%, read other {:.1}%, tell same {:.1}%, tell other {:.1}%, tell closed {:.1}%",
+        pct(hc_train.0, hc_train.1),
+        pct(by_cond[0][0].0, by_cond[0][0].1), pct(by_cond[0][1].0, by_cond[0][1].1),
+        pct(by_cond[1][0].0, by_cond[1][0].1), pct(by_cond[1][1].0, by_cond[1][1].1), pct(by_cond[1][2].0, by_cond[1][2].1));
     let (rd, tl) = (net.gate.value(Gate::Load, id("read")), net.gate.value(Gate::Load, id("tell")));
     let (nw, it, the) = (net.gate.value(Gate::Load, id("now")), net.gate.value(Gate::Load, id(IT)), net.gate.value(Gate::Load, id("the")));
     let q = |v: u32| v as f64 / ONE as f64;

@@ -571,6 +571,35 @@ The hippocampus projects straight back to the medial prefrontal cortex.
   group does not drown the rest. The instruction would then be visible at the wait without
   first having to be held in working memory.
 
+## The striatum sees the cortex's ongoing activity
+**Changes:**
+- **Corticostriatal input:** the striatum sees layer 2/3's and layer 5's fired cells, besides
+  the prefrontal content, the last two sounds, the mode signals and the recalled place.
+- **Each input group counts by its own mean** (`Striatum::begin_groups`). A state's value and an
+  action's preference are sums of group means, so the large cortical groups do not drown the
+  small signals.
+- **The cortex now learns during the instruction:** the next sound, then the teacher's pause.
+  Before this it never learned there, so layer 2/3 was silent at the wait (0 bits).
+
+**What was found** (1,500 trials, each change tested in turn):
+- **A switched-on signal looked like a loss.** Giving an "off" mode signal cells of its own let
+  those cells carry the baseline value, so switching "book in view" on read as a drop. Only
+  signals that are on now have cells.
+- **The dopamine right after a reach stays negative,** −2.4 to −6.3 under "read", though reaching
+  helps reading (68.2% of words against 55.8%). It stays negative with a longer eligibility trace
+  (λ = 0.95 and 1.0) too.
+- **The cortex's activity does not hold the instruction.** At the wait, layer 2/3 fires 15 bits.
+  Their overlap between two "read" trials is 0.97, and between a "read" and a "tell" trial 0.95:
+  its activity is the last word, "it". So the striatum cannot tell the two apart, and on balance
+  waiting wins.
+
+**Where this leaves it:** the instruction can reach the striatum at the wait only through
+something that holds it: the prefrontal cortex. But the striatum's learned gate holds the verb
+only about 5% of the time, and holding it would pay only once reaching does. A plausible way
+out is that the prefrontal cortex updates on salient, surprising input, gated by phasic dopamine
+(Braver & Cohen 2000). In "now read it" the verb is the unpredictable word, "now" and "it" are
+not, so a surprise-gated update would hold the verb with no gate to learn first.
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.

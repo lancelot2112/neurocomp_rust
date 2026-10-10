@@ -415,24 +415,31 @@ impl Net {
     }
 }
 
-/// What the striatum sees: the prefrontal content, the association area's assemblies for the
-/// last sound heard and the one before, and mode signals (each true flag 24 bits), as one pattern
-/// of active bits.
-fn state_bits(pfc: &BitVector, heard: &BitVector, before: &BitVector, flags: &[bool], place: Option<usize>) -> Vec<usize> {
-    let mut v = ones(pfc);
-    v.extend(ones(heard).into_iter().map(|b| b + BITS));
-    // the sound before (the cortex keeps it active a moment: an auditory trace)
-    v.extend(ones(before).into_iter().map(|b| b + 3 * BITS));
+/// What the striatum sees, as groups of active bits (one per input pathway, each counting by
+/// its own mean): the prefrontal content; the association area's assemblies for the last sound
+/// and the one before (an auditory trace); the cortex's ongoing activity, layer 2/3's and layer
+/// 5's fired cells (the corticostriatal inputs); the mode signals; and the place the hippocampus
+/// recalled.
+fn state_groups(
+    pfc: &BitVector,
+    heard: &BitVector,
+    before: &BitVector,
+    l23: &BitVector,
+    l5: &BitVector,
+    flags: &[bool],
+    place: Option<usize>,
+) -> Vec<Vec<usize>> {
+    let off = |v: &BitVector, k: usize| ones(v).into_iter().map(|b| b + k * BITS).collect::<Vec<usize>>();
+    // a mode signal that is on has cells; one that is off has none (an absent signal must not
+    // carry the baseline value, or switching it on would look like a loss)
+    let mut mode = Vec::new();
     for (i, &f) in flags.iter().enumerate() {
         if f {
-            v.extend((0..24).map(|k| 2 * BITS + i * 24 + k));
+            mode.extend((0..24).map(|k| 7 * BITS + i * 24 + k));
         }
     }
-    // the place the hippocampus recalled for what is held (24 bits per place)
-    if let Some(k) = place {
-        v.extend((0..24).map(|j| 2 * BITS + 128 + k * 24 + j));
-    }
-    v
+    let where_ = place.map_or(Vec::new(), |k| (0..24).map(|j| 7 * BITS + 1024 + k * 24 + j).collect());
+    vec![off(pfc, 0), off(heard, 1), off(before, 2), off(l23, 3), off(l5, 4), mode, where_]
 }
 
 /// The striatum's channels (one per gate).
@@ -791,6 +798,8 @@ fn main() {
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
     striatum.gamma = ONE;
+    // RT_LAMBDA (default 0.8): how long a choice stays eligible (its decay per step, in hundredths)
+    striatum.lambda = ONE * env("RT_LAMBDA", 80u32) / 100;
     let mut shelf: Vec<Vec<&str>> = Vec::new();
     for k in 0..shelf_k {
         let b = shelf_book(&mut rng, &shelf, k);
@@ -802,6 +811,9 @@ fn main() {
     let mut find_diag = (0usize, 0usize, 0usize, 0usize);
     // training read trials: words planned right without and with a reach
     let mut read_by_reach = [(0usize, 0usize); 2];
+    // training: the dopamine signal right after a reach, per instruction (read, tell, make)
+    let mut reach_delta = [(0i64, 0usize); 3];
+    let mut wait_states: [Vec<Vec<usize>>; 2] = [Vec::new(), Vec::new()];
     // per (instruction read/tell, book): (trials, reached, words before the reach), at test
     let mut reach_stats = [[(0usize, 0usize, 0usize); 3]; 2];
     // RT_HC_STORE=all (default): the hippocampus stores every word heard (the instruction,
@@ -866,8 +878,8 @@ fn main() {
     macro_rules! td_step {
         ($fired:expr, $explore:expr) => {{
             let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.request, x.held.is_some()));
-            let state = state_bits(&net.wm.content(), &last_assoc, &prev_assoc, &[book_seen, retr, held], recalled_place);
-            striatum.begin(&state, $explore);
+            let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &[book_seen, retr, held], recalled_place);
+            striatum.begin_groups(&state, $explore);
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
                     // reinstating is possible only when not already retrieving (it would only
@@ -1032,9 +1044,15 @@ fn main() {
             if fixed_gate && w == verb {
                 net.wm.load(0, &ear.codes[wi]);
             }
-            let st = net.step(&zero(), &ear.codes[wi], &zero(), false, 0, &mut rng);
+            // the cortex learns the instruction like any speech: the next sound, and after its last
+            // word the teacher's pause
+            let st = net.step(&zero(), &ear.codes[wi], &zero(), learn, 0, &mut rng);
             hc_plan!(st);
-            if learn && reward_all && it + 1 < instr.len() && overlap(&st.plan, &ear.codes[id(instr[it + 1])]) >= 24 {
+            let next = if it + 1 < instr.len() { ear.codes[id(instr[it + 1])].clone() } else { silence.clone() };
+            if learn {
+                net.learn(&st, &next, &mut rng);
+            }
+            if learn && reward_all && overlap(&st.plan, &next) >= 24 {
                 striatum.reward(ONE as i32);
             }
         }
@@ -1129,6 +1147,11 @@ fn main() {
             find_diag.2 += (recalled_place == Some(find_at)) as usize;
             find_diag.3 += recalled_place.is_some() as usize;
         }
+        // diagnosis: layer 2/3's activity at the wait, by instruction
+        if learn && trial + 300 >= n_train && (read || (!make && !find)) {
+            let k = if read { 0 } else { 1 };
+            wait_states[k].push(ones(&net.rec23));
+        }
         // the teacher waits (up to three pauses) before starting; the network may reach for the
         // book meanwhile (in "find" trials: to one of the shelf's places). Once the teacher
         // starts, it goes on whether a book is open or not.
@@ -1169,6 +1192,11 @@ fn main() {
                         x.reach_event();
                     }
                     td_step!(true, learn);
+                    if learn {
+                        let k = if read { 0 } else if make { 2 } else { 1 };
+                        reach_delta[k].0 += striatum.last_delta as i64;
+                        reach_delta[k].1 += 1;
+                    }
                     break;
                 }
             }
@@ -1474,6 +1502,38 @@ fn main() {
         pct(read_by_reach[1].0, read_by_reach[1].1),
         read_by_reach[1].1
     );
+    {
+        let sim = |a: &Vec<usize>, b: &Vec<usize>| a.iter().filter(|x| b.binary_search(x).is_ok()).count() as f64 / a.len().max(b.len()).max(1) as f64;
+        let mut within = (0.0, 0usize);
+        let mut across = (0.0, 0usize);
+        for i in 0..wait_states[0].len().min(40) {
+            for j in 0..wait_states[0].len().min(40) {
+                if i != j {
+                    within.0 += sim(&wait_states[0][i], &wait_states[0][j]);
+                    within.1 += 1;
+                }
+            }
+            for j in 0..wait_states[1].len().min(40) {
+                across.0 += sim(&wait_states[0][i], &wait_states[1][j]);
+                across.1 += 1;
+            }
+        }
+        println!(
+            "layer 2/3 at the wait: {} bits on average; overlap read-read {:.2}, read-tell {:.2}",
+            wait_states[0].iter().map(|v| v.len()).sum::<usize>() / wait_states[0].len().max(1),
+            within.0 / within.1.max(1) as f64,
+            across.0 / across.1.max(1) as f64
+        );
+    }
+    println!(
+        "dopamine right after a reach (training): read {:+.2} ({}), tell {:+.2} ({}), make {:+.2} ({})",
+        reach_delta[0].0 as f64 / reach_delta[0].1.max(1) as f64 / ONE as f64,
+        reach_delta[0].1,
+        reach_delta[1].0 as f64 / reach_delta[1].1.max(1) as f64 / ONE as f64,
+        reach_delta[1].1,
+        reach_delta[2].0 as f64 / reach_delta[2].1.max(1) as f64 / ONE as f64,
+        reach_delta[2].1
+    );
     if shelf_k > 0 {
         println!(
             "\nfinding a book on the shelf ({} places; test, instruction held): {} trials; reached the right place {:.1}% (chance {:.1}%), reached a place {:.1}%; words read right {:.1}%",
@@ -1540,8 +1600,8 @@ fn main() {
         let heard_it = net.assoc_of(&zero(), &ear.codes[id(IT)], false, &mut rng);
         let mut pref = |v: &str| {
             let before = net.assoc_of(&zero(), &ear.codes[id(v)], false, &mut rng);
-            let st = state_bits(&zero(), &heard_it, &before, &[false, false, false], None);
-            (striatum.preference(&st, CH_REACH, 1) - striatum.preference(&st, CH_REACH, 0)) as f64 / ONE as f64
+            let st = state_groups(&zero(), &heard_it, &before, &zero(), &zero(), &[false, false, false], None);
+            (striatum.preference_groups(&st, CH_REACH, 1) - striatum.preference_groups(&st, CH_REACH, 0)) as f64 / ONE as f64
         };
         println!("\nreaching for the book (test, instruction held):{line} preference for reaching over waiting after \"read it\" {:+.2}, \"tell it\" {:+.2}", pref("read"), pref("tell"));
     }

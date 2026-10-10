@@ -2,10 +2,12 @@
 //! learning; Sutton & Barto; Schultz, Dayan & Montague 1997).
 //!
 //! - **State is a pattern:** the active bits of whatever the striatum sees (the prefrontal
-//!   content, an association-area assembly, mode signals). Each bit is a cortical input with
-//!   its own synapses, so states that share bits share what they learned.
-//! - **The critic** (patch / ventral striatum) learns the state's value: the mean weight of its
-//!   active inputs.
+//!   content, an association-area assembly, the cortex's ongoing activity, mode signals). Each
+//!   bit is a cortical input with its own synapses, so states that share bits share what they
+//!   learned. The bits come in groups (one per input pathway): each group counts by its own
+//!   mean, so a large group (the cortex's activity) does not drown a small one (a mode signal).
+//! - **The critic** (patch / ventral striatum) learns the state's value: the sum over groups of
+//!   the mean weight of each group's active inputs.
 //! - **Actors** (matrix / dorsal striatum): one channel per gate (e.g. reach, hold, reinstate,
 //!   load into working memory), each with a few actions. An action's preference in a state is
 //!   the mean weight of the state's inputs on that action's cells (a fixed hash of input bit,
@@ -35,8 +37,8 @@ pub struct Striatum {
     pub shift: u32,
     /// exploration rate, in `Q16`
     pub explore: Q16,
-    /// the current state's inputs (synapse indices) and value
-    state: Vec<usize>,
+    /// the current state's inputs (bits, by group) and value
+    state: Vec<Vec<usize>>,
     value: i32,
     /// reward gathered since the current state began
     reward: i32,
@@ -45,6 +47,8 @@ pub struct Striatum {
     started: bool,
     /// (TD errors applied, sum of |δ|) for reports
     pub stats: (u64, u64),
+    /// the latest TD error (`Q16`), for reports
+    pub last_delta: i32,
 }
 
 fn mix(x: u64) -> u64 {
@@ -71,6 +75,7 @@ impl Striatum {
             trace: Vec::new(),
             started: false,
             stats: (0, 0),
+            last_delta: 0,
         }
     }
 
@@ -89,21 +94,37 @@ impl Striatum {
         (syns.iter().map(|&s| table[s] as i64).sum::<i64>() / syns.len() as i64) as i32
     }
 
-    /// The value the critic gives a state (its active bits), in `Q16`.
-    pub fn value_of(&self, state: &[usize]) -> i32 {
-        let syns: Vec<usize> = state.iter().map(|&b| self.critic_syn(b)).collect();
-        self.mean(&self.critic, &syns)
+    /// The value the critic gives a state (its active bits by group), in `Q16`: the sum of the
+    /// groups' mean weights.
+    pub fn value_of_groups(&self, state: &[Vec<usize>]) -> i32 {
+        state.iter().map(|g| self.mean(&self.critic, &g.iter().map(|&b| self.critic_syn(b)).collect::<Vec<_>>())).sum()
     }
 
-    /// An action's preference in a state, in `Q16`.
+    /// The value of a state given as one group of bits.
+    pub fn value_of(&self, state: &[usize]) -> i32 {
+        self.value_of_groups(&[state.to_vec()])
+    }
+
+    /// An action's preference in a state (bits by group), in `Q16`.
+    pub fn preference_groups(&self, state: &[Vec<usize>], channel: usize, action: usize) -> i32 {
+        state.iter().map(|g| self.mean(&self.actor, &g.iter().map(|&b| self.actor_syn(b, channel, action)).collect::<Vec<_>>())).sum()
+    }
+
+    /// An action's preference in a state given as one group of bits.
     pub fn preference(&self, state: &[usize], channel: usize, action: usize) -> i32 {
-        let syns: Vec<usize> = state.iter().map(|&b| self.actor_syn(b, channel, action)).collect();
-        self.mean(&self.actor, &syns)
+        self.preference_groups(&[state.to_vec()], channel, action)
+    }
+
+    /// The eligibility of each synapse of a group: the value is a sum of group means, so with
+    /// `n` groups each synapse moves by 1/n of the step to move the value by the step.
+    fn per_synapse(&self) -> u32 {
+        ONE / self.state.iter().filter(|g| !g.is_empty()).count().max(1) as u32
     }
 
     /// Apply one dopamine signal `delta` to every eligible synapse.
     fn learn(&mut self, delta: i32) {
         self.stats.0 += 1;
+        self.last_delta = delta;
         self.stats.1 += delta.unsigned_abs() as u64;
         for &(is_critic, i, e) in &self.trace {
             let step = ((delta as i64 * e as i64) >> 16) >> self.shift;
@@ -115,7 +136,12 @@ impl Striatum {
     /// A new state (its active bits, `learn`: update): the dopamine signal for the step that
     /// ends here is the reward gathered + γ·V(this state) − V(the previous state).
     pub fn begin(&mut self, state: &[usize], learn: bool) {
-        let v = self.value_of(state);
+        self.begin_groups(&[state.to_vec()], learn);
+    }
+
+    /// A new state given as groups of bits (one per input pathway).
+    pub fn begin_groups(&mut self, state: &[Vec<usize>], learn: bool) {
+        let v = self.value_of_groups(state);
         if self.started && learn {
             let delta = self.reward + ((self.gamma as i64 * v as i64) >> 16) as i32 - self.value;
             self.learn(delta);
@@ -127,13 +153,14 @@ impl Striatum {
             t.2 = ((t.2 as u64 * l * g) >> 32) as u32;
         }
         self.trace.retain(|t| t.2 > ONE / 64);
-        // a value is the mean weight of the active inputs, so each eligible synapse moves by the
-        // whole step to move the value by it
-        for b in state {
-            let s = self.critic_syn(*b);
-            self.trace.push((true, s, ONE));
-        }
         self.state = state.to_vec();
+        let e = self.per_synapse();
+        for g in state {
+            for &b in g {
+                let s = self.critic_syn(b);
+                self.trace.push((true, s, e));
+            }
+        }
         self.value = v;
         self.reward = 0;
         self.started = true;
@@ -141,7 +168,7 @@ impl Striatum {
 
     /// (the current state's value, the preference for action 1 over 0 on `channel`), for reports.
     pub fn debug_now(&self, channel: usize) -> (i32, i32) {
-        (self.value, self.preference(&self.state, channel, 1) - self.preference(&self.state, channel, 0))
+        (self.value, self.preference_groups(&self.state, channel, 1) - self.preference_groups(&self.state, channel, 0))
     }
 
     /// Reward (`Q16`) for the current step.
@@ -152,7 +179,7 @@ impl Striatum {
     /// Choose one of `n` actions on `channel` in the current state (action 0 is the default:
     /// it wins ties). With `rng`, explore. The choice becomes eligible.
     pub fn choose<R: Rng>(&mut self, channel: usize, n: usize, rng: Option<&mut R>) -> usize {
-        let prefs: Vec<i32> = (0..n).map(|a| self.preference(&self.state, channel, a)).collect();
+        let prefs: Vec<i32> = (0..n).map(|a| self.preference_groups(&self.state, channel, a)).collect();
         let mut best = 0;
         for a in 1..n {
             if prefs[a] > prefs[best] {
@@ -164,9 +191,10 @@ impl Striatum {
                 best = rng.gen_range(0..n);
             }
         }
-        let syns: Vec<usize> = self.state.iter().map(|&b| self.actor_syn(b, channel, best)).collect();
+        let e = self.per_synapse();
+        let syns: Vec<usize> = self.state.iter().flatten().map(|&b| self.actor_syn(b, channel, best)).collect();
         for s in syns {
-            self.trace.push((false, s, ONE));
+            self.trace.push((false, s, e));
         }
         best
     }

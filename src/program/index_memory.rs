@@ -249,6 +249,19 @@ impl IndexMemory {
         }
     }
 
+    /// The row stored after `row` in its sequence (empty if none, or forgotten).
+    pub fn successor(&self, row: u32) -> Recall {
+        match self.rows.get(row as usize).and_then(|r| r.next) {
+            Some(n) => self.emit(n),
+            None => Recall::default(),
+        }
+    }
+
+    /// Rows stored so far (live or forgotten).
+    pub fn rows(&self) -> usize {
+        self.rows.len()
+    }
+
     /// Recall from `cue`, then follow the successor pointers: up to `max` patterns.
     pub fn recall_sequence(&self, cue: &[usize], max: usize) -> Vec<Recall> {
         let first = self.recall_row(cue, true);

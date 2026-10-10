@@ -47,8 +47,8 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::{
-    BitCells, CerebellarCircuit, Driver, Gate, Hippocampus, HippocampusConfig, Layer4, MotorArea, PfcGate, ThalamicRelay, VocalTract,
-    WorkingMemory,
+    BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Gate, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
+    PfcGate, ThalamicRelay, VocalTract, WorkingMemory,
 };
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -376,6 +376,137 @@ impl Net {
     }
 }
 
+/// The hippocampal context's cells are drawn from this many.
+const CTX_POOL: usize = 1 << 16;
+
+/// The hippocampus as an index (`IndexMemory`, after Teyler & DiScenna): one row per event,
+/// grown as needed, forgotten when unused.
+/// - **The context is driven by what is heard** (the temporal context model, Howard & Kahana
+///   2002): each sound replaces a few of the context's 32 cells with cells set by that sound (its
+///   auditory code) and the cell it replaces; a learned event boundary (`BoundaryCell`, from the cortex's
+///   surprise) replaces half. The same words heard again from the same start give the same
+///   contexts; a wrong word changes only a few cells.
+/// - **A row's keys are the context in force; it points into the cortex:** it holds the ear's
+///   layer 4 cells active when the next sound was heard. Recall is "which row had this
+///   context", and reinstates those cells; the cortex says the word.
+/// - **Order:** each row also links to the next; when no row matches, the successor of the last
+///   row recalled is given.
+/// - **The prefrontal cortex holds and reinstates context:** at a boundary one learned gate may
+///   hold the context where the new episode begins, and another may reinstate the held context
+///   as the current one (keyed by the last two words, credited by the words said right). "Tell
+///   it" can then return to the start of the story and retell it, the context evolving as it
+///   did the first time.
+struct IndexHc {
+    mem: IndexMemory,
+    ctx: Vec<usize>,
+    boundary: BoundaryCell,
+    hold_gate: PfcGate,
+    back_gate: PfcGate,
+    held: Option<Vec<usize>>,
+    last_word: usize,
+    last_recalled: Option<u32>,
+    plan: BitVector,
+    boundaries: usize,
+    holds: usize,
+    reinstated: usize,
+    rng: StdRng,
+}
+
+impl IndexHc {
+    fn new(seed: u64) -> Self {
+        let mut rng = StdRng::seed_from_u64(seed.wrapping_add(4242));
+        let ctx = (0..ACTIVE).map(|_| rng.gen_range(0..CTX_POOL)).collect();
+        let cfg = IndexConfig { min_overlap: 12, ..Default::default() };
+        Self {
+            mem: IndexMemory::new(cfg),
+            ctx,
+            boundary: BoundaryCell::new(BITS, 3, 80),
+            hold_gate: PfcGate::new(BITS, 1, ONE * 9 / 10, seed.wrapping_add(13)),
+            back_gate: PfcGate::new(BITS, 1, ONE * 9 / 10, seed.wrapping_add(17)),
+            held: None,
+            last_word: 0,
+            last_recalled: None,
+            plan: zero(),
+            boundaries: 0,
+            holds: 0,
+            reinstated: 0,
+            rng,
+        }
+    }
+
+    /// The context moves on with a sound: `n` of its cells, chosen by the sound, are replaced
+    /// by cells set by the sound and the cell replaced (a fixed random projection).
+    fn drift(&mut self, sound: &[usize], n: usize, salt: u64) {
+        let mut h: u64 = 0x51_7CC1_B727_220A ^ salt;
+        for &b in sound {
+            h = (h ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            h ^= h >> 29;
+        }
+        let len = self.ctx.len();
+        for k in 0..n as u64 {
+            let mut x = (h ^ k.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)).wrapping_mul(0xD6E8_FEB8_6659_FD93);
+            x ^= x >> 31;
+            let slot = (x % len as u64) as usize;
+            let mut y = (x ^ (self.ctx[slot] as u64).wrapping_mul(0xA24B_AED4_963E_E407)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            y ^= y >> 29;
+            self.ctx[slot] = (y % CTX_POOL as u64) as usize;
+        }
+    }
+
+    /// What the hippocampus reinstates now: the layer 4 cells stored under the context most
+    /// like the current one; else the successor of the last row recalled.
+    fn recall(&mut self) -> BitVector {
+        let mut r = self.mem.recall(&self.ctx);
+        if r.ec.is_empty() {
+            if let Some(l) = self.last_recalled {
+                r = self.mem.successor(l);
+            }
+        }
+        self.last_recalled = r.ca3.first().copied();
+        let mut v = zero();
+        for &b in r.ec.iter().filter(|&&b| b < BITS) {
+            v.bit_set(b);
+        }
+        v
+    }
+
+    /// A sound is heard (`key` its word, `code` its sensory code, `cells` its layer 4 cells):
+    /// store it under the context in force (if `store`), move the context on, learn the
+    /// boundary cell from the surprise, and at a boundary let the gates hold and reinstate.
+    fn hear(&mut self, key: usize, code: &BitVector, cells: &BitVector, store: bool, explore: bool) {
+        let surprise = ONE - (overlap(&self.plan, code).min(ACTIVE as u32) * ONE / ACTIVE as u32);
+        self.boundary.learn(surprise);
+        let cells = ones(cells);
+        if store && !cells.is_empty() {
+            self.mem.store_split(&self.ctx, &[], &cells);
+        }
+        let sound = ones(code);
+        self.drift(&sound, 4, 1);
+        let pair = self.last_word * 101 + key;
+        self.last_word = key;
+        if self.boundary.observe(&sound) {
+            self.boundaries += 1;
+            self.drift(&sound, self.ctx.len() / 2, 2);
+            let decide = |g: &mut PfcGate, rng: &mut StdRng| if explore { g.decide(pair, Some(rng)) } else { g.decide::<StdRng>(pair, None) };
+            // reinstate what is held (the context where a held episode began), or go on
+            if self.held.is_some() && decide(&mut self.back_gate, &mut self.rng) == Gate::Load {
+                self.ctx = self.held.clone().unwrap();
+                self.last_recalled = None;
+                self.reinstated += 1;
+            } else if decide(&mut self.hold_gate, &mut self.rng) == Gate::Load {
+                // hold where this new episode begins
+                self.held = Some(self.ctx.clone());
+                self.holds += 1;
+            }
+        }
+    }
+
+    fn reward(&mut self, r: i32) {
+        self.hold_gate.reward(r, &mut self.rng);
+        self.back_gate.reward(r, &mut self.rng);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Book {
     Same,
@@ -425,6 +556,46 @@ fn main() {
     // the story as first heard
     let store_all = std::env::var("RT_HC_STORE").map_or(true, |v| v != "listen");
     let mut net = Net::new(seed);
+    // RT_HC=index (default): the hippocampus as a growing index with learned event boundaries
+    // (`IndexHc`); RT_HC=circuit: the fixed circuit cued by the driver's story context
+    // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
+    // reinstated when the task begins, instead of by the learned gates
+    let ix_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle");
+    let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
+    // the hippocampus hears word `w`: the index learns its boundary and (with `store`) stores
+    // the event; the circuit stores it with `cue` when `store`
+    macro_rules! hc_hear {
+        ($w:expr, $cue:expr, $store:expr, $explore:expr) => {{
+            let w: usize = $w;
+            match ix.as_mut() {
+                Some(x) => {
+                    let cells = net.l4a.encode(&ear.codes[w]);
+                    x.hear(w, &ear.codes[w], &cells, $store, $explore);
+                }
+                None => {
+                    if $store {
+                        net.hc.store_split(&ones(&ear.codes[w]), $cue, &ones(&ear.codes[w]));
+                    }
+                }
+            }
+        }};
+    }
+    macro_rules! hc_recall {
+        ($cue:expr) => {
+            match ix.as_mut() {
+                Some(x) => x.recall(),
+                None => net.recall($cue),
+            }
+        };
+    }
+    // the index's boundary cell judges surprise against the plan
+    macro_rules! hc_plan {
+        ($st:expr) => {
+            if let Some(x) = ix.as_mut() {
+                x.plan = $st.plan.clone();
+            }
+        };
+    }
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let tell_apart = std::env::var("RT_TELL").map_or(false, |v| v == "apart");
     let time = std::env::var("RT_HC_TIME").map_or(false, |v| v == "1");
@@ -470,18 +641,30 @@ fn main() {
             let heard = &ear.codes[w];
             net.hear_gate(w, heard, learn && !fixed_gate, &mut rng);
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
-            let rec = net.recall(&cue);
+            if ix.is_some() {
+                // RT_IX_HOLD=oracle (diagnosis only): hold the context in force at the story's
+                // first word, instead of the learned gate
+                if t == 0 && ix_oracle {
+                    let x = ix.as_mut().unwrap();
+                    x.held = Some(x.ctx.clone());
+                }
+                hc_hear!(w, &cue, true, learn);
+            }
+            let rec = hc_recall!(&cue);
             let st = net.step(&zero(), heard, &rec, learn, 0, &mut rng);
+            hc_plan!(st);
             if learn && t + 1 < s.len() {
                 net.learn(&st, &ear.codes[id(s[t + 1])], &mut rng);
             } else if learn && stop_learned {
                 // the teacher stops: silence is heard next
                 net.learn(&st, &silence, &mut rng);
             }
-            net.hc.store_split(&ones(heard), &cue, &ones(heard));
+            if ix.is_none() {
+                hc_hear!(w, &cue, true, learn);
+            }
             prev2 = prev.replace(heard.clone());
         }
-        if trace > 0 && testing {
+        if trace > 0 && testing && ix.is_none() {
             // probe: cue the hippocampus with the true preceding words, right after hearing
             let (mut p1, mut p2): (Option<BitVector>, Option<BitVector>) = (None, None);
             let mut line = String::new();
@@ -519,11 +702,9 @@ fn main() {
         let (mut ip, mut ip2): (Option<BitVector>, Option<BitVector>) = (None, None);
         for (it, w) in ["now", verb, if make { "one" } else { IT }].into_iter().enumerate() {
             let wi = id(w);
-            if store_all {
-                let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
-                net.hc.store_split(&ones(&ear.codes[wi]), &cue, &ones(&ear.codes[wi]));
-                ip2 = ip.replace(ear.codes[wi].clone());
-            }
+            let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
+            hc_hear!(wi, &cue, store_all, learn);
+            ip2 = ip.replace(ear.codes[wi].clone());
             if fixed_gate {
                 if w == verb {
                     net.wm.load(0, &ear.codes[wi]);
@@ -531,10 +712,19 @@ fn main() {
             } else {
                 net.hear_gate(wi, &ear.codes[wi], learn, &mut rng);
             }
-            net.step(&zero(), &ear.codes[wi], &zero(), false, 0, &mut rng);
+            let st = net.step(&zero(), &ear.codes[wi], &zero(), false, 0, &mut rng);
+            hc_plan!(st);
         }
         if no_instr {
             net.wm.clear();
+        }
+        if ix_oracle && !read && !make {
+            if let Some(x) = ix.as_mut() {
+                if let Some(h) = x.held.clone() {
+                    x.ctx = h;
+                    x.last_recalled = None;
+                }
+            }
         }
         // 3. the task: the teacher does it (training), or the network does (test)
         if make && testing {
@@ -545,9 +735,10 @@ fn main() {
                 let mut stopped = false;
                 for t in 0..40 {
                     let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
-                    let rec = net.recall(&cue);
+                    let rec = hc_recall!(&cue);
                     let heard = prev.clone().unwrap_or_else(zero);
                     let st = net.step(&zero(), &heard, &rec, false, make_temp, &mut rng);
+                    hc_plan!(st);
                     match say(&st.plan) {
                         Some(w) if w == quiet => {
                             // it says nothing more: the story is over
@@ -556,9 +747,7 @@ fn main() {
                         }
                         Some(w) => {
                             said_words.push(vocab[w]);
-                            if store_all {
-                                net.hc.store_split(&ones(&ear.codes[w]), &cue, &ones(&ear.codes[w]));
-                            }
+                            hc_hear!(w, &cue, store_all, false);
                             prev2 = prev.replace(ear.codes[w].clone());
                         }
                         None => {
@@ -591,16 +780,19 @@ fn main() {
         for t in 0..target.len() {
             let seen = p.get(t).map(|w| eye.codes[id(w)].clone()).unwrap_or_else(zero);
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
-            let rec = net.recall(&cue);
+            let rec = hc_recall!(&cue);
             let heard = prev.clone().unwrap_or_else(zero);
             let st = net.step(&seen, &heard, &rec, learn, 0, &mut rng);
+            hc_plan!(st);
             let want = id(target[t]);
+            // what recall should give: the wanted word's sound (circuit) or its layer 4 cells (index)
+            let want_rec = if ix.is_some() { net.l4a.encode(&ear.codes[want]) } else { ear.codes[want].clone() };
             if !read && !make {
-                hc_right.0 += (overlap(&rec, &ear.codes[want]) >= 16) as usize;
+                hc_right.0 += (overlap(&rec, &want_rec) >= 16) as usize;
                 hc_right.1 += 1;
                 hc_bits += rec.count_ones() as usize;
                 if learn && trial + 500 >= n_train {
-                    hc_train.0 += (overlap(&rec, &ear.codes[want]) >= 16) as usize;
+                    hc_train.0 += (overlap(&rec, &want_rec) >= 16) as usize;
                     hc_train.1 += 1;
                 }
             }
@@ -637,22 +829,34 @@ fn main() {
                     if !fixed_gate {
                         net.gate.reward(if ok { ONE as i32 } else { 0 }, &mut rng);
                     }
-                    if store_all {
+                    if let Some(x) = ix.as_mut() {
+                        x.reward(if ok { ONE as i32 } else { 0 });
+                    }
+                    if ix.is_some() {
+                        // its own word was heard, then (if wrong) the teacher's
+                        if let Some(w) = said {
+                            hc_hear!(w, &cue, store_all, true);
+                        }
+                        if heard_correction && !ok {
+                            hc_hear!(want, &cue, store_all, true);
+                        }
+                    } else if store_all {
                         let w = if ok || heard_correction { Some(want) } else { said };
                         if let Some(w) = w {
-                            net.hc.store_split(&ones(&ear.codes[w]), &cue, &ones(&ear.codes[w]));
+                            hc_hear!(w, &cue, true, true);
                         }
                     }
                 } else {
                     if !fixed_gate {
                         net.gate.reward(if right { ONE as i32 } else { 0 }, &mut rng);
                     }
+                    if let Some(x) = ix.as_mut() {
+                        x.reward(if right { ONE as i32 } else { 0 });
+                    }
                     // the teacher's word is heard
                     prev2 = prev.replace(ear.codes[want].clone());
                     net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
-                    if store_all {
-                        net.hc.store_split(&ones(&ear.codes[want]), &cue, &ones(&ear.codes[want]));
-                    }
+                    hc_hear!(want, &cue, store_all, true);
                 }
             } else {
                 let said = say(&st.plan).filter(|&w| w != quiet);
@@ -680,9 +884,7 @@ fn main() {
                         if !fixed_gate {
                             net.hear_gate(w, &ear.codes[w], false, &mut rng);
                         }
-                        if store_all {
-                            net.hc.store_split(&ones(&ear.codes[w]), &cue, &ones(&ear.codes[w]));
-                        }
+                        hc_hear!(w, &cue, store_all, false);
                     }
                     None => {
                         tally.silent += 1;
@@ -694,7 +896,7 @@ fn main() {
         if learn && stop_learned && !target.is_empty() {
             // the task is done and the teacher falls silent: silence is the next sound
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(target.len()));
-            let rec = net.recall(&cue);
+            let rec = hc_recall!(&cue);
             let heard = prev.clone().unwrap_or_else(zero);
             let st = net.step(&zero(), &heard, &rec, true, 0, &mut rng);
             net.learn(&st, &silence, &mut rng);
@@ -776,6 +978,20 @@ fn main() {
         for (_, w) in invented.iter().take(8) {
             println!("  {}", w.join(" "));
         }
+    }
+    if let Some(x) = &ix {
+        let (live, evicted, work) = x.mem.report();
+        println!(
+            "\nhippocampal index: {} rows stored ({} live, {} forgotten), {} postings visited per recall; {} learned event boundaries ({:.1} per trial); an episode's start held {} times, reinstated {} times",
+            x.mem.rows(),
+            live,
+            evicted,
+            work,
+            x.boundaries,
+            x.boundaries as f64 / (n_train + 2 * n_test) as f64,
+            x.holds,
+            x.reinstated
+        );
     }
     if practice_p > 0.0 {
         println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });

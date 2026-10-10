@@ -1119,11 +1119,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             // CB_LTP=k: restoration with probability 2^-k (0: always); CB_QUIET=q: a Purkinje cell
             // is quiet below 1/q of the active granule cells' drive
             c.set_rates(
-                std::env::var("CB_LTP").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
+                std::env::var("CB_LTP").ok().and_then(|v| v.parse().ok()).unwrap_or(2), // (nocf: the default 2 for wrong fires)
                 std::env::var("CB_QUIET").ok().and_then(|v| v.parse().ok()).unwrap_or(0),
             );
             // CB_CROSS=1: each granule cell's dendrites on different frames (sources)
             c.set_cross_frames(std::env::var("CB_CROSS").map_or(true, |v| v != "0"));
+            // CB_LTP=nocf: slow recovery of synapses active without a climbing fibre;
+            // CB_OLIVE=sparse: a rare, synchronous teaching signal
+            c.set_olive(std::env::var("CB_LTP").map_or(false, |v| v == "nocf"), std::env::var("CB_OLIVE").map_or(false, |v| v == "sparse"));
             Cb::Circuit(c)
         } else {
             Cb::Kernels(neurocomp::program::Cerebellum::new(BITS, make_l23(None)))

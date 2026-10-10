@@ -55,6 +55,10 @@ pub struct CerebellarCircuit {
     target_bits: u32,
     /// each granule cell's dendrites on different sources (frames of `out_bits` bits)
     cross_frames: bool,
+    /// LTP without a climbing fibre (`set_olive`)
+    ltp_nocf: bool,
+    /// a sparse, synchronous olive (`set_olive`)
+    olive_sparse: bool,
 }
 
 impl CerebellarCircuit {
@@ -78,6 +82,8 @@ impl CerebellarCircuit {
             quiet: 4,
             target_bits: 0,
             cross_frames: false,
+            ltp_nocf: false,
+            olive_sparse: false,
         }
     }
 
@@ -99,6 +105,18 @@ impl CerebellarCircuit {
     pub fn set_cross_frames(&mut self, on: bool) {
         self.cross_frames = on;
         self.row_bits = 0; // rewire at the next input
+    }
+
+    /// The olive and the plasticity rule, closer to the circuit:
+    /// - `ltp_nocf`: a parallel-fibre synapse active while its Purkinje cell gets **no**
+    ///   climbing-fibre spike slowly recovers (each depressed one with probability 1/16 per
+    ///   step): depressions no longer confirmed by errors fade (the cerebellum's homeostasis);
+    /// - `sparse`: the olive fires only on about half of the steps with an error, and then for
+    ///   all the missed bits together (gap-junction-coupled olive cells firing in synchrony), so
+    ///   the teaching signal is rare and grouped rather than every bit at every step.
+    pub fn set_olive(&mut self, ltp_nocf: bool, sparse: bool) {
+        self.ltp_nocf = ltp_nocf;
+        self.olive_sparse = sparse;
     }
 
     /// Wire the granule layer to a row of `bits` mossy fibres (once, at the first input).
@@ -260,11 +278,25 @@ impl CerebellarCircuit {
         self.target_bits = if self.target_bits == 0 { tb } else { (self.target_bits * 15 + tb) / 16 };
         let (out, _) = self.output(&active);
         let words = self.out_words;
+        // the olive: silent when the prediction was right; when sparse, it fires on about half
+        // of the steps with an error, for all the missed bits together
+        let olive_fires = !self.olive_sparse || rng.next_u64() & 1 == 0;
         for wi in 0..words {
             let t = target.as_words().get(wi).copied().unwrap_or(0);
             let o = out.as_words().get(wi).copied().unwrap_or(0);
-            let missed = t & !o; // should have fired: LTD
+            let missed = if olive_fires { t & !o } else { 0 }; // climbing-fibre spike: LTD
             let wrong = o & !t; // fired wrongly: LTP (slower)
+            if self.ltp_nocf {
+                // parallel fibres active without a climbing fibre: slow recovery, 1/16
+                for &g in &active {
+                    let l = &mut self.ltd[g as usize];
+                    if l.is_empty() {
+                        continue;
+                    }
+                    let r = rng.next_u64() & rng.next_u64() & rng.next_u64() & rng.next_u64();
+                    l[wi] &= !(!missed & r);
+                }
+            }
             if missed == 0 && wrong == 0 {
                 continue;
             }

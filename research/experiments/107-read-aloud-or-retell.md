@@ -222,11 +222,88 @@ From A (practice with the heard correction):
   well formed, coherent and new. A blank ("…") often replaces the name: the plan for the first
   word is weak.
 
+## The hippocampus as an index, with learned event boundaries
+The circuit above stored a copy of each word's sound and gave it back, and the driver started
+each story's context and counted positions. It now defaults to an index (`RT_HC=index`;
+`RT_HC=circuit` restores the circuit), built on `IndexMemory` (hippocampal indexing theory,
+Teyler & DiScenna; the bit form of a modern Hopfield network). The index never holds content.
+
+**Rows:**
+- **One row per event, grown as needed.** Rows are forgotten when unused. Separable capacity
+  grows exponentially with the code's width, because each row competes as a whole.
+- **A row points to a cortical assembly:** the ear's layer 4 cells that fired when the sound was
+  heard. Recall reinstates them, layer 2/3 completes the assembly, and the cortex says the word.
+- **A row's keys are the context in force.**
+
+**Context (the temporal context model, Howard & Kahana 2002):**
+- **Driven by layer 4.** Each sound replaces 4 of the context's 32 cells, each set by one layer 4
+  cell: the 4 with the smallest hash (min-hash). A layer 4 response that drifted by a cell or two
+  then moves the context almost the same way.
+- **Learned event boundaries.** A boundary cell (`BoundaryCell`) learns where the cortex's
+  surprise rises; at a boundary, half the context is replaced. It fires about 9 times a trial,
+  mostly near sentence ends.
+- **Pauses are heard as silence,** a natural boundary.
+
+**Order and recall:**
+- **Each row links to the next.**
+- **Sequence bias (CA3):** recall expects the successor of the row just recalled, unless another
+  row matches the context better by 12 of 32 cells.
+- **Retrieval mode (Hasselmo):** while a reinstated episode keeps predicting what is heard,
+  nothing new is stored, so the network's own retelling does not overwrite the memory it reads.
+  A mismatch, which is novelty, returns it to encoding.
+
+**Prefrontal gates.** Two learned gates, keyed by the last two sounds:
+- one holds the context where an episode begins (at a boundary);
+- one reinstates the held context (on any sound).
+
+Their dopamine is the hippocampus's own comparator: did the row it recalled predict the next
+sound?
+
+**Keeping up with drift** (the cortex's layer 4 keeps learning):
+- **Reconsolidation:** when the cortex completes a recalled pointer to an assembly that keeps at
+  least half the pointed cells, the row is relearned to the assembly as it is now.
+- **Sleep replay:** every 10 trials, 3 chains of up to 30 rows are reinstated; the cortex
+  completes each, and the row is re-pointed (Káli & Dayan 2004). The cortex does not learn from
+  replay yet.
+- **Layer 4 settles** (`Layer4::set_settling`): a cell's chance to move a synapse halves with
+  each doubling of its wins past 64.
+
+**Bugs found on the way:**
+- the context was first driven by a hash of layer 4's whole response, so one changed cell gave
+  a different context (fixed with the min-hash);
+- reconsolidation consumed the pointer recall needed to follow the links: only 122 of 6,727
+  recalls knew where they were;
+- the network's own wrong words, stored during a retelling, became the best match (fixed with
+  retrieval mode);
+- exploratory reinstatements left the hippocampus in retrieval mode, so new stories were not
+  stored (fixed by ending retrieval mode on a mismatch).
+
+**Results** (3,000 trials, with invention; learned gates against the start held and reinstated
+by the driver, `RT_IX_HOLD=oracle`, a diagnosis):
+
+| | Learned gates | Oracle hold | Circuit (D above) |
+|---|---|---|---|
+| recall right at test | 11% | **89%** (99–100% at 400 trials) | 97% |
+| tell, book closed | 0.1 | 36.4 | **52.0** |
+| tell, another book (story's / book's) | 28.9 / 43.5 | 40.8 / 73.9 | 52.7 / 55.3 |
+| read, same story | 56.3 | 58.2 | 75.6 |
+| invention: ended by itself | 14% | 22% | 92% |
+
+**Findings:**
+- **The index works when the start is found:** 89–100% recall from pointers to assemblies, with
+  graded context, links, retrieval mode and reconsolidation keeping up with layer 4's drift.
+- **The cortex uses it less well than the circuit's copy of the content:** 36% against 52% with
+  the book closed. Another open book now wins more often (74% of words from the book).
+- **The learned gates do not find when to hold and reinstate.** The hippocampal match also
+  rewards predicting the predictable: the hold gate learned to hold the start of "now tell it"
+  (value 0.38) and of common phrases ("the fox", 0.61), not the start of the story.
+- **Invention lost its learned stop:** stories end by themselves only 14–22% of the time, against
+  92% with the circuit.
+
 ## Next
-- **Learned event boundaries and a hippocampal index** (in progress). The story's context and
-  the time code come from boundaries learned from the cortex's surprise. The hippocampus becomes
-  an index that grows a row per event: its keys are context and the order of events, and it
-  points to cortical cells instead of holding words.
+- **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
+  later (retelling), not for predicting the predictable.
+- **Let the cortex learn from replay,** and restore the learned stop with the index.
 - **Credit for the gate per instruction.** Compare the reward with what the same trial type
   usually earns, not the overall average, so holding "tell" is credited.
 - **Seeds 1–4** for every column.

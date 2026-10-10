@@ -119,7 +119,11 @@ const OBJECTS: &[&str] = &["ball", "apple", "book", "key", "cup", "box"];
 const DISTRACTORS: &[&[&str]] = &[&["the", "cat", "slept", "."], &["the", "dog", "ran", "away", "."], &["it", "rained", "."]];
 /// Persist task: names whose places are fixed and stated only early in training.
 const ANCHOR_NAMES: &[&str] = &["bill", "fred", "julie"];
-const TRAIN: usize = 3000;
+/// Training stories (TRAIN_STORIES, default 3000): more experience for the slow learners.
+fn train_n() -> usize {
+    static N: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *N.get_or_init(|| std::env::var("TRAIN_STORIES").ok().and_then(|v| v.parse().ok()).unwrap_or(3000))
+}
 /// The frame gate's own records in the mix (HIER_TRUST_GATE): the higher area, the column.
 const TRUST_AREA: u8 = 40;
 const TRUST_COLUMN: u8 = 41;
@@ -1961,7 +1965,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         if let Some(k) = schema_k {
             let phase: usize = std::env::var("SCHEMA_PHASE").ok().and_then(|v| v.parse().ok()).unwrap_or(600);
             let mut srng = StdRng::seed_from_u64(seed.wrapping_add(991));
-            let mut slots: Vec<usize> = (TRAIN - phase..TRAIN).collect();
+            let mut slots: Vec<usize> = (train_n() - phase..train_n()).collect();
             slots.shuffle(&mut srng);
             let mut it = slots.into_iter();
             for i in 0..NEW_NAMES.len() {
@@ -2208,7 +2212,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     1 => if (j / 3) % 2 == 0 { vec![(0, f), (1, 1 - f)] } else { vec![(1, f), (0, 1 - f)] },
                     _ => vec![(prng.gen_range(0..k - 1), f)],
                 };
-                let mut at = prng.gen_range(100..TRAIN - phase - 200);
+                let mut at = prng.gen_range(100..train_n() - phase - 200);
                 for (n, fam) in tellers {
                     while at % k != n || m.contains_key(&at) {
                         at += 1;
@@ -2500,14 +2504,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
     let sleep_every: Option<usize> = std::env::var("SLEEP_EVERY").ok().and_then(|v| v.parse().ok());
     let (mut sleeps, mut slept_pruned, mut slept_merged) = (0usize, 0usize, 0usize);
     let mut prof_t = std::time::Instant::now();
-    for s_i in 0..TRAIN + TEST {
-        let testing = s_i >= TRAIN;
-        if kernel_fam_on && (s_i % 100 == 0 || s_i == TRAIN) {
+    for s_i in 0..train_n() + TEST {
+        let testing = s_i >= train_n();
+        if kernel_fam_on && (s_i % 100 == 0 || s_i == train_n()) {
             cortex_fam = cortical_familiarity(column.l23.kernels(), &enc.codes, BITS);
         }
         // SLEEP_EVERY=n: an offline sleep pass for the column every n training stories
         // consolidation replay: at every sleep, and the night before the test
-        if let (Some(reps), true) = (consolidate, hier && bind && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
+        if let (Some(reps), true) = (consolidate, hier && bind && s_i > 0 && (s_i == train_n() || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             // the replayed input of a trace: [question sentence | gist], the gist being the
             // words of the story's uncommon bindings
             let replay_input = |sent: &BitVector, bl: &[(usize, usize)]| -> BitVector {
@@ -2670,7 +2674,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         // of another story → "lucy went to the hallway", in that story's context), and the
         // higher area learns each word of them from the words before it and the story's
         // unfamiliar context words, `reps` times: the walk's results taught to the cortex.
-        if let (Some(reps), true, Some(hc)) = (infer_reps, hier && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
+        if let (Some(reps), true, Some(hc)) = (infer_reps, hier && s_i > 0 && (s_i == train_n() || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
             let events = hc.infer(infer_rows);
             if !infer_pairs {
                 // read mode: each inferred event becomes a story, its source story's opening
@@ -2885,7 +2889,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
-                if std::env::var("GENDIAG").is_ok() && gen_stats[0] % 200 == 1 && s_i == TRAIN - sleep_every.unwrap_or(500) {
+                if std::env::var("GENDIAG").is_ok() && gen_stats[0] % 200 == 1 && s_i == train_n() - sleep_every.unwrap_or(500) {
                     let names = |v: &[usize]| v.iter().map(|&w| vocab[w]).collect::<Vec<_>>();
                     eprintln!("  GENDIAG replay {}: content {:?} | context {:?}", gen_stats[0], names(&content), names(&context));
                 }
@@ -2909,7 +2913,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             }
         }
-        if let (Some(reps), true, Some(hc)) = (semantic_reps, hippo_self && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
+        if let (Some(reps), true, Some(hc)) = (semantic_reps, hippo_self && s_i > 0 && (s_i == train_n() || (!testing && sleep_every.map_or(false, |n| s_i % n == 0))), bind_hc.as_mut()) {
             // novelty-tagged events are replayed first (REPLAY_TAGGED=1), each `reps` times,
             // then the cue-free random replays
             let tags = if std::env::var("REPLAY_TAGGED").is_ok() { hc.take_tags() } else { Vec::new() };
@@ -2950,7 +2954,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                 }
-                if std::env::var("TAGDIAG").is_ok() && i < tagged.len() && s_i >= TRAIN - 500 {
+                if std::env::var("TAGDIAG").is_ok() && i < tagged.len() && s_i >= train_n() - 500 {
                     let d: Vec<String> = items.iter().map(|(w, f, _)| format!("{}:{}", vocab[*w], f)).collect();
                     eprintln!("  TAGDIAG s_i {s_i} tagged replay {i}/{}: {} bits -> {:?}", tagged.len(), r.ec.len(), d);
                 }
@@ -2996,7 +3000,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 sem_replays += 1;
             }
         }
-        if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
+        if let (Some(reps), true) = (rel_reps, s_i > 0 && (s_i == train_n() || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             rel_stats[0] += rel.consolidate(&enc.codes, reps, &mut rel_rng);
             // curiosity: once this sleep's facts are weighed, the open questions (people whose
             // family the module has claims about) are ranked by the value of information; the
@@ -3105,7 +3109,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 }
             }
         }
-        if let (Some(reps), true) = (semantic_reps, !hippo_self && s_i > 0 && (s_i == TRAIN || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
+        if let (Some(reps), true) = (semantic_reps, !hippo_self && s_i > 0 && (s_i == train_n() || (!testing && sleep_every.map_or(false, |n| s_i % n == 0)))) {
             let rare = |w: usize| (word_count[w] as u64) * 100 < sentence_count as u64;
             let novel: Vec<usize> = (0..sem_buf.len()).filter(|&i| sem_buf[i].iter().any(|&w| rare(w))).collect();
             let others: Vec<usize> = (0..sem_buf.len()).filter(|&i| !novel.contains(&i)).collect();
@@ -3152,14 +3156,14 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             slept_pruned += p;
             slept_merged += m;
         }
-        if s_i == TRAIN {
+        if s_i == train_n() {
             train_secs = phase_start.elapsed().as_secs_f64();
             phase_start = std::time::Instant::now();
         }
         if policy == Policy::LearnedGate && !testing && s_i % 50 == 0 && s_i > 0 {
             gate_routes = route_scores.top(8, 2 * ONE as u64);
         }
-        if s_i == TRAIN && std::env::var("DIAG").is_ok() {
+        if s_i == train_n() && std::env::var("DIAG").is_ok() {
             // Coverage after training: per place, kernels that predict it from the
             // question context ("?" as current word) and read the memory frame.
             let frame = BITS / 64;
@@ -3199,7 +3203,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
             }
             eprintln!("  COVER seed {seed} after training:{line}");
         }
-        if s_i == TRAIN {
+        if s_i == train_n() {
             // TRUST_AT_TEST=f: reliability-aware ranking only when answering, so training
             // keeps the depth-first ranking that drives growth
             if let Some(f) = ratio_env("TRUST_AT_TEST") {
@@ -3375,7 +3379,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
         step_pending.clear();
         // the previous story's bindings become one episode (training stories only)
         if bind {
-            if bind_story.count_ones() > 0 && s_i > 0 && s_i - 1 < TRAIN && !hippo_self && !prev_replaying {
+            if bind_story.count_ones() > 0 && s_i > 0 && s_i - 1 < train_n() && !hippo_self && !prev_replaying {
                 bind_mem.store(&bind_story);
                 if let (Some(dg), Some(ca3)) = (&bind_dg, &mut bind_ca3) {
                     let x = set_bits(&bind_story);
@@ -3581,7 +3585,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     }
                 }
             }
-            if std::env::var("TRACE_SHARE").is_ok() && testing && s_i < TRAIN + 3 {
+            if std::env::var("TRACE_SHARE").is_ok() && testing && s_i < train_n() + 3 {
                 eprint!("{}:{:.2} ", s.words[t], to_f32(share));
                 if t + 1 == ids.len() {
                     eprintln!();
@@ -3931,7 +3935,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                     Policy::Loop(hops) => {
                         let cue = memory.rarest(cue_source, Q_TENTH, rarity_ratio);
                         let chain = memory.recall_chain(&cue, hops, habituation, Q_TENTH, rarity_ratio);
-                        if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 3 {
+                        if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < train_n() + 3 {
                             let names = |bv: &BitVector| -> Vec<&str> {
                                 (0..vocab.len())
                                     .filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
@@ -3976,7 +3980,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                     }
                                     bg_pending = Some(hop2.clone());
                                 }
-                                if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 5 {
+                                if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < train_n() + 5 {
                                     let names = |bv: &BitVector| -> Vec<&str> {
                                         (0..vocab.len())
                                             .filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
@@ -4003,7 +4007,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         let cue_bits = set_bits(&cue);
                         if !cue_bits.is_empty() {
                             let (bits, strength) = ca3.as_ref().unwrap().recall(&cue_bits, BITS);
-                            if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 3 {
+                            if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < train_n() + 3 {
                                 let raw = BitVector::from_bits(&bits, BITS);
                                 let names = |bv: &BitVector| -> Vec<&str> {
                                     (0..vocab.len())
@@ -4050,7 +4054,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                                 }
                             }
                         }
-                        if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 3 {
+                        if std::env::var("TRACE").is_ok() && testing && t + 1 == s.answer_at && s_i < train_n() + 3 {
                             let names = |bv: &BitVector| -> Vec<&str> {
                                 (0..vocab.len())
                                     .filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24)
@@ -4303,7 +4307,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         area.input_with(&sentence_plus, if assoc_on { &surprising } else { &surprising_r }, if chain_mix { None } else { above.as_ref() })
                     };
                     let td = if hier_skip { BitVector::new(BITS, Some(0)) } else { area.predict(&hin) };
-                    if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
+                    if std::env::var("HIERDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < train_n() + 8 {
                         let names = |bv: &BitVector| -> Vec<&str> {
                             (0..vocab.len()).filter(|&i| enc.codes[i].as_words().iter().zip(bv.as_words()).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= 24).map(|i| vocab[i]).collect()
                         };
@@ -5116,7 +5120,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                 prof[1] += prof_t.elapsed().as_secs_f64();
                 prof_t = std::time::Instant::now();
                 let next = ids[t + 1];
-                if std::env::var("FASTDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < TRAIN + 8 {
+                if std::env::var("FASTDIAG").is_ok() && testing && t + 1 == s.answer_at && s_i < train_n() + 8 {
                     eprintln!(
                         "  FASTDIAG answer step: {} kernels matched, {} distinct outputs, {} inhibited, winner reliability {:.2}, predicted {:?}, answer {}",
                         column.l23.matched(),
@@ -5768,7 +5772,7 @@ fn run(policy: Policy, task: Task, max_facts: usize, seed: u64) -> Outcome {
                         }
                     }
                     if s.held_out {
-                        let h = &mut held_halves[(s_i - TRAIN >= TEST / 2) as usize];
+                        let h = &mut held_halves[(s_i - train_n() >= TEST / 2) as usize];
                         h.0 += right as usize;
                         h.1 += 1;
                     }
@@ -7456,7 +7460,7 @@ fn main() {
         Ok("books") => vec![Task::Books],
         _ => vec![Task::Short, Task::Long, Task::Varied],
     };
-    println!("answer accuracy on {TEST} test stories after {TRAIN} training stories (predictor learning off at test); chance 1/6");
+    println!("answer accuracy on {TEST} test stories after {} training stories (predictor learning off at test); chance 1/6", train_n());
     if std::env::var("NOVELTY").map_or(false, |v| v == "prediction") {
         println!("NOVELTY=prediction: CA1-style comparator; store, cue and read out only what the predictor did not predict");
     }
@@ -7938,9 +7942,9 @@ fn run_genome(task: Task, max_facts: usize, seed: u64) -> Outcome {
         return fail("no output".into());
     }
     let (mut seen, mut held) = ((0usize, 0usize), (0usize, 0usize));
-    for s_i in 0..TRAIN + TEST {
-        let testing = s_i >= TRAIN;
-        if s_i == TRAIN {
+    for s_i in 0..train_n() + TEST {
+        let testing = s_i >= train_n();
+        if s_i == train_n() {
             reader.start_test();
         }
         let held_out = testing && s_i % 2 == 1;

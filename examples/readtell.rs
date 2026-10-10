@@ -1609,9 +1609,10 @@ fn main() {
         println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });
     }
     println!(
-        "\nstriatum: {} TD updates, mean |dopamine| {:.3}; cells: {} striosome, {} go, {} no-go ({} recruited, {} removed)",
+        "\nbasal ganglia: {} dopamine events, mean |dopamine| {:.3}, {} cholinergic pauses; striatal cells: {} striosome, {} go, {} no-go ({} recruited, {} removed)",
         striatum.stats.0,
         striatum.stats.1 as f64 / striatum.stats.0.max(1) as f64 / ONE as f64,
+        striatum.pauses,
         striatum.sizes().0,
         striatum.sizes().1,
         striatum.sizes().2,

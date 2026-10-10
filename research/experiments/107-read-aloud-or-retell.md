@@ -516,6 +516,61 @@ boundaries (overwriting the story's start), and reinstates at the wrong moments.
   is what is active in the cortex just after the word is heard.
 - **Reading fell to 58%** with a quarter of the trials given to finding.
 
+## Closer to the brain: outcome reward, acetylcholine, and a reuniens-like request
+**Where credit comes from in the brain:**
+- **Most cortical prediction learning is local.** A cell whose feedforward and apical inputs
+  coincide fires a burst, and bursts drive LTP, lone spikes LTD (burst-dependent plasticity;
+  Larkum; Payeur et al. 2021; in CA1, plateau-driven BTSP, Bittner et al. 2017). The cortical
+  cells here already learn this way.
+- **Dopamine is a three-factor signal mainly for choices,** at corticostriatal synapses.
+
+**How the prefrontal cortex reaches the hippocampus:**
+- through the entorhinal cortex, and through the nucleus reuniens of the thalamus, which
+  coordinates retrieval (Vertes; Dolleman-Van der Weel et al. 2019);
+- hardly at all directly (a sparse anterior cingulate → CA3/CA1 path, Rajasethupathy et al.
+  2015).
+
+The hippocampus projects straight back to the medial prefrontal cortex.
+
+**Changes:**
+- **The striatum's reward is the outcome only:** words said right in the task.
+  `RT_REWARD=all` restores rewarding every predicted word.
+- **Acetylcholine for novelty:**
+  - the CA1 comparator's mismatch with what others say raises it (CA1 → septum; Hasselmo &
+    Schnell; Meeter et al.); it decays by a quarter each step;
+  - the prefrontal decision to reinstate becomes a standing request (the reuniens route),
+    withdrawn when a new episode's start is held;
+  - the hippocampus retrieves while the request stands and acetylcholine is low, and encodes
+    otherwise;
+  - a mismatch now pauses retrieval instead of cancelling it.
+- **No discounting within a trial** (a finite episode). Mode flags and the recalled place weigh
+  24 bits each, and the sound before the last joins what the striatum sees.
+
+**Results** (3,000 trials, with invention and the shelf):
+
+| | All learned | Start held by the driver (oracle) |
+|---|---|---|
+| tell, book closed | 0.0 (silent) | **72.7** |
+| tell, same story | 0.0 | **83.4** |
+| tell, another book (story's / book's) | 0.0 | **73.2 / 31.2** |
+| read | 0.0 (no reach) | 0.0 (no reach) |
+
+**Findings:**
+- **Retrieval with acetylcholine is the best retelling yet.** With the start held, the network
+  retells 73% with the book closed and 83% with the same story open. With another story open,
+  the remembered story now wins clearly (73% against 31%). A mismatch pauses retrieval instead
+  of ending it.
+- **With only outcomes rewarded, the striatum stopped reaching for the book,** though reaching
+  helps reading (60.5% of words against 54.0% without). The reason: at the wait it cannot tell
+  "read it" from "tell it". It sees the pause and "it"; the verb is three sounds back, and the
+  prefrontal cortex holds it only about 5% of the time. Under "tell", an opened book intrudes,
+  so on average waiting wins. Holding the verb would pay only once reaching is valued, and
+  reaching is valued only when the verb is held.
+- **Next:** give the striatum the cortex's ongoing context, as corticostriatal input carries
+  (layer 2/3 and layer 5 activity), with each input group weighed by its own mean so a large
+  group does not drown the rest. The instruction would then be visible at the wait without
+  first having to be held in working memory.
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.

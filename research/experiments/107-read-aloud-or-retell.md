@@ -467,6 +467,55 @@ silent; reinstatements fell from 125,207 to 64,614 over the run, holds rose from
 - **The hippocampal gates are not learned yet.** The striatum reinstates far too often, and a
   mismatch while listening ends retrieval, so it reinstates again. Recall stays near 1%.
 
+## A cost for reinstating, and a shelf of books
+**The cost emerges; it is not written in.** Reinstating already has a real price: the
+hippocampus stops taking in what is new, and the old story's recall reaches the cortex while a
+new one is heard. That price shows only if correct predictions count all the time. So the
+reward is now every heard word the cortex predicted, while listening, during the instruction
+and in the task (`RT_REWARD=all`). Dopamine neurons signal sensory prediction errors too
+(Takahashi et al. 2017; Gardner et al. 2018).
+
+Result (3,000 trials): reinstatements fell from 64,614 to 10,598, holds rose from 2,782 to
+9,407, and reading rose to 77–79%. Learned retelling is still silent: it now holds at many
+boundaries (overwriting the story's start), and reinstates at the wrong moments.
+
+**The shelf** (`RT_SHELF=4`, default):
+- **Books at four places,** now and then one replaced by a new book. Each is about a different
+  animal.
+- **The find task:** in a quarter of the trials the teacher says "now find the <animal>", waits
+  three pauses, then reads that book. The network may reach to a place (a striatum channel over
+  the places), and the book there is what its eye sees. A wrong place means the eye and the
+  teacher disagree, and the words come out wrong.
+- **The index binds books to places.** While a book from a place is in view, rows are keyed by
+  the context, the place cells, and the content: the association area's assembly for what is
+  *seen*, the words at that place. (Keying by what was heard bound the requested story to
+  whatever place was reached.)
+- **Only the entorhinal cortex cues the hippocampus.** `IndexHc::ec` is the context, the place
+  and the content now. A first version also cued it from working memory directly, and that was
+  removed. "Where was this seen?" is the place component of the completion: every matching
+  episode votes for its place with its match score, and episodes with no place vote nothing.
+  Taking only the best match failed, because that was the instruction just heard, which has no
+  place.
+- **The recalled place joins what the striatum sees,** and TD credits a reach by the reading
+  that follows.
+
+| (3,000 trials) | |
+|---|---|
+| hippocampus recalls the right place for the animal just heard | 36.9% (chance 25%) |
+| reaches the right place at test | **35.4%** (chance 25%) |
+| words read right in find trials | 41.3% |
+| working memory holds the animal at the wait | 3.6% |
+| a word seen and heard share (of 32 cells) | 11.3 |
+
+**Findings:**
+- **Above chance, but not far.** Where-recall is limited by the association area's cross-modal
+  convergence: the heard "fox" must match the seen "fox", and they share only 11 of 32 cells.
+- **The striatum uses the recalled place about as well as the hippocampus supplies it**
+  (35% reach right, 37% recall right).
+- **Working memory almost never holds the animal.** Finding works without it, because the cue
+  is what is active in the cortex just after the word is heard.
+- **Reading fell to 58%** with a quarter of the trials given to finding.
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.
@@ -474,8 +523,7 @@ silent; reinstatements fell from 125,207 to 64,614 over the run, holds rose from
 - **The hippocampal gates under TD:** reinstating should cost something (it stops the hippocampus
   taking in what is new), and the hold needs the boundary that begins a story to be distinct in
   the state.
-- **Which book:** a shelf of several books, reached by a cue the network holds ("the fox one"),
-  their places remembered by the index.
+- **Better cross-modal convergence** in the association area, the limit on finding a book by name.
 - **Credit for the gate per instruction.** Compare the reward with what the same trial type
   usually earns, not the overall average, so holding "tell" is credited.
 - **Seeds 1–4** for every column.

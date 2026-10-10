@@ -668,6 +668,71 @@ The hand-made flags are gone.
 - **The striatum churns:** about 1.8 million cells recruited and as many removed. Populations sit
   at their cap, and the run is about twice as slow.
 
+## The rest of the loop as bit cells
+**Before this,** only the striatum was cells. Choosing an action was a function (the strongest
+D1 − D2, plus noise), and dopamine was a formula.
+
+**Now every stage is a population** ([`src/program/striatum.rs`](../../src/program/striatum.rs)).
+Each population has 32 cells with their own thresholds, so its response is a count of cells
+firing.
+- **Fast-spiking interneurons:** feedforward inhibition. They scale a channel's D1 and D2 counts
+  so the total is at most 32.
+- **GPe** (per action): tonically active (24 of 32), inhibited by the action's D2 cells.
+- **STN** (per channel): a tonic baseline, inhibited by GPe. The cortex excites it through the
+  hyperdirect path when more than one option is driven at once, which is conflict.
+- **GPi/SNr** (per action):
+  - tonically active and noisy (±4 cells, the exploration);
+  - excited by STN;
+  - inhibited by the action's D1 cells and by GPe.
+
+  An action is released when its GPi falls at least 3 cells below tonic. The most released
+  action wins. Conflict raises every GPi, so the loop waits.
+- **Dopamine neurons:** 32 cells, 8 firing at baseline.
+  - Reward and the next state's value excite them; the current state's striosome cells inhibit
+    them.
+  - Each cell above or below baseline is an eighth of a reward. A burst can rise far; a dip can
+    only fall to silence.
+- **Cholinergic interneurons (TANs):** they pause at phasic dopamine. Eligibility tags become
+  lasting changes only during a pause.
+- **The tag fades** to four-fifths per step back, and each change happens with probability ¼.
+
+**The first run failed, and the failure was informative:**
+- "Wait" was an action with its own go cells.
+- Small value errors kept rewarding whatever was chosen, which was usually waiting.
+- Once normalisation drove wait's GPi to zero, noise could never release the reach. The network
+  never reached, and reading fell to 26%.
+- **The fix:** in the brain, waiting is not an action but the absence of a release. Tonic GPi
+  keeps the thalamus shut, there is no efference copy, and nothing is tagged. Now action 0 is
+  that default: it has no cells and is never learned. Only a released action carries
+  eligibility.
+
+**Results** (3,000 trials, everything learned; before → now):
+
+| | bitvec striatum | full loop |
+|---|---|---|
+| read, same story / another book | 69.5 / 65.2 | 61.5 / 66.3 |
+| reaches after "read it" / "tell it" | 100% / 100% | 100% / 100% |
+| tell, book closed | 3.8 (silent 95%) | 0.0 (silent 97%) |
+| tell, another book (story's / book's) | 34.3 / 58.8 | 31.0 / 58.7 |
+| working memory holds the animal (find) | 72.4% | 61.7% |
+| find: right place | 22.2% | 10.5% (19 trials; chance 25%) |
+| striatal cells (striosome / go / no-go) | 4,071 / 23,102 / 15,422 | 4,096 / 19,465 / 1,168 |
+| cells recruited | about 1.8 million | 102,607 |
+
+**Findings:**
+- **Behaviour is about the same, and the churn is gone.** About 18 times fewer cells were changed.
+  TANs paused at 46% of dopamine events. Changes come at the tag's rate, and the default is no
+  longer learned, so most no-go cells were never needed.
+- **The STN brake does not stop reaching under "tell".** Only one option (reach) is ever
+  driven, so there is no conflict for the hyperdirect path to see. The reach still pays: the
+  dopamine right after a reach is +0.06 under "read" and +0.02 under "tell". So the striatum has
+  no reason to hold back. What would stop it is a cost the outcome reflects: under "tell", an
+  open book should make the retelling worse, and the reward should show it.
+- **The probe "preference after 'read it'" reads 0.** It builds a state from the instruction
+  alone, which fires no cells. The real states at the wait carry layer 2/3 and 5 activity.
+- **Retelling and finding are unchanged.** They are limited by the hippocampal gates (recall
+  about 0%), not by the striatum.
+
 ## Next
 - **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
   later (retelling), not for predicting the predictable.

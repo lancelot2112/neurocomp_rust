@@ -396,9 +396,10 @@ const CTX_POOL: usize = 1 << 16;
 ///   content: the ear's layer 4 cells active when the next sound was heard. Recall is "which
 ///   row had this context"; it reinstates those cells, layer 2/3 completes the assembly, and the
 ///   cortex says the word. Content comes back through the cortex (or by rereading).
-/// - **Retrieval mode:** while a held episode is reinstated, nothing new is stored, so its own
-///   retelling does not overwrite the memory it reads (Hasselmo's separate encoding and
-///   retrieval modes); holding a new episode's start ends it.
+/// - **Retrieval mode:** while a reinstated episode keeps predicting what is heard, nothing new
+///   is stored, so its own retelling does not overwrite the memory it reads (Hasselmo's separate
+///   encoding and retrieval modes). A mismatch (novelty) returns it to encoding, as does holding
+///   a new episode's start.
 /// - **Reconsolidation:** when the cortex completes a recalled pointer to an assembly that
 ///   still holds at least half the pointed cells, the row is relearned to the assembly as it is
 ///   now, so the index follows layer 4's drift.
@@ -406,8 +407,10 @@ const CTX_POOL: usize = 1 << 16;
 ///   recalled (CA3's sequence bias) and gives it unless another row matches the cue better by
 ///   12 of 32 cells; when nothing matches, the successor anyway.
 /// - **The prefrontal cortex holds and reinstates context:** at a boundary one learned gate may
-///   hold the context where the new episode begins, and another may reinstate the held context
-///   as the current one (keyed by the last two words, credited by the words said right). "Tell
+///   hold the context where the new episode begins; on any sound another may reinstate the
+///   held context as the current one (both keyed by the last two sounds). Their dopamine is the
+///   hippocampus's own comparator: whether the row it recalled predicted the sound heard next.
+///   Pauses are heard as silence, a natural boundary. "Tell
 ///   it" can then return to the start of the story and retell it, the context evolving as it
 ///   did the first time.
 struct IndexHc {
@@ -544,13 +547,21 @@ impl IndexHc {
         // completed and what was then heard is that assembly (at least half its pointed cells
         // still in it), the row is relearned to the assembly as it is now
         if let Some(r) = self.to_reconsolidate.take() {
-            let old = self.mem.out_of(r);
-            if !old.is_empty() && old != &cells[..] {
-                let kept = old.iter().filter(|c| cells.binary_search(c).is_ok()).count();
-                if kept * 2 >= old.len() {
-                    self.mem.reconsolidate(r, &cells);
-                    self.relearned += 1;
-                }
+            let old = self.mem.out_of(r).to_vec();
+            let kept = old.iter().filter(|c| cells.binary_search(c).is_ok()).count();
+            let matched = !old.is_empty() && kept * 2 >= old.len();
+            if matched && old != cells {
+                self.mem.reconsolidate(r, &cells);
+                self.relearned += 1;
+            }
+            // the comparator's verdict (CA1: did the recalled row predict what was heard?) is
+            // the dopamine for the hippocampal gates (the hippocampus-VTA loop, Lisman & Grace)
+            if !self.gates_off {
+                self.reward(if matched { ONE as i32 } else { 0 });
+            }
+            // a mismatch is novelty, and novelty returns the hippocampus to encoding
+            if !matched {
+                self.retrieving = false;
             }
         }
         // retrieval mode: while a held episode is being reinstated, nothing new is stored
@@ -567,22 +578,22 @@ impl IndexHc {
         if fired {
             self.boundaries += 1;
             self.drift(&cells, self.ctx.len() / 2, 2);
-            if self.gates_off {
-                return;
-            }
-            let decide = |g: &mut PfcGate, rng: &mut StdRng| if explore { g.decide(pair, Some(rng)) } else { g.decide::<StdRng>(pair, None) };
-            // reinstate what is held (the context where a held episode began), or go on
-            if self.held.is_some() && decide(&mut self.back_gate, &mut self.rng) == Gate::Load {
-                self.ctx = self.held.clone().unwrap();
-                self.last_recalled = None;
-                self.retrieving = true;
-                self.reinstated += 1;
-            } else if decide(&mut self.hold_gate, &mut self.rng) == Gate::Load {
-                // hold where this new episode begins
-                self.held = Some(self.ctx.clone());
-                self.retrieving = false;
-                self.holds += 1;
-            }
+        }
+        if self.gates_off {
+            return;
+        }
+        let decide = |g: &mut PfcGate, rng: &mut StdRng| if explore { g.decide(pair, Some(rng)) } else { g.decide::<StdRng>(pair, None) };
+        // on any sound (as PBWM gates do): reinstate what is held, the context where a held
+        // episode began; at a boundary, otherwise: hold where this new episode begins
+        if self.held.is_some() && decide(&mut self.back_gate, &mut self.rng) == Gate::Load {
+            self.ctx = self.held.clone().unwrap();
+            self.last_recalled = None;
+            self.retrieving = true;
+            self.reinstated += 1;
+        } else if fired && decide(&mut self.hold_gate, &mut self.rng) == Gate::Load {
+            self.held = Some(self.ctx.clone());
+            self.retrieving = false;
+            self.holds += 1;
         }
     }
 
@@ -770,6 +781,11 @@ fn main() {
             }
             println!("  probe right after hearing:{line}");
         }
+        // the teacher pauses: silence is heard (a sound, and a natural event boundary)
+        if let Some(x) = ix.as_mut() {
+            let cells = net.l4a.encode(&silence);
+            x.hear(quiet, &silence, &cells, false, learn);
+        }
         let listen_log: Vec<bool> = ix.as_mut().map_or(Vec::new(), |x| x.log.drain(..).map(|l| l.0).collect());
         // 2. the book and the instruction
         let make = make_on && rng.gen_bool(0.25);
@@ -930,9 +946,7 @@ fn main() {
                     if !fixed_gate {
                         net.gate.reward(if ok { ONE as i32 } else { 0 }, &mut rng);
                     }
-                    if let Some(x) = ix.as_mut() {
-                        x.reward(if ok { ONE as i32 } else { 0 });
-                    }
+
                     if ix.is_some() {
                         // its own word was heard, then (if wrong) the teacher's
                         if let Some(w) = said {
@@ -951,9 +965,7 @@ fn main() {
                     if !fixed_gate {
                         net.gate.reward(if right { ONE as i32 } else { 0 }, &mut rng);
                     }
-                    if let Some(x) = ix.as_mut() {
-                        x.reward(if right { ONE as i32 } else { 0 });
-                    }
+
                     // the teacher's word is heard
                     prev2 = prev.replace(ear.codes[want].clone());
                     net.hear_gate(want, &ear.codes[want], !fixed_gate, &mut rng);
@@ -1003,6 +1015,9 @@ fn main() {
             net.learn(&st, &silence, &mut rng);
         }
         if let Some(x) = ix.as_mut() {
+            // the pause after the task
+            let cells = net.l4a.encode(&silence);
+            x.hear(quiet, &silence, &cells, false, learn);
             let task_log: Vec<bool> = x.log.drain(..).map(|l| l.0).collect();
             if trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr {
                 trace -= 1;
@@ -1136,6 +1151,20 @@ fn main() {
             x.had_prev,
             x.followed
         );
+    }
+    if let Some(x) = &ix {
+        let pairs: Vec<(&str, &str)> = vec![("tell", IT), ("read", IT), ("now", "tell"), ("now", "read"), ("home", "."), (".", "<pause>"), ("<pause>", "now"), ("the", "fox")];
+        let wid = |w: &str| if w == "<pause>" { quiet } else { id(w) };
+        let q = |v: u32| v as f64 / ONE as f64;
+        let line = pairs
+            .iter()
+            .map(|(a, b)| {
+                let k = wid(a) * 101 + wid(b);
+                format!("{a} {b}: hold {:.2} reinstate {:.2}", q(x.hold_gate.value(Gate::Load, k) as u32), q(x.back_gate.value(Gate::Load, k) as u32))
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        println!("hippocampal gates, value of loading after: {line}");
     }
     if practice_p > 0.0 {
         println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });

@@ -1720,9 +1720,40 @@ regression on the task so far.
 (`RT_SELFORG=0` for the shared layers, `RT_TEACHER_CURSOR=0` for the teacher on the network's
 cursor). Touch and play stay off by default.
 
+### Touch as a fingertip; why the self-organizing network was silent
+**Touch, redesigned.** The skin's receptors report different things: slowly adapting ones report
+pressure and edges, fast ones vibration and texture. So touch is a fingertip's window over the
+place under the cursor and its two neighbours:
+- a **vibration mode** for what is under the cursor (its kind: the desk's book, a shelf's book,
+  nothing), 16 bits;
+- an **edge** on the side where a neighbour differs (8 bits each side): where a thing begins and
+  ends, and whether the cursor is inside it or at its border (containment, extent);
+- while moving, the **motion** itself.
+The parts are sparse and add up. In play, books lie on half the places, so modes and edges tell
+"over a book" from "over nothing".
+
+**Defaults now:** the self-organizing columns, the teacher's own cursor, touch, and 300 trials of
+play (`RT_SELFORG=0`, `RT_TEACHER_CURSOR=0`, `RT_TOUCH=0`, `RT_PLAY=0` turn them off).
+
+**Why the self-organizing network was silent at test** (traced):
+- **Telling with the book shut, nothing fired.** The hippocampus's return (32 bits every step)
+  was added to a column's input only when a sense was active; with the book shut and nothing yet
+  said, no sense is. Now the return reaches every column always (the entorhinal route back to
+  the cortex).
+- **Reading aloud, it said the next word** (saw "tom", said "went"). The association fuses
+  seeing and hearing a word (they share 28 of 32 cells), which is what memory wants, but then
+  "say what is seen" (reading) and "what comes next" (listening) look alike, and listening
+  dominates. Now every area's layer 5 offers goals, the senses' columns too (as every cortical
+  area's layer 5 projects to the striatum and the motor system), and the relay learns which to
+  trust where. The eye's own column can learn "say what is seen" (the visual word form area's
+  route to phonology).
+
+In a 300-trial check after both fixes it speaks again with the book shut, and the senses offer
+sounds (ear right 61%, eye 54%; the eye+ear association 56%). Measuring on 4 seeds.
+
 ## Next
-- **Why the self-organizing network is silent at test** although its eye+ear column's goals are
-  right in training: trace the path from goal to relay to voice.
+- **The new defaults on 4 seeds** (running): self-organizing columns, the senses' goals, recall
+  reaching every column, touch, play.
 - **Acting's own value:** the story's credit made superstitions; without it the network stops
   acting. Play is meant to give acts value of their own early, but did not teach clicking on a
   book; why (the striatum's state during play, babbling half the steps, the reward size).

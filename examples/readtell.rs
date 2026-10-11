@@ -231,6 +231,10 @@ struct Net {
     felt: BitVector,
     /// the multi-area index: what the cortex represents is each area's own cells
     multi: bool,
+    /// top-down input for the next step, per area (layer 4 codes): what is imagined
+    topdown: Vec<(usize, BitVector)>,
+    /// diagnosis: the latest step was driven top-down only (imagined or recalled, nothing sensed)
+    imagined_now: bool,
     /// RT_TOP=1: the top association column replaces the shared layers 2/3 and 5. Its input is
     /// the scene (the association of every area) and the hippocampus's return; its tuft the
     /// prefrontal content and the cerebellum's output; its layer 2/3 predicts the next scene,
@@ -385,6 +389,8 @@ impl Net {
             }),
             felt: zero(),
             multi: selforg && std::env::var("RT_HC_MULTI").map_or(true, |v| v != "0"),
+            topdown: Vec::new(),
+            imagined_now: false,
             top: (top && !streams).then(|| Column::agranular(BITS, 16384)),
             streams: streams.then(|| Streams { ventral: Column::agranular(BITS, 16384), audio_motor: Column::agranular(BITS, 16384), visuo_motor: Column::agranular(BITS, 8192) }),
             ff_l4: std::env::var("RT_FF").map_or(false, |v| v == "l4"),
@@ -548,27 +554,36 @@ impl Net {
             };
             // the senses' columns, with the association columns' activity as feedback
             let (fb, _) = b.columns_activity();
-            // the multi-area index's recall: each area's part reinstated in that area (vivid
-            // recall reactivates the sensory cortex), and the association columns complete from
-            // them like from anything sensed
-            let (mut e4, mut a4, mut acts4) = (e4, a4, acts4);
-            if recall.bit_len() > BITS {
-                let or = |x: &mut BitVector, y: BitVector| {
-                    for (w, z) in x.as_words_mut().iter_mut().zip(y.as_words()) {
-                        *w |= z;
-                    }
-                };
-                or(&mut e4, part(recall, EYE));
-                or(&mut a4, part(recall, EAR));
-                or(&mut h4, part(recall, HAND));
-                or(&mut acts4, part(recall, ACTS));
+            // top-down, per area: the multi-area index's recall (each area's part, as vivid recall
+            // reactivates the sensory cortex) and what is imagined (a motor area's forward model's
+            // prediction of what it would produce). It arrives as feedback, on the column's tuft
+            // and as its weak input, never through layer 4: a column learns only from what came
+            // through layer 4 (sensed), and the association columns complete from either.
+            let or = |x: &BitVector, y: &BitVector| {
+                let mut v = x.clone();
+                for (w, z) in v.as_words_mut().iter_mut().zip(y.as_words()) {
+                    *w |= z;
+                }
+                v
+            };
+            let mut td: Vec<BitVector> = SLOTS.iter().map(|&a| part(recall, a)).collect();
+            for (a, c) in std::mem::take(&mut self.topdown) {
+                if let Some(slot) = SLOTS.iter().position(|&x| x == a) {
+                    td[slot] = or(&td[slot], &c);
+                }
             }
-            b.sense_step(EYE, &e4, Some(&fb), learn);
-            b.sense_step(EAR, &a4, Some(&fb), learn);
-            b.sense_step(HAND, &h4, Some(&fb), learn);
-            b.sense_step(ACTS, &acts4, Some(&fb), learn);
-            // association areas grow from this step's co-activity (any areas active together)
+            let ff = [e4.clone(), a4.clone(), h4.clone(), acts4.clone()];
+            let mut both: Vec<BitVector> = Vec::new();
+            for (slot, &a) in SLOTS.iter().enumerate() {
+                let sensed = ff[slot].count_ones() > 0;
+                let input = or(&ff[slot], &td[slot]);
+                b.sense_step(a, &input, Some(&or(&fb, &td[slot])), learn && sensed);
+                both.push(input);
+            }
+            self.imagined_now = td.iter().any(|t| t.count_ones() > 0) && ff.iter().all(|f| f.count_ones() == 0);
+            // association areas grow from what is sensed together
             b.associate_codes(&[e4.clone(), a4.clone(), h4.clone(), zero(), acts4.clone()], learn);
+            let (e4, a4, h4, acts4) = (both[0].clone(), both[1].clone(), both[2].clone(), both[3].clone());
             let mut tuft = pfc.clone();
             for (w, x) in tuft.as_words_mut().iter_mut().zip(cb_out.as_words()) {
                 *w |= x;
@@ -720,6 +735,29 @@ impl Net {
         Step { top_in: None, streams_in: None, selforg_in: None, l23_row, l5_row, mossy, ctx, props, plan }
     }
 
+    /// Imagine (with areas): motor area `motor`'s goal, held back from the body, run through its
+    /// forward model: what it would produce, for the matching sensory area, top-down at the next
+    /// step (the hand: how it would feel, and through the mirror how it would look; the voice:
+    /// the sound, for the ear). Returns what the cortex then represents (each area's cells), for
+    /// the hippocampus.
+    fn imagine(&mut self, motor: usize, goal: &BitVector) -> BitVector {
+        let Some(b) = self.brain.as_mut() else { return zero() };
+        let Some(m) = b.areas[motor].motor.as_mut() else { return zero() };
+        let Some(cmd) = m.plan(goal) else { return zero() };
+        let Some(result) = m.predict(&cmd) else { return zero() };
+        let parts: Vec<(usize, BitVector)> = if motor == HAND {
+            let h = b.encode_only(HAND, &result);
+            let seen = b.mirror(HAND, &h, ACTS);
+            let e = b.encode_only(ACTS, &seen);
+            vec![(HAND, h), (ACTS, e)]
+        } else {
+            vec![(EAR, b.encode_only(EAR, &result))]
+        };
+        let out = multi(&parts.iter().map(|(a, c)| (*a, c)).collect::<Vec<_>>());
+        self.topdown.extend(parts);
+        out
+    }
+
     /// The plan: the relay mixes the sources' proposals, each weighted by its learned
     /// reliability in this context; the strongest 32 bits.
     fn mix(&mut self, props: &[(u8, Driver, BitVector)], ctx: &BitVector, cb_out: &BitVector, temp: u32, rng: &mut StdRng) -> BitVector {
@@ -831,6 +869,8 @@ const CH_ACT: usize = 5;
 /// what the cortex imagines instead of doing (the same candidates: a motion imagined cues the
 /// hippocampus with it)
 const CH_IMAGINE: usize = 7;
+/// say the planned word aloud or inwardly (RT_INNER=1)
+const CH_INNER: usize = 9;
 /// steps a request to retrieve lasts unless renewed
 const REQUEST_STEPS: usize = 32;
 /// where the cortex's proposals sit in the striatum's input ids
@@ -1874,6 +1914,11 @@ fn main() {
             }
         }};
     }
+    // inner speech (RT_INNER=1): the basal ganglia may hold a planned word from the vocal tract;
+    // the voice's forward model then predicts its sound, which reaches the ear's column top-down
+    // (the inner voice), and the hippocampus completes what is represented
+    let inner_on = std::env::var("RT_INNER").map_or(false, |v| v == "1");
+    let mut inner_count = 0usize;
     // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
     let mut voice_check = (0usize, 0usize);
     let imitate = std::env::var("RT_IMITATE").map_or(true, |v| v != "0");
@@ -1948,6 +1993,15 @@ fn main() {
             // the boundary cell watches the same cells (every area's)
             x.boundary = BoundaryCell::new(SLOTS.len() * BITS, 3, 80);
         }
+    }
+    macro_rules! inner {
+        ($plan:expr) => {{
+            let cue = net.imagine(VOICE, $plan);
+            if let Some(x) = ix.as_mut().filter(|x| x.auto) {
+                x.represent(&ones(&cue));
+            }
+            inner_count += 1;
+        }};
     }
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle || std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause" || v == "imagine");
@@ -2692,7 +2746,7 @@ fn main() {
                     let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
                     if let Some(i) = striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
                         // the act the proposal is (the motion it matched), as the cortex represents it
-                        let cue = if net.brain.is_some() { ones(&imagined_assembly!(&cands[i].1)) } else { ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng)) };
+                        let cue = if net.multi { ones(&net.imagine(HAND, &cands[i].1)) } else if net.brain.is_some() { ones(&imagined_assembly!(&cands[i].1)) } else { ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng)) };
                         if let Some(x) = ix.as_mut() {
                             if x.auto {
                                 // the cortex represents the imagined act; the hippocampus completes it
@@ -2966,7 +3020,12 @@ fn main() {
                 net.learn(&st, &ear.codes[want], &mut rng);
                 if practice {
                     // the network says it and hears itself
-                    let said = say!(&st.plan).filter(|&w| w != quiet);
+                    let said = if inner_on && net.multi && striatum.choose(CH_INNER, 2, Some(&mut rng)) == 1 {
+                        inner!(&st.plan);
+                        None
+                    } else {
+                        say!(&st.plan).filter(|&w| w != quiet)
+                    };
                     let ok = said == Some(want);
                     practice_right.0 += ok as usize;
                     practice_right.1 += 1;
@@ -3013,7 +3072,12 @@ fn main() {
                     hc_hear!(want, &cue, store_all, true, false);
                 }
             } else {
-                let said = say!(&st.plan).filter(|&w| w != quiet);
+                let said = if inner_on && net.multi && striatum.choose(CH_INNER, 2, None) == 1 {
+                    inner!(&st.plan);
+                    None
+                } else {
+                    say!(&st.plan).filter(|&w| w != quiet)
+                };
                 if trace > 0 && (trace_all || (book == Book::Closed && !read)) && t < 6 && no_instr == trace_noinstr {
                     trace -= (t == 5) as usize;
                     let near = ear.decode(&st.plan).map_or("-", |w| vocab[w]);
@@ -3393,6 +3457,9 @@ fn main() {
     }
     println!("mirror: {} of the teacher's acts seen, {} evoked the right felt motion", mirror_stats.0, mirror_stats.1);
     println!("imagining the click while telling: {} times, recall went to this story's opening {} times", open_recall.0, open_recall.1);
+    if inner_on {
+        println!("inner speech: {inner_count} words said inwardly");
+    }
     println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);
     println!("read trials at test, cursor off the book (place:proposed>released): {off_book:?}");

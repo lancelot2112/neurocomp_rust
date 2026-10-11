@@ -1403,6 +1403,27 @@ fn main() {
             }
         };
     }
+    // the cortex's assembly for a mouse act (done, seen or imagined): with areas, the association
+    // of the hand (how it feels) and seen acts (how it looks); else the old shortcut, the motion
+    // as an ear input
+    macro_rules! act_assembly {
+        ($m:expr) => {{
+            let m: usize = $m;
+            match net.brain.as_mut() {
+                Some(b) => {
+                    let h = b.encode(HAND, &motion[m], false);
+                    let e = b.encode(ACTS, &motion_seen[m], false);
+                    let c = b.associate_codes(&[zero(), zero(), h.clone(), zero(), e], false);
+                    if c.count_ones() > 0 {
+                        c
+                    } else {
+                        h
+                    }
+                }
+                None => net.assoc_of(&zero(), &motion[m], false, &mut rng),
+            }
+        }};
+    }
     // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
     let mut voice_check = (0usize, 0usize);
     // a word said: None for nothing said or (with the learned stop) silence. With areas, the
@@ -1619,14 +1640,19 @@ fn main() {
         // click the network sees, an event the hippocampus stores); the network predicts each
         // next word and stores it
         if story_book {
-            let cells = net.assoc_of(&zero(), &motion[CLICK], false, &mut rng);
+            // (with areas, the click is seen, not heard: an act, as the cortex represents acts)
+            let cells = act_assembly!(CLICK);
             if ix.is_some() {
                 let fired = ix.as_mut().unwrap().hear(quiet, &motion[CLICK], &cells, &cells, true, false);
                 prev_assoc = std::mem::replace(&mut last_assoc, cells);
                 td_step!(fired, learn);
             }
             // the cortex: after the book opens, the first word
-            let st = net.step(&zero(), &motion[CLICK], &zero(), learn, 0, &mut rng);
+            let st = if net.brain.is_some() {
+                net.step(&motion_seen[CLICK], &zero(), &zero(), learn, 0, &mut rng)
+            } else {
+                net.step(&zero(), &motion[CLICK], &zero(), learn, 0, &mut rng)
+            };
             if learn {
                 net.learn(&st, &ear.codes[id(s[0])], &mut rng);
             }
@@ -1944,7 +1970,8 @@ fn main() {
                 if imagine_on && !cands.is_empty() && !ix.as_ref().map_or(true, |x| x.request) {
                     let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
                     if let Some(i) = striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
-                        let cue = ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng));
+                        // the act the proposal is (the motion it matched), as the cortex represents it
+                        let cue = if net.brain.is_some() { ones(&act_assembly!(cands[i].0)) } else { ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng)) };
                         if let Some(x) = ix.as_mut() {
                             if x.auto {
                                 // the cortex represents the imagined act; the hippocampus completes it
@@ -2133,7 +2160,7 @@ fn main() {
         // the hand is still once the wait is over
         net.felt = zero();
         if imagine_oracle && !read && !make {
-            let cue = ones(&net.assoc_of(&zero(), &motion[CLICK], false, &mut rng));
+            let cue = ones(&act_assembly!(CLICK));
             if let Some(x) = ix.as_mut() {
                 if let Some(r) = x.best_row(&cue) {
                     x.reinstate_row(r);

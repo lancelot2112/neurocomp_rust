@@ -1189,6 +1189,9 @@ fn main() {
     // diagnosis, read trials with the cursor on the book (training, test): steps, CLICK
     // proposed by the cortex, LEFT proposed, CLICK released, LEFT released
     let mut on_book = [[0usize; 5]; 2];
+    // diagnosis, read trials at test (instruction held), cursor elsewhere: (place, what the
+    // cortex proposed, what was released) counts, as "place:proposed>released"
+    let mut off_book: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
     // RT_TEACH=none: the teacher never shows how to use the mouse
     let teach_mouse = std::env::var("RT_TEACH").map_or(true, |v| v != "none");
     // RT_STORY=book (default): the teacher reads the story from a book, opened with a click the
@@ -1725,8 +1728,14 @@ fn main() {
                         on_book[k][1] += cands.iter().any(|c| c.0 == CLICK) as usize;
                         on_book[k][2] += cands.iter().any(|c| c.0 == LEFT) as usize;
                     }
+                    let off = read && cursor != 0 && testing && !no_instr;
+                    let names = ["L", "R", "C"];
+                    let proposed: String = cands.iter().map(|c| names.get(c.0).copied().unwrap_or("?")).collect();
                     match striatum.choose_among(CH_ACT, &offer, if learn { Some(&mut rng) } else { None }) {
                         Some(i) => {
+                            if off {
+                                *off_book.entry(format!("{cursor}:{proposed}>{}", names.get(cands[i].0).copied().unwrap_or("?"))).or_default() += 1;
+                            }
                             if let Some(k) = ob {
                                 on_book[k][3] += (cands[i].0 == CLICK) as usize;
                                 on_book[k][4] += (cands[i].0 == LEFT) as usize;
@@ -1734,7 +1743,12 @@ fn main() {
                             mouse_stats[1] += 1;
                             hand.plan(&cands[i].1)
                         }
-                        None => None,
+                        None => {
+                            if off {
+                                *off_book.entry(format!("{cursor}:{proposed}>-")).or_default() += 1;
+                            }
+                            None
+                        }
                     }
                 };
                 striatum.set_noise(0);
@@ -2258,4 +2272,5 @@ fn main() {
         hand.stats()
     );
     println!("read trials, cursor on the book (steps, CLICK proposed, LEFT proposed, CLICK released, LEFT released): training {:?}, test {:?}", on_book[0], on_book[1]);
+    println!("read trials at test, cursor off the book (place:proposed>released): {off_book:?}");
 }

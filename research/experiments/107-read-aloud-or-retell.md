@@ -1366,10 +1366,108 @@ instruction held):**
 - **Top-k recall** (`RT_HC_K`). When recall does not follow a link, the k best matches vote and
   the output keeps the bits most of them share (a majority). Not yet measured.
 
+### Why one seed in four failed: superstition
+**The wandering mouse was not curiosity.** Seeds 1 and 3 pressed LEFT thousands of times (about
+4,800 against about 750 in working seeds) and never opened the book at test. Curiosity was the
+first suspect, but it is not the cause:
+
+| curiosity | seed 0 | seed 1 | seed 2 | seed 3 |
+|---|---|---|---|---|
+| as reward | works | wanders | works | works |
+| as reward, registers start empty | works | wanders | works | wanders |
+| off | reads, no reach at test | works | reads, no reach at test | wanders |
+| as noise (below) | works | wanders | works | wanders |
+
+**The count that found it.** In read trials, with the cursor already on the desk book (where
+only a click helps):
+
+| | steps | CLICK proposed by the cortex | LEFT proposed | CLICK released | LEFT released |
+|---|---|---|---|---|---|
+| seed 0, training | 246 | 225 | 85 | 221 | 3 |
+| seed 0, test | 18 | 18 | 0 | 18 | 0 |
+| seed 3, training | 1,412 | 595 | 1,394 | 8 | 1,386 |
+| seed 3, test | 152 | 0 | 152 | 0 | 152 |
+
+LEFT on the book moved nothing, but the motion was still sensed. Then the teacher, needing the
+remaining steps, clicked and the book opened. The burst that followed credited the network's own
+tagged LEFT presses (the teacher's act is not tagged): a superstition, as in Skinner's pigeons.
+Two locks followed:
+- **The striatum:** go cells for LEFT on the book grew and became habits. Even when the cortex
+  proposed CLICK, it was released 8 times in 595.
+- **The cortex:** it learns what follows what. It learned that LEFT follows LEFT on the book (the
+  network's own presses), and stopped proposing CLICK. The basal ganglia only choose among the
+  cortex's proposals, so by test CLICK was never on offer.
+
+Seed 0 happened to click before the teacher stepped in, so the superstition never formed.
+
+**Two fixes, each tested on seeds 1 and 3:**
+- **The world, made honest** (`RT_BLOCKED`, now the default): a move against the screen's edge
+  moves nothing, and nothing is sensed. The cortex no longer learns that LEFT follows on the
+  book, so CLICK stays on offer.
+- **The teacher's act, tagged as if done** (`RT_OBSERVE=1`, the mirror system's view): the
+  burst credits the observed click, not the earlier LEFT presses.
+
+| | seed 1: read / tell, book closed | seed 3: read / tell, book closed |
+|---|---|---|
+| neither (noise curiosity) | 18–21% / 21%, no reach | 0–2% / 13%, no reach |
+| `RT_OBSERVE=1` | 41–27% / 34% | 45–51% / 51% |
+| `RT_BLOCKED=1` | 45–33% / 42%, reaches 100% | 50–43% / 27%, reaches 100% |
+
+Both stop the wandering (left presses back to about 800). The blocked move is the default
+because it only corrects the world.
+
+### Curiosity as noise
+Curiosity paid as reward competes with the task: it pays the mouse to go where predictions are
+improving, whether or not that helps. Now (`RT_CURIOSITY=noise`, the default) the same progress
+signal (misses 9–16 steps back minus those of the last 8, for the current context) adds up to ±2
+to the growing masks' GPi noise (±3) for the mouse and imagine choices, and pays nothing. It
+loosens a habit a little where there is something to learn; it does not choose what replaces it.
+`RT_CURIOSITY=reward` keeps the old form; `0` turns it off. As noise, seeds 0 and 2 open the book at
+test (with curiosity off they did not); seeds 1 and 3 still wandered before the blocked-move fix.
+
+Biology suggests the source should be the cortex, not a table in the driver. Random exploration
+is linked to the locus coeruleus's tonic mode (a noise gain); what drives it is surprise and
+uncertainty tracked in the anterior cingulate and orbitofrontal cortex. Directed exploration
+(trying the uncertain option on purpose) is frontopolar, and advance information does excite
+dopamine neurons. The cortex here already marks its own surprise: a predictive kernel bursts when
+its prediction fails. A candidate: a slow running rate of cortical bursts as the noise gain,
+damped while reward is coming. Not built.
+
+### Silence without the instruction: no input at all
+A trace of each step's inputs to the cortex, in the test with the prefrontal content removed:
+
+| input | bits |
+|---|---|
+| eye | 0: the book stays shut (the mouse never reaches, even when asked to read) |
+| ear | 0: nothing said yet |
+| prefrontal | 0: removed |
+| hippocampal recall | 0: nothing cues it |
+
+For one or two steps, leftover activity in the cerebellum and layer 2/3 gives a guess; then the
+plan is empty. Reaching, imagining the opening (which cues recall) and so the whole chain are
+learned in the instruction's context; without it nothing starts. This is arguably right (no task,
+nothing to do). Whether the story just heard should be enough of a cue is a design question.
+
+### Top-k recall, and the new defaults
+Defaults now: growing masks (`RT_MASK_GROW=0` for one mask per pathway), blocked edge moves,
+curiosity as noise. Top-k recall (`RT_HC_K=3`: the 3 best matches vote, a majority keeps the
+bits) against top-1, first test table:
+
+| seed | top-1: read same–other / tell closed / recall right | top-3: read same–other / tell closed / recall right |
+|---|---|---|
+| 0 | 49.7–28.2% / 30.0% / 19.4% | 36.7–32.5% / 24.7% / 21.7% |
+| 1 | 44.8–32.9% / 41.7% / 23.3% | 42.1–45.3% / 27.8% / 24.3% |
+| 2 | 37.2–28.7% / 28.5% / 23.5% | 38.5–45.1% / 64.3% (28 words) / 24.1% |
+| 3 | 49.7–43.1% / 26.6% / 20.8% | 56.7–58.2% / 37.9% / 20.6% |
+
+No seed wanders now, and all four read and tell at 25–60%. But with top-1, seeds 0 and 2 did not
+reach for the book at test (seed 0 also with top-3): those read scores come from hearing the
+teacher read, not from seeing the page. Top-3 recall is right on slightly more telling steps
+(about +1 point); on what is said, it is mixed, within seed-to-seed noise. Top-1 stays the default.
+With the instruction removed, both are 85–100% silent (above).
+
 ## Next
-- **Top-k recall:** measure on 4 seeds.
-- **Why one seed in four fails** (the mouse wandering off the book, or silence), with or
-  without banks.
-- **Why the growing masks fall silent with the prefrontal content removed,** and why seed 1's
-  mouse wanders.
-- **Make the growing masks the default** once those hold.
+- **Cortical curiosity:** a running rate of cortical bursts as the noise gain, in place of the
+  per-context miss registers.
+- **Test-time reaching** on seeds 0 and 2 with the new defaults (being traced).
+- **Whether the story heard should cue telling** without the instruction.

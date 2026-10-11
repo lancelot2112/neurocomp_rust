@@ -204,6 +204,34 @@ impl Pool {
         code
     }
 
+    /// Feedback: what the cells in `code` expect on source `source`, as that source's bits
+    /// with the most votes from those cells' synapses (the top `k`, at least two votes, or one
+    /// when a single cell is active). The back projection that lets part of a conjunction
+    /// evoke the rest.
+    pub fn backproject(&self, code: &BitVector, source: usize) -> BitVector {
+        let mut votes: HashMap<u32, u32> = HashMap::new();
+        let mut cells = 0;
+        for c in 0..self.syn.len().min(code.bit_len()) {
+            if !code.bit_get(c) {
+                continue;
+            }
+            cells += 1;
+            for &b in &self.syn[c] {
+                if b as usize / self.src_bits == source {
+                    *votes.entry(b % self.src_bits as u32).or_default() += 1;
+                }
+            }
+        }
+        let need = if cells > 1 { 2 } else { 1 };
+        let mut v: Vec<(u32, u32)> = votes.into_iter().filter(|&(_, n)| n >= need).collect();
+        v.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let mut out = BitVector::new(self.src_bits, Some(0));
+        for &(b, _) in v.iter().take(self.k) {
+            out.bit_set(b as usize);
+        }
+        out
+    }
+
     /// A slot for a new cell: a new one while there is room, else the stalest of 8 sampled.
     fn place(&mut self) -> usize {
         if self.syn.len() < self.out_bits {
@@ -380,8 +408,10 @@ impl Brain {
             }
         }
         let mut pair_codes: Vec<BitVector> = Vec::with_capacity(self.pairs.len());
+        let silent = BitVector::new(self.bits, Some(0));
         for ((a, b), pool) in self.pairs.iter_mut() {
-            let input = [(0usize, &codes[*a]), (1usize, &codes[*b])];
+            // an area not given is silent
+            let input = [(0usize, codes.get(*a).unwrap_or(&silent)), (1usize, codes.get(*b).unwrap_or(&silent))];
             pair_codes.push(if learn { pool.learn(&input) } else { pool.encode(&input) });
         }
         if self.full.is_none() && self.pairs.len() >= 2 {
@@ -398,6 +428,30 @@ impl Brain {
             }
         }
         merged
+    }
+}
+
+impl Brain {
+    /// The mirror: area `from`'s code alone (an act seen) evokes, through the association area
+    /// of the pair (`from`, `to`), the cells that conjoined it with `to` when both were active
+    /// (own acts, seen and felt); their synapses on `to` project back to `to`'s layer 4 code, and
+    /// that code back to `to`'s input: what `to` would sense (the act as if felt). Nothing if
+    /// the pair has no association area yet.
+    pub fn mirror(&self, from: usize, code: &BitVector, to: usize) -> BitVector {
+        let none = BitVector::new(self.bits, Some(0));
+        let Some(((a, _), pool)) = self.pairs.iter().find(|p| p.0 == (from, to) || p.0 == (to, from)) else {
+            return none;
+        };
+        let (side_from, side_to) = if *a == from { (0, 1) } else { (1, 0) };
+        let cells = pool.encode(&[(side_from, code)]);
+        if cells.count_ones() == 0 {
+            return none;
+        }
+        let to_code = pool.backproject(&cells, side_to);
+        match self.areas[to].l4.as_ref() {
+            Some(l4) => l4.backproject(&to_code, 0),
+            None => to_code,
+        }
     }
 }
 
@@ -483,6 +537,34 @@ mod tests {
         }
         assert_eq!(brain.pairs.len(), 2);
         assert!(brain.full.is_some());
+    }
+
+    #[test]
+    fn a_seen_act_evokes_how_it_feels() {
+        let mut rng = StdRng::seed_from_u64(4);
+        let mut brain = Brain::new(BITS, K, 4);
+        let eye = brain.attach("eye", Kind::Sensor);
+        let hand = brain.attach("hand", Kind::SensorMotor);
+        let seen: Vec<BitVector> = (0..3).map(|_| rand_code(&mut rng)).collect();
+        let felt: Vec<BitVector> = (0..3).map(|_| rand_code(&mut rng)).collect();
+        // before any own act, seeing evokes nothing
+        let e = brain.encode(eye, &seen[0], false);
+        assert_eq!(brain.mirror(eye, &e, hand).count_ones(), 0);
+        // own acts: each seen and felt together
+        for i in 0..30 {
+            let e = brain.areas[eye].sense(&seen[i % 3], true);
+            let h = brain.areas[hand].sense(&felt[i % 3], true);
+            brain.associate_codes(&[e, h], true);
+        }
+        // someone else's act, seen only: it evokes how it would feel
+        for i in 0..3 {
+            let e = brain.encode(eye, &seen[i], false);
+            let m = brain.mirror(eye, &e, hand);
+            assert!(ov(&m, &felt[i]) * 2 >= K as u32, "act {i}: {} of {K} felt bits evoked", ov(&m, &felt[i]));
+            for j in (0..3).filter(|&j| j != i) {
+                assert!(ov(&m, &felt[j]) * 4 < K as u32, "act {i} evokes act {j}");
+            }
+        }
     }
 
     #[test]

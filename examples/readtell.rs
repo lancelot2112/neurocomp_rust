@@ -234,6 +234,9 @@ const EYE: usize = 0;
 const EAR: usize = 1;
 const HAND: usize = 2;
 const VOICE: usize = 3;
+/// seen actions (the superior temporal sulcus's biological-motion stream): what an act looks
+/// like, wherever it happens
+const ACTS: usize = 4;
 
 struct Step {
     l23_row: BitVector,
@@ -287,6 +290,7 @@ impl Net {
                 b.attach("hand", Kind::SensorMotor);
                 // the voice: a motor area (it is heard through the ear)
                 b.attach("voice", Kind::Motor);
+                b.attach("seen acts", Kind::Sensor);
                 b
             }),
             felt: zero(),
@@ -1307,6 +1311,8 @@ fn main() {
     let mut check_due = [false; 3];
     // (checks made, of which failed)
     let mut checks = (0usize, 0usize);
+    // the mirror (with areas and RT_TEACH_SEEN=1): (teacher's acts seen, mirrored to the right felt motion)
+    let mut mirror_stats = (0usize, 0usize);
     let mouse = VocalTract::new(MOUSE, BITS, ACTIVE, &mut rng);
     let mut hand = MotorArea::new(BITS);
     hand.babble(&mouse, &motion, 3, &mut rng);
@@ -1975,7 +1981,28 @@ fn main() {
                 let opens = if find { cursor >= 1 && cursor <= shelf_k } else { cursor == 0 && !p.is_empty() };
                 let blocked = blocked_senses && (matches!((done, cursor), (Some(LEFT), 0)) || done == Some(RIGHT) && cursor + 1 == npos || done == Some(CLICK) && !opens);
                 // (with RT_TEACH_SEEN=1 the teacher's act is not felt: it is seen, at the next step)
-                let next = if blocked || (teach_seen && shown.is_some()) { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
+                let mut next = if blocked || (teach_seen && shown.is_some()) { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
+                if let (Some(b), Some(m), false) = (net.brain.as_mut(), done, blocked) {
+                    if shown.is_none() {
+                        // an own act, seen and felt: the association of seen acts and the hand
+                        // learns the pair
+                        if learn {
+                            let e = b.encode(ACTS, &motion_seen[m], true);
+                            let h = b.encode(HAND, &motion[m], true);
+                            b.associate_codes(&[zero(), zero(), h, zero(), e], true);
+                        }
+                    } else if teach_seen {
+                        // the teacher's act, seen only: the mirror (that association)
+                        // evokes how it would feel, and that is what the cortex takes as come
+                        let e = b.encode(ACTS, &motion_seen[m], false);
+                        let felt = b.mirror(ACTS, &e, HAND);
+                        mirror_stats.0 += 1;
+                        mirror_stats.1 += (overlap(&felt, &motion[m]) * 2 >= ACTIVE as u32) as usize;
+                        if felt.count_ones() > 0 {
+                            next = felt;
+                        }
+                    }
+                }
                 seen_motion = if blocked { None } else { done };
                 // the check: an own act, due for one (or every act, RT_CHECK=always), compared
                 // with what the forward model expected it to do; no effect at all is a dip
@@ -2514,6 +2541,7 @@ fn main() {
     if net.brain.is_some() {
         println!("voice area: {} words said, {} not heard as its efference copy expected", voice_check.0, voice_check.1);
     }
+    println!("mirror: {} of the teacher's acts seen, {} evoked the right felt motion", mirror_stats.0, mirror_stats.1);
     println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);
     println!("read trials at test, cursor off the book (place:proposed>released): {off_book:?}");

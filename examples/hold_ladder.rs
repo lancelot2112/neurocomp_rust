@@ -35,7 +35,70 @@
 //! default 3).
 
 use neurocomp::fixed::ONE;
-use neurocomp::program::Striatum;
+use neurocomp::program::{MaskStriatum, Striatum};
+
+/// The striatum under test: popcount cells (`Striatum`) or masks (`MaskStriatum`).
+enum Bg {
+    Cells(Striatum),
+    Masks(MaskStriatum),
+}
+
+impl Bg {
+    fn begin_groups(&mut self, s: &[Vec<usize>], learn: bool, rng: &mut StdRng) {
+        match self {
+            Bg::Cells(x) => x.begin_groups(s, learn, rng),
+            Bg::Masks(x) => x.begin_groups(s, learn),
+        }
+    }
+    fn choose(&mut self, ch: usize, n: usize, rng: Option<&mut StdRng>) -> usize {
+        match self {
+            Bg::Cells(x) => x.choose(ch, n, rng),
+            Bg::Masks(x) => x.choose(ch, n, rng.is_some()),
+        }
+    }
+    fn maintain(&mut self, ch: usize) {
+        match self {
+            Bg::Cells(x) => x.maintain(ch),
+            Bg::Masks(x) => x.maintain(ch),
+        }
+    }
+    fn retag(&mut self, ch: usize) {
+        match self {
+            Bg::Cells(x) => x.retag(ch),
+            Bg::Masks(x) => x.retag(ch),
+        }
+    }
+    fn reward(&mut self, r: i32) {
+        match self {
+            Bg::Cells(x) => x.reward(r),
+            Bg::Masks(x) => x.reward(r),
+        }
+    }
+    fn end(&mut self, learn: bool, rng: &mut StdRng) {
+        match self {
+            Bg::Cells(x) => x.end(learn, rng),
+            Bg::Masks(x) => x.end(learn),
+        }
+    }
+    fn value(&mut self) -> i32 {
+        match self {
+            Bg::Cells(x) => x.debug_now(0).0,
+            Bg::Masks(x) => x.value(),
+        }
+    }
+    fn last_delta(&self) -> i32 {
+        match self {
+            Bg::Cells(x) => x.last_delta,
+            Bg::Masks(x) => x.last_delta,
+        }
+    }
+    fn report(&self) -> String {
+        match self {
+            Bg::Cells(x) => format!("cells {:?}, mean |dopamine| {:.3}", x.sizes(), x.stats.1 as f64 / x.stats.0.max(1) as f64 / ONE as f64),
+            Bg::Masks(x) => format!("{} bit swaps, mean |dopamine| {:.3}", x.swaps, x.stats.1 as f64 / x.stats.0.max(1) as f64 / ONE as f64),
+        }
+    }
+}
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -142,7 +205,7 @@ fn state(wm: &[usize], heard: &[usize], before: &[usize], held: &[usize], recall
     [wm, heard, before, held, recall, voice, since_b, since_h].iter().enumerate().map(|(g, v)| v.iter().map(|&b| b + g * 65536).collect()).collect()
 }
 
-fn episode(st: &mut Striatum, w: &mut World, ep: usize, rung: Rung, learn: bool, rng: &mut StdRng, t: &mut Tally) {
+fn episode(st: &mut Bg, w: &mut World, ep: usize, rung: Rung, learn: bool, rng: &mut StdRng, t: &mut Tally) {
     let tell = rng.gen_bool(0.5);
     let story: Vec<usize> = (0..L).map(|_| rng.gen_range(0..w.vocab.len())).collect();
     let ctx: Vec<Vec<usize>> = (0..=L).map(|_| pattern(rng, 32, 65536)).collect();
@@ -158,7 +221,7 @@ fn episode(st: &mut Striatum, w: &mut World, ep: usize, rung: Rung, learn: bool,
     w.last = if rung.marker { w.silence.clone() } else { w.vocab[rng.gen_range(0..w.vocab.len())].clone() };
     // one step of the loop; returns the recalled position (if retrieving this episode's story)
     // phase: 0 story, 1 instruction, 2 wait, 3 task, 4 the last waiting step
-    let mut step = |st: &mut Striatum, w: &mut World, stored: &[bool; L], heard: Vec<usize>, wm: &[usize], boundary: Option<usize>, phase: u8, rng: &mut StdRng, t: &mut Tally| -> Option<usize> {
+    let mut step = |st: &mut Bg, w: &mut World, stored: &[bool; L], heard: Vec<usize>, wm: &[usize], boundary: Option<usize>, phase: u8, rng: &mut StdRng, t: &mut Tally| -> Option<usize> {
         let held_ctx = w.held.as_ref().map_or(Vec::new(), |h| h.2.clone());
         let recalled = if w.retrieving && (phase == 0 || phase == 3) {
             let r = w.held.as_ref().and_then(|h| (h.0 == ep && h.1 + w.k < L && stored[h.1 + w.k]).then_some(h.1 + w.k));
@@ -196,7 +259,7 @@ fn episode(st: &mut Striatum, w: &mut World, ep: usize, rung: Rung, learn: bool,
             DELTA.with(|d| {
                 let mut d = d.borrow_mut();
                 let k = (tell as usize) * 64 + w.step_no.min(63);
-                d[k].0 += if std::env::var("HL_DEBUG").unwrap() == "v" { st.debug_now(0).0 as i64 } else { st.last_delta as i64 };
+                d[k].0 += if std::env::var("HL_DEBUG").unwrap() == "v" { st.value() as i64 } else { st.last_delta() as i64 };
                 d[k].1 += 1;
             });
         }
@@ -302,8 +365,28 @@ fn episode(st: &mut Striatum, w: &mut World, ep: usize, rung: Rung, learn: bool,
     st.end(learn, rng);
 }
 
-fn run(rung: Rung, seed: u64, n_train: usize) -> Tally {
-    let mut rng = StdRng::seed_from_u64(100 + seed);
+/// A striatum by name: `cells` (with HL_STRIATUM choosing its parts), or `masks` with options
+/// after a colon: `d1`..`d3` (τ = 2^−n), `flat` (no novelty), `nohold`, `taps`, `sticky`.
+fn make(spec: &str, seed: u64) -> Bg {
+    if let Some(opts) = spec.strip_prefix("masks") {
+        let mut m = MaskStriatum::new(2048, 64, 7 + seed);
+        for d in 1..=4 {
+            if opts.contains(&format!("d{d}")) {
+                m.drop_shift = d;
+            }
+        }
+        m.novelty = !opts.contains("flat");
+        m.hold = !opts.contains("nohold");
+        m.taps = opts.contains("taps");
+        m.sticky = opts.contains("sticky");
+        m.push_pull = !opts.contains("swap");
+        m.low_value = !opts.contains("calm");
+        m.conj = opts.contains("conj");
+        if opts.contains("p1") {
+            m.pause_min = 1;
+        }
+        return Bg::Masks(m);
+    }
     let mut st = Striatum::new(1 << 16);
     // HL_STRIATUM: which of the striatum's newer parts are on (default all)
     if let Ok(v) = std::env::var("HL_STRIATUM") {
@@ -315,13 +398,19 @@ fn run(rung: Rung, seed: u64, n_train: usize) -> Tally {
         st.critic_td0 = v.contains("td0");
         st.d2_affinity = v.contains("d2");
     }
+    Bg::Cells(st)
+}
+
+fn run(spec: &str, rung: Rung, seed: u64, n_train: usize) -> Tally {
+    let mut rng = StdRng::seed_from_u64(100 + seed);
+    let mut st = make(spec, seed);
     let mut w = World::new(&mut rng);
     let mut t = Tally::default();
     for ep in 0..n_train {
         episode(&mut st, &mut w, ep, rung, true, &mut rng, &mut t);
     }
     if seed == 0 {
-        eprintln!("{}: cells {:?}, mean |dopamine| {:.3}", rung.name, st.sizes(), st.stats.1 as f64 / st.stats.0.max(1) as f64 / ONE as f64);
+        eprintln!("{spec} {}: {}", rung.name, st.report());
     }
     let mut t = Tally::default();
     for ep in n_train..n_train + 400 {
@@ -330,9 +419,82 @@ fn run(rung: Rung, seed: u64, n_train: usize) -> Tally {
     t
 }
 
+/// A contextual bandit: 16 contexts (64 bits each; contexts 2i and 2i+1 share half their bits
+/// but want different actions), 4 actions, a reward for the context's best action. Each trial
+/// replaces a quarter of the context's bits with random ones. Returns the share of best choices
+/// per block of 500 trials, and in a test without exploration.
+fn bandit(spec: &str, seed: u64, n: usize) -> (Vec<f64>, f64) {
+    let mut rng = StdRng::seed_from_u64(500 + seed);
+    let mut st = make(spec, seed);
+    let mut ctx: Vec<Vec<usize>> = Vec::new();
+    for i in 0..16 {
+        let v: Vec<usize> = if i % 2 == 1 {
+            let twin: &Vec<usize> = &ctx[i - 1];
+            twin[..32].iter().copied().chain((0..32).map(|_| rng.gen_range(0..1 << 20))).collect()
+        } else {
+            (0..64).map(|_| rng.gen_range(0..1 << 20)).collect()
+        };
+        ctx.push(v);
+    }
+    let best: Vec<usize> = (0..16).map(|i| if i % 2 == 1 { 1 + (rng.gen_range(0..3) + 1) % 4 } else { 1 + rng.gen_range(0..4) }).collect();
+    let noisy = |i: usize, rng: &mut StdRng| -> Vec<Vec<usize>> { vec![ctx[i].iter().map(|&b| if rng.gen_range(0..4) == 0 { rng.gen_range(0..1 << 20) } else { b }).collect()] };
+    let mut curve = Vec::new();
+    let mut right = 0;
+    for t in 0..n {
+        let i = rng.gen_range(0..16);
+        let s = noisy(i, &mut rng);
+        st.begin_groups(&s, true, &mut rng);
+        let c = st.choose(0, 5, Some(&mut rng));
+        let ok = c == best[i];
+        right += ok as usize;
+        st.reward(if ok { ONE as i32 } else { 0 });
+        st.end(true, &mut rng);
+        if t % 500 == 499 {
+            curve.push(right as f64 / 500.0);
+            right = 0;
+        }
+    }
+    let mut test = 0;
+    for _ in 0..400 {
+        let i = rng.gen_range(0..16);
+        let s = noisy(i, &mut rng);
+        st.begin_groups(&s, false, &mut rng);
+        test += (st.choose(0, 5, None) == best[i]) as usize;
+        st.end(false, &mut rng);
+    }
+    (curve, test as f64 / 400.0)
+}
+
 fn main() {
     let n_train: usize = std::env::var("HL_TRAIN").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
     let seeds: u64 = std::env::var("HL_SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(3);
+    let specs: Vec<String> = std::env::var("HL_IMPLS").unwrap_or_else(|_| "cells,masks".into()).split(',').map(|x| x.to_string()).collect();
+    if std::env::var("HL_MODE").map_or(false, |v| v == "bandit") {
+        // the contextual bandit, for each striatum, in parallel
+        let n: usize = std::env::var("HL_BANDIT").ok().and_then(|v| v.parse().ok()).unwrap_or(3000);
+        let jobs: Vec<(usize, u64)> = (0..specs.len()).flat_map(|r| (0..seeds).map(move |s| (r, s))).collect();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results = std::sync::Mutex::new(vec![(vec![0.0; n / 500], 0.0); specs.len()]);
+        std::thread::scope(|sc| {
+            for _ in 0..4 {
+                sc.spawn(|| loop {
+                    let j = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(&(r, seed)) = jobs.get(j) else { break };
+                    let (c, t) = bandit(&specs[r], seed, n);
+                    let mut res = results.lock().unwrap();
+                    for (a, b) in res[r].0.iter_mut().zip(c) {
+                        *a += b / seeds as f64;
+                    }
+                    res[r].1 += t / seeds as f64;
+                });
+            }
+        });
+        println!("contextual bandit: 16 contexts (twins share half their bits, want different actions), 4 actions, a quarter of each context's bits noise; {seeds} seeds; best action chosen per block of 500 trials, then a test without exploration (chance 25%)");
+        for (spec, (c, t)) in specs.iter().zip(results.into_inner().unwrap()) {
+            println!("  {:<22} {}  test {:.1}%", spec, c.iter().map(|x| format!("{:5.1}%", 100.0 * x)).collect::<Vec<_>>().join(" "), 100.0 * t);
+        }
+        return;
+    }
     let base = Rung { name: "", end_only: false, retag: false, theta: false, marker: true, restart: false, hold_given: false, reinstate_given: false, voice: false, time: false };
     let rungs = [
         Rung { name: "end", end_only: true, ..base },
@@ -355,16 +517,17 @@ fn main() {
         "  {:<14} {:>6} {:>11} {:>13} {:>13} {:>17} {:>10}",
         "rung", "holds", "start held", "reinst. tell", "reinst. read", "reinst. in story", "tell right"
     );
-    // all (rung, seed) runs, four at a time
-    let jobs: Vec<(usize, u64)> = (0..rungs.len()).flat_map(|r| (0..seeds).map(move |s| (r, s))).collect();
+    // all (striatum, rung, seed) runs, four at a time
+    let nr = rungs.len();
+    let jobs: Vec<(usize, u64)> = (0..specs.len() * nr).flat_map(|r| (0..seeds).map(move |s| (r, s))).collect();
     let next = std::sync::atomic::AtomicUsize::new(0);
-    let results = std::sync::Mutex::new(vec![Tally::default(); rungs.len()]);
+    let results = std::sync::Mutex::new(vec![Tally::default(); specs.len() * nr]);
     std::thread::scope(|sc| {
         for _ in 0..4 {
             sc.spawn(|| loop {
                 let j = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 let Some(&(r, seed)) = jobs.get(j) else { break };
-                let t = run(rungs[r], seed, n_train);
+                let t = run(&specs[r / nr], rungs[r % nr], seed, n_train);
                 let mut res = results.lock().unwrap();
                 let sum = &mut res[r];
                 sum.episodes += t.episodes;
@@ -380,7 +543,11 @@ fn main() {
         }
     });
     let pc = |a: usize, b: usize| 100.0 * a as f64 / b.max(1) as f64;
-    for (rung, sum) in rungs.iter().zip(results.into_inner().unwrap()) {
+    for (r, sum) in results.into_inner().unwrap().into_iter().enumerate() {
+        if r % nr == 0 {
+            println!("{}:", specs[r / nr]);
+        }
+        let rung = &rungs[r % nr];
         println!(
             "  {:<14} {:>6.2} {:>10.1}% {:>12.1}% {:>12.1}% {:>16.1}% {:>9.1}%",
             rung.name,

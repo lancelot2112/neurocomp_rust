@@ -898,10 +898,109 @@ second error signal. Those copies carry scalar bookkeeping rather than bitvec po
 The repertoire stays opt-in (`RT_MOTOR=on`) and bookmarks stay the default only until these
 replace them.
 
+### Actions through the cortex: a mouse
+**What replaced the side structures:**
+- **A mouse is the network's body** (relative moves and a click). The screen is a row of
+  places: the desk with the story's book (unless it is closed), then the shelf.
+  - The eye sees where the cursor is.
+  - A mouse command is felt as its motion, sensed like a sound.
+  - The mouse's motor area is learned by babbling before the trials, as speech is.
+- **The cortex runs at the waiting steps** and learns what it senses next.
+  - Every prediction a layer-5 cell makes that is a mouse motion is a candidate
+    (`BitCells::proposals`). The basal ganglia release one or none, and the motor area turns it
+    into a command.
+  - While learning, the mouse also moves on its own now and then (motor babbling).
+- **Curiosity** is the progress of the cortex's own misses there: a 64-bit shift register of
+  misses, the long-run rate minus the last eight.
+- **Bookmarks are index rows.** Pauses are stored like any sound. When one is needed, the
+  hippocampus, cued with "a pause" in the current context, offers the rows that match. Each row
+  is offered by its own keys: context, content, and the context it still shares with now.
+- **Removed:** the motor repertoire, the body function, the bookmark list, the anchors, and the
+  hand-made reach and place channels.
+
+**Results (1,500 trials): not learned yet, and the default is broken.**
+
+| | read, same / another book | tell, book closed | notes |
+|---|---|---|---|
+| all learned | 6.8 / 3.2% (silent 90%) | 1.8% | bookmark reinstated about 34 times a trial; 494 books opened; find: right place 45% (11 trials) |
+| hold and reinstate given (oracle) | 2.4 / 2.4% | 46.7 / 55.2% | 61% of recalls right; about 4,900 mouse releases, almost all "right", so the cursor leaves the desk |
+
+- With the start held, retelling works (55% with the book closed).
+- Reading needs the click on the desk, and the learned mouse does not make it reliably.
+- With everything learned, retrieval is re-entered on almost every step, and the network falls
+  silent.
+
+### A mask striatum
+[`src/program/mask_striatum.rs`](../../src/program/mask_striatum.rs) is the basal ganglia in
+popcount and masking only.
+- **Values.** Each action has a go mask and a no-go mask over a context of fixed popcount (64 of
+  2,048 bits, an equal min-hash share from each input pathway). Its value is
+  `q = popcount(C & Mgo & R1) − popcount(C & Mno & R2)`.
+  - Go and no-go start as the same random mask, so chance overlap cancels exactly and q
+    starts at 0.
+- **Selection:** a tonic brake, and an STN hold when the runner-up is within a margin of the
+  winner.
+- **Exploration** is dropout, drawn apart for the two pathways so that the noise does not
+  cancel. Its rate τ doubles where the state's value is at or below zero (low tonic dopamine)
+  or where most of the context is new.
+- **The critic** is a mask pair scored the same way, learned TD(0) with discounting.
+- **Learning is three-factor and bitwise.** A burst potentiates the go mask on the context's
+  bits and depresses the no-go mask there (push-pull, so the pair keeps its density); a dip
+  does the reverse. Options:
+  - the swap rule (each mask at constant density, bits outside the context cleared);
+  - sticky habit bits;
+  - log-spaced eligibility taps;
+  - conjunctive context bits (pairs of inputs from two pathways).
+
+**A contextual bandit** (`HL_MODE=bandit`): 16 contexts, where twins share half their bits but
+want different actions; 4 actions; a quarter of each context's bits are noise on each trial; 5
+seeds. The best action is chosen per block of 500 trials, then in a test without exploration
+(chance 25%):
+
+| | first block | last block | test |
+|---|---|---|---|
+| cells (current striatum) | 46.2% | 95.2% | 98.1% |
+| masks, swap rule | 30.2% | 78.8% | 83.2% |
+| **masks, push-pull** | 46.4% | 95.2% | **98.4%** |
+| masks, no STN hold | **60.6%** | 95.0% | 98.2% |
+| **masks, sticky habit bits** | 48.4% | **98.4%** | **99.8%** |
+| masks, conjunctive bits and swap rule | 17.7% | 80.8% | 86.1% |
+
+**The hold ladder** (3 seeds, retold words right):
+
+| rung | cells | masks, push-pull | masks, conjunctive bits and swap |
+|---|---|---|---|
+| hold given (reinstating learned) | **100%** | 16.7% | 81.9% |
+| reinstating given (holding learned) | 0% (start held 0%) | 0% | 10.7% (start held 10.2%) |
+| every other rung | ≤ 3% | ≤ 3% | ≤ 2% |
+
+**Findings:**
+- **Push-pull, not the swap rule.** The swap rule clears bits outside the context, and in a
+  shared mask those are other contexts' learned bits, so learning one context erases others
+  (83% against 98%). A burst that strengthens D1 and weakens D2 on the same synapses changes
+  nothing else.
+- **Starting go and no-go as the same mask matters.** With independent random masks each
+  context starts with fixed, random preferences that dropout cannot overcome.
+- **Tonic dopamine as temperature is needed.** An action that was never rewarded in a context,
+  but gets value there through shared bits, is never corrected. The critic expects nothing
+  there, so there is no dip. Doubling τ where the value is at or below zero finds the better
+  action.
+- **The STN hold slows early learning on the bandit** (46% against 61% in the first block). Its
+  value is in conflicts the bandit does not test.
+- **Sticky habit bits give the best bandit result** (99.8%).
+- **On sequential gating the cells still win.** With the hold given, masks keep reinstating at
+  every step, so recall restarts and only the first word is right. A mask is linear over
+  context bits. The held context's bits stay the same from the instruction through the task,
+  so "reinstate" weight learned on them carries over to steps where it is wrong. The cells are
+  small conjunctions. Conjunctive context bits with the swap rule recover most of it (82%), and
+  are the only variant that ever holds the story's start (10%).
+- **Neither learns holding.** That stays the hippocampus's job (bookmarks), as the earlier
+  ladder found.
+
 ## Next
-- **The motor ladder.** Test `choose_among` with a growing repertoire in a toy, as the hold
-  ladder did, to find why commands are almost never released.
-- **Find the story's start among the bookmarks.** Check in the toy that the bookmark after the
-  pause is learnable at the time of need. Then find whether readtell lacks the input (the pause
-  in the bookmark's features) or the credit.
+- **Fix readtell's default.** Find why retrieval is re-entered on almost every step, and why the
+  network falls silent once the cortex runs at the waiting steps.
+- **Teach the mouse to click on the desk.** With the start given, reading needs it.
+- **Masks for sequential gating:** conjunctive bits with push-pull, and stable phase inputs.
+  Then try the mask striatum in readtell.
 - **Seeds 1–4** for every column.

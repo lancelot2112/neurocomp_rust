@@ -248,6 +248,8 @@ pub struct MaskStriatum {
     pub novelty: bool,
     /// the STN's hold on close competitors
     pub hold: bool,
+    /// the tonic brake: q must reach this to release
+    pub release: i32,
     /// τ doubles where the state's value is at or below zero (tonic dopamine low)
     pub low_value: bool,
     /// eligibility at log-spaced delays instead of a fading window
@@ -304,6 +306,7 @@ impl MaskStriatum {
             drop_shift: 2,
             novelty: true,
             hold: true,
+            release: RELEASE,
             low_value: true,
             taps: false,
             sticky: false,
@@ -465,7 +468,7 @@ impl MaskStriatum {
     fn release(&self, q: &[i32]) -> Option<usize> {
         let (best, &top) = q.iter().enumerate().max_by_key(|x| (*x.1, std::cmp::Reverse(x.0)))?;
         let second = q.iter().enumerate().filter(|x| x.0 != best).map(|x| *x.1).max();
-        let brake = RELEASE + if self.hold && second.map_or(false, |s| s + MARGIN >= top) { HOLD } else { 0 };
+        let brake = self.release + if self.hold && second.map_or(false, |s| s + MARGIN >= top) { HOLD } else { 0 };
         (top >= brake).then_some(best)
     }
 

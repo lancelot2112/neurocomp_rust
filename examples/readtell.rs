@@ -899,6 +899,8 @@ struct Tally {
 enum Bg {
     Cells(Striatum),
     Masks(MaskStriatum),
+    /// diagnosis: masks, with the channels listed handled by cells (RT_CELLS_FOR)
+    Mixed(Box<Striatum>, Box<MaskStriatum>, Vec<usize>),
 }
 
 impl Bg {
@@ -906,48 +908,89 @@ impl Bg {
         match self {
             Bg::Cells(x) => x.begin_groups(s, learn, rng),
             Bg::Masks(x) => x.begin_groups(s, learn),
+            Bg::Mixed(c, m, _) => {
+                c.begin_groups(s, learn, rng);
+                m.begin_groups(s, learn);
+            }
         }
     }
     fn choose(&mut self, ch: usize, n: usize, rng: Option<&mut StdRng>) -> usize {
         match self {
             Bg::Cells(x) => x.choose(ch, n, rng),
             Bg::Masks(x) => x.choose(ch, n, rng.is_some()),
+            Bg::Mixed(c, m, on) => {
+                if on.contains(&ch) {
+                    c.choose(ch, n, rng)
+                } else {
+                    m.choose(ch, n, rng.is_some())
+                }
+            }
         }
     }
     fn choose_among(&mut self, ch: usize, cands: &[Vec<Vec<usize>>], rng: Option<&mut StdRng>) -> Option<usize> {
         match self {
             Bg::Cells(x) => x.choose_among(ch, cands, rng),
             Bg::Masks(x) => x.choose_among(ch, cands, rng.is_some()),
+            Bg::Mixed(c, m, on) => {
+                if on.contains(&ch) {
+                    c.choose_among(ch, cands, rng)
+                } else {
+                    m.choose_among(ch, cands, rng.is_some())
+                }
+            }
         }
     }
     fn did_among(&mut self, ch: usize, cand: &[Vec<usize>]) {
         match self {
             Bg::Cells(x) => x.did_among(ch, cand),
             Bg::Masks(x) => x.did_among(ch, cand),
+            Bg::Mixed(c, m, on) => {
+                if on.contains(&ch) {
+                    c.did_among(ch, cand)
+                } else {
+                    m.did_among(ch, cand)
+                }
+            }
         }
     }
     fn maintain(&mut self, ch: usize) {
         match self {
             Bg::Cells(x) => x.maintain(ch),
             Bg::Masks(x) => x.maintain(ch),
+            Bg::Mixed(c, m, _) => {
+                c.maintain(ch);
+                m.maintain(ch);
+            }
         }
     }
     fn retag(&mut self, ch: usize) {
         match self {
             Bg::Cells(x) => x.retag(ch),
             Bg::Masks(x) => x.retag(ch),
+            Bg::Mixed(c, m, _) => {
+                c.retag(ch);
+                m.retag(ch);
+            }
         }
     }
     fn reward(&mut self, r: i32) {
         match self {
             Bg::Cells(x) => x.reward(r),
             Bg::Masks(x) => x.reward(r),
+            Bg::Mixed(c, m, _) => {
+                c.reward(r);
+                m.reward(r);
+            }
         }
     }
     fn end(&mut self, learn: bool, rng: &mut StdRng) {
         match self {
             Bg::Cells(x) => x.end(learn, rng),
             Bg::Masks(x) => x.end(learn),
+            Bg::Mixed(c, m, _) => {
+                c.end(learn, rng);
+                m.end(learn);
+            }
         }
     }
     /// (the current state's value, 0), for reports
@@ -955,17 +998,19 @@ impl Bg {
         match self {
             Bg::Cells(x) => x.debug_now(ch),
             Bg::Masks(x) => (x.value(), 0),
+            Bg::Mixed(_, m, _) => (m.value(), 0),
         }
     }
     fn last_delta(&self) -> i32 {
         match self {
             Bg::Cells(x) => x.last_delta,
             Bg::Masks(x) => x.last_delta,
+            Bg::Mixed(_, m, _) => m.last_delta,
         }
     }
     fn report(&self) -> String {
-        match self {
-            Bg::Cells(x) => format!(
+        let cells = |x: &Striatum| {
+            format!(
                 "cells: {} dopamine events, mean |dopamine| {:.3}, {} cholinergic pauses; striatal cells: {} striosome, {} go, {} no-go ({} recruited, {} removed)",
                 x.stats.0,
                 x.stats.1 as f64 / x.stats.0.max(1) as f64 / ONE as f64,
@@ -975,14 +1020,21 @@ impl Bg {
                 x.sizes().2,
                 x.changes.0,
                 x.changes.1
-            ),
-            Bg::Masks(x) => format!(
+            )
+        };
+        let masks = |x: &MaskStriatum| {
+            format!(
                 "masks: {} dopamine events, mean |dopamine| {:.3}, {} cholinergic pauses, {} bits changed",
                 x.stats.0,
                 x.stats.1 as f64 / x.stats.0.max(1) as f64 / ONE as f64,
                 x.pauses,
                 x.swaps
-            ),
+            )
+        };
+        match self {
+            Bg::Cells(x) => cells(x),
+            Bg::Masks(x) => masks(x),
+            Bg::Mixed(c, m, on) => format!("{}; channels {:?} on {}", masks(m), on, cells(c)),
         }
     }
 }
@@ -1039,7 +1091,13 @@ fn main() {
             m.sticky = true;
             m.conj = true;
             m.push_pull = false;
-            Bg::Masks(m)
+            // RT_MASK_RELEASE: the masks' tonic brake (default 2)
+            m.release = env("RT_MASK_RELEASE", 2);
+            // RT_CELLS_FOR (diagnosis): channels handled by cells, the rest by masks
+            match std::env::var("RT_CELLS_FOR") {
+                Ok(v) => Bg::Mixed(Box::new(Striatum::new(1 << 18)), Box::new(m), v.split(',').filter_map(|x| x.parse().ok()).collect()),
+                Err(_) => Bg::Masks(m),
+            }
         }
     };
     // the screen and the mouse (the network's body): a row of places, the desk (where the

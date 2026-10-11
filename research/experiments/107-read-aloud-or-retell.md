@@ -855,6 +855,49 @@ near 0%.
 times, the book was never opened, and reading fell to 0–14%. It is opt-in (`RT_MOTOR=on`) until
 it learns.
 
+### Audit: the cortex is already motor, and what was built beside the network
+**How the network acts already.** readtell speaks through the cortex:
+- The cortex's bit cells (layer 2/3 and layer 5, [`BitCells`](../../src/program/bitcells.rs))
+  predict the next sound: the plan.
+- The motor area ([`MotorArea`](../../src/program/motor.rs)) turns that plan into a motor
+  command. Its inverse model is learned by babbling, on the same predictive kernels as the rest
+  of the cortex.
+- The vocal tract says the word. The basal ganglia only decide go or no-go.
+
+So an action is already *the cortex predicting its sensory consequence* (ideomotor theory;
+active inference: a motor command is a proprioceptive prediction the body fulfils). Reaching can
+use the same route, as the sketch in "The way back into the network" below describes.
+
+**What the last round built beside the network instead,** and the counterpart in the network for
+each:
+
+| built | what it is | in the network already |
+|---|---|---|
+| motor repertoire (`repertoire.rs`) | a list of random commands, each with scalar averages (fast and slow error, deviation, worth) | the cortex's own predictions are the commands; new actions are new cells, which `BitCells` grows on its own |
+| curiosity | scalar averages of one forward model's error per command | the cortex's prediction error is a bit overlap (plan against input), and each cell's confirmed or contradicted fires are its own record of it |
+| bookmarks (`Mark`) | a list of 16 copied contexts, with age read from a hand-written table of bands | the index rows already hold each moment's context; how far the drifting context has moved from a row's is its age, in bits |
+| anchor strength | one integer from the boundary cell | the same cell (kept) |
+| `choose_among` | the striatum scoring hashed id lists of candidates | right in kind (cortex proposes, basal ganglia dispose); the candidates should be what the cortex or hippocampus actually has active, not lists made for them |
+
+**Why it went this way.** Each was the quickest way to test an idea. Each added a second copy of
+something the network does already: a second motor system, a second memory of past contexts, a
+second error signal. Those copies carry scalar bookkeeping rather than bitvec populations.
+
+**The way back into the network:**
+1. **Actions through the cortex.**
+   - The arm gets a motor area like the vocal tract's, learned by babbling, and the body reports
+     proprioception as a sense.
+   - The cortex learns, like any sequence, that after "read it" a page comes into view.
+   - Its prediction goes through the arm's inverse model, and the basal ganglia gate it.
+   - What can be done is whatever the cortex can predict, so the set of actions grows with it.
+2. **Curiosity from the cortex's own error:** learning progress is the fall of the plan's
+   mismatch with what comes, in bits, where the network acts.
+3. **Bookmarks are index rows:** at the time of need, the candidates are the rows the current
+   cue recalls, offered by their own bits (context, content). Nothing extra is copied.
+
+The repertoire stays opt-in (`RT_MOTOR=on`) and bookmarks stay the default only until these
+replace them.
+
 ## Next
 - **The motor ladder.** Test `choose_among` with a growing repertoire in a toy, as the hold
   ladder did, to find why commands are almost never released.

@@ -229,6 +229,8 @@ struct Net {
     brain: Option<Brain>,
     /// what the hand feels now (its own motion), for its area
     felt: BitVector,
+    /// the multi-area index: what the cortex represents is each area's own cells
+    multi: bool,
     /// RT_TOP=1: the top association column replaces the shared layers 2/3 and 5. Its input is
     /// the scene (the association of every area) and the hippocampus's return; its tuft the
     /// prefrontal content and the cerebellum's output; its layer 2/3 predicts the next scene,
@@ -269,6 +271,36 @@ struct Streams {
     ventral: Column,
     audio_motor: Column,
     visuo_motor: Column,
+}
+
+/// The multi-area index (with self-organizing columns; RT_HC_MULTI=0 off): the areas a memory
+/// points into, each a slot of BITS cells in the index's pointers (eye, ear, hand, seen acts)
+const SLOTS: [usize; 4] = [EYE, EAR, HAND, ACTS];
+
+/// Cells of several areas as one pointer vector: area `a`'s cells at its slot.
+fn multi(parts: &[(usize, &BitVector)]) -> BitVector {
+    let mut v = BitVector::new(SLOTS.len() * BITS, Some(0));
+    for &(a, c) in parts {
+        if let Some(slot) = SLOTS.iter().position(|&x| x == a) {
+            for b in ones(c) {
+                v.bit_set(slot * BITS + b);
+            }
+        }
+    }
+    v
+}
+
+/// Area `a`'s part of a pointer vector (empty if it is not a multi-area one).
+fn part(v: &BitVector, a: usize) -> BitVector {
+    let mut out = BitVector::new(BITS, Some(0));
+    if v.bit_len() > BITS {
+        if let Some(slot) = SLOTS.iter().position(|&x| x == a) {
+            for b in ones(v).into_iter().filter(|&b| b / BITS == slot) {
+                out.bit_set(b % BITS);
+            }
+        }
+    }
+    out
 }
 
 const EYE: usize = 0;
@@ -352,6 +384,7 @@ impl Net {
                 b
             }),
             felt: zero(),
+            multi: selforg && std::env::var("RT_HC_MULTI").map_or(true, |v| v != "0"),
             top: (top && !streams).then(|| Column::agranular(BITS, 16384)),
             streams: streams.then(|| Streams { ventral: Column::agranular(BITS, 16384), audio_motor: Column::agranular(BITS, 16384), visuo_motor: Column::agranular(BITS, 8192) }),
             ff_l4: std::env::var("RT_FF").map_or(false, |v| v == "l4"),
@@ -389,6 +422,14 @@ impl Net {
     /// a word's cells grow synapses on both, so either sense alone comes to evoke the same
     /// assembly.
     fn assoc_of(&mut self, eye: &BitVector, ear: &BitVector, learn: bool, rng: &mut StdRng) -> BitVector {
+        if let (true, Some(b)) = (self.multi, self.brain.as_mut()) {
+            // what the cortex represents of this: each sense's own cells (the association areas
+            // learn from them as ever, and complete from them when they are reinstated)
+            let e4 = b.encode(EYE, eye, false);
+            let a4 = b.encode(EAR, ear, false);
+            b.associate_codes(&[e4.clone(), a4.clone(), zero()], learn);
+            return multi(&[(EYE, &e4), (EAR, &a4)]);
+        }
         if let Some(b) = self.brain.as_mut() {
             // the association areas (grown by conjunction); a sense with no partner yet is
             // represented by its own area's code
@@ -507,6 +548,21 @@ impl Net {
             };
             // the senses' columns, with the association columns' activity as feedback
             let (fb, _) = b.columns_activity();
+            // the multi-area index's recall: each area's part reinstated in that area (vivid
+            // recall reactivates the sensory cortex), and the association columns complete from
+            // them like from anything sensed
+            let (mut e4, mut a4, mut acts4) = (e4, a4, acts4);
+            if recall.bit_len() > BITS {
+                let or = |x: &mut BitVector, y: BitVector| {
+                    for (w, z) in x.as_words_mut().iter_mut().zip(y.as_words()) {
+                        *w |= z;
+                    }
+                };
+                or(&mut e4, part(recall, EYE));
+                or(&mut a4, part(recall, EAR));
+                or(&mut h4, part(recall, HAND));
+                or(&mut acts4, part(recall, ACTS));
+            }
             b.sense_step(EYE, &e4, Some(&fb), learn);
             b.sense_step(EAR, &a4, Some(&fb), learn);
             b.sense_step(HAND, &h4, Some(&fb), learn);
@@ -519,7 +575,8 @@ impl Net {
             }
             // recall: the index's pointers name cells of the eye–ear association (a word seen or
             // heard); the hippocampus reinstates those cells there, and nowhere else
-            let extra: Vec<(usize, BitVector)> = b.pair_index(EYE, EAR).filter(|_| recall.count_ones() > 0).map(|i| (i, recall.clone())).into_iter().collect();
+            // (with the multi-area index the areas already hold it; else the eye–ear column takes it)
+            let extra: Vec<(usize, BitVector)> = if recall.bit_len() > BITS { Vec::new() } else { b.pair_index(EYE, EAR).filter(|_| recall.count_ones() > 0).map(|i| (i, recall.clone())).into_iter().collect() };
             let outs = b.step_columns(&[e4.clone(), a4.clone(), h4.clone(), zero(), acts4.clone()], &extra, &tuft, learn);
             // every area's layer 5 offers a goal, the senses' too (sources 30 + the area)
             let mut sense_ins = Vec::new();
@@ -901,6 +958,8 @@ struct IndexHc {
     just_stored: Option<u32>,
     /// diagnosis: completions, and of those that reached the cortex
     completions: (usize, usize),
+    /// the width of what the index points to (BITS; with the multi-area index, every slot)
+    out_bits: usize,
 }
 
 impl IndexHc {
@@ -950,6 +1009,7 @@ impl IndexHc {
             content: Vec::new(),
             just_stored: None,
             completions: (0, 0),
+            out_bits: BITS,
         }
     }
 
@@ -1092,13 +1152,13 @@ impl IndexHc {
             }
         }
         self.to_reconsolidate = self.last_recalled;
-        let mut v = zero();
+        let mut v = BitVector::new(self.out_bits, Some(0));
         // in encoding mode the hippocampus's output to the cortex is suppressed (Hasselmo): what
         // reaches the cortex is a memory being retrieved, never a guess during new input
         if self.gate_output && !self.retrieving() {
             return v;
         }
-        for &b in r.ec.iter().filter(|&&b| b < BITS) {
+        for &b in r.ec.iter().filter(|&&b| b < self.out_bits) {
             v.bit_set(b);
         }
         v
@@ -1116,7 +1176,7 @@ impl IndexHc {
         self.last_recalled = r.ca3.first().copied();
         self.to_reconsolidate = self.last_recalled;
         self.completions.0 += 1;
-        let mut v = zero();
+        let mut v = BitVector::new(self.out_bits, Some(0));
         if !self.retrieving() {
             return v;
         }
@@ -1133,7 +1193,7 @@ impl IndexHc {
             }
         }
         self.completions.1 += 1;
-        for &b in r.ec.iter().filter(|&&b| b < BITS) {
+        for &b in r.ec.iter().filter(|&&b| b < self.out_bits) {
             v.bit_set(b);
         }
         v
@@ -1719,12 +1779,15 @@ fn main() {
             let pat: &BitVector = $pat;
             let cmd = hand!().plan(pat);
             let felt = cmd.and_then(|c| hand!().predict(&c)).unwrap_or_else(zero);
+            let multi_on = net.multi;
             let b = net.brain.as_mut().unwrap();
             let h = b.encode(HAND, &felt, false);
             let seen = b.mirror(HAND, &h, ACTS);
             let e = b.encode_only(ACTS, &seen);
-            let c = b.associate_codes(&[zero(), zero(), h.clone(), zero(), e], false);
-            if c.count_ones() > 0 {
+            let c = b.associate_codes(&[zero(), zero(), h.clone(), zero(), e.clone()], false);
+            if multi_on {
+                multi(&[(HAND, &h), (ACTS, &e)])
+            } else if c.count_ones() > 0 {
                 c
             } else {
                 h
@@ -1735,12 +1798,15 @@ fn main() {
     macro_rules! seen_assembly {
         ($seen:expr) => {{
             let seen: &BitVector = $seen;
+            let multi_on = net.multi;
             let b = net.brain.as_mut().unwrap();
             let e = b.encode_only(ACTS, seen);
             let felt = b.mirror(ACTS, &e, HAND);
             let h = b.encode_only(HAND, &felt);
-            let c = b.associate_codes(&[zero(), zero(), h, zero(), e.clone()], false);
-            if c.count_ones() > 0 {
+            let c = b.associate_codes(&[zero(), zero(), h.clone(), zero(), e.clone()], false);
+            if multi_on {
+                multi(&[(HAND, &h), (ACTS, &e)])
+            } else if c.count_ones() > 0 {
                 c
             } else {
                 e
@@ -1816,6 +1882,11 @@ fn main() {
     // sets the mode); RT_HC_AUTO=0: the imagine-to-reinstate route
     if let Some(x) = ix.as_mut() {
         x.auto = std::env::var("RT_HC_AUTO").map_or(net.brain.is_some(), |v| v == "1");
+        if net.multi {
+            x.out_bits = SLOTS.len() * BITS;
+            // the boundary cell watches the same cells (every area's)
+            x.boundary = BoundaryCell::new(SLOTS.len() * BITS, 3, 80);
+        }
     }
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle || std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause" || v == "imagine");
@@ -3012,8 +3083,8 @@ fn main() {
                     let chain = x.mem.replay_prioritized(&mut rng, |_| 1, 30);
                     for r in chain {
                         let (Some(&row), false) = (r.ca3.first(), r.ec.is_empty()) else { continue };
-                        let mut frame = zero();
-                        for &b in r.ec.iter().filter(|&&b| b < BITS) {
+                        let mut frame = BitVector::new(x.out_bits, Some(0));
+                        for &b in r.ec.iter().filter(|&&b| b < x.out_bits) {
                             frame.bit_set(b);
                         }
                         let st = net.step(&zero(), &zero(), &frame, false, 0, &mut rng);

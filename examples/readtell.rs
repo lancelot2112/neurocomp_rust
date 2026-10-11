@@ -1548,6 +1548,9 @@ fn main() {
     // what a mouse act looks like on the screen (the cursor moving, a click's flash), whoever
     // does it; drawn from its own generator so the other codes stay as they were
     let motion_seen = Encoder::new(MOUSE, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0x5EE5)).codes;
+    // the teacher's cursor as seen: another cursor, which looks different from one's own (two
+    // cursors are seen as two, and which is one's own is not confused)
+    let teacher_seen = Encoder::new(npos, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0x7EAC)).codes;
     // RT_TEACH_SEEN=1: the teacher's act is seen (on the screen), not felt as one's own motion
     // the teacher shows how with a cursor of their own, on their own copy
     // of the book: the network's cursor stays where it is, its book opens only when it clicks it
@@ -1906,7 +1909,9 @@ fn main() {
     let time = std::env::var("RT_HC_TIME").map_or(false, |v| v == "1");
     // RT_PRACTICE: the share of training tasks the network does itself, hearing its own words,
     // with the teacher's word as the target (practice with correction)
-    let practice_p: f64 = env("RT_PRACTICE", 0.0);
+    // (default a quarter: the network speaks in training too, hears itself and is corrected, so
+    // speaking at test is not new)
+    let practice_p: f64 = env("RT_PRACTICE", 0.25);
     let (n_train, n_test): (usize, usize) = (env("RT_TRAIN", 3000), env("RT_TEST", 300));
     println!("vocabulary {}; {} training trials, {} test trials; gate {}", vocab.len(), n_train, n_test, if fixed_gate { "fixed (diagnosis)" } else { "learned" });
     let t0 = std::time::Instant::now();
@@ -1936,8 +1941,8 @@ fn main() {
     let books = [Book::Same, Book::Other, Book::Closed];
     // touch (the default; RT_TOUCH=0 off): a fingertip's window over the place under the cursor
     // and its two neighbours, as the skin's receptors report it:
-    // - a vibration mode for what is under the cursor (its kind: the desk's book, a shelf's
-    //   book, or nothing), as fast receptors report texture;
+    // - a vibration mode for what is under the cursor (a book, or nothing), as fast receptors
+    //   report texture;
     // - an edge on the side where a neighbour differs, as slow receptors report edges: so where
     //   a thing begins and ends, and whether the cursor is inside it or at its border;
     // - while moving, the motion itself.
@@ -1945,8 +1950,7 @@ fn main() {
     let touch_on = std::env::var("RT_TOUCH").map_or(true, |v| v != "0");
     let modes = Encoder::new(3, BITS, ACTIVE / 2, &mut StdRng::seed_from_u64(seed ^ 0x7E47)).codes;
     let edges = Encoder::new(2, BITS, ACTIVE / 4, &mut StdRng::seed_from_u64(seed ^ 0xED6E)).codes;
-    // what lies at each place: 1 the desk's book, 2 a shelf's book, 0 nothing
-    let kinds: Vec<usize> = (0..npos).map(|p| if p == 0 { 1 } else { 2 }).collect();
+    // what lies at each place: 1 a book, 0 nothing (set where it is known: per trial, per play)
     macro_rules! touch {
         ($sensed:expr, $pos:expr, $kinds:expr) => {{
             let sensed: &BitVector = $sensed;
@@ -2030,7 +2034,7 @@ fn main() {
             let k = rng.gen_range(0..npos);
             present[k] = true;
         }
-        let play_kinds: Vec<usize> = (0..npos).map(|p| if !present[p] { 0 } else if p == 0 { 1 } else { 2 }).collect();
+        let play_kinds: Vec<usize> = (0..npos).map(|p| present[p] as usize).collect();
         let mut sensed = silence.clone();
         let mut seen_motion: Option<usize> = None;
         eye_now = zero();
@@ -2410,7 +2414,7 @@ fn main() {
                 // whoever's it is)
                 let mut scene = cursor_seen[cursor].clone();
                 if let Some(t) = tcur {
-                    for (w, x) in scene.as_words_mut().iter_mut().zip(cursor_seen[t].as_words()) {
+                    for (w, x) in scene.as_words_mut().iter_mut().zip(teacher_seen[t].as_words()) {
                         *w |= x;
                     }
                 }
@@ -2425,6 +2429,9 @@ fn main() {
                     None => scene,
                 };
                 // with areas, the hand feels its motion in its own area; the ear hears nothing
+                // what is there: a book on the desk if there is one (none when closed away), a
+                // book at every shelf place
+                let kinds: Vec<usize> = (0..npos).map(|q| if q == 0 { (!p.is_empty()) as usize } else { 1 }).collect();
                 let felt_now = touch!(&sensed, cursor, &kinds);
                 let st = if net.brain.is_some() {
                     net.felt = felt_now;
@@ -2594,6 +2601,7 @@ fn main() {
                 let blocked = blocked_senses && (matches!((done, cursor), (Some(LEFT), 0)) || done == Some(RIGHT) && cursor + 1 == npos || done == Some(CLICK) && !opens);
                 // (with RT_TEACH_SEEN=1 the teacher's act is not felt: it is seen, at the next step)
                 let mut next = if blocked || (teach_seen && shown.is_some()) { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
+                let mut resonance: Option<BitVector> = None;
                 if let (Some(b), Some(m), false) = (net.brain.as_mut(), done.or(shown), blocked) {
                     if shown.is_none() {
                         // an own act, seen and felt: the association of seen acts and the hand
@@ -2604,14 +2612,21 @@ fn main() {
                             b.associate_codes(&[zero(), zero(), h, zero(), e], true);
                         }
                     } else if teach_seen {
-                        // the teacher's act, seen only: the mirror (that association)
-                        // evokes how it would feel, and that is what the cortex takes as come
+                        // the teacher's act, seen only: the mirror evokes how it would feel. With
+                        // the teacher's own cursor that resonance is part of what the hand area
+                        // represents next (watching an act activates one's own motor and touch
+                        // areas), but not something its own hand did: it is not the cortex's target.
+                        // (Without the teacher's cursor, the old way: taken as come.)
                         let e = b.encode(ACTS, &motion_seen[m], false);
                         let felt = b.mirror(ACTS, &e, HAND);
                         mirror_stats.0 += 1;
                         mirror_stats.1 += (overlap(&felt, &motion[m]) * 2 >= ACTIVE as u32) as usize;
                         if felt.count_ones() > 0 {
-                            next = felt;
+                            if teacher_cursor {
+                                resonance = Some(felt);
+                            } else {
+                                next = felt;
+                            }
                         }
                     }
                 }
@@ -2644,7 +2659,7 @@ fn main() {
                         striatum.reward(-EFFORT);
                     }
                 }
-                sensed = next;
+                sensed = resonance.take().unwrap_or(next);
                 let mut opened: Option<usize> = None;
                 match done {
                     Some(LEFT) => {

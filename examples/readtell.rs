@@ -758,6 +758,22 @@ impl Net {
         out
     }
 
+    /// Explore inwardly (with areas): a goal of any kind, run through the motor area it belongs
+    /// to (the one whose inverse and forward models reproduce it best: a sound through the voice,
+    /// an act through the hand), held back from the body (see `imagine`).
+    fn imagine_any(&mut self, goal: &BitVector) -> BitVector {
+        let fit = |net: &mut Net, motor: usize| -> u32 {
+            let Some(b) = net.brain.as_mut() else { return 0 };
+            let Some(m) = b.areas[motor].motor.as_mut() else { return 0 };
+            m.plan(goal).and_then(|c| m.predict(&c)).map_or(0, |p| overlap(&p, goal))
+        };
+        let (v, h) = (fit(self, VOICE), fit(self, HAND));
+        if v == 0 && h == 0 {
+            return zero();
+        }
+        self.imagine(if v >= h { VOICE } else { HAND }, goal)
+    }
+
     /// The plan: the relay mixes the sources' proposals, each weighted by its learned
     /// reliability in this context; the strongest 32 bits.
     fn mix(&mut self, props: &[(u8, Driver, BitVector)], ctx: &BitVector, cb_out: &BitVector, temp: u32, rng: &mut StdRng) -> BitVector {
@@ -869,8 +885,6 @@ const CH_ACT: usize = 5;
 /// what the cortex imagines instead of doing (the same candidates: a motion imagined cues the
 /// hippocampus with it)
 const CH_IMAGINE: usize = 7;
-/// say the planned word aloud or inwardly (RT_INNER=1)
-const CH_INNER: usize = 9;
 /// steps a request to retrieve lasts unless renewed
 const REQUEST_STEPS: usize = 32;
 /// where the cortex's proposals sit in the striatum's input ids
@@ -1914,11 +1928,12 @@ fn main() {
             }
         }};
     }
-    // inner speech (RT_INNER=1): the basal ganglia may hold a planned word from the vocal tract;
-    // the voice's forward model then predicts its sound, which reaches the ear's column top-down
-    // (the inner voice), and the hippocampus completes what is represented
-    let inner_on = std::env::var("RT_INNER").map_or(false, |v| v == "1");
-    let mut inner_count = 0usize;
+    // inner exploration (with areas; RT_EXPLORE=0 off): one channel (the imagine channel) for
+    // trying inwardly whatever the cortex proposes, a mouse act while waiting or the word it
+    // plans to say: held back from the body, run through the motor area it belongs to (inner
+    // speech is one case), predicted back top-down, completed by the hippocampus
+    let explore_on = std::env::var("RT_EXPLORE").map_or(true, |v| v != "0");
+    let mut explore_count = 0usize;
     // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
     let mut voice_check = (0usize, 0usize);
     let imitate = std::env::var("RT_IMITATE").map_or(true, |v| v != "0");
@@ -1994,13 +2009,13 @@ fn main() {
             x.boundary = BoundaryCell::new(SLOTS.len() * BITS, 3, 80);
         }
     }
-    macro_rules! inner {
+    macro_rules! explore {
         ($plan:expr) => {{
-            let cue = net.imagine(VOICE, $plan);
+            let cue = net.imagine_any($plan);
             if let Some(x) = ix.as_mut().filter(|x| x.auto) {
                 x.represent(&ones(&cue));
             }
-            inner_count += 1;
+            explore_count += 1;
         }};
     }
     if let Some(x) = ix.as_mut() {
@@ -2746,7 +2761,7 @@ fn main() {
                     let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
                     if let Some(i) = striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
                         // the act the proposal is (the motion it matched), as the cortex represents it
-                        let cue = if net.multi { ones(&net.imagine(HAND, &cands[i].1)) } else if net.brain.is_some() { ones(&imagined_assembly!(&cands[i].1)) } else { ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng)) };
+                        let cue = if net.multi { ones(&net.imagine_any(&cands[i].1)) } else if net.brain.is_some() { ones(&imagined_assembly!(&cands[i].1)) } else { ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng)) };
                         if let Some(x) = ix.as_mut() {
                             if x.auto {
                                 // the cortex represents the imagined act; the hippocampus completes it
@@ -3020,8 +3035,8 @@ fn main() {
                 net.learn(&st, &ear.codes[want], &mut rng);
                 if practice {
                     // the network says it and hears itself
-                    let said = if inner_on && net.multi && striatum.choose(CH_INNER, 2, Some(&mut rng)) == 1 {
-                        inner!(&st.plan);
+                    let said = if explore_on && net.multi && striatum.choose_among(CH_IMAGINE, &[vec![ones(&st.plan).into_iter().map(|b| ACT_BASE + b).collect()]], Some(&mut rng)).is_some() {
+                        explore!(&st.plan);
                         None
                     } else {
                         say!(&st.plan).filter(|&w| w != quiet)
@@ -3034,7 +3049,10 @@ fn main() {
                     } else {
                         prev2 = if heard_plan { prev.replace(st.plan.clone()) } else { prev.take() };
                     }
-                    if heard_correction && !ok {
+                    // the teacher responds only to a word said aloud (silence, or a word tried
+                    // inwardly, gets no correction: nothing was heard)
+                    let corrected = heard_correction && !ok && said.is_some();
+                    if corrected {
                         // the teacher says the right word aloud, and it is heard
                         prev2 = prev.replace(ear.codes[want].clone());
                         corrections += 1;
@@ -3049,10 +3067,10 @@ fn main() {
                         if let Some(w) = said {
                             hc_hear!(w, &cue, store_all, true, true);
                         }
-                        if heard_correction && !ok {
+                        if corrected {
                             hc_hear!(want, &cue, store_all, true, false);
                         }
-                        if said.is_none() && !(heard_correction && !ok) {
+                        if said.is_none() && !corrected {
                             cortex_drift!(&st.plan);
                         }
                     } else if store_all {
@@ -3072,8 +3090,8 @@ fn main() {
                     hc_hear!(want, &cue, store_all, true, false);
                 }
             } else {
-                let said = if inner_on && net.multi && striatum.choose(CH_INNER, 2, None) == 1 {
-                    inner!(&st.plan);
+                let said = if explore_on && net.multi && striatum.choose_among(CH_IMAGINE, &[vec![ones(&st.plan).into_iter().map(|b| ACT_BASE + b).collect()]], None).is_some() {
+                    explore!(&st.plan);
                     None
                 } else {
                     say!(&st.plan).filter(|&w| w != quiet)
@@ -3457,8 +3475,8 @@ fn main() {
     }
     println!("mirror: {} of the teacher's acts seen, {} evoked the right felt motion", mirror_stats.0, mirror_stats.1);
     println!("imagining the click while telling: {} times, recall went to this story's opening {} times", open_recall.0, open_recall.1);
-    if inner_on {
-        println!("inner speech: {inner_count} words said inwardly");
+    if explore_on {
+        println!("inner exploration: {explore_count} planned words tried inwardly instead of said");
     }
     println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);

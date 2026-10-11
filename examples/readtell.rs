@@ -965,6 +965,14 @@ impl Bg {
             }
         }
     }
+    /// curiosity as noise: extra GPi noise for the next choices (masks in grow mode only)
+    fn set_noise(&mut self, n: i32) {
+        match self {
+            Bg::Cells(_) => {}
+            Bg::Masks(x) => x.extra_noise = n,
+            Bg::Mixed(_, m, _) => m.extra_noise = n,
+        }
+    }
     fn choose(&mut self, ch: usize, n: usize, rng: Option<&mut StdRng>) -> usize {
         match self {
             Bg::Cells(x) => x.choose(ch, n, rng),
@@ -1186,7 +1194,11 @@ fn main() {
     let mut imagined = (0usize, 0usize);
     let mut curiosity_sum = 0i64;
     // RT_CURIOSITY=0: learning progress is not rewarded
-    let curiosity_on = std::env::var("RT_CURIOSITY").map_or(true, |v| v != "0");
+    // curiosity: RT_CURIOSITY=noise (default) adds a little exploration noise where the cortex's
+    // predictions are improving; =reward pays it as reward; =0 off
+    let curiosity_mode = std::env::var("RT_CURIOSITY").unwrap_or_else(|_| "noise".into());
+    let curiosity_on = curiosity_mode == "reward" || curiosity_mode == "1";
+    let curiosity_noise = curiosity_mode == "noise";
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
     let mut shelf: Vec<Vec<&str>> = Vec::new();
@@ -1377,6 +1389,10 @@ fn main() {
     // right per (instruction, book)
     let mut hc_train = (0usize, 0usize);
     let mut trace: usize = env("RT_TRACE", 0);
+    // RT_TRACE_NOINSTR=1: trace the trials with the prefrontal content removed instead
+    let trace_noinstr = std::env::var("RT_TRACE_NOINSTR").map_or(false, |v| v == "1");
+    // RT_TRACE_ALL=1: trace every kind of trial, not only telling with the book closed
+    let trace_all = std::env::var("RT_TRACE_ALL").map_or(false, |v| v == "1");
     let mut by_cond = [[(0usize, 0usize); 3]; 2];
     let books = [Book::Same, Book::Other, Book::Closed];
     for trial in 0..n_train + 2 * n_test {
@@ -1576,7 +1592,7 @@ fn main() {
         let mut trace_recall: Vec<bool> = Vec::new();
         let mut said_seq: Vec<&str> = Vec::new();
         if let Some(x) = ix.as_mut() {
-            x.debug = trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr;
+            x.debug = trace > 0 && testing && !read && !make && book == Book::Closed && no_instr == trace_noinstr;
             if x.debug {
                 println!("  story rows end at {} (stored so far)", x.mem.rows());
             }
@@ -1634,6 +1650,16 @@ fn main() {
                 // turns it into a command. While learning, the mouse also moves on its own now
                 // and then (motor babbling), so the cortex learns what follows what.
                 let st = net.step(&cursor_seen[cursor], &sensed, &zero(), learn, 0, &mut rng);
+                // curiosity as noise: the learning progress where the network is now (from the
+                // steps before) loosens the choice a little, up to ±2 more; no reward
+                let here = {
+                    let wm: u64 = ones(&net.wm.content()).iter().take(4).fold(0u64, |h, &b| (h ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                    ((wm ^ (cursor as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)) >> 58) as usize
+                };
+                if curiosity_noise {
+                    let p = (misses[here] & 0xFF00).count_ones() as i32 - (misses[here] & 0xFF).count_ones() as i32 - 1;
+                    striatum.set_noise(p.clamp(0, 2));
+                }
                 let mut cands: Vec<(usize, BitVector)> = Vec::new();
                 for (pat, _) in net.l5.proposals(BITS) {
                     let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
@@ -1690,6 +1716,7 @@ fn main() {
                         None => None,
                     }
                 };
+                striatum.set_noise(0);
                 // the world: the mouse does what the command articulates
                 let done = shown.or_else(|| command.as_ref().and_then(|c| mouse.articulate(c)));
                 if let (Some(c), Some(m)) = (command.as_ref(), done) {
@@ -1697,10 +1724,6 @@ fn main() {
                 }
                 let next = done.map_or(silence.clone(), |m| motion[m].clone());
                 // the cortex learns what came; curiosity is the progress of its predictions here
-                let here = {
-                    let wm: u64 = ones(&net.wm.content()).iter().take(4).fold(0u64, |h, &b| (h ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-                    ((wm ^ (cursor as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)) >> 58) as usize
-                };
                 misses[here] = misses[here] << 1 | (overlap(&st.plan, &next) < 24) as u64;
                 // misses 9..16 steps back minus the last 8 (no divide), beyond one of noise
                 let progress = (misses[here] & 0xFF00).count_ones() as i32 - (misses[here] & 0xFF).count_ones() as i32 - 1;
@@ -1875,17 +1898,23 @@ fn main() {
                 }
             } else {
                 let said = say(&st.plan).filter(|&w| w != quiet);
-                if trace > 0 && book == Book::Closed && !read && t < 6 {
+                if trace > 0 && (trace_all || (book == Book::Closed && !read)) && t < 6 && no_instr == trace_noinstr {
                     trace -= (t == 5) as usize;
                     let near = ear.decode(&st.plan).map_or("-", |w| vocab[w]);
                     println!(
-                        "  trace t={t} want {:<7} plan bits {:>2} (nearest {:<7} overlap {:>2}) sources {:?} recall overlap {:>2} said {:?}",
+                        "  trace {} book {} t={t} want {:<7} seen {:>2} heard {:>2} pfc {:>2} recall {:>2} plan bits {:>2} (nearest {:<7} overlap {:>2}) sources {:?} recall overlap {:>2} said {:?}",
+                        if read { "read" } else { "tell" },
+                        if book_open { "open" } else { "shut" },
                         target[t],
+                        seen.count_ones(),
+                        heard.count_ones(),
+                        net.wm.content().count_ones(),
+                        rec.count_ones(),
                         st.plan.count_ones(),
                         near,
                         overlap(&st.plan, &ear.codes[want]),
                         st.props.iter().map(|x| x.0).collect::<Vec<_>>(),
-                        overlap(&rec, &ear.codes[want]),
+                        overlap(&rec, &want_rec),
                         said.map(|w| vocab[w])
                     );
                 }
@@ -1928,7 +1957,7 @@ fn main() {
             prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, learn);
             let task_log: Vec<bool> = ix.as_mut().unwrap().log.drain(..).map(|l| l.0).collect();
-            if trace > 0 && testing && !read && !make && book == Book::Closed && !no_instr {
+            if trace > 0 && testing && !read && !make && book == Book::Closed && no_instr == trace_noinstr {
                 trace -= 1;
                 let marks = |l: &[bool], w: &[&str]| w.iter().zip(l.iter().chain(std::iter::repeat(&false))).map(|(w, &b)| if b { format!("{w}|") } else { w.to_string() }).collect::<Vec<_>>().join(" ");
                 println!("  boundaries while listening: {}", marks(&listen_log, &s));

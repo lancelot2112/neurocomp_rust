@@ -321,6 +321,9 @@ pub struct MaskStriatum {
     pub go_ltd: bool,
     /// grow: each pathway is a pool of mask-cells recruited as needed, not one mask
     pub grow: bool,
+    /// grow mode: extra GPi noise (±this on top of ±`JITTER`) for the next choices, e.g.
+    /// curiosity: where predictions are improving, try other things a little more
+    pub extra_noise: i32,
     pools: Vec<Vec<(CellPool, CellPool)>>,
     vpool: (CellPool, CellPool),
     clock: u64,
@@ -373,6 +376,7 @@ impl MaskStriatum {
             push_pull: true,
             go_ltd: true,
             grow: false,
+            extra_noise: 0,
             pools: Vec::new(),
             vpool: (CellPool::default(), CellPool::default()),
             clock: 0,
@@ -521,8 +525,9 @@ impl MaskStriatum {
     /// with no cells yet are tried (dropout only removes what cells there are).
     fn jitter(&mut self, q: &mut [i32], explore: bool) {
         if self.grow && explore {
+            let j = JITTER + self.extra_noise.max(0);
             for x in q.iter_mut() {
-                *x += self.rng.gen_range(-JITTER..=JITTER);
+                *x += self.rng.gen_range(-j..=j);
             }
         }
     }

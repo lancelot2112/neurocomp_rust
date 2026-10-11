@@ -885,6 +885,8 @@ const CH_ACT: usize = 5;
 /// what the cortex imagines instead of doing (the same candidates: a motion imagined cues the
 /// hippocampus with it)
 const CH_IMAGINE: usize = 7;
+/// the voice's motor gate: release the planned word to the vocal tract, or withhold it
+const CH_SPEAK: usize = 9;
 /// steps a request to retrieve lasts unless renewed
 const REQUEST_STEPS: usize = 32;
 /// where the cortex's proposals sit in the striatum's input ids
@@ -1933,6 +1935,26 @@ fn main() {
     // plans to say: held back from the body, run through the motor area it belongs to (inner
     // speech is one case), predicted back top-down, completed by the hippocampus
     let explore_on = std::env::var("RT_EXPLORE").map_or(true, |v| v != "0");
+    let two_gates = net.multi && std::env::var("RT_TWO_GATES").map_or(true, |v| v != "0");
+    // RT_SPEAK_GATE=brake: the voice's gate releases unless the basal ganglia hold the word
+    // (default: held unless they release it)
+    let speak_brake = std::env::var("RT_SPEAK_GATE").map_or(false, |v| v == "brake");
+    // the voice's motor gate: is the planned word (already the content in the loop) released to
+    // the vocal tract, or withheld (then it runs inwardly)? With two gates the basal ganglia must
+    // release it (the motor loop's gate); without, the old explore channel may divert it
+    macro_rules! speak_withheld {
+        ($plan:expr, $rng:expr) => {{
+            let offer = [ones($plan).into_iter().map(|b| ACT_BASE + b).collect::<Vec<usize>>()];
+            if two_gates && speak_brake {
+                // released unless the brake holds it (the subthalamic nucleus's hold)
+                striatum.choose_among(CH_SPEAK, &[offer.to_vec()], $rng).is_some()
+            } else if two_gates {
+                striatum.choose_among(CH_SPEAK, &[offer.to_vec()], $rng).is_none()
+            } else {
+                explore_on && net.multi && striatum.choose_among(CH_IMAGINE, &[offer.to_vec()], $rng).is_some()
+            }
+        }};
+    }
     let mut explore_count = 0usize;
     // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
     let mut voice_check = (0usize, 0usize);
@@ -2318,7 +2340,23 @@ fn main() {
                 Some(mouse.command(m).clone())
             } else {
                 let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
-                striatum.choose_among(CH_ACT, &offer, Some(&mut rng)).and_then(|i| hand!().plan(&cands[i].1))
+                // the two gates: into the loop, then released or withheld (run inwardly)
+                let pick = if net.multi && std::env::var("RT_TWO_GATES").map_or(true, |v| v != "0") {
+                    striatum.choose_among(CH_IMAGINE, &offer, Some(&mut rng)).and_then(|i| {
+                        if striatum.choose_among(CH_ACT, &[offer[i].clone()], Some(&mut rng)).is_some() {
+                            Some(i)
+                        } else {
+                            let cue = ones(&net.imagine_any(&cands[i].1));
+                            if let Some(x) = ix.as_mut().filter(|x| x.auto) {
+                                x.represent(&cue);
+                            }
+                            None
+                        }
+                    })
+                } else {
+                    striatum.choose_among(CH_ACT, &offer, Some(&mut rng))
+                };
+                pick.and_then(|i| hand!().plan(&cands[i].1))
             };
             let done = command.as_ref().and_then(|c| mouse.articulate(c));
             if let (Some(c), Some(m)) = (command.as_ref(), done) {
@@ -2757,7 +2795,7 @@ fn main() {
                 // imagine instead of do: one of the same proposals, not sent to the mouse but to
                 // the hippocampus as a cue (what is imagined, as if sensed); recall goes back to
                 // the row it matches best and carries on along the links
-                if imagine_on && !cands.is_empty() && !ix.as_ref().map_or(true, |x| x.request) {
+                if imagine_on && !two_gates && !cands.is_empty() && !ix.as_ref().map_or(true, |x| x.request) {
                     let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
                     if let Some(i) = striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
                         // the act the proposal is (the motion it matched), as the cortex represents it
@@ -2781,6 +2819,11 @@ fn main() {
                         imagined.1 += (!read && !make && !find) as usize;
                     }
                 }
+                // two gates (the default with areas; RT_TWO_GATES=0: the act and imagine channels as
+                // alternatives): the associative loop's gate takes one proposal into the cortical
+                // loop (or none); the motor loop's gate releases it to the hand, or withholds it,
+                // and then it runs inwardly (imagined). Imagining is open, then shut: no mode.
+                let mut inward: Option<usize> = None;
                 let command: Option<BitVector> = if let Some(m) = shown {
                     // RT_OBSERVE=1: the teacher's act, seen, is tagged as if done (the
                     // mirror system's view of it), so the dopamine that follows credits it and not
@@ -2805,7 +2848,22 @@ fn main() {
                     let off = read && cursor != 0 && testing && !no_instr;
                     let names = ["L", "R", "C"];
                     let proposed: String = cands.iter().map(|c| names.get(c.0).copied().unwrap_or("?")).collect();
-                    match striatum.choose_among(CH_ACT, &offer, if learn { Some(&mut rng) } else { None }) {
+                    let chosen = if two_gates {
+                        match striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
+                            Some(i) => {
+                                if striatum.choose_among(CH_ACT, &[offer[i].clone()], if learn { Some(&mut rng) } else { None }).is_some() {
+                                    Some(i)
+                                } else {
+                                    inward = Some(i);
+                                    None
+                                }
+                            }
+                            None => None,
+                        }
+                    } else {
+                        striatum.choose_among(CH_ACT, &offer, if learn { Some(&mut rng) } else { None })
+                    };
+                    match chosen {
                         Some(i) => {
                             if off {
                                 *off_book.entry(format!("{cursor}:{proposed}>{}", names.get(cands[i].0).copied().unwrap_or("?"))).or_default() += 1;
@@ -2826,6 +2884,17 @@ fn main() {
                     }
                 };
                 striatum.set_noise(0);
+                // withheld: the proposal taken into the loop runs inwardly (forward model,
+                // top-down, completed by the hippocampus)
+                if let Some(i) = inward {
+                    let cue = ones(&net.imagine_any(&cands[i].1));
+                    if let Some(x) = ix.as_mut().filter(|x| x.auto) {
+                        x.represent(&cue);
+                        last_recall = x.complete();
+                    }
+                    imagined.0 += 1;
+                    imagined.1 += (!read && !make && !find) as usize;
+                }
                 // the world: the mouse does what the command articulates
                 // with the teacher's own cursor, the teacher's act moves that cursor, not the network's
                 let done = if teacher_cursor && shown.is_some() { None } else { shown.or_else(|| command.as_ref().and_then(|c| mouse.articulate(c))) };
@@ -3035,7 +3104,7 @@ fn main() {
                 net.learn(&st, &ear.codes[want], &mut rng);
                 if practice {
                     // the network says it and hears itself
-                    let said = if explore_on && net.multi && striatum.choose_among(CH_IMAGINE, &[vec![ones(&st.plan).into_iter().map(|b| ACT_BASE + b).collect()]], Some(&mut rng)).is_some() {
+                    let said = if speak_withheld!(&st.plan, Some(&mut rng)) {
                         explore!(&st.plan);
                         None
                     } else {
@@ -3090,7 +3159,7 @@ fn main() {
                     hc_hear!(want, &cue, store_all, true, false);
                 }
             } else {
-                let said = if explore_on && net.multi && striatum.choose_among(CH_IMAGINE, &[vec![ones(&st.plan).into_iter().map(|b| ACT_BASE + b).collect()]], None).is_some() {
+                let said = if speak_withheld!(&st.plan, None) {
                     explore!(&st.plan);
                     None
                 } else {

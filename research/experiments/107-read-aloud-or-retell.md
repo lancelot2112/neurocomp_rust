@@ -1615,10 +1615,70 @@ heard as expected), and 60 of the teacher's 73 acts were mirrored right. Still t
 as full columns, and the shared layers 2/3 and 5 replaced by the top association column, with
 feedback down as tuft context.
 
+### Acts as acts; the columns ported; the top column
+All with the teacher's own cursor, seeds 0 and 2, first test table.
+
+| | seed 0: read / tell closed / recall right | seed 2: read / tell closed / recall right | own book openings (training) |
+|---|---|---|---|
+| columns (motor and association) | 2–3% / 0% / 1.6% | 1–4% / 20% / 0% | 264; 152 |
+| areas + acts as acts | 3–10% / 10% / **12.7%** | 0% / 0% / 0.1% | 542; 165 |
+| top association column (senses as columns) | 5–6% / 9% / 5.4% | 1–4% / 3% / 0.6% | 530; 230 |
+
+- **Acts as acts.** With areas, the teacher's opening click had still gone in through the ear (the
+  old shortcut), and an imagined act was coded through the ear's area, whose thresholded cells
+  mostly gave no code: 319 of 5,138 imaginings found a row. Now an act, seen, done or imagined,
+  is the association of the hand (how it feels) and seen acts (how it looks), and the teacher's
+  click is seen. Every imagining finds a row; recall on seed 0 rose from 1.6% to 12.7%.
+- **The top association column** (`RT_TOP=1`): the senses are columns (layer 2/3 predicting the
+  next code, the top's activity as tuft feedback), and one top column replaces the shared layers
+  2/3 and 5: input the scene and the hippocampus's return, tuft the prefrontal content and the
+  cerebellum; layer 2/3 predicts the next scene (53% right), layer 5 sends the goal. It reached
+  the book on 0–29% of test trials and was silent half the time.
+- **The common failure is the mouse.** With the teacher on their own cursor the network opens
+  its own book rarely (150–540 times in 1,500 trials), and a LEFT habit forms on the book (seed
+  2, areas: LEFT released 1,228 times there in training, CLICK 16). A guess: each wait is
+  followed by the story, whose rewards (words predicted right) do not depend on the wait's acts,
+  yet reach back to them. Being tested (`RT_WAIT_END=1`: the wait is its own credit episode).
+- **The mirror** stays accurate (97–99%), and the voice was never heard other than its
+  efference copy expected.
+
+### What the biology says about the layout, and streams
+The cortex is largely one circuit (Mountcastle; Douglas and Martin), with layer 4 for input,
+feedback onto layer 1's tufts, and agranular motor cortex. Where the model differed:
+- **Feedforward runs from layer 2/3** of the lower area to layer 4 of the next (Felleman and Van
+  Essen), not from layer 4.
+- **Every area's layer 5** reaches the striatum, the pons and the higher-order thalamus (the
+  transthalamic route, Sherman and Guillery), not only the top's.
+- **No single top:** parallel streams, ventral (what: objects, word forms, meaning) and dorsal
+  (where and how: sensorimotor), with several apexes.
+- **Speech is planned in a dorsal auditory–motor stream** (Hickok and Poeppel: an area at the
+  parietal–temporal junction, Broca's, premotor); reading's meeting place of seen and heard
+  words is the visual word form area.
+- **The entorhinal cortex is not an association area of every area:** it takes the highest
+  association areas (perirhinal: what, into lateral EC; parahippocampal and retrosplenial:
+  where, into medial EC; prefrontal, cingulate, insula), and smell directly; it returns the same
+  way, the route recall uses.
+
+**Two versions built:**
+- **Explicit streams** (`RT_STREAMS=1`): feedforward from layer 2/3 (the code with the sense
+  column's activity); a ventral column (the word seen and heard, the hippocampus's return; its
+  predicted next word sent down to the ear as the sound expected, `Brain::down`, a source of the
+  plan; its activity the dorsal tufts' feedback); a dorsal auditory–motor column (layer 5: the
+  meant sound) and a dorsal visual–motor column (layer 5: the mouse's acts); both layer 5s reach
+  the basal ganglia and the pons.
+- **Self-organizing** (`RT_SELFORG=1`): no streams wired. Biology suggests streams are largely
+  shaped by input statistics on a coarse innate scaffold (rewired ferret auditory cortex comes
+  to see; visual cortex reads Braille in the blind; a single network trained to predict can
+  split into ventral- and dorsal-like pathways). Every association column grown by co-activity
+  has layers 2/3 and 5; every column's layer 5 offers goals to every motor area; which column
+  drives which is learned (the relay's reliability per source and context), and a column learns
+  only where its input is active. In a 150-trial check the streams formed by themselves: the
+  eye+ear column alone offered sounds (58% right), and eye+hand, ear+hand, hand+seen acts and the
+  full column offered only mouse acts.
+
 ## Next
-- **The columns on 4 seeds** (running), then the senses as full columns and the shared layers
-  2/3 and 5 replaced by the top association column, with feedback.
-- **Hippocampal recall with areas** (0–1.6% of telling steps): why.
-- **Seed 0's LEFT habit on the book** with the teacher's own cursor.
+- **Self-organizing vs explicit streams, and the story's credit**, on seeds 0 and 2 (running).
+- **The mouse:** why the network rarely opens its own book once the teacher has a cursor.
+- **Hippocampal recall with areas.**
 - **The always-completing hippocampus**, measured on 4 seeds.
 - **Whether the story heard should cue telling** without the instruction.

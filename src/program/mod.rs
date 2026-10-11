@@ -78,5 +78,6 @@ pub use layer4::Layer4;
 pub mod striatum;
 pub mod mask_striatum;
 pub mod area;
+pub mod column;
 pub use striatum::Striatum;
 pub use mask_striatum::MaskStriatum;

@@ -48,8 +48,9 @@ use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::{
     BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
-    Striatum, ThalamicRelay, VocalTract, WorkingMemory,
+    Repertoire, Striatum, ThalamicRelay, VocalTract, WorkingMemory,
 };
+use neurocomp::program::repertoire::EFFORT;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, RngCore, SeedableRng};
@@ -444,6 +445,26 @@ const CH_HOLD: usize = 1;
 const CH_REINSTATE: usize = 2;
 const CH_LOAD: usize = 3;
 const CH_PLACE: usize = 4;
+/// the motor repertoire's channel, its size, and how often the motor cortex babbles (1 in this
+/// many motor opportunities while learning)
+const CH_MOTOR: usize = 5;
+const MOTOR_CAP: usize = 32;
+const BABBLE: u32 = 8;
+
+/// The body (part of the world, not of the network): what a motor pattern does. Its bits in
+/// 0..64 point the arm (the quarter with the most bits, if it has at least two and no other
+/// quarter as many: one of four places, else nowhere); at least two bits in 64..96 close the
+/// hand.
+fn body(pattern: &[usize]) -> (Option<usize>, bool) {
+    let mut q = [0usize; 4];
+    for &b in pattern.iter().filter(|&&b| b < 64) {
+        q[b / 16] += 1;
+    }
+    let m = *q.iter().max().unwrap();
+    let dir = (m >= 2 && q.iter().filter(|&&x| x == m).count() == 1).then(|| q.iter().position(|&x| x == m).unwrap());
+    let grasp = pattern.iter().filter(|&&b| (64..96).contains(&b)).count() >= 2;
+    (dir, grasp)
+}
 
 /// The hippocampal context's cells are drawn from this many.
 const CTX_POOL: usize = 1 << 16;
@@ -515,6 +536,19 @@ struct IndexHc {
     followed: usize,
     /// diagnosis: the hold gate does nothing (the driver holds at the story's start)
     hold_off: bool,
+    /// automatic anchors (RT_ANCHOR, default on): at each event boundary the hippocampus keeps the
+    /// context with the boundary's strength (how far the boundary cell's expectation of surprise
+    /// rose above its threshold), in a few slots; strengths fade at each boundary and a new
+    /// anchor replaces the weakest only if it is stronger. What is "held" is the strongest.
+    anchors: Option<Vec<(Vec<usize>, i32)>>,
+    /// storing goes on while retrieving (encoding and retrieval alternate within each theta
+    /// cycle), except for its own speech (corollary discharge)
+    theta: bool,
+    /// the phase the driver is in (for the anchor report): 0 the story's first word, 1 the rest
+    /// of the story, 2 the instruction, 3 later
+    phase: usize,
+    /// per phase: (boundaries, sum of their strength, anchors taken)
+    anchor_stats: [(usize, i64, usize); 4],
     /// diagnosis: the gates do nothing (the driver holds and reinstates)
     gates_off: bool,
     /// diagnosis: (boundary fired, recalled row) per heard sound, while tracing
@@ -551,6 +585,10 @@ impl IndexHc {
             followed: 0,
             gates_off: false,
             hold_off: false,
+            anchors: None,
+            theta: false,
+            phase: 3,
+            anchor_stats: [(0, 0, 0); 4],
             log: Vec::new(),
         }
     }
@@ -652,7 +690,7 @@ impl IndexHc {
         }
         // retrieval mode (requested and acetylcholine low): nothing new is stored (encoding and
         // retrieval are separate modes, Hasselmo)
-        if store && !self.retrieving() && !cells.is_empty() {
+        if store && (!self.retrieving() || (self.theta && !own)) && !cells.is_empty() {
             // the keys: the context, the place (if a book from the shelf is in view), and the
             // content (the assembly), so the episode can be completed from any of them
             let mut keys = self.ctx.clone();
@@ -670,6 +708,30 @@ impl IndexHc {
         if fired {
             self.boundaries += 1;
             self.drift(&cells, self.ctx.len() / 2, 2);
+            let strength = self.boundary.excess();
+            let st = &mut self.anchor_stats[self.phase];
+            st.0 += 1;
+            st.1 += strength as i64;
+            if let Some(a) = self.anchors.as_mut() {
+                for x in a.iter_mut() {
+                    x.1 -= x.1.abs() / 8;
+                }
+                let weakest = a.iter().enumerate().min_by_key(|x| x.1 .1).map(|x| (x.0, x.1 .1));
+                let taken = if a.len() < 4 {
+                    a.push((self.ctx.clone(), strength));
+                    true
+                } else if let Some((i, w)) = weakest.filter(|&(_, w)| strength > w) {
+                    let _ = w;
+                    a[i] = (self.ctx.clone(), strength);
+                    true
+                } else {
+                    false
+                };
+                if taken {
+                    st.2 += 1;
+                    self.held = a.iter().max_by_key(|x| x.1).map(|x| x.0.clone());
+                }
+            }
         }
         fired
     }
@@ -794,6 +856,13 @@ fn main() {
     // the striatum: one critic, and an actor channel per gate (reach, hold, reinstate, load into
     // working memory); dopamine is the TD error, the reward the words that come out right
     let mut striatum = Striatum::new(1 << 18);
+    // RT_MOTOR=off: the hand-made reach and shelf-place channels instead of a motor repertoire
+    // that grows by babbling, with curiosity (learning progress) and effort as inner rewards
+    let mut repertoire = std::env::var("RT_MOTOR").map_or(true, |v| v != "off").then(|| Repertoire::new(256, 8, MOTOR_CAP));
+    // the arm's motor area: its forward model learns what each command makes the senses report
+    let mut arm = MotorArea::new(256);
+    let mut motor_uses = vec![0usize; MOTOR_CAP];
+    let mut curiosity_sum = 0i64;
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
     let mut shelf: Vec<Vec<&str>> = Vec::new();
@@ -829,12 +898,21 @@ fn main() {
     // the hold is given, reinstating is learned
     let ix_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle");
     let hold_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle" || v == "hold");
+    // RT_RESTART=off: no reinstating while retrieving (else it starts the sequence over)
+    let restart = std::env::var("RT_RESTART").map_or(true, |v| v != "off");
     let sleep_every: usize = env("RT_SLEEP_EVERY", 10);
     let replays: usize = env("RT_REPLAY", 3);
     let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle;
         x.hold_off = hold_oracle;
+        // RT_ANCHOR=off: the striatum's hold gate instead of automatic anchors
+        if std::env::var("RT_ANCHOR").map_or(true, |v| v != "off") && !hold_oracle {
+            x.anchors = Some(Vec::new());
+            x.hold_off = true;
+        }
+        // RT_THETA=off: retrieval mode stops all storing
+        x.theta = std::env::var("RT_THETA").map_or(true, |v| v != "off");
     }
     // the hippocampus hears word `w`: the index learns its boundary and (with `store`) stores
     // the event; the circuit stores it with `cue` when `store`
@@ -888,7 +966,7 @@ fn main() {
                     // start the sequence over)
                     // the held content's tag is kept with it, and re-armed when it is used, so the
                     // dopamine that follows using it reaches the decision to hold it
-                    if held && !retr && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
+                    if held && (!retr || restart) && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
                         x.reinstate();
                         striatum.retag(CH_HOLD);
                     } else if $fired && !x.hold_off && striatum.choose(CH_HOLD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
@@ -963,6 +1041,9 @@ fn main() {
             if ix.is_some() {
                 // RT_IX_HOLD=oracle (diagnosis only): hold the context in force at the story's
                 // first word, instead of the learned gate
+                if let Some(x) = ix.as_mut() {
+                    x.phase = (t > 0) as usize;
+                }
                 if t == 0 && hold_oracle {
                     let x = ix.as_mut().unwrap();
                     x.held = Some(x.ctx.clone());
@@ -1047,6 +1128,9 @@ fn main() {
         for (it, w) in instr.into_iter().enumerate() {
             let wi = id(w);
             let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
+            if let Some(x) = ix.as_mut() {
+                x.phase = 2;
+            }
             hc_hear!(wi, &cue, store_all, learn, false);
             ip2 = ip.replace(ear.codes[wi].clone());
             if fixed_gate && w == verb {
@@ -1064,17 +1148,11 @@ fn main() {
                 striatum.reward(ONE as i32);
             }
         }
+        if let Some(x) = ix.as_mut() {
+            x.phase = 3;
+        }
         if no_instr {
             net.wm.clear();
-        }
-        if ix_oracle && !read && !make {
-            if let Some(x) = ix.as_mut() {
-                if let Some(h) = x.held.clone() {
-                    x.ctx = h;
-                    x.last_recalled = None;
-                    x.request = true;
-                }
-            }
         }
         // 3. the task: the teacher does it (training), or the network does (test)
         if make && testing {
@@ -1174,38 +1252,95 @@ fn main() {
                     prev_assoc = std::mem::replace(&mut last_assoc, net.assoc_of(&zero(), &silence, false, &mut rng));
                     td_step!(false, learn);
                 }
-                if find {
+                // what the network does: with the motor repertoire (default), a motor pattern
+                // the basal ganglia release (or the motor cortex babbles); else the old
+                // hand-made channels. `opened`: the shelf place whose book came into view.
+                let opened: Option<usize> = if let Some(rep) = repertoire.as_mut() {
+                    let mut done: Option<usize> = None;
+                    if learn && (rep.is_empty() || rng.gen_range(0..BABBLE) == 0) {
+                        // babbling: a new pattern, done now (its efference copy tags the
+                        // striatal cells that will stand for it)
+                        let (i, replaced) = rep.propose(&mut rng);
+                        if replaced {
+                            striatum.reset_action(CH_MOTOR, i + 1);
+                            motor_uses[i] = 0;
+                        }
+                        striatum.did(CH_MOTOR, rep.len() + 1, i + 1);
+                        done = Some(i);
+                    } else {
+                        let c = striatum.choose(CH_MOTOR, rep.len() + 1, if learn { Some(&mut rng) } else { None });
+                        if c > 0 {
+                            done = Some(c - 1);
+                        }
+                    }
+                    let mut opened = None;
+                    if let Some(i) = done {
+                        // the world: the body moves; a grasp toward a place with a book opens it
+                        let (dir, grasp) = body(&ones(rep.code(i)));
+                        let has_book = |d: usize| if find { d < shelf_k } else { d == 0 && !p.is_empty() };
+                        if grasp {
+                            opened = dir.filter(|&d| has_book(d));
+                        }
+                        let mut outcome: Vec<usize> = match dir {
+                            Some(d) => (0..16).map(|j| 16 * d + j).collect(),
+                            None => (64..80).collect(),
+                        };
+                        if grasp {
+                            outcome.extend(80..96);
+                        }
+                        if opened.is_some() {
+                            outcome.extend(96..112);
+                        }
+                        let code = rep.code(i).clone();
+                        let err = arm.observe(&code, &BitVector::from_bits(&outcome, 256), &mut rng);
+                        let cur = rep.observe(i, err);
+                        motor_uses[i] += 1;
+                        if learn {
+                            curiosity_sum += cur as i64;
+                            striatum.reward(cur - EFFORT);
+                        }
+                    }
+                    opened
+                } else if find {
                     let a = striatum.choose(CH_PLACE, shelf_k + 1, if learn { Some(&mut rng) } else { None });
-                    if a > 0 {
+                    (a > 0).then(|| a - 1)
+                } else {
+                    // with the book closed there is nothing to hand over
+                    (striatum.choose(CH_REACH, 2, if learn { Some(&mut rng) } else { None }) == 1 && !p.is_empty()).then_some(0)
+                };
+                if let Some(d) = opened {
+                    if find {
                         // the book at that place, from its first word; its place joins the
                         // hippocampus's context while it is in view
-                        p = shelf[a - 1].clone();
-                        book_open = true;
-                        eye_now = p.first().map_or(zero(), |w| eye.codes[id(w)].clone());
-                        reached_at = Some(a - 1);
-                        if let Some(x) = ix.as_mut() {
-                            x.reach_event();
-                            x.place = Some(a - 1);
-                        }
-                        td_step!(true, learn);
-                        break;
+                        p = shelf[d].clone();
                     }
-                } else if striatum.choose(CH_REACH, 2, if learn { Some(&mut rng) } else { None }) == 1 {
-                    // the world hands over the book, from its first word; the reach is an
-                    // event boundary, and the striatum may hold where this new episode begins
+                    // the book, from its first word; the reach is an event boundary
                     book_open = true;
                     eye_now = p.first().map_or(zero(), |w| eye.codes[id(w)].clone());
-                    reached_at = Some(0);
+                    reached_at = Some(d);
                     if let Some(x) = ix.as_mut() {
                         x.reach_event();
+                        if find {
+                            x.place = Some(d);
+                        }
                     }
                     td_step!(true, learn);
-                    if learn {
+                    if learn && !find {
                         let k = if read { 0 } else if make { 2 } else { 1 };
                         reach_delta[k].0 += striatum.last_delta as i64;
                         reach_delta[k].1 += 1;
                     }
                     break;
+                }
+            }
+        }
+        // RT_IX_HOLD=oracle: the held start is reinstated as the task begins (after the wait)
+        if ix_oracle && !read && !make {
+            if let Some(x) = ix.as_mut() {
+                if let Some(h) = x.held.clone() {
+                    x.ctx = h;
+                    x.last_recalled = None;
+                    x.request = true;
                 }
             }
         }
@@ -1578,6 +1713,16 @@ fn main() {
             x.had_prev,
             x.followed
         );
+        if x.anchors.is_some() {
+            let names = ["story start", "story", "instruction", "later"];
+            let parts: Vec<String> = (0..4)
+                .map(|k| {
+                    let (n, sum, taken) = x.anchor_stats[k];
+                    format!("{}: {} boundaries, strength {:+.3}, {} anchored", names[k], n, sum as f64 / n.max(1) as f64 / ONE as f64, taken)
+                })
+                .collect();
+            println!("anchors: {}", parts.join("; "));
+        }
     }
     {
         // is the association area cross-modal? the assembly a word evokes seen and heard
@@ -1629,4 +1774,25 @@ fn main() {
         striatum.changes.0,
         striatum.changes.1
     );
+    if let Some(rep) = repertoire.as_ref() {
+        // the repertoire: what each action does (the body's reading of its pattern) and how
+        // often it was used
+        let mut kinds = std::collections::BTreeMap::new();
+        for i in 0..rep.len() {
+            let (dir, grasp) = body(&ones(rep.code(i)));
+            let k = format!("{}{}", dir.map_or("no direction".to_string(), |d| format!("place {d}")), if grasp { " + grasp" } else { "" });
+            let e = kinds.entry(k).or_insert((0usize, 0usize));
+            e.0 += 1;
+            e.1 += motor_uses[i];
+        }
+        let parts: Vec<String> = kinds.iter().map(|(k, (n, u))| format!("{k}: {n} ({u} uses)")).collect();
+        println!(
+            "motor repertoire: {} actions now, {} proposed, {} replaced; mean curiosity per training trial {:+.3}; {}",
+            rep.len(),
+            rep.stats.0,
+            rep.stats.1,
+            curiosity_sum as f64 / n_train.max(1) as f64 / ONE as f64,
+            parts.join("; ")
+        );
+    }
 }

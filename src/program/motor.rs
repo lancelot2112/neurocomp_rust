@@ -100,6 +100,34 @@ impl MotorArea {
         }
     }
 
+    /// One command issued and its result sensed, for any effector (the vocal tract, an arm):
+    /// the forward model's prediction is compared with what came (the error, `Q16`: the share
+    /// of the predicted and sensed bits that do not match; all of it if nothing was predicted),
+    /// then both models learn from the pair.
+    pub fn observe<R: Rng>(&mut self, command: &BitVector, sensed: &BitVector, rng: &mut R) -> u32 {
+        let one = crate::fixed::ONE;
+        let err = match self.forward.peek(command) {
+            Some(p) => {
+                let hit: u32 = p.as_words().iter().zip(sensed.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
+                let total = (p.count_ones() + sensed.count_ones()) as u32;
+                if total == 0 {
+                    0
+                } else {
+                    one - 2 * hit * one / total
+                }
+            }
+            None => one,
+        };
+        let mut out = BitVector::new(self.bits, Some(0));
+        self.inverse.process_predictive(sensed, &mut out);
+        self.inverse.feedback(sensed, command, rng);
+        let mut out = BitVector::new(self.bits, Some(0));
+        self.forward.process_predictive(command, &mut out);
+        self.forward.feedback(command, sensed, rng);
+        self.babbles += 1;
+        err
+    }
+
     /// How to say what the cortex means (a heard-word code): a motor command, or None.
     pub fn plan(&self, meant: &BitVector) -> Option<BitVector> {
         self.inverse.peek(meant)

@@ -2538,6 +2538,9 @@ fn main() {
     if let Some(x) = ix.as_ref().filter(|x| x.auto) {
         println!("always completing: {} completions, {} reached the cortex (retrieval mode)", x.completions.0, x.completions.1);
     }
+    if let Some(b) = net.brain.as_ref() {
+        println!("areas: {:?}; association areas (pair, cells): {:?}; full area: {:?} cells", b.areas.iter().map(|a| (a.name.as_str(), a.l4.as_ref().map_or(0, |p| p.cells()))).collect::<Vec<_>>(), b.pairs.iter().map(|p| (p.0, p.1.cells())).collect::<Vec<_>>(), b.full.as_ref().map(|f| f.cells()));
+    }
     if net.brain.is_some() {
         println!("voice area: {} words said, {} not heard as its efference copy expected", voice_check.0, voice_check.1);
     }

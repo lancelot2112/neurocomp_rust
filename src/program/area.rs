@@ -145,6 +145,10 @@ impl Pool {
         self.tick += 1;
         let on = self.active(input);
         let fired = self.fire(&on);
+        // the sources present: a synapse is moved away only if its own source was active (an
+        // absent sense is no evidence against it, so a pair's cell keeps both halves when one
+        // comes alone)
+        let present: Vec<bool> = (0..self.sources).map(|s| on.iter().any(|&b| b as usize / self.src_bits == s)).collect();
         for &(c, _) in &fired {
             self.last[c as usize] = self.tick;
             let r = self.next();
@@ -152,12 +156,14 @@ impl Pool {
                 continue;
             }
             let s = &self.syn[c as usize];
-            let off: Vec<usize> = (0..s.len()).filter(|&i| on.binary_search(&s[i]).is_err()).collect();
-            let gain: Vec<u32> = on.iter().copied().filter(|b| s.binary_search(b).is_err()).collect();
-            if off.is_empty() || gain.is_empty() {
+            let off: Vec<usize> = (0..s.len()).filter(|&i| on.binary_search(&s[i]).is_err() && present[s[i] as usize / self.src_bits]).collect();
+            // and it moves within its source (each half stays a half)
+            let gain_in = |src: usize| on.iter().copied().filter(|b| s.binary_search(b).is_err() && *b as usize / self.src_bits == src).collect::<Vec<u32>>();
+            let Some(&i) = off.get(((r >> 8) as usize) % off.len().max(1)) else { continue };
+            let gain = gain_in(s[i] as usize / self.src_bits);
+            if gain.is_empty() {
                 continue;
             }
-            let i = off[((r >> 8) as usize) % off.len()];
             let nb = gain[((r >> 32) as usize) % gain.len()];
             self.rewire(c as usize, i, nb);
         }
@@ -366,7 +372,7 @@ impl Brain {
     /// One step's association: the areas' current codes; pairs active together count toward an
     /// association area of their own (created after `pair_after` steps); every pairwise area
     /// codes its pair; once there are two, the full area conjoins them. Returns the full area's
-    /// code if it exists, else the pairwise codes merged (or nothing).
+    /// code if it has one, else the pairwise codes merged (or nothing).
     pub fn associate(&mut self, learn: bool) -> BitVector {
         let codes: Vec<BitVector> = self.areas.iter().map(|a| a.code.clone()).collect();
         self.associate_codes(&codes, learn)
@@ -417,9 +423,13 @@ impl Brain {
         if self.full.is_none() && self.pairs.len() >= 2 {
             self.full = Some(Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)));
         }
+        // the highest level active: the full area when it has a code, else the pairwise codes
         if let Some(full) = self.full.as_mut() {
             let input: Vec<(usize, &BitVector)> = pair_codes.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
-            return if learn { full.learn(&input) } else { full.encode(&input) };
+            let c = if learn { full.learn(&input) } else { full.encode(&input) };
+            if c.count_ones() > 0 {
+                return c;
+            }
         }
         let mut merged = BitVector::new(self.bits, Some(0));
         for c in &pair_codes {
@@ -527,6 +537,22 @@ mod tests {
             evoked += (ov(&c, pc) * 2 >= K as u32) as usize;
         }
         assert!(evoked >= 9, "heard alone evoked the pair's code for {evoked} of 10");
+        // heard alone (learning) many times: the cells keep their eye half, so seeing alone
+        // still evokes the pair's code
+        for _ in 0..20 {
+            for (_, heard) in &words {
+                brain.areas[eye].sense(&BitVector::new(BITS, Some(0)), true);
+                brain.areas[ear].sense(heard, true);
+                brain.associate(true);
+            }
+        }
+        let mut kept = 0;
+        for ((seen, _), pc) in words.iter().zip(&pair_code) {
+            brain.areas[eye].sense(seen, false);
+            brain.areas[ear].sense(&BitVector::new(BITS, Some(0)), false);
+            kept += (ov(&brain.associate(false), pc) * 2 >= K as u32) as usize;
+        }
+        assert!(kept >= 9, "seen alone evoked the pair's code for {kept} of 10 after hearing alone");
         // now the hand moves while words are heard: a second pair, and the full area
         let motions: Vec<BitVector> = (0..3).map(|_| rand_code(&mut rng)).collect();
         for i in 0..30 {

@@ -1850,6 +1850,129 @@ fn main() {
     let trace_all = std::env::var("RT_TRACE_ALL").map_or(false, |v| v == "1");
     let mut by_cond = [[(0usize, 0usize); 3]; 2];
     let books = [Book::Same, Book::Other, Book::Closed];
+    // RT_TOUCH=1: the hand feels what is under the cursor. Moving, it feels the motion (a
+    // vibration); at rest, the texture of what the cursor is on: the desk's book has one, each
+    // shelf place's book its own
+    let touch_on = std::env::var("RT_TOUCH").map_or(false, |v| v == "1");
+    let textures = Encoder::new(npos, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0x7E47)).codes;
+    macro_rules! touch {
+        ($sensed:expr, $pos:expr) => {{
+            let sensed: &BitVector = $sensed;
+            // (at rest: nothing moved, or only silence was sensed)
+            if touch_on && (sensed.count_ones() == 0 || sensed.as_words() == silence.as_words()) {
+                textures[$pos].clone()
+            } else {
+                sensed.clone()
+            }
+        }};
+    }
+    // RT_PLAY: trials of play before any teaching (default 0). No teacher, no story: the cursor
+    // starts somewhere, and the network moves (often babbling) and clicks. A click on a book opens
+    // it: the eye sees its page. That change, made by its own act, is rewarding in itself (as
+    // contingent sensory change is for an infant), so the basal ganglia learn when a click pays,
+    // and the cortex what each act does to what is seen and felt.
+    let n_play: usize = env("RT_PLAY", 0);
+    let mut play_opened = 0usize;
+    // (clicks on a book, clicks in all) in the first and the last half of play, chosen (not babbled)
+    let mut play_clicks = [(0usize, 0usize); 2];
+    for play_trial in 0..n_play {
+        cursor = rng.gen_range(0..npos);
+        // which places hold a book this time (each half the time, at least one)
+        let mut present: Vec<bool> = (0..npos).map(|_| rng.gen_bool(0.5)).collect();
+        if !present.iter().any(|&x| x) {
+            let k = rng.gen_range(0..npos);
+            present[k] = true;
+        }
+        let mut sensed = silence.clone();
+        let mut seen_motion: Option<usize> = None;
+        eye_now = zero();
+        for _ in 0..12 {
+            let mut eye_in = cursor_seen[cursor].clone();
+            if let Some(m) = seen_motion {
+                for (w, x) in eye_in.as_words_mut().iter_mut().zip(motion_seen[m].as_words()) {
+                    *w |= x;
+                }
+            }
+            eye_now = eye_in.clone();
+            td_step!(false, true);
+            // (an empty place feels like nothing)
+            let felt_now = if present[cursor] { touch!(&sensed, cursor) } else { sensed.clone() };
+            let st = if net.brain.is_some() {
+                net.felt = felt_now;
+                net.step(&eye_in, &silence, &zero(), true, 0, &mut rng)
+            } else {
+                net.step(&eye_in, &felt_now, &zero(), true, 0, &mut rng)
+            };
+            let mut cands: Vec<(usize, BitVector)> = Vec::new();
+            let proposals = match (net.streams.as_ref(), net.top.as_ref()) {
+                _ if net.selforg => net.brain.as_mut().unwrap().goal_proposals().into_iter().map(|(_, p, b)| (p, b)).collect(),
+                (Some(sx), _) => sx.visuo_motor.l5.proposals(),
+                (None, Some(t)) => t.l5.proposals(),
+                _ => net.l5.proposals(BITS),
+            };
+            for (pat, _) in proposals {
+                let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
+                if 2 * overlap(&pat, &motion[best]) >= ACTIVE as u32 && !cands.iter().any(|c| c.0 == best) {
+                    cands.push((best, pat));
+                }
+            }
+            // babbling, often: half the steps
+            let babbled = cands.is_empty() || rng.gen_bool(0.5);
+            let command: Option<BitVector> = if babbled {
+                let m = rng.gen_range(0..MOUSE);
+                striatum.did_among(CH_ACT, &[ones(&motion[m]).into_iter().map(|b| ACT_BASE + b).collect()]);
+                Some(mouse.command(m).clone())
+            } else {
+                let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
+                striatum.choose_among(CH_ACT, &offer, Some(&mut rng)).and_then(|i| hand!().plan(&cands[i].1))
+            };
+            let done = command.as_ref().and_then(|c| mouse.articulate(c));
+            if let (Some(c), Some(m)) = (command.as_ref(), done) {
+                hand!().observe(c, &motion[m], &mut rng);
+            }
+            if done == Some(CLICK) && !babbled {
+                let half = (play_trial * 2 >= n_play) as usize;
+                play_clicks[half].0 += present[cursor] as usize;
+                play_clicks[half].1 += 1;
+            }
+            // a click opens the book under the cursor; on an empty place, or a move against the
+            // edge, nothing happens and nothing is sensed
+            let blocked = matches!((done, cursor), (Some(LEFT), 0)) || done == Some(RIGHT) && cursor + 1 == npos || done == Some(CLICK) && !present[cursor];
+            let next = if blocked { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
+            if let (Some(b), Some(m), false) = (net.brain.as_mut(), done, blocked) {
+                let e = b.encode(ACTS, &motion_seen[m], true);
+                let h = b.encode(HAND, &motion[m], true);
+                b.associate_codes(&[zero(), zero(), h, zero(), e], true);
+            }
+            net.learn_motor(&st, &next, &mut rng);
+            if done.is_some() {
+                striatum.reward(-EFFORT);
+            }
+            seen_motion = if blocked { None } else { done };
+            sensed = next;
+            match done {
+                Some(LEFT) => cursor = cursor.saturating_sub(1),
+                Some(RIGHT) => cursor = (cursor + 1).min(npos - 1),
+                Some(CLICK) => {
+                    // the page appears: its own act changed what it sees
+                    play_opened += 1;
+                    striatum.reward(ONE as i32 / 2);
+                    td_step!(true, true);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        striatum.end(true, &mut rng);
+    }
+    net.felt = zero();
+    eye_now = zero();
+    if n_play > 0 {
+        println!(
+            "play: {n_play} trials, a book opened in {play_opened}; chosen clicks on a book: first half {} of {}, second half {} of {} (books on half the places)",
+            play_clicks[0].0, play_clicks[0].1, play_clicks[1].0, play_clicks[1].1
+        );
+    }
     for trial in 0..n_train + 2 * n_test {
         let testing = trial >= n_train;
         let no_instr = trial >= n_train + n_test;
@@ -2136,11 +2259,12 @@ fn main() {
                     None => scene,
                 };
                 // with areas, the hand feels its motion in its own area; the ear hears nothing
+                let felt_now = touch!(&sensed, cursor);
                 let st = if net.brain.is_some() {
-                    net.felt = sensed.clone();
+                    net.felt = felt_now;
                     net.step(&eye_in, &silence, &zero(), learn, 0, &mut rng)
                 } else {
-                    net.step(&eye_in, &sensed, &zero(), learn, 0, &mut rng)
+                    net.step(&eye_in, &felt_now, &zero(), learn, 0, &mut rng)
                 };
                 // curiosity as noise: the learning progress where the network is now (from the
                 // steps before) loosens the choice a little, up to ±2 more; no reward

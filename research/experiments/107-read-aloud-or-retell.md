@@ -1350,12 +1350,26 @@ instruction held):**
 - **Context at several timescales** (`RT_CTX_BANKS=1`). Besides the fast bank (32 slots, 4 per
   step, a half-life of about 5 steps), two slower banks (16 and 32 slots, one per step: about
   11 and 22 steps). Event boundaries jump only the fast bank, so the slow banks carry the episode
-  across boundaries. The replay uses the same per-bank drift. Results are pending.
+  across boundaries. The replay uses the same per-bank drift. On 4 seeds (growing masks, first
+  test table) it does not change the overall picture: three seeds work either way, but a
+  different one fails.
+
+  | seed | without banks: read / tell, book closed | with banks: read / tell, book closed |
+  |---|---|---|
+  | 0 | 47.8–45.7% / 38.9% | 51.8–42.9% / 33.6% |
+  | 1 | 5.0–8.6% / 2.9% | **43.5–46.3% / 34.9%** |
+  | 2 | 50.6–49.3% / 46.8% | 51.9–23.6% / 42.4% |
+  | 3 | 57.6–56.6% / 54.2% | 0 / 0% (silent) |
+
+  The failures are seed-specific: one seed's mouse wanders, or the network falls silent. They
+  are not caused by the context's timescale.
 - **Top-k recall** (`RT_HC_K`). When recall does not follow a link, the k best matches vote and
   the output keeps the bits most of them share (a majority). Not yet measured.
 
 ## Next
-- **Context banks and top-k recall:** measure on 4 seeds.
+- **Top-k recall:** measure on 4 seeds.
+- **Why one seed in four fails** (the mouse wandering off the book, or silence), with or
+  without banks.
 - **Why the growing masks fall silent with the prefrontal content removed,** and why seed 1's
   mouse wanders.
 - **Make the growing masks the default** once those hold.

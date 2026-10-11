@@ -233,6 +233,7 @@ struct Net {
 const EYE: usize = 0;
 const EAR: usize = 1;
 const HAND: usize = 2;
+const VOICE: usize = 3;
 
 struct Step {
     l23_row: BitVector,
@@ -284,6 +285,8 @@ impl Net {
                 b.attach("eye", Kind::Sensor);
                 b.attach("ear", Kind::Sensor);
                 b.attach("hand", Kind::SensorMotor);
+                // the voice: a motor area (it is heard through the ear)
+                b.attach("voice", Kind::Motor);
                 b
             }),
             felt: zero(),
@@ -1247,8 +1250,6 @@ fn main() {
     let quiet = vocab.len();
     let sounds: Vec<BitVector> = ear.codes.iter().cloned().chain(stop_learned.then(|| silence.clone())).collect();
     motor.babble(&tract, &sounds, 3, &mut rng);
-    // a word said: None for nothing said or (with the learned stop) silence
-    let say = |plan: &BitVector| motor.plan(plan).and_then(|m| tract.articulate(&m));
     // RT_CORRECT=heard (default): in practice, a wrong word is followed by the teacher saying
     // the right one aloud, which the network hears; RT_CORRECT=oracle: the teacher's word is
     // the target without being heard (the first version)
@@ -1371,6 +1372,38 @@ fn main() {
     // the story as first heard
     let store_all = std::env::var("RT_HC_STORE").map_or(true, |v| v != "listen");
     let mut net = Net::new(seed);
+    // with areas, the voice's own motor area learns by babbling (the shared one is unused)
+    if let Some(b) = net.brain.as_mut() {
+        b.areas[VOICE].motor.as_mut().unwrap().babble(&tract, &sounds, 3, &mut rng);
+    }
+    // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
+    let mut voice_check = (0usize, 0usize);
+    // a word said: None for nothing said or (with the learned stop) silence. With areas, the
+    // voice's area turns the plan into a command and keeps its efference copy, which is compared
+    // with what the ear then hears
+    macro_rules! say {
+        ($plan:expr) => {{
+            let plan: &BitVector = $plan;
+            match net.brain.as_mut() {
+                Some(b) => {
+                    let v = &mut b.areas[VOICE];
+                    let cmd = v.command_for(plan);
+                    cmd.and_then(|c| {
+                        v.issue(&c);
+                        let w = tract.articulate(&c);
+                        let heard = w.map_or_else(zero, |w| sounds[w].clone());
+                        v.sense(&heard, false);
+                        if w.is_some() {
+                            voice_check.0 += 1;
+                            voice_check.1 += (v.effect_error.unwrap_or(0) >= ONE / 2) as usize;
+                        }
+                        w
+                    })
+                }
+                None => motor.plan(plan).and_then(|m| tract.articulate(&m)),
+            }
+        }};
+    }
     let fixed_gate = std::env::var("RT_GATE").map_or(false, |v| v == "fixed");
     let td_debug = std::env::var("RT_TD_DEBUG").is_ok();
     // the striatum's reward is the outcome: words said right in the task (the teacher's
@@ -1704,7 +1737,7 @@ fn main() {
                     let heard = prev.clone().unwrap_or_else(zero);
                     let st = net.step(&zero(), &heard, &rec, false, make_temp, &mut rng);
                     hc_plan!(st);
-                    match say(&st.plan) {
+                    match say!(&st.plan) {
                         Some(w) if w == quiet => {
                             // it says nothing more: the story is over
                             stopped = true;
@@ -2091,7 +2124,7 @@ fn main() {
                 net.learn(&st, &ear.codes[want], &mut rng);
                 if practice {
                     // the network says it and hears itself
-                    let said = say(&st.plan).filter(|&w| w != quiet);
+                    let said = say!(&st.plan).filter(|&w| w != quiet);
                     let ok = said == Some(want);
                     practice_right.0 += ok as usize;
                     practice_right.1 += 1;
@@ -2138,7 +2171,7 @@ fn main() {
                     hc_hear!(want, &cue, store_all, true, false);
                 }
             } else {
-                let said = say(&st.plan).filter(|&w| w != quiet);
+                let said = say!(&st.plan).filter(|&w| w != quiet);
                 if trace > 0 && (trace_all || (book == Book::Closed && !read)) && t < 6 && no_instr == trace_noinstr {
                     trace -= (t == 5) as usize;
                     let near = ear.decode(&st.plan).map_or("-", |w| vocab[w]);
@@ -2160,7 +2193,7 @@ fn main() {
                     );
                 }
                 tally.words += 1;
-                said_seq.push(match say(&st.plan) {
+                said_seq.push(match say!(&st.plan) {
                     Some(w) if w == quiet => "<silence>",
                     Some(w) => vocab[w],
                     None => "…",
@@ -2477,6 +2510,9 @@ fn main() {
     println!("read trials, cursor on the book (steps, CLICK proposed, LEFT proposed, CLICK released, LEFT released): training {:?}, test {:?}", on_book[0], on_book[1]);
     if let Some(x) = ix.as_ref().filter(|x| x.auto) {
         println!("always completing: {} completions, {} reached the cortex (retrieval mode)", x.completions.0, x.completions.1);
+    }
+    if net.brain.is_some() {
+        println!("voice area: {} words said, {} not heard as its efference copy expected", voice_check.0, voice_check.1);
     }
     println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);

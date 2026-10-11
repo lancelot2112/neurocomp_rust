@@ -563,7 +563,8 @@ impl IndexHc {
     fn new(seed: u64) -> Self {
         let mut rng = StdRng::seed_from_u64(seed.wrapping_add(4242));
         let ctx = (0..ACTIVE).map(|_| rng.gen_range(0..CTX_POOL)).collect();
-        let cfg = IndexConfig { min_overlap: 12, ..Default::default() };
+        // RT_HC_TIERS=0: rarity weights 1/n (default: powers of two, 2^−⌊log₂ n⌋)
+        let cfg = IndexConfig { min_overlap: 12, tiers: std::env::var("RT_HC_TIERS").map_or(true, |v| v != "0"), ..Default::default() };
         Self {
             mem: IndexMemory::new(cfg),
             ctx,
@@ -1641,7 +1642,8 @@ fn main() {
                 let next = done.map_or(silence.clone(), |m| motion[m].clone());
                 // the cortex learns what came; curiosity is the progress of its predictions here
                 misses = misses << 1 | (overlap(&st.plan, &next) < 24) as u64;
-                let progress = (misses.count_ones() / 8) as i32 - (misses & 0xFF).count_ones() as i32 - 1;
+                // misses 9..16 steps back minus the last 8 (no divide), beyond one of noise
+                let progress = (misses & 0xFF00).count_ones() as i32 - (misses & 0xFF).count_ones() as i32 - 1;
                 if learn {
                     net.learn(&st, &next, &mut rng);
                     if progress > 0 {

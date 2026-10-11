@@ -98,8 +98,9 @@ impl Mask {
             }
             v
         };
-        let add = pick(list(&|w| c[w] & !self.bits[w]), k, rng);
-        let del = pick(list(&|w| self.bits[w] & !c[w] & !self.sticky[w]), add.len(), rng);
+        // constant density: as many bits added as removed
+        let del = pick(list(&|w| self.bits[w] & !c[w] & !self.sticky[w]), k, rng);
+        let add = pick(list(&|w| c[w] & !self.bits[w]), del.len(), rng);
         for b in add {
             self.bits[b / 64] |= 1 << (b % 64);
         }
@@ -399,8 +400,9 @@ impl MaskStriatum {
                 return out;
             }
             let share = (n / live.len()).max(1);
-            for g in live {
-                let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ 0x5EED)).collect();
+            for (gi, g) in live.into_iter().enumerate() {
+                let salt = 0x5EED ^ (gi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ salt)).collect();
                 h.sort_unstable();
                 out.extend(h.into_iter().take(share));
             }
@@ -426,8 +428,10 @@ impl MaskStriatum {
             return c;
         }
         let share = (k / live.len()).max(1);
-        for g in live {
-            let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ 0x5EED)).collect();
+        for (gi, g) in live.into_iter().enumerate() {
+            // each pathway its own permutation, so their picks are not correlated
+            let salt = 0x5EED ^ (gi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ salt)).collect();
             h.sort_unstable();
             for &x in h.iter().take(share) {
                 let b = (x % self.d as u64) as usize;
@@ -448,8 +452,9 @@ impl MaskStriatum {
         let singles = if self.conj { self.k / 2 } else { self.k };
         let share = (singles / live.len()).max(1);
         let mut picks: Vec<Vec<u64>> = Vec::new();
-        for g in &live {
-            let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ 0x5EED)).collect();
+        for (gi, g) in live.iter().enumerate() {
+            let salt = 0x5EED ^ (gi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ salt)).collect();
             h.sort_unstable();
             for &x in h.iter().take(share) {
                 let b = (x % self.d as u64) as usize;
@@ -555,7 +560,8 @@ impl MaskStriatum {
     /// The dropout keep-masks R, one for each pathway (independent noise in D1 and D2; None
     /// without exploration).
     fn keep(&mut self, explore: bool) -> Option<(Vec<u64>, Vec<u64>)> {
-        if !explore {
+        // grow mode explores with GPi's tonic noise: dropout would silence threshold cells
+        if !explore || self.grow {
             return None;
         }
         let mut shift = self.drop_shift.max(1);
@@ -858,7 +864,7 @@ mod tests {
         let mut st = MaskStriatum::new(2048, 64, 4);
         st.grow = true;
         let ctx = |k: usize| -> Vec<Vec<usize>> { vec![(1000 * k..1000 * k + 64).collect(), (5000..5064).collect()] };
-        for i in 0..800 {
+        for i in 0..1600 {
             let k = i % 2;
             st.begin_groups(&ctx(k), true);
             let c = st.choose(0, 3, true);
@@ -872,4 +878,5 @@ mod tests {
         }
     }
 }
+
 

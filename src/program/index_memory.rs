@@ -50,6 +50,8 @@ pub struct IndexConfig {
     pub cap: usize,
     /// Weight each cue index by 1/n (n = rows containing it); else every index counts 1.
     pub inverse: bool,
+    /// the 1/n weight rounded down to a power of two (2^−⌊log₂ n⌋)
+    pub tiers: bool,
     /// The winner must share at least this many indices with the cue.
     pub min_overlap: u32,
     /// Strength on write, plus `novelty_bonus` × novelty; capped at 255.
@@ -73,7 +75,7 @@ pub struct IndexConfig {
 
 impl Default for IndexConfig {
     fn default() -> Self {
-        Self { cap: 4096, inverse: true, min_overlap: 16, write_strength: 128, novelty_bonus: 127, bump: 16, period: 64, link: true, place_bits: 0, place_pool: 4096, place_base: 0 }
+        Self { cap: 4096, inverse: true, tiers: false, min_overlap: 16, write_strength: 128, novelty_bonus: 127, bump: 16, period: 64, link: true, place_bits: 0, place_pool: 4096, place_base: 0 }
     }
 }
 
@@ -156,7 +158,7 @@ impl IndexMemory {
             if n == 0 || n > self.cfg.cap {
                 continue;
             }
-            let w = if self.cfg.inverse { recip32(n as u64) >> 16 } else { ONE as u64 };
+            let w = self.weight(n);
             for &r in &self.postings[i] {
                 *acc.entry(r).or_default() += w;
             }
@@ -172,6 +174,18 @@ impl IndexMemory {
         let period = if r.consolidated.get() { (self.cfg.period / 4).max(1) } else { self.cfg.period.max(1) };
         let lost = (self.now - r.touched.get()) / period;
         r.strength.get().saturating_sub(lost.min(255) as u8)
+    }
+
+    /// A cue index's vote when `n` rows use it: 1/n, or with `tiers` the power of two at or below
+    /// it, 2^−⌊log₂ n⌋ (a leading-zero count and a shift, no reciprocal table).
+    fn weight(&self, n: usize) -> u64 {
+        if !self.cfg.inverse {
+            ONE as u64
+        } else if self.cfg.tiers {
+            (ONE as u64) >> (63 - (n as u64).leading_zeros())
+        } else {
+            recip32(n as u64) >> 16
+        }
     }
 
     fn n(&self, i: usize) -> usize {
@@ -194,7 +208,7 @@ impl IndexMemory {
             if n > self.cfg.cap {
                 continue;
             }
-            let w = if self.cfg.inverse { recip32(n.max(1) as u64) >> 16 } else { ONE as u64 };
+            let w = self.weight(n.max(1));
             // an index no row holds counts fully in the cue's own weight: it is what is new
             own += w;
             if n == 0 {

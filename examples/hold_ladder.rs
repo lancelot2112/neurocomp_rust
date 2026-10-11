@@ -56,6 +56,12 @@ impl Bg {
             Bg::Masks(x) => x.choose(ch, n, rng.is_some()),
         }
     }
+    fn choose_among(&mut self, ch: usize, cands: &[Vec<Vec<usize>>], rng: Option<&mut StdRng>) -> Option<usize> {
+        match self {
+            Bg::Cells(x) => x.choose_among(ch, cands, rng),
+            Bg::Masks(x) => x.choose_among(ch, cands, rng.is_some()),
+        }
+    }
     fn maintain(&mut self, ch: usize) {
         match self {
             Bg::Cells(x) => x.maintain(ch),
@@ -126,7 +132,16 @@ struct Rung {
     voice: bool,
     /// the striatum has time cells (steps since the last boundary and since the last hold)
     time: bool,
+    /// bookmarks: every boundary is kept (the last `MARKS`), and on every step the striatum may
+    /// go back to one of them (offered by the sound at it and the one before), as readtell's
+    /// index rows; no hold gate
+    marks: bool,
+    /// what going back costs (effort, in sixteenths of a reward)
+    effort: i32,
 }
+
+const MARKS: usize = 6;
+const CH_MARK: usize = 2;
 
 fn pattern(rng: &mut StdRng, n: usize, range: usize) -> Vec<usize> {
     let mut v: Vec<usize> = (0..n).map(|_| rng.gen_range(0..range)).collect();
@@ -167,6 +182,8 @@ struct World {
     times: Vec<Vec<usize>>,
     since_b: usize,
     since_h: usize,
+    /// bookmarks: (episode, position, features)
+    marks: Vec<(usize, usize, Vec<Vec<usize>>)>,
     /// (episode, position, context cells) of what is held
     held: Option<(usize, usize, Vec<usize>)>,
     retrieving: bool,
@@ -190,6 +207,7 @@ impl World {
             times: (0..20).map(|_| pattern(rng, 16, W)).collect(),
             since_b: 0,
             since_h: 0,
+            marks: Vec::new(),
             held: None,
             retrieving: false,
             k: 0,
@@ -264,6 +282,33 @@ fn episode(st: &mut Bg, w: &mut World, ep: usize, rung: Rung, learn: bool, rng: 
             });
         }
         w.step_no += 1;
+        if rung.marks {
+            // every boundary is a bookmark; on every step the striatum may go back to one
+            if let Some(pos) = boundary {
+                if w.marks.len() >= MARKS {
+                    w.marks.remove(0);
+                }
+                let f = vec![heard.iter().map(|&b| b + 10 * 65536).collect(), w.last.iter().map(|&b| b + 11 * 65536).collect()];
+                w.marks.push((ep, pos, f));
+            }
+            if !w.marks.is_empty() && (!w.retrieving || rung.restart) {
+                let cands: Vec<Vec<Vec<usize>>> = w.marks.iter().map(|m| m.2.clone()).collect();
+                let explore = if learn { Some(&mut *rng) } else { None };
+                if let Some(i) = st.choose_among(CH_MARK, &cands, explore) {
+                    let (e, pos, _) = w.marks[i];
+                    w.held = Some((e, pos, ctx[pos.min(L)].clone()));
+                    w.retrieving = true;
+                    w.k = 0;
+                    st.reward(-rung.effort * (ONE as i32 / 16));
+                    t.holds += (e == ep && pos == 0) as usize;
+                    if phase == 0 {
+                        t.reinstated_story += 1;
+                    }
+                }
+            }
+            w.last = heard;
+            return recalled;
+        }
         // the two gates are separate loops: holding at a boundary, then reinstating
         if let Some(pos) = boundary {
             let explore = if learn { Some(&mut *rng) } else { None };
@@ -495,7 +540,7 @@ fn main() {
         }
         return;
     }
-    let base = Rung { name: "", end_only: false, retag: false, theta: false, marker: true, restart: false, hold_given: false, reinstate_given: false, voice: false, time: false };
+    let base = Rung { name: "", end_only: false, retag: false, theta: false, marker: true, restart: false, hold_given: false, reinstate_given: false, voice: false, time: false, marks: false, effort: 0 };
     let rungs = [
         Rung { name: "end", end_only: true, ..base },
         Rung { name: "word", ..base },
@@ -508,6 +553,10 @@ fn main() {
         Rung { name: "scene+rg", retag: true, theta: true, restart: true, voice: true, reinstate_given: true, ..base },
         Rung { name: "time", retag: true, theta: true, restart: true, voice: true, time: true, ..base },
         Rung { name: "time+rg", retag: true, theta: true, restart: true, voice: true, time: true, reinstate_given: true, ..base },
+        Rung { name: "marks", theta: true, restart: true, marks: true, ..base },
+        Rung { name: "marks+eff1", theta: true, restart: true, marks: true, effort: 1, ..base },
+        Rung { name: "marks+eff4", theta: true, restart: true, marks: true, effort: 4, ..base },
+        Rung { name: "marks+eff4+t", theta: true, restart: true, marks: true, effort: 4, time: true, voice: true, ..base },
         Rung { name: "no marker", retag: true, theta: true, restart: true, voice: true, time: true, marker: false, ..base },
     ];
     let only: Option<Vec<String>> = std::env::var("HL_RUNGS").ok().map(|v| v.split(',').map(|x| x.to_string()).collect());

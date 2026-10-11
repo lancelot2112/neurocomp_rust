@@ -1375,6 +1375,8 @@ fn main() {
         let mut sensed = silence.clone();
         if !book_open {
             for _ in 0..waits {
+                // the eye sees the screen: where the cursor is (the striatum's visual input)
+                eye_now = cursor_seen[cursor].clone();
                 if ix.is_some() {
                     let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
                     let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
@@ -1476,6 +1478,10 @@ fn main() {
                     break;
                 }
             }
+        }
+        if !book_open {
+            // no book came into view: the eye sees no page in the task
+            eye_now = zero();
         }
         // RT_IX_HOLD=oracle: the held start is reinstated as the task begins (after the wait)
         if ix_oracle && !read && !make {

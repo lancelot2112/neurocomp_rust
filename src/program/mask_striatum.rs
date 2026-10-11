@@ -288,6 +288,57 @@ impl MaskStriatum {
 
     /// The fixed-popcount context of some input groups: each group gives an equal share of the
     /// `k` bits, its bits with the smallest hashes.
+    /// The context a candidate is scored on: half the bits are the state's own (its single
+    /// inputs, an equal share per pathway), half are pairs of one state input and one candidate
+    /// input. The candidate never counts alone, so "candidates like this" are valued only "in
+    /// states like that" (as a spiny cell with synapses from both).
+    fn candidate_context(&self, candidate: &[Vec<usize>]) -> Vec<u64> {
+        let mut c = self.context_k(&self.state, self.k / 2);
+        let picks = |groups: &[Vec<usize>], n: usize| -> Vec<u64> {
+            let live: Vec<&Vec<usize>> = groups.iter().filter(|g| !g.is_empty()).collect();
+            let mut out = Vec::new();
+            if live.is_empty() {
+                return out;
+            }
+            let share = (n / live.len()).max(1);
+            for g in live {
+                let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ 0x5EED)).collect();
+                h.sort_unstable();
+                out.extend(h.into_iter().take(share));
+            }
+            out
+        };
+        let (a, b) = (picks(&self.state, 16), picks(candidate, 8));
+        if a.is_empty() || b.is_empty() {
+            return c;
+        }
+        for i in 0..self.k - self.k / 2 {
+            let x = mix(a[i % a.len()] ^ b[(i / a.len() + i) % b.len()].rotate_left(29) ^ 0xBEEF);
+            let bit = (x % self.d as u64) as usize;
+            c[bit / 64] |= 1 << (bit % 64);
+        }
+        c
+    }
+
+    /// The fixed-popcount context of some input groups with `k` bits (singles only).
+    fn context_k(&self, groups: &[Vec<usize>], k: usize) -> Vec<u64> {
+        let live: Vec<&Vec<usize>> = groups.iter().filter(|g| !g.is_empty()).collect();
+        let mut c = vec![0u64; self.d / 64];
+        if live.is_empty() {
+            return c;
+        }
+        let share = (k / live.len()).max(1);
+        for g in live {
+            let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ 0x5EED)).collect();
+            h.sort_unstable();
+            for &x in h.iter().take(share) {
+                let b = (x % self.d as u64) as usize;
+                c[b / 64] |= 1 << (b % 64);
+            }
+        }
+        c
+    }
+
     fn context(&self, groups: &[Vec<usize>]) -> Vec<u64> {
         let live: Vec<&Vec<usize>> = groups.iter().filter(|g| !g.is_empty()).collect();
         let mut c = vec![0u64; self.d / 64];
@@ -507,14 +558,15 @@ impl MaskStriatum {
     }
 
     /// The cortex proposes candidates (each its own input groups), the loop picks one or none:
-    /// each is scored by `channel`'s one mask pair on the context of the state with it.
+    /// each is scored by `channel`'s one mask pair on the state's bits and pairs of state and
+    /// candidate bits (`candidate_context`).
     pub fn choose_among(&mut self, channel: usize, candidates: &[Vec<Vec<usize>>], explore: bool) -> Option<usize> {
         if candidates.is_empty() {
             return None;
         }
         self.ensure(channel, 2);
         let keep = self.keep(explore);
-        let xs: Vec<Vec<u64>> = candidates.iter().map(|c| self.context(&[self.state.as_slice(), c.as_slice()].concat())).collect();
+        let xs: Vec<Vec<u64>> = candidates.iter().map(|c| self.candidate_context(c)).collect();
         let q: Vec<i32> = xs.iter().map(|x| {
             let (g, o) = &self.actors[channel][1];
             g.overlap(x, keep.as_ref().map(|k| k.0.as_slice())) - o.overlap(x, keep.as_ref().map(|k| k.1.as_slice()))
@@ -529,7 +581,7 @@ impl MaskStriatum {
     /// A candidate done without the loop choosing it (the cortex initiated it).
     pub fn did_among(&mut self, channel: usize, candidate: &[Vec<usize>]) {
         self.ensure(channel, 2);
-        let x = self.context(&[self.state.as_slice(), candidate].concat());
+        let x = self.candidate_context(candidate);
         if let Some(st) = self.recent.last_mut() {
             st.choices.push((channel, 1, x));
         }

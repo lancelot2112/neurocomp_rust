@@ -1773,6 +1773,56 @@ et al. 2003). Then a word heard alone evokes, through the ear–voice associatio
 says it: the mirror for speech, a learned route from hearing to saying. After 600 sounds: **63 of 63
 words**. Not yet used in the tasks (the inverse model still says the plan).
 
+### The defaults with speech play, imitation and recall where its pointers point
+4 seeds, 1,500 training trials, first test table: self-organizing columns, the senses' goals,
+the teacher's own cursor, touch, mouse play (300), speech play (600), the imitation route, recall
+reinstated in the eye–ear column only.
+
+| seed | read same / other | tell closed | silent | recall right | own book opened at test |
+|---|---|---|---|---|---|
+| 0 | 9.3% / 6.4% | 8.0% | 13–26% | 27.1% | 0% |
+| 1 | 4.8% / 1.2% | 3.1% | 10–17% | 23.6% | 100% |
+| 2 | 12.4% / 9.9% | 11.1% | 8–17% | 31.9% | 0% |
+| 3 | 18.5% / 30.9% | 26.5% | 13–18% | 28.5% | 0% |
+
+- **It speaks on every seed** (the self-organizing default had been silent).
+- **Recall is the best yet** (24–32% of telling steps), with recall reinstated only where its
+  pointers point.
+- **Imagining the click lands on this story's opening** 84% of the time (704 of 818).
+- **Both speech routes work:** of about 22,000 planned words, 11,800 went through the imitation
+  route (the ear–voice association from speech play: 63 of 63 words) and 10,900 through the
+  voice's inverse model.
+- **Still poor:** reading (1–31%, against 40–50% with the shared layers), and reaching the
+  book at test (one seed in four). Play did not teach clicking on a book (chosen clicks on a book
+  near chance).
+
+### Deconstructing the hard-codes
+An audit of the driver for places where it decides or senses what the network should learn
+(the full list is kept with the commits). Removed so far, each now the default:
+1. **Recall without the imagine door.** With areas the hippocampus always completes (no cue, no
+   request, no reinstated context copied from a side map); acetylcholine sets the mode.
+2. **Proposals undecoded.** The mouse is offered every distinct proposal as it is; the motor area
+   makes of it what it can (the old decoder kept only patterns near a known motion and labelled
+   them).
+3. **Imagery by the forward model.** An imagined act is the proposal run through the hand's
+   forward model without acting (how it would feel) and the mirror (how it would look), not an
+   assembly built from a decoded label.
+4. **The story's opening seen**, not felt as if by the network's own hand.
+5. **The teacher's cursor looks like another's,** and the mirror's evoked feel of the teacher's
+   act is resonance in the hand area, no longer the cortex's target as if its own hand had moved.
+6. **Practice speaking** in a quarter of training tasks.
+7. **Touch reports what is there** (a book or nothing; no desk-vs-shelf label).
+8. **Seen acts from visual change** (the motion stream: the area sees onsets between glimpses,
+   as the brain's motion areas do, not the act's code handed over); the mirror and the
+   act–feel association happen inside every step, from co-activity, with no driver calls.
+9. **Salience instead of a fixed play reward:** the dopamine after a click is the eye column's
+   surprise at what then comes into view (the colliculus's short-latency route; Redgrave and
+   Gurney), fading as the change comes to be expected.
+
+Left: the find trials' place cells (the driver's shelf index), recall routed to the eye–ear
+column by the driver's knowledge of where pointers point, the fixed effort cost, and the reading
+reward computed by comparing the plan with the teacher's word.
+
 ## Next
 - **The new defaults on 4 seeds** (running): self-organizing columns, the senses' goals, recall
   reaching every column, touch, play.

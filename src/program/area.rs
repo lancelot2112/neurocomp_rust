@@ -1,0 +1,487 @@
+//! Cortical areas, one per device, and association areas that grow as conjunctions are needed.
+//!
+//! - **An area per device.** A sensor (an eye, an ear), a motor (a vocal tract) or both (a hand:
+//!   it moves, and it feels its own motion) is attached with `Brain::attach`. Each gets its own
+//!   cortical area:
+//!   - a sensory side: its own layer 4, a pool that recruits cells as new inputs need them;
+//!   - a motor side: the inverse and forward models (`MotorArea`). Issuing a command keeps the
+//!     forward model's prediction (the efference copy); what is then sensed is compared with
+//!     it, and the mismatch is the act's *effect error*: "did it do what I expected?".
+//! - **Association areas grow by conjunction.** When two areas are active together often
+//!   enough, an association area for the pair is created; its cells are recruited from their
+//!   joint activity, each with synapses on both. Either one alone then evokes most of the
+//!   pair's code (a word heard evokes what it looks like).
+//! - **A full association area grows** once there are two pairwise areas: its cells conjoin
+//!   the pairwise areas' codes, so it represents the whole scene. It is what an index (the
+//!   hippocampus) reads.
+//!
+//! Everything is binary: a cell is a set of input bits, it fires when at least `theta` of
+//! them are on (popcount), and the `k` most driven cells win.
+
+use std::collections::HashMap;
+
+use crate::bitvec::BitVector;
+use crate::program::motor::MotorArea;
+
+/// A pool of cells over several sources (each `src_bits` bits), recruited as needed.
+pub struct Pool {
+    src_bits: usize,
+    sources: usize,
+    /// at most this many cells (the output's width)
+    pub out_bits: usize,
+    sample: usize,
+    theta: usize,
+    k: usize,
+    /// a new cell samples at least this many active sources (2: a conjunction)
+    min_sources: usize,
+    /// an input not yet covered recruits on its `repeat`-th occurrence
+    repeat: u8,
+    syn: Vec<Vec<u32>>,
+    last: Vec<u64>,
+    index: Vec<Vec<u32>>,
+    seen: HashMap<u64, u8>,
+    tick: u64,
+    rng: u64,
+    /// cells recruited so far (including those that replaced old ones)
+    pub recruited: u64,
+}
+
+impl Pool {
+    pub fn new(sources: usize, src_bits: usize, out_bits: usize, k: usize, min_sources: usize, seed: u64) -> Self {
+        let sample = 16;
+        // a conjunction cell fires on one of its sources fully (completion from either part)
+        let theta = if min_sources >= 2 { sample / 2 } else { sample * 5 / 8 };
+        Self {
+            src_bits,
+            sources,
+            out_bits,
+            sample,
+            theta,
+            k,
+            min_sources,
+            repeat: 1,
+            syn: Vec::new(),
+            last: Vec::new(),
+            index: vec![Vec::new(); sources * src_bits],
+            seen: HashMap::new(),
+            tick: 0,
+            rng: seed | 1,
+            recruited: 0,
+        }
+    }
+
+    /// An uncovered input recruits only on its `n`-th occurrence (default 1).
+    pub fn set_repeat(&mut self, n: u8) {
+        self.repeat = n.max(1);
+    }
+
+    pub fn cells(&self) -> usize {
+        self.syn.len()
+    }
+
+    fn next(&mut self) -> u64 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
+        self.rng
+    }
+
+    /// The input's active bits, in the pool's input space (source `s` at offset `s·src_bits`).
+    fn active(&self, input: &[(usize, &BitVector)]) -> Vec<u32> {
+        let mut on = Vec::new();
+        for &(s, v) in input {
+            if s >= self.sources {
+                continue;
+            }
+            for (wi, &w) in v.as_words().iter().enumerate() {
+                let mut x = w;
+                while x != 0 {
+                    let b = wi * 64 + x.trailing_zeros() as usize;
+                    if b < self.src_bits {
+                        on.push((s * self.src_bits + b) as u32);
+                    }
+                    x &= x - 1;
+                }
+            }
+        }
+        on.sort_unstable();
+        on
+    }
+
+    /// The cells that fire on these active bits (at least `theta`), most driven first, at most `k`.
+    fn fire(&self, on: &[u32]) -> Vec<(u32, usize)> {
+        let mut count: HashMap<u32, usize> = HashMap::new();
+        for &b in on {
+            for &c in &self.index[b as usize] {
+                *count.entry(c).or_default() += 1;
+            }
+        }
+        let mut f: Vec<(u32, usize)> = count.into_iter().filter(|&(_, n)| n >= self.theta).collect();
+        f.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        f.truncate(self.k);
+        f
+    }
+
+    fn code(&self, fired: &[(u32, usize)]) -> BitVector {
+        let mut out = BitVector::new(self.out_bits, Some(0));
+        for &(c, _) in fired {
+            out.bit_set(c as usize);
+        }
+        out
+    }
+
+    /// The pool's code for this input, without learning.
+    pub fn encode(&self, input: &[(usize, &BitVector)]) -> BitVector {
+        let on = self.active(input);
+        self.code(&self.fire(&on))
+    }
+
+    /// The code, learning: the winners tighten toward the input (one synapse, 1/4); if fewer
+    /// than half of `k` fire, the input is not yet covered, and (on its `repeat`-th occurrence)
+    /// new cells are recruited from it, up to `k` in all, each sampling the active sources in
+    /// turn (at least `min_sources` of them must be active). A full pool replaces, of 8 cells
+    /// sampled, the one unused longest.
+    pub fn learn(&mut self, input: &[(usize, &BitVector)]) -> BitVector {
+        self.tick += 1;
+        let on = self.active(input);
+        let fired = self.fire(&on);
+        for &(c, _) in &fired {
+            self.last[c as usize] = self.tick;
+            let r = self.next();
+            if r & 3 != 0 {
+                continue;
+            }
+            let s = &self.syn[c as usize];
+            let off: Vec<usize> = (0..s.len()).filter(|&i| on.binary_search(&s[i]).is_err()).collect();
+            let gain: Vec<u32> = on.iter().copied().filter(|b| s.binary_search(b).is_err()).collect();
+            if off.is_empty() || gain.is_empty() {
+                continue;
+            }
+            let i = off[((r >> 8) as usize) % off.len()];
+            let nb = gain[((r >> 32) as usize) % gain.len()];
+            self.rewire(c as usize, i, nb);
+        }
+        let mut code = self.code(&fired);
+        let srcs: Vec<usize> = {
+            let mut v: Vec<usize> = on.iter().map(|&b| b as usize / self.src_bits).collect();
+            v.dedup();
+            v
+        };
+        if fired.len() * 2 < self.k && srcs.len() >= self.min_sources && !on.is_empty() {
+            // the input's signature: a min-hash of its bits
+            let sig = on.iter().map(|&b| (b as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)).min().unwrap_or(0) ^ (on.len() as u64);
+            let n = self.seen.entry(sig).or_default();
+            *n = n.saturating_add(1);
+            if *n >= self.repeat {
+                self.seen.remove(&sig);
+                if self.seen.len() > 4096 {
+                    self.seen.clear();
+                }
+                let by_src: Vec<Vec<u32>> = srcs.iter().map(|&s| on.iter().copied().filter(|&b| b as usize / self.src_bits == s).collect()).collect();
+                for j in fired.len()..self.k {
+                    let mut s: Vec<u32> = Vec::with_capacity(self.sample);
+                    let mut tries = 0;
+                    while s.len() < self.sample && tries < self.sample * 8 {
+                        tries += 1;
+                        let pick = &by_src[(s.len() + j) % by_src.len()];
+                        let b = pick[(self.next() as usize) % pick.len()];
+                        if !s.contains(&b) {
+                            s.push(b);
+                        }
+                    }
+                    s.sort_unstable();
+                    let c = self.place();
+                    for &b in &s {
+                        self.index[b as usize].push(c as u32);
+                    }
+                    self.syn[c] = s;
+                    self.last[c] = self.tick;
+                    self.recruited += 1;
+                    code.bit_set(c);
+                }
+            }
+        }
+        code
+    }
+
+    /// A slot for a new cell: a new one while there is room, else the stalest of 8 sampled.
+    fn place(&mut self) -> usize {
+        if self.syn.len() < self.out_bits {
+            self.syn.push(Vec::new());
+            self.last.push(0);
+            return self.syn.len() - 1;
+        }
+        let mut best = (u64::MAX, 0usize);
+        for _ in 0..8 {
+            let c = (self.next() as usize) % self.syn.len();
+            if self.last[c] < best.0 {
+                best = (self.last[c], c);
+            }
+        }
+        let c = best.1;
+        for &b in &std::mem::take(&mut self.syn[c]) {
+            self.index[b as usize].retain(|&x| x as usize != c);
+        }
+        c
+    }
+
+    fn rewire(&mut self, c: usize, i: usize, nb: u32) {
+        let old = self.syn[c][i];
+        self.index[old as usize].retain(|&x| x as usize != c);
+        self.index[nb as usize].push(c as u32);
+        self.syn[c][i] = nb;
+        self.syn[c].sort_unstable();
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Kind {
+    Sensor,
+    Motor,
+    SensorMotor,
+}
+
+/// A device's own cortical area.
+pub struct Area {
+    pub name: String,
+    pub kind: Kind,
+    /// layer 4 (sensory side)
+    pub l4: Option<Pool>,
+    /// inverse and forward models (motor side)
+    pub motor: Option<MotorArea>,
+    /// the latest sensory code (layer 4's winners)
+    pub code: BitVector,
+    /// the efference copy of the latest command (what it should be sensed as)
+    expect: Option<BitVector>,
+    /// the latest act's effect error (`Q16`): the share of the expected and sensed bits that
+    /// do not match; None until an act is sensed
+    pub effect_error: Option<u32>,
+}
+
+impl Area {
+    /// Sense `input` (the device's raw code): layer 4's code, learned when `learn`. If a
+    /// command was issued, what is sensed is compared with its efference copy.
+    pub fn sense(&mut self, input: &BitVector, learn: bool) -> BitVector {
+        if let Some(e) = self.expect.take() {
+            let hit: u32 = e.as_words().iter().zip(input.as_words()).map(|(a, b)| (a & b).count_ones()).sum();
+            let total = (e.count_ones() + input.count_ones()) as u32;
+            let one = crate::fixed::ONE;
+            self.effect_error = Some(if total == 0 { 0 } else { one - 2 * hit * one / total });
+        }
+        if let Some(p) = self.l4.as_mut() {
+            self.code = if input.count_ones() == 0 {
+                BitVector::new(p.out_bits, Some(0))
+            } else if learn {
+                p.learn(&[(0, input)])
+            } else {
+                p.encode(&[(0, input)])
+            };
+        }
+        self.code.clone()
+    }
+
+    /// The command for what is meant (a sensory code), from the inverse model.
+    pub fn command_for(&self, meant: &BitVector) -> Option<BitVector> {
+        self.motor.as_ref().and_then(|m| m.plan(meant))
+    }
+
+    /// A command is issued: its efference copy (the forward model's prediction) is kept, to be
+    /// compared with what is sensed next. Returns the prediction.
+    pub fn issue(&mut self, command: &BitVector) -> Option<BitVector> {
+        let p = self.motor.as_ref().and_then(|m| m.predict(command));
+        self.expect = Some(p.clone().unwrap_or_else(|| BitVector::new(command.bit_len(), Some(0))));
+        p
+    }
+
+    /// Both models learn from a command and what it produced (babbling, or any act).
+    pub fn learn_act<R: rand::Rng>(&mut self, command: &BitVector, sensed: &BitVector, rng: &mut R) {
+        if let Some(m) = self.motor.as_mut() {
+            m.observe(command, sensed, rng);
+        }
+    }
+}
+
+/// Areas, the pairwise association areas grown between them, and the full association area.
+pub struct Brain {
+    bits: usize,
+    k: usize,
+    pub areas: Vec<Area>,
+    /// ((area a, area b), its pool)
+    pub pairs: Vec<((usize, usize), Pool)>,
+    /// co-activity counts of pairs without an association area yet
+    together: HashMap<(usize, usize), u32>,
+    /// a pair gets an association area after this many co-active steps
+    pub pair_after: u32,
+    pub full: Option<Pool>,
+    seed: u64,
+}
+
+/// Room for this many pairwise association areas as sources of the full one.
+const MAX_PAIRS: usize = 16;
+
+impl Brain {
+    /// Areas of `bits` cells each, `k` active.
+    pub fn new(bits: usize, k: usize, seed: u64) -> Self {
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed }
+    }
+
+    /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
+    /// Returns the area's index.
+    pub fn attach(&mut self, name: &str, kind: Kind) -> usize {
+        let i = self.areas.len();
+        let l4 = (kind != Kind::Motor).then(|| Pool::new(1, self.bits, self.bits, self.k, 1, self.seed.wrapping_add(17 * i as u64 + 1)));
+        let motor = (kind != Kind::Sensor).then(|| MotorArea::new(self.bits));
+        self.areas.push(Area { name: name.to_string(), kind, l4, motor, code: BitVector::new(self.bits, Some(0)), expect: None, effect_error: None });
+        i
+    }
+
+    /// One step's association: the areas' current codes; pairs active together count toward an
+    /// association area of their own (created after `pair_after` steps); every pairwise area
+    /// codes its pair; once there are two, the full area conjoins them. Returns the full area's
+    /// code if it exists, else the pairwise codes merged (or nothing).
+    pub fn associate(&mut self, learn: bool) -> BitVector {
+        let active: Vec<usize> = (0..self.areas.len()).filter(|&i| self.areas[i].code.count_ones() > 0).collect();
+        if learn {
+            for x in 0..active.len() {
+                for y in x + 1..active.len() {
+                    let key = (active[x], active[y]);
+                    if self.pairs.iter().any(|p| p.0 == key) || self.pairs.len() >= MAX_PAIRS {
+                        continue;
+                    }
+                    let n = self.together.entry(key).or_default();
+                    *n += 1;
+                    if *n >= self.pair_after {
+                        self.together.remove(&key);
+                        let seed = self.seed.wrapping_add(1000 + 31 * self.pairs.len() as u64);
+                        self.pairs.push((key, Pool::new(2, self.bits, self.bits, self.k, 2, seed)));
+                    }
+                }
+            }
+        }
+        let mut codes: Vec<BitVector> = Vec::with_capacity(self.pairs.len());
+        for ((a, b), pool) in self.pairs.iter_mut() {
+            let input = [(0usize, &self.areas[*a].code), (1usize, &self.areas[*b].code)];
+            codes.push(if learn { pool.learn(&input) } else { pool.encode(&input) });
+        }
+        if self.full.is_none() && self.pairs.len() >= 2 {
+            self.full = Some(Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)));
+        }
+        if let Some(full) = self.full.as_mut() {
+            let input: Vec<(usize, &BitVector)> = codes.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
+            return if learn { full.learn(&input) } else { full.encode(&input) };
+        }
+        let mut merged = BitVector::new(self.bits, Some(0));
+        for c in &codes {
+            for (w, x) in merged.as_words_mut().iter_mut().zip(c.as_words()) {
+                *w |= x;
+            }
+        }
+        merged
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::seq::SliceRandom;
+    use rand::SeedableRng;
+
+    const BITS: usize = 2048;
+    const K: usize = 32;
+
+    fn rand_code(rng: &mut StdRng) -> BitVector {
+        let all: Vec<usize> = (0..BITS).collect();
+        BitVector::from_bits(&all.choose_multiple(rng, K).copied().collect::<Vec<_>>(), BITS)
+    }
+
+    fn ov(a: &BitVector, b: &BitVector) -> u32 {
+        a.as_words().iter().zip(b.as_words()).map(|(x, y)| (x & y).count_ones()).sum()
+    }
+
+    #[test]
+    fn a_sensory_area_grows_for_new_inputs_and_keeps_its_codes() {
+        let mut rng = StdRng::seed_from_u64(1);
+        let mut brain = Brain::new(BITS, K, 1);
+        let eye = brain.attach("eye", Kind::Sensor);
+        let inputs: Vec<BitVector> = (0..20).map(|_| rand_code(&mut rng)).collect();
+        let first: Vec<BitVector> = inputs.iter().map(|x| brain.areas[eye].sense(x, true)).collect();
+        let grown = brain.areas[eye].l4.as_ref().unwrap().cells();
+        assert_eq!(grown, 20 * K, "one code per new input");
+        for _ in 0..5 {
+            for x in &inputs {
+                brain.areas[eye].sense(x, true);
+            }
+        }
+        assert_eq!(brain.areas[eye].l4.as_ref().unwrap().cells(), grown, "no growth on familiar inputs");
+        for (x, f) in inputs.iter().zip(&first) {
+            let now = brain.areas[eye].sense(x, false);
+            assert!(ov(&now, f) * 2 >= K as u32, "the code stays put");
+        }
+    }
+
+    #[test]
+    fn association_areas_grow_for_pairs_then_a_full_one() {
+        let mut rng = StdRng::seed_from_u64(2);
+        let mut brain = Brain::new(BITS, K, 2);
+        let eye = brain.attach("eye", Kind::Sensor);
+        let ear = brain.attach("ear", Kind::Sensor);
+        let hand = brain.attach("hand", Kind::SensorMotor);
+        let words: Vec<(BitVector, BitVector)> = (0..10).map(|_| (rand_code(&mut rng), rand_code(&mut rng))).collect();
+        // seen and heard together: one association area, eye–ear
+        let mut pair_code = Vec::new();
+        for round in 0..3 {
+            for (seen, heard) in &words {
+                brain.areas[eye].sense(seen, true);
+                brain.areas[ear].sense(heard, true);
+                brain.areas[hand].sense(&BitVector::new(BITS, Some(0)), true);
+                let c = brain.associate(true);
+                if round == 2 {
+                    pair_code.push(c);
+                }
+            }
+        }
+        assert_eq!(brain.pairs.len(), 1);
+        assert!(brain.full.is_none());
+        // the word heard alone evokes most of what it evoked seen and heard
+        let mut evoked = 0;
+        for ((_, heard), pc) in words.iter().zip(&pair_code) {
+            brain.areas[eye].sense(&BitVector::new(BITS, Some(0)), false);
+            brain.areas[ear].sense(heard, false);
+            let c = brain.associate(false);
+            evoked += (ov(&c, pc) * 2 >= K as u32) as usize;
+        }
+        assert!(evoked >= 9, "heard alone evoked the pair's code for {evoked} of 10");
+        // now the hand moves while words are heard: a second pair, and the full area
+        let motions: Vec<BitVector> = (0..3).map(|_| rand_code(&mut rng)).collect();
+        for i in 0..30 {
+            brain.areas[eye].sense(&BitVector::new(BITS, Some(0)), true);
+            brain.areas[ear].sense(&words[i % 10].1, true);
+            brain.areas[hand].sense(&motions[i % 3], true);
+            brain.associate(true);
+        }
+        assert_eq!(brain.pairs.len(), 2);
+        assert!(brain.full.is_some());
+    }
+
+    #[test]
+    fn an_act_that_does_nothing_is_an_effect_error() {
+        let mut rng = StdRng::seed_from_u64(3);
+        let mut brain = Brain::new(BITS, K, 3);
+        let hand = brain.attach("hand", Kind::SensorMotor);
+        let cmds: Vec<BitVector> = (0..3).map(|_| rand_code(&mut rng)).collect();
+        let felt: Vec<BitVector> = (0..3).map(|_| rand_code(&mut rng)).collect();
+        // babbling: each command and what it is felt as
+        for _ in 0..10 {
+            for (c, f) in cmds.iter().zip(&felt) {
+                brain.areas[hand].learn_act(c, f, &mut rng);
+            }
+        }
+        brain.areas[hand].issue(&cmds[0]);
+        brain.areas[hand].sense(&felt[0], false);
+        assert!(brain.areas[hand].effect_error.unwrap() < crate::fixed::ONE / 4, "as expected");
+        brain.areas[hand].issue(&cmds[1]);
+        brain.areas[hand].sense(&BitVector::new(BITS, Some(0)), false);
+        assert_eq!(brain.areas[hand].effect_error, Some(crate::fixed::ONE), "nothing happened");
+    }
+}

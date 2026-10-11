@@ -559,6 +559,21 @@ struct IndexHc {
     gates_off: bool,
     /// diagnosis: (boundary fired, recalled row) per heard sound, while tracing
     pub log: Vec<(bool, Option<u32>)>,
+    /// always completing (RT_HC_AUTO=1): no cue and no request. Every step the entorhinal
+    /// input (the context and the association area's assembly for what the cortex represents:
+    /// heard, seen, said, meant or imagined) is completed to the stored row it matches best;
+    /// what followed that row is the output, and the context is pulled half way toward the
+    /// row's own. Acetylcholine alone sets the mode: high, the output is suppressed (encoding);
+    /// low, it reaches the cortex (retrieval). Storing goes on in both (the two halves of a
+    /// theta cycle), except for its own speech.
+    auto: bool,
+    /// what the cortex represents now, as association cells (the content half of the input)
+    content: Vec<usize>,
+    /// the row stored at the latest sound (not yet available to recall: it was written in the
+    /// other half of the cycle)
+    just_stored: Option<u32>,
+    /// diagnosis: completions, and of those that reached the cortex
+    completions: (usize, usize),
 }
 
 impl IndexHc {
@@ -604,6 +619,10 @@ impl IndexHc {
             request_left: 0,
             theta: false,
             log: Vec::new(),
+            auto: std::env::var("RT_HC_AUTO").map_or(false, |v| v == "1"),
+            content: Vec::new(),
+            just_stored: None,
+            completions: (0, 0),
         }
     }
 
@@ -656,6 +675,9 @@ impl IndexHc {
     /// What the hippocampus reinstates now: the layer 4 cells stored under the context most
     /// like the current one; else the successor of the last row recalled.
     fn recall(&mut self) -> BitVector {
+        if self.auto {
+            return self.complete();
+        }
         // the sequence bias (CA3's recurrent links): the successor of the row just recalled is
         // expected, and is recalled whenever the cue still matches it well enough
         // expected, and is recalled unless another row matches the cue clearly better (by 12 of
@@ -755,6 +777,48 @@ impl IndexHc {
         v
     }
 
+    /// Always completing (`auto`): the entorhinal input now (context and content) is completed
+    /// to the best matching row other than the one just written; the row that followed it is
+    /// the output (CA3's sequence step), and in retrieval mode the context is pulled half way
+    /// toward the completed row's own (each slot with probability 1/2).
+    fn complete(&mut self) -> BitVector {
+        self.recalls += 1;
+        let cue = self.ec(&self.content);
+        let c = self.mem.matches(&cue, 2).into_iter().map(|x| x.0).find(|&r| Some(r) != self.just_stored);
+        let r = c.map_or_else(Default::default, |c| self.mem.successor(c));
+        self.last_recalled = r.ca3.first().copied();
+        self.to_reconsolidate = self.last_recalled;
+        self.completions.0 += 1;
+        let mut v = zero();
+        if !self.retrieving() {
+            return v;
+        }
+        if let Some((stored, _)) = c.and_then(|c| self.ordered.get(&c)) {
+            if stored.len() == self.ctx.len() {
+                for i in 0..self.ctx.len() {
+                    self.blend_rng ^= self.blend_rng << 13;
+                    self.blend_rng ^= self.blend_rng >> 7;
+                    self.blend_rng ^= self.blend_rng << 17;
+                    if self.blend_rng & 1 == 0 {
+                        self.ctx[i] = stored[i];
+                    }
+                }
+            }
+        }
+        self.completions.1 += 1;
+        for &b in r.ec.iter().filter(|&&b| b < BITS) {
+            v.bit_set(b);
+        }
+        v
+    }
+
+    /// The cortex represents something not heard (meant, said silently, imagined): it becomes
+    /// the content half of the input, and the context moves with it.
+    fn represent(&mut self, cells: &[usize]) {
+        self.content = cells.to_vec();
+        self.step_drift(cells);
+    }
+
     /// A sound is heard (`key` its word, `code` its sensory code, `cells` its layer 4 cells):
     /// store a pointer to the layer 4 cells under the context in force (if `store`), move the
     /// context on with those cells, learn the boundary cell (its input: layer 4) from the
@@ -788,7 +852,12 @@ impl IndexHc {
         }
         // retrieval mode (requested and acetylcholine low): nothing new is stored (encoding and
         // retrieval are separate modes, Hasselmo)
-        if store && (!self.retrieving() || (self.theta && !own)) && !cells.is_empty() {
+        if self.auto {
+            self.content = ones(heard);
+            self.just_stored = None;
+        }
+        let may_store = if self.auto { !own } else { !self.retrieving() || (self.theta && !own) };
+        if store && may_store && !cells.is_empty() {
             // the keys: the context, the place (if a book from the shelf is in view), and the
             // content (the assembly), so the episode can be completed from any of them
             let mut keys = self.ctx.clone();
@@ -801,12 +870,13 @@ impl IndexHc {
             if self.mem.rows() as u32 > id {
                 self.ordered.insert(id, (self.ctx.clone(), false));
                 self.stored_now = Some(id);
+                self.just_stored = Some(id);
             }
         }
         // the context moves on with layer 4's cells, not the raw sound; while retrieving, the
         // network's own speech does not move it (it is predicted: corollary discharge), the
         // recall does (see `recall`)
-        if !(own && self.retrieving()) {
+        if self.auto || !(own && self.retrieving()) {
             self.step_drift(&cells);
         }
         self.last_word = key;
@@ -833,7 +903,7 @@ impl IndexHc {
     /// Retrieval mode: the prefrontal request stands and acetylcholine is low (Hasselmo: high
     /// acetylcholine favours encoding, low favours retrieval).
     fn retrieving(&self) -> bool {
-        self.request && self.ach < ONE / 2
+        (self.request || self.auto) && self.ach < ONE / 2
     }
 
     /// A reach (a motor act that brings a new scene, a book) is an event boundary: the context
@@ -876,6 +946,10 @@ impl IndexHc {
     /// The cortex's own state moves the context when nothing is heard: the association area's
     /// assembly of what it represents (its plan: a word recalled or meant, said or not).
     fn drift_with(&mut self, cells: &[usize]) {
+        if self.auto {
+            self.represent(cells);
+            return;
+        }
         // while retrieving, the cortex represents what is recalled, and that moved it already
         if !self.retrieving() {
             self.step_drift(cells);
@@ -1722,7 +1796,11 @@ fn main() {
                     if let Some(i) = striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
                         let cue = ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng));
                         if let Some(x) = ix.as_mut() {
-                            if let Some(r) = x.best_row(&cue) {
+                            if x.auto {
+                                // the cortex represents the imagined act; the hippocampus completes it
+                                x.represent(&cue);
+                                last_recall = x.complete();
+                            } else if let Some(r) = x.best_row(&cue) {
                                 x.reinstate_row(r);
                             }
                         }
@@ -2298,6 +2376,9 @@ fn main() {
         hand.stats()
     );
     println!("read trials, cursor on the book (steps, CLICK proposed, LEFT proposed, CLICK released, LEFT released): training {:?}, test {:?}", on_book[0], on_book[1]);
+    if let Some(x) = ix.as_ref().filter(|x| x.auto) {
+        println!("always completing: {} completions, {} reached the cortex (retrieval mode)", x.completions.0, x.completions.1);
+    }
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);
     println!("read trials at test, cursor off the book (place:proposed>released): {off_book:?}");
 }

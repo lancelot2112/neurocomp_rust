@@ -279,8 +279,9 @@ struct Step {
     top_in: Option<(BitVector, BitVector, BitVector)>,
     /// with streams: (auditory–motor input, visual–motor input, tuft, their layer 2/3s' expectations)
     streams_in: Option<(BitVector, BitVector, BitVector, BitVector, BitVector)>,
-    /// self-organizing: (per association column: its input and expectation; the tuft)
-    selforg_in: Option<(Vec<(BitVector, BitVector)>, BitVector)>,
+    /// self-organizing: (per association column: its input and expectation; the tuft; per
+    /// sensory column: (area, its code, its expectation))
+    selforg_in: Option<(Vec<(BitVector, BitVector)>, BitVector, Vec<(usize, BitVector, BitVector)>)>,
     l23_row: BitVector,
     l5_row: BitVector,
     mossy: BitVector,
@@ -485,6 +486,18 @@ impl Net {
                 *w |= x;
             }
             let outs = b.step_columns(&[e4.clone(), a4.clone(), h4.clone()], recall, &tuft, learn);
+            // every area's layer 5 offers a goal, the senses' too (sources 30 + the area)
+            let mut sense_ins = Vec::new();
+            for a in [EYE, EAR, HAND] {
+                if let Some((code, exp)) = b.sense_state(a) {
+                    if code.count_ones() > 0 {
+                        if let Some((o, burst)) = b.sense_goal(a, &tuft) {
+                            props.push((30 + a as u8, if burst { Driver::Burst } else { Driver::Spike }, o));
+                        }
+                        sense_ins.push((a, code, exp));
+                    }
+                }
+            }
             let (act, fired) = b.columns_activity();
             self.rec23 = act;
             self.pons = project(&fired);
@@ -500,7 +513,7 @@ impl Net {
             let ctx = frames(&[&pfc, ear]);
             let plan = self.mix(&props, &ctx, &cb_out, temp, rng);
             let ins = outs.into_iter().map(|(_, x, e)| (x, e)).collect();
-            return Step { top_in: None, streams_in: None, selforg_in: Some((ins, tuft)), l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
+            return Step { top_in: None, streams_in: None, selforg_in: Some((ins, tuft, sense_ins)), l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
         }
         if let (Some(sx), Some(b)) = (self.streams.as_mut(), self.brain.as_mut()) {
             let or = |a: &BitVector, b: &BitVector| {
@@ -659,15 +672,19 @@ impl Net {
     }
 
     fn learn(&mut self, st: &Step, target: &BitVector, rng: &mut StdRng) {
-        if let (Some(b), Some((ins, tuft))) = (self.brain.as_mut(), st.selforg_in.as_ref()) {
+        if let (Some(b), Some((ins, tuft, sense_ins))) = (self.brain.as_mut(), st.selforg_in.as_ref()) {
             for (i, (x, e)) in ins.iter().enumerate() {
                 b.learn_goal(i, x, tuft, e, target);
+            }
+            for (a, code, exp) in sense_ins {
+                b.learn_sense_goal(*a, code, tuft, exp, target);
             }
             // which column's goal was right, for which kind of target
             let kind = self.learning_motion as usize;
             for (src, _, pat) in &st.props {
                 if *src >= 10 {
-                    let i = (*src - 10) as usize;
+                    // association columns at 0.., sensory columns at 20 + the area
+                    let i = if *src >= 30 { 20 + (*src - 30) as usize } else { (*src - 10) as usize };
                     if self.goal_hits.len() <= i {
                         self.goal_hits.resize(i + 1, [(0, 0); 2]);
                     }
@@ -1856,28 +1873,57 @@ fn main() {
     let trace_all = std::env::var("RT_TRACE_ALL").map_or(false, |v| v == "1");
     let mut by_cond = [[(0usize, 0usize); 3]; 2];
     let books = [Book::Same, Book::Other, Book::Closed];
-    // RT_TOUCH=1: the hand feels what is under the cursor. Moving, it feels the motion (a
-    // vibration); at rest, the texture of what the cursor is on: the desk's book has one, each
-    // shelf place's book its own
-    let touch_on = std::env::var("RT_TOUCH").map_or(false, |v| v == "1");
-    let textures = Encoder::new(npos, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0x7E47)).codes;
+    // touch (the default; RT_TOUCH=0 off): a fingertip's window over the place under the cursor
+    // and its two neighbours, as the skin's receptors report it:
+    // - a vibration mode for what is under the cursor (its kind: the desk's book, a shelf's
+    //   book, or nothing), as fast receptors report texture;
+    // - an edge on the side where a neighbour differs, as slow receptors report edges: so where
+    //   a thing begins and ends, and whether the cursor is inside it or at its border;
+    // - while moving, the motion itself.
+    // Each part is sparse (the mode 16 bits, an edge 8), so they add up.
+    let touch_on = std::env::var("RT_TOUCH").map_or(true, |v| v != "0");
+    let modes = Encoder::new(3, BITS, ACTIVE / 2, &mut StdRng::seed_from_u64(seed ^ 0x7E47)).codes;
+    let edges = Encoder::new(2, BITS, ACTIVE / 4, &mut StdRng::seed_from_u64(seed ^ 0xED6E)).codes;
+    // what lies at each place: 1 the desk's book, 2 a shelf's book, 0 nothing
+    let kinds: Vec<usize> = (0..npos).map(|p| if p == 0 { 1 } else { 2 }).collect();
     macro_rules! touch {
-        ($sensed:expr, $pos:expr) => {{
+        ($sensed:expr, $pos:expr, $kinds:expr) => {{
             let sensed: &BitVector = $sensed;
-            // (at rest: nothing moved, or only silence was sensed)
-            if touch_on && (sensed.count_ones() == 0 || sensed.as_words() == silence.as_words()) {
-                textures[$pos].clone()
-            } else {
+            let kinds: &[usize] = $kinds;
+            let pos: usize = $pos;
+            if !touch_on {
                 sensed.clone()
+            } else {
+                // what moved (not the silence of nothing sensed)
+                let mut v = if sensed.as_words() == silence.as_words() { zero() } else { sensed.clone() };
+                let mut add = |c: &BitVector| {
+                    for (w, x) in v.as_words_mut().iter_mut().zip(c.as_words()) {
+                        *w |= x;
+                    }
+                };
+                if kinds[pos] > 0 {
+                    add(&modes[kinds[pos]]);
+                }
+                if pos > 0 && kinds[pos - 1] != kinds[pos] {
+                    add(&edges[0]);
+                }
+                if pos + 1 < kinds.len() && kinds[pos + 1] != kinds[pos] {
+                    add(&edges[1]);
+                }
+                if v.count_ones() == 0 {
+                    silence.clone()
+                } else {
+                    v
+                }
             }
         }};
     }
-    // RT_PLAY: trials of play before any teaching (default 0). No teacher, no story: the cursor
+    // RT_PLAY: trials of play before any teaching (default 300; 0 none). No teacher, no story: the cursor
     // starts somewhere, and the network moves (often babbling) and clicks. A click on a book opens
     // it: the eye sees its page. That change, made by its own act, is rewarding in itself (as
     // contingent sensory change is for an infant), so the basal ganglia learn when a click pays,
     // and the cortex what each act does to what is seen and felt.
-    let n_play: usize = env("RT_PLAY", 0);
+    let n_play: usize = env("RT_PLAY", 300);
     let mut play_opened = 0usize;
     // (clicks on a book, clicks in all) in the first and the last half of play, chosen (not babbled)
     let mut play_clicks = [(0usize, 0usize); 2];
@@ -1889,6 +1935,7 @@ fn main() {
             let k = rng.gen_range(0..npos);
             present[k] = true;
         }
+        let play_kinds: Vec<usize> = (0..npos).map(|p| if !present[p] { 0 } else if p == 0 { 1 } else { 2 }).collect();
         let mut sensed = silence.clone();
         let mut seen_motion: Option<usize> = None;
         eye_now = zero();
@@ -1902,7 +1949,7 @@ fn main() {
             eye_now = eye_in.clone();
             td_step!(false, true);
             // (an empty place feels like nothing)
-            let felt_now = if present[cursor] { touch!(&sensed, cursor) } else { sensed.clone() };
+            let felt_now = touch!(&sensed, cursor, &play_kinds);
             let st = if net.brain.is_some() {
                 net.felt = felt_now;
                 net.step(&eye_in, &silence, &zero(), true, 0, &mut rng)
@@ -2276,7 +2323,7 @@ fn main() {
                     None => scene,
                 };
                 // with areas, the hand feels its motion in its own area; the ear hears nothing
-                let felt_now = touch!(&sensed, cursor);
+                let felt_now = touch!(&sensed, cursor, &kinds);
                 let st = if net.brain.is_some() {
                     net.felt = felt_now;
                     net.step(&eye_in, &silence, &zero(), learn, 0, &mut rng)
@@ -3009,10 +3056,11 @@ fn main() {
         }
         if net.selforg {
             let names: Vec<String> = b.pairs.iter().map(|p| format!("{}+{}", b.areas[p.0 .0].name, b.areas[p.0 .1].name)).chain(b.full.iter().map(|_| "full".to_string())).collect();
-            for (i, h) in net.goal_hits.iter().enumerate() {
+            for (i, h) in net.goal_hits.iter().enumerate().filter(|(_, h)| h[0].0 + h[1].0 > 0) {
+                let name = if i >= 20 { format!("sense {}", b.areas[i - 20].name) } else { names.get(i).cloned().unwrap_or_else(|| "?".into()) };
                 println!(
-                    "  association column {}: sounds right {} of {} offered, mouse acts right {} of {}",
-                    names.get(i).map_or("?", |x| x.as_str()),
+                    "  column {}: sounds right {} of {} offered, mouse acts right {} of {}",
+                    name,
                     h[0].1,
                     h[0].0,
                     h[1].1,

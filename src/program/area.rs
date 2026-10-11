@@ -510,11 +510,11 @@ impl Brain {
         let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
         let mut out = Vec::new();
         for (col, inp) in self.assoc_columns().into_iter().zip(inputs) {
+            // the hippocampus's return reaches every column, whether or not a sense is active
+            // (recalling with the book shut, nothing is seen or heard)
             let mut x = inp;
-            if x.count_ones() > 0 {
-                for (w, y) in x.as_words_mut().iter_mut().zip(extra.as_words()) {
-                    *w |= y;
-                }
+            for (w, y) in x.as_words_mut().iter_mut().zip(extra.as_words()) {
+                *w |= y;
             }
             col.sense_code(&x, Some(tuft), learn, &mut rng);
             let exp = col.expected.clone().unwrap_or_else(|| BitVector::new(x.bit_len(), Some(0)));
@@ -573,6 +573,31 @@ impl Brain {
         if let Some(col) = self.areas[a].col.as_mut() {
             col.sense(&[(0, code)], feedback, learn, &mut self.rng);
         }
+    }
+
+    /// A sensory column's goal (every area's layer 5 offers one): from its latest code, the
+    /// tuft and its expectation. With its input the area's own (what is seen, alone), it can
+    /// learn what the association areas cannot tell apart (say what is seen, not what comes next).
+    pub fn sense_goal(&mut self, a: usize, tuft: &BitVector) -> Option<(BitVector, bool)> {
+        let col = self.areas[a].col.as_mut()?;
+        let code = col.code.clone();
+        let exp = col.expected.clone().unwrap_or_else(|| BitVector::new(code.bit_len(), Some(0)));
+        col.l5.predict_full(&code, Some(tuft), Some(&exp))
+    }
+
+    /// A sensory column's layer 5 learns that `target` was the goal (only where its input is active).
+    pub fn learn_sense_goal(&mut self, a: usize, code: &BitVector, tuft: &BitVector, exp: &BitVector, target: &BitVector) {
+        let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
+        if let Some(col) = self.areas[a].col.as_mut() {
+            col.l5.learn(code, Some(tuft), Some(exp), target, &mut rng);
+        }
+        self.rng = rng;
+    }
+
+    /// A sensory column's latest code and expectation (to learn from).
+    pub fn sense_state(&self, a: usize) -> Option<(BitVector, BitVector)> {
+        let col = self.areas[a].col.as_ref()?;
+        Some((col.code.clone(), col.expected.clone().unwrap_or_else(|| BitVector::new(col.code.bit_len(), Some(0)))))
     }
 
     /// The sensory columns' predictions: (checked, right).

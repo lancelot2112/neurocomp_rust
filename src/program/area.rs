@@ -610,6 +610,14 @@ impl Brain {
         self.pairs.iter().map(|p| &p.1).chain(self.full.iter()).fold((0, 0), |a, c| (a.0 + c.hits.0, a.1 + c.hits.1))
     }
 
+    /// Layer 4's code for `input` in area `a`, without learning (from a shared reference).
+    pub fn encode_only(&self, a: usize, input: &BitVector) -> BitVector {
+        match self.areas[a].l4.as_ref() {
+            Some(p) if input.count_ones() > 0 => p.encode(&[(0, input)]),
+            _ => BitVector::new(self.bits, Some(0)),
+        }
+    }
+
     /// As `associate`, for given codes (one per area, in order; empty for a silent area).
     pub fn associate_codes(&mut self, codes: &[BitVector], learn: bool) -> BitVector {
         let active: Vec<usize> = (0..codes.len()).filter(|&i| codes[i].count_ones() > 0).collect();

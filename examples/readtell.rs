@@ -1918,6 +1918,40 @@ fn main() {
             }
         }};
     }
+    // speech play (with areas; RT_SPEECH_PLAY sounds, default 600, 0 none), before any teaching,
+    // as an infant's canonical babbling: the network makes a sound (a random command to the vocal
+    // tract) and hears it. The ear's area and column hear it, and the voice's area holds the
+    // command issued (its efference copy), so the two are active together and an auditory–motor
+    // association area grows between them (the dorsal speech stream). Half the time a caregiver
+    // answers with the same sound, heard in their voice (contingent replies shape babbling).
+    // Then a word heard alone evokes, through that association, the command that says it: the
+    // mirror for speech, a learned route from hearing to saying (imitation).
+    let n_speech: usize = env("RT_SPEECH_PLAY", 600);
+    if let (true, Some(_)) = (n_speech > 0, net.brain.as_ref()) {
+        for _ in 0..n_speech {
+            let w = rng.gen_range(0..tract.len());
+            let cmd = tract.command(w).clone();
+            let heard = tract.articulate(&cmd).map_or_else(|| silence.clone(), |x| sounds[x].clone());
+            let answer = rng.gen_bool(0.5);
+            let b = net.brain.as_mut().unwrap();
+            b.areas[VOICE].motor.as_mut().unwrap().observe(&cmd, &heard, &mut rng);
+            let a4 = b.encode(EAR, &heard, true);
+            b.sense_step(EAR, &a4, None, true);
+            b.associate_codes(&[zero(), a4, zero(), cmd], true);
+            if answer {
+                let a4 = b.encode(EAR, &heard, true);
+                b.sense_step(EAR, &a4, None, true);
+            }
+        }
+        // imitation: each word heard alone, through the ear–voice association, to a command
+        let b = net.brain.as_ref().unwrap();
+        let mut right = 0;
+        for w in 0..sounds.len().min(tract.len()) {
+            let e = b.encode_only(EAR, &sounds[w]);
+            right += (tract.articulate(&b.mirror(EAR, &e, VOICE)) == Some(w)) as usize;
+        }
+        println!("speech play: {n_speech} sounds babbled; a word heard evokes the command that says it for {right} of {} words (the ear–voice association)", sounds.len().min(tract.len()));
+    }
     // RT_PLAY: trials of play before any teaching (default 300; 0 none). No teacher, no story: the cursor
     // starts somewhere, and the network moves (often babbling) and clicks. A click on a book opens
     // it: the eye sees its page. That change, made by its own act, is rewarding in itself (as

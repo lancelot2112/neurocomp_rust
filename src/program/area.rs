@@ -340,7 +340,28 @@ impl Brain {
     /// codes its pair; once there are two, the full area conjoins them. Returns the full area's
     /// code if it exists, else the pairwise codes merged (or nothing).
     pub fn associate(&mut self, learn: bool) -> BitVector {
-        let active: Vec<usize> = (0..self.areas.len()).filter(|&i| self.areas[i].code.count_ones() > 0).collect();
+        let codes: Vec<BitVector> = self.areas.iter().map(|a| a.code.clone()).collect();
+        self.associate_codes(&codes, learn)
+    }
+
+    /// Layer 4's code for `input` in area `a`, learned when `learn` (the area's current code is
+    /// left as it is: for what is imagined or merely considered).
+    pub fn encode(&mut self, a: usize, input: &BitVector, learn: bool) -> BitVector {
+        match self.areas[a].l4.as_mut() {
+            Some(p) if input.count_ones() > 0 => {
+                if learn {
+                    p.learn(&[(0, input)])
+                } else {
+                    p.encode(&[(0, input)])
+                }
+            }
+            _ => BitVector::new(self.bits, Some(0)),
+        }
+    }
+
+    /// As `associate`, for given codes (one per area, in order; empty for a silent area).
+    pub fn associate_codes(&mut self, codes: &[BitVector], learn: bool) -> BitVector {
+        let active: Vec<usize> = (0..codes.len()).filter(|&i| codes[i].count_ones() > 0).collect();
         if learn {
             for x in 0..active.len() {
                 for y in x + 1..active.len() {
@@ -358,20 +379,20 @@ impl Brain {
                 }
             }
         }
-        let mut codes: Vec<BitVector> = Vec::with_capacity(self.pairs.len());
+        let mut pair_codes: Vec<BitVector> = Vec::with_capacity(self.pairs.len());
         for ((a, b), pool) in self.pairs.iter_mut() {
-            let input = [(0usize, &self.areas[*a].code), (1usize, &self.areas[*b].code)];
-            codes.push(if learn { pool.learn(&input) } else { pool.encode(&input) });
+            let input = [(0usize, &codes[*a]), (1usize, &codes[*b])];
+            pair_codes.push(if learn { pool.learn(&input) } else { pool.encode(&input) });
         }
         if self.full.is_none() && self.pairs.len() >= 2 {
             self.full = Some(Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)));
         }
         if let Some(full) = self.full.as_mut() {
-            let input: Vec<(usize, &BitVector)> = codes.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
+            let input: Vec<(usize, &BitVector)> = pair_codes.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
             return if learn { full.learn(&input) } else { full.encode(&input) };
         }
         let mut merged = BitVector::new(self.bits, Some(0));
-        for c in &codes {
+        for c in &pair_codes {
             for (w, x) in merged.as_words_mut().iter_mut().zip(c.as_words()) {
                 *w |= x;
             }

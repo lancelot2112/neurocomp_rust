@@ -1635,6 +1635,9 @@ fn main() {
     // the story as first heard
     let store_all = std::env::var("RT_HC_STORE").map_or(true, |v| v != "listen");
     let mut net = Net::new(seed);
+    // with areas (the default), proposals are offered undecoded (RT_DECODE=1: only those near a
+    // known motion, labelled)
+    let undecoded = net.brain.is_some() && std::env::var("RT_DECODE").map_or(true, |v| v != "1");
     // with areas, the voice's own motor area learns by babbling (the shared one is unused)
     if let Some(b) = net.brain.as_mut() {
         b.areas[VOICE].motor.as_mut().unwrap().babble(&tract, &sounds, 3, &mut rng);
@@ -1669,6 +1672,43 @@ fn main() {
                     }
                 }
                 None => net.assoc_of(&zero(), &motion[m], false, &mut rng),
+            }
+        }};
+    }
+    // an act imagined (with areas): the cortex's proposal, as the hand's motor area would carry
+    // it out, run through its forward model without acting (motor imagery): how it would feel;
+    // the mirror adds how it would look; their association is the act as the cortex represents
+    // it. No label: whatever the proposal is.
+    macro_rules! imagined_assembly {
+        ($pat:expr) => {{
+            let pat: &BitVector = $pat;
+            let cmd = hand!().plan(pat);
+            let felt = cmd.and_then(|c| hand!().predict(&c)).unwrap_or_else(zero);
+            let b = net.brain.as_mut().unwrap();
+            let h = b.encode(HAND, &felt, false);
+            let seen = b.mirror(HAND, &h, ACTS);
+            let e = b.encode_only(ACTS, &seen);
+            let c = b.associate_codes(&[zero(), zero(), h.clone(), zero(), e], false);
+            if c.count_ones() > 0 {
+                c
+            } else {
+                h
+            }
+        }};
+    }
+    // an act seen (with areas): how it looks, and through the mirror how it would feel
+    macro_rules! seen_assembly {
+        ($seen:expr) => {{
+            let seen: &BitVector = $seen;
+            let b = net.brain.as_mut().unwrap();
+            let e = b.encode_only(ACTS, seen);
+            let felt = b.mirror(ACTS, &e, HAND);
+            let h = b.encode_only(HAND, &felt);
+            let c = b.associate_codes(&[zero(), zero(), h, zero(), e.clone()], false);
+            if c.count_ones() > 0 {
+                c
+            } else {
+                e
             }
         }};
     }
@@ -1737,6 +1777,11 @@ fn main() {
     let sleep_every: usize = env("RT_SLEEP_EVERY", 10);
     let replays: usize = env("RT_REPLAY", 3);
     let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
+    // with areas (the default), the hippocampus always completes (no cue, no request; acetylcholine
+    // sets the mode); RT_HC_AUTO=0: the imagine-to-reinstate route
+    if let Some(x) = ix.as_mut() {
+        x.auto = std::env::var("RT_HC_AUTO").map_or(net.brain.is_some(), |v| v == "1");
+    }
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle || std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause" || v == "imagine");
         x.hold_off = hold_oracle;
@@ -2014,9 +2059,16 @@ fn main() {
                 _ => net.l5.proposals(BITS),
             };
             for (pat, _) in proposals {
-                let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
-                if 2 * overlap(&pat, &motion[best]) >= ACTIVE as u32 && !cands.iter().any(|c| c.0 == best) {
-                    cands.push((best, pat));
+                if !undecoded {
+                    let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
+                    if 2 * overlap(&pat, &motion[best]) >= ACTIVE as u32 && !cands.iter().any(|c| c.0 == best) {
+                        cands.push((best, pat));
+                    }
+                } else if cands.len() < 8 && !cands.iter().any(|c| overlap(&c.1, &pat) * 2 >= ACTIVE as u32) {
+                    // every distinct proposal is offered as it is (the motor area makes of it what
+                    // it can); the motion it is nearest is kept for the readouts only
+                    let label = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
+                    cands.push((label, pat));
                 }
             }
             // babbling, often: half the steps
@@ -2097,7 +2149,7 @@ fn main() {
         // next word and stores it
         if story_book {
             // (with areas, the click is seen, not heard: an act, as the cortex represents acts)
-            let cells = act_assembly!(CLICK);
+            let cells = if net.brain.is_some() { seen_assembly!(&motion_seen[CLICK]) } else { act_assembly!(CLICK) };
             if ix.is_some() {
                 let before = ix.as_ref().unwrap().mem.rows();
                 let fired = ix.as_mut().unwrap().hear(quiet, &motion[CLICK], &cells, &cells, true, false);
@@ -2414,9 +2466,16 @@ fn main() {
                     _ => net.l5.proposals(BITS),
                 };
                 for (pat, _) in proposals {
-                    let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
-                    if 2 * overlap(&pat, &motion[best]) >= ACTIVE as u32 && !cands.iter().any(|c| c.0 == best) {
-                        cands.push((best, pat));
+                    if !undecoded {
+                        let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
+                        if 2 * overlap(&pat, &motion[best]) >= ACTIVE as u32 && !cands.iter().any(|c| c.0 == best) {
+                            cands.push((best, pat));
+                        }
+                    } else if cands.len() < 8 && !cands.iter().any(|c| overlap(&c.1, &pat) * 2 >= ACTIVE as u32) {
+                        // every distinct proposal is offered as it is (the motor area makes of it what
+                        // it can); the motion it is nearest is kept for the readouts only
+                        let label = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
+                        cands.push((label, pat));
                     }
                 }
                 // the teacher shows how (training, RT_TEACH=mouse, default): if the network has not
@@ -2443,7 +2502,7 @@ fn main() {
                     let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
                     if let Some(i) = striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
                         // the act the proposal is (the motion it matched), as the cortex represents it
-                        let cue = if net.brain.is_some() { ones(&act_assembly!(cands[i].0)) } else { ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng)) };
+                        let cue = if net.brain.is_some() { ones(&imagined_assembly!(&cands[i].1)) } else { ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng)) };
                         if let Some(x) = ix.as_mut() {
                             if x.auto {
                                 // the cortex represents the imagined act; the hippocampus completes it
@@ -2643,7 +2702,7 @@ fn main() {
             striatum.end(learn, &mut rng);
         }
         if imagine_oracle && !read && !make {
-            let cue = ones(&act_assembly!(CLICK));
+            let cue = if net.brain.is_some() { ones(&seen_assembly!(&motion_seen[CLICK])) } else { ones(&act_assembly!(CLICK)) };
             if let Some(x) = ix.as_mut() {
                 if let Some(r) = x.best_row(&cue) {
                     x.reinstate_row(r);

@@ -733,14 +733,132 @@ firing.
 - **Retelling and finding are unchanged.** They are limited by the hippocampal gates (recall
   about 0%), not by the striatum.
 
+## Holding and reinstating: a test ladder, bookmarks, and actions that grow
+**The question.** The learned gates hold and reinstate at the wrong moments: about 11 holds and
+11 reinstatements per trial, so recall stays at 0%. Is the striatum missing input, or credit?
+
+### A test ladder
+[`examples/hold_ladder.rs`](../../examples/hold_ladder.rs) is the read/tell task without the
+cortex:
+- a 16-word story with event boundaries at words 0, 4, 8 and 12;
+- the instruction ("now", the verb, "it");
+- three waiting steps, then six task words.
+
+Hold and reinstate are striatal channels, decided as in readtell. Each rung adds one thing.
+Results are means over 2 seeds, 3,000 episodes, then 400 test episodes:
+
+| rung | what it adds | holds / episode | start held | tell words right |
+|---|---|---|---|---|
+| end | one reward at the episode's end | 0.00 | 0% | 0% |
+| word | a reward per right task word | 0.00 | 0% | 0% |
+| retag | the hold's tag re-armed when its content is used (PBWM) | 0.01 | 0% | 0% |
+| theta | storing goes on while retrieving | 0.01 | 0% | 0% |
+| restart | reinstating may start the sequence over | 0.02 | 0.2% | 0% |
+| **hold given** | the hold made by the driver; reinstating learned | 1.00 | 100% | **100%** |
+| reinstate given | reinstating made by the driver under "tell"; holding learned | 0.00 | 0% | 0% |
+| scene / time | the teacher's voice and a page as input; time cells | 0–1.2 | 0% | 0–3% |
+
+**Findings:**
+- **Reinstating is learnable from per-word dopamine.** With the hold given, it happens after the
+  instruction 99% of the time and almost never mid-story, and every retold word is right. Its
+  payoff comes 1–4 steps later.
+- **Holding is not learnable in any form tried,** even with reinstating given. Its payoff comes
+  about 25 steps later, and only if no later boundary overwrites it.
+  - The credit for it is about (⅘)^25 ≈ 0.004.
+  - Exploring finds it about ⅕ × (⅘)^4 ≈ 8% of the time.
+  - Noise credit at "now", the same sound every episode and just before the verb that predicts
+    reward, wins instead.
+- **What the striatum lacked, found on the way** (now in
+  [`src/program/striatum.rs`](../../src/program/striatum.rs)):
+  - **Discounting (⅞) and a TD(0) critic.** A steady reward flow gave a burst on every step
+    (δ = 1 + V − V), which credited whatever gate had fired.
+  - **Dips read by D2 affinity.** A dip used to stop at silence (−1) while bursts reach +3, so
+    releasing was favoured on average. Dips now reach as far as bursts, read by the
+    high-affinity D2 receptors.
+  - **A pause threshold for the cholinergic interneurons:** a quarter of a reward. Small tonic
+    drift (−V/8 on every step of a story) no longer punishes every action.
+  - **Pruning of unused critic cells.** The critic sat at its cap, full of cells for one-off
+    words. Pruning the actor pools broke learning, so it stays off there.
+  - **Stable phase context.** With only content as input, the critic cannot value "reading,
+    step k". It needs the voice, a page in view and elapsed time, and cells that combine two
+    pathways.
+  - **Conflict means close competitors.** STN now counts options driven within 2 cells of the
+    strongest, not every option driven. With many candidates the old brake released nothing.
+
+### A regression found: the closed book
+In the closed-book condition a reach still "succeeded": the world handed over an empty book.
+The reach was an event boundary that moved the context by half. The oracle reinstated the
+story's start *before* the wait, so the reach erased it. Every oracle run since reaching was
+learned (100%) was broken this way.
+
+**The fix corrects the world:**
+- a closed book cannot be grasped;
+- the oracle reinstates as the task begins.
+
+| oracle (hold and reinstate given), 1,500 trials | tell, book closed | recall right |
+|---|---|---|
+| storing during retrieval (theta) | 18.8 / 27.0% | 32% |
+| retrieval stops storing | **61.0 / 54.5%** | **57%** |
+
+Storing during retrieval files the teacher's retelling under the reinstated context, and those
+rows then win recall. It is now off by default (`RT_THETA=on` restores it).
+
+### Bookmarks instead of a hold
+The hold is better as the hippocampus's job: people anchor memories at event onsets, and recall
+of a narrative starts at boundaries. Two versions were built.
+- **The strongest anchor** (`RT_ANCHOR=strongest`): each boundary keeps its context with its
+  strength (how far the boundary cell's expected surprise rose above threshold).
+  - It fails: strength is about the same everywhere (+0.11 in the story, +0.105 after the task).
+  - The boundary cell fires on the input *before* an unpredictable stretch (the pause), not at
+    the story's first word.
+- **Bookmarks chosen when needed** (`RT_ANCHOR=choose`, default): the last 16 boundaries are
+  kept. The striatum may go back to one at any step, or none.
+  - The choice is made by a new `Striatum::choose_among`, "cortex proposes, basal ganglia
+    dispose". Each candidate is scored by one shared pair of go/no-go pools on the state
+    together with the candidate's own features:
+    - its age (time cells);
+    - its strength;
+    - the sound before it and the sound at it.
+  - A test learns which feature to pick per context on fresh candidates it has never seen.
+  - A prefrontal request to retrieve now lapses after 32 steps unless renewed. Without that,
+    retrieval mode never ended and storing stopped after a few hundred rows.
+
+| 1,500 trials | read, same / another book | tell, book closed | recall right | find: right place |
+|---|---|---|---|---|
+| bookmarks chosen | 83.6 / 80.7% | 2.0% | 0.2% | 40% (15 trials) |
+
+Reading is the best yet, but the bookmark of the story's start is not yet found: recall stays
+near 0%.
+
+### Actions that grow, with curiosity
+- **A repertoire** ([`src/program/repertoire.rs`](../../src/program/repertoire.rs)):
+  - The motor cortex proposes motor commands (babbling), and the basal ganglia choose among
+    them with `choose_among`.
+  - Each command is offered with its own bits and with what the motor area predicts it will do
+    (its efference copy), so an action is chosen by its expected effect.
+  - Half of all new proposals vary the command worth the most so far. A full repertoire drops
+    the command worth the least.
+- **What a command does is learned by the existing motor area** (`MotorArea::observe`): its
+  forward model, motor command → what the senses report, on the same predictive kernels as the
+  rest of the cortex.
+- **Curiosity is learning progress:** a slow average of a command's prediction error minus a
+  fast one, beyond the error's usual variation.
+  - In a test, a learnable effect pays about 1.9 rewards over its first 10 tries, then nothing
+    (boredom).
+  - A random effect pays about 0.3 in all, and nothing later.
+  - Each command costs ¹⁄₁₆ of a reward of effort.
+- **The world has a body.** One field of a command's bits points the arm at one of four places;
+  another closes the hand. A grasp toward a place with a book opens it. The senses report
+  proprioception, the grasp, and a page when one comes into view.
+
+**Result: it does not learn yet.** In 1,500 trials the basal ganglia released a command only 82
+times, the book was never opened, and reading fell to 0–14%. It is opt-in (`RT_MOTOR=on`) until
+it learns.
+
 ## Next
-- **Learn when to hold and reinstate.** The gates need credit for what holding makes possible
-  later (retelling), not for predicting the predictable.
-- **Let the cortex learn from replay,** and find why retelling falls silent with the index.
-- **The hippocampal gates under TD:** reinstating should cost something (it stops the hippocampus
-  taking in what is new), and the hold needs the boundary that begins a story to be distinct in
-  the state.
-- **Better cross-modal convergence** in the association area, the limit on finding a book by name.
-- **Credit for the gate per instruction.** Compare the reward with what the same trial type
-  usually earns, not the overall average, so holding "tell" is credited.
+- **The motor ladder.** Test `choose_among` with a growing repertoire in a toy, as the hold
+  ladder did, to find why commands are almost never released.
+- **Find the story's start among the bookmarks.** Check in the toy that the bookmark after the
+  pause is learnable at the time of need. Then find whether readtell lacks the input (the pause
+  in the bookmark's features) or the credit.
 - **Seeds 1–4** for every column.

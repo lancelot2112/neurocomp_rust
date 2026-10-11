@@ -28,11 +28,14 @@ pub const EFFORT: i32 = (ONE / 16) as i32;
 
 struct Command {
     code: BitVector,
+    bits: Vec<usize>,
     /// prediction error, fast and slow averages (`Q16`)
     fast: u32,
     slow: u32,
     /// how much the error usually varies (mean absolute deviation from the slow average)
     dev: u32,
+    /// what it has been worth: a running average of the dopamine that followed it (`Q16`)
+    worth: i32,
     last_used: u64,
 }
 
@@ -52,19 +55,35 @@ impl Repertoire {
         Self { commands: Vec::new(), cap, bits, active, clock: 0, stats: (0, 0) }
     }
 
-    /// The motor cortex proposes a new command. Returns its index and whether it replaced an
-    /// older one there (whose striatal cells must then be cleared).
+    /// The motor cortex proposes a new command: half the time (once something has paid) a
+    /// variation of the command worth most so far (two of its bits moved: exploration around
+    /// what works, as in song learning), else a random one. Returns its index and whether it
+    /// replaced an older one (the one worth least, of those worth no more than nothing first,
+    /// the oldest among equals).
     pub fn propose<R: Rng>(&mut self, rng: &mut R) -> (usize, bool) {
-        let mut bits: Vec<usize> = (0..self.active).map(|_| rng.gen_range(0..self.bits)).collect();
+        let best = (0..self.commands.len()).filter(|&i| self.commands[i].worth > 0).max_by_key(|&i| self.commands[i].worth);
+        let mut bits: Vec<usize> = match best {
+            Some(b) if rng.gen_bool(0.5) => {
+                let mut v = self.commands[b].bits.clone();
+                for _ in 0..2 {
+                    if !v.is_empty() {
+                        let k = rng.gen_range(0..v.len());
+                        v[k] = rng.gen_range(0..self.bits);
+                    }
+                }
+                v
+            }
+            _ => (0..self.active).map(|_| rng.gen_range(0..self.bits)).collect(),
+        };
         bits.sort_unstable();
         bits.dedup();
-        let c = Command { code: BitVector::from_bits(&bits, self.bits), fast: ONE, slow: ONE, dev: 0, last_used: self.clock };
+        let c = Command { code: BitVector::from_bits(&bits, self.bits), bits: bits.clone(), fast: ONE, slow: ONE, dev: 0, worth: 0, last_used: self.clock };
         self.stats.0 += 1;
         if self.commands.len() < self.cap {
             self.commands.push(c);
             (self.commands.len() - 1, false)
         } else {
-            let i = (0..self.commands.len()).min_by_key(|&i| self.commands[i].last_used).unwrap();
+            let i = (0..self.commands.len()).min_by_key(|&i| (self.commands[i].worth.max(0), self.commands[i].last_used)).unwrap();
             self.commands[i] = c;
             self.stats.1 += 1;
             (i, true)
@@ -83,6 +102,17 @@ impl Repertoire {
         c.dev = c.dev - c.dev / 16 + err.abs_diff(c.slow) / 16;
         // progress beyond the error's usual variation (a noisy error's dips are not progress)
         (c.slow as i32 - c.fast as i32 - c.dev as i32).max(0)
+    }
+
+    /// The dopamine that followed command `i` (`Q16`): its worth moves an eighth of the way.
+    pub fn credit(&mut self, i: usize, dopamine: i32) {
+        let c = &mut self.commands[i];
+        c.worth += (dopamine - c.worth) / 8;
+    }
+
+    /// What command `i` has been worth (`Q16`).
+    pub fn worth(&self, i: usize) -> i32 {
+        self.commands[i].worth
     }
 
     /// The motor code of command `i`.

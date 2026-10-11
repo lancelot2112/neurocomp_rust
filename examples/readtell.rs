@@ -452,6 +452,8 @@ const CH_MOTOR: usize = 5;
 /// and where their features sit in the striatum's input ids
 const CH_MARK: usize = 6;
 const MARKS: usize = 16;
+/// steps a request to retrieve lasts unless renewed
+const REQUEST_STEPS: usize = 32;
 const MARK_BASE: usize = 1 << 24;
 /// where motor commands' bits sit in the striatum's input ids
 const MOTOR_BASE: usize = 1 << 25;
@@ -468,17 +470,17 @@ const MOTOR_CAP: usize = 32;
 const BABBLE: u32 = 8;
 
 /// The body (part of the world, not of the network): what a motor pattern does. Its bits in
-/// 0..64 point the arm (the quarter with the most bits, if it has at least two and no other
-/// quarter as many: one of four places, else nowhere); at least two bits in 64..96 close the
+/// 0..128 point the arm (the quarter with the most bits, if it has at least two and no other
+/// quarter as many: one of four places, else nowhere); at least two bits in 128..192 close the
 /// hand.
 fn body(pattern: &[usize]) -> (Option<usize>, bool) {
     let mut q = [0usize; 4];
-    for &b in pattern.iter().filter(|&&b| b < 64) {
-        q[b / 16] += 1;
+    for &b in pattern.iter().filter(|&&b| b < 128) {
+        q[b / 32] += 1;
     }
     let m = *q.iter().max().unwrap();
     let dir = (m >= 2 && q.iter().filter(|&&x| x == m).count() == 1).then(|| q.iter().position(|&x| x == m).unwrap());
-    let grasp = pattern.iter().filter(|&&b| (64..96).contains(&b)).count() >= 2;
+    let grasp = pattern.iter().filter(|&&b| (128..192).contains(&b)).count() >= 2;
     (dir, grasp)
 }
 
@@ -563,6 +565,9 @@ struct IndexHc {
     marks: Option<Vec<Mark>>,
     /// steps heard so far, and the association cells heard last
     clock: usize,
+    /// steps the prefrontal request to retrieve lasts unless renewed (with anchors or
+    /// bookmarks, where no hold ends it); 0 = until a hold
+    request_left: usize,
     last_cells: Vec<usize>,
     /// storing goes on while retrieving (encoding and retrieval alternate within each theta
     /// cycle), except for its own speech (corollary discharge)
@@ -611,6 +616,7 @@ impl IndexHc {
             anchors: None,
             marks: None,
             clock: 0,
+            request_left: 0,
             last_cells: Vec::new(),
             theta: false,
             phase: 3,
@@ -732,6 +738,13 @@ impl IndexHc {
         let fired = self.boundary.observe(&cells);
         self.log.push((fired, self.last_recalled));
         self.clock += 1;
+        // the request lapses unless renewed (prefrontal activity that is not maintained fades)
+        if self.request && self.hold_off && self.request_left > 0 {
+            self.request_left -= 1;
+            if self.request_left == 0 {
+                self.request = false;
+            }
+        }
         let before = std::mem::replace(&mut self.last_cells, cells.clone());
         if fired {
             self.boundaries += 1;
@@ -846,6 +859,7 @@ impl IndexHc {
             self.ctx = k.ctx.clone();
             self.last_recalled = None;
             self.request = true;
+            self.request_left = REQUEST_STEPS;
             self.reinstated += 1;
         }
     }
@@ -856,6 +870,7 @@ impl IndexHc {
             self.ctx = h;
             self.last_recalled = None;
             self.request = true;
+            self.request_left = REQUEST_STEPS;
             self.reinstated += 1;
         }
     }
@@ -920,12 +935,16 @@ fn main() {
     // the striatum: one critic, and an actor channel per gate (reach, hold, reinstate, load into
     // working memory); dopamine is the TD error, the reward the words that come out right
     let mut striatum = Striatum::new(1 << 18);
-    // RT_MOTOR=off: the hand-made reach and shelf-place channels instead of a motor repertoire
-    // that grows by babbling, with curiosity (learning progress) and effort as inner rewards
-    let mut repertoire = std::env::var("RT_MOTOR").map_or(true, |v| v != "off").then(|| Repertoire::new(256, 8, MOTOR_CAP));
+    // RT_MOTOR=on: a motor repertoire that grows by babbling, with curiosity (learning progress)
+    // and effort as inner rewards, instead of the hand-made reach and shelf-place channels (off
+    // by default until it learns to open the book: see wiki 107)
+    let mut repertoire = std::env::var("RT_MOTOR").map_or(false, |v| v == "on").then(|| Repertoire::new(256, 8, MOTOR_CAP));
     // the arm's motor area: its forward model learns what each command makes the senses report
     let mut arm = MotorArea::new(256);
     let mut motor_uses = vec![0usize; MOTOR_CAP];
+    // the command just done, credited with the dopamine of the next step
+    let mut pending_cmd: Option<usize> = None;
+    let mut motor_released = 0usize;
     let mut curiosity_sum = 0i64;
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
@@ -1031,6 +1050,9 @@ fn main() {
             let eye4 = if eye_now.count_ones() == 0 { zero() } else { net.l4e.encode(&eye_now) };
             let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place);
             striatum.begin_groups(&state, $explore, &mut rng);
+            if let (Some(i), Some(rep)) = (pending_cmd.take(), repertoire.as_mut()) {
+                rep.credit(i, striatum.last_delta);
+            }
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
                     // reinstating is possible only when not already retrieving (it would only
@@ -1337,7 +1359,13 @@ fn main() {
                 let opened: Option<usize> = if let Some(rep) = repertoire.as_mut() {
                     let done: Option<usize>;
                     // the commands as the motor cortex offers them: each one's own bits
-                    let offer = |rep: &Repertoire, i: usize| -> Vec<Vec<usize>> { vec![ones(rep.code(i)).into_iter().map(|b| MOTOR_BASE + b).collect()] };
+                    // the commands as the motor cortex offers them: each one's own bits and what
+                    // the motor area predicts it will make the senses report (its efference copy:
+                    // an action is chosen by its expected effect)
+                    let offer = |rep: &Repertoire, arm: &MotorArea, i: usize| -> Vec<Vec<usize>> {
+                        let effect = arm.predict(rep.code(i)).map_or(Vec::new(), |p| ones(&p).into_iter().map(|b| MOTOR_BASE + 256 + b).collect());
+                        vec![ones(rep.code(i)).into_iter().map(|b| MOTOR_BASE + b).collect(), effect]
+                    };
                     if learn && (rep.is_empty() || rng.gen_range(0..BABBLE) == 0) {
                         // babbling: a new command, done now (its efference copy tags the
                         // striatal cells that see it)
@@ -1345,11 +1373,12 @@ fn main() {
                         if replaced {
                             motor_uses[i] = 0;
                         }
-                        striatum.did_among(CH_MOTOR, &offer(rep, i));
+                        striatum.did_among(CH_MOTOR, &offer(rep, &arm, i));
                         done = Some(i);
                     } else {
-                        let cands: Vec<Vec<Vec<usize>>> = (0..rep.len()).map(|i| offer(rep, i)).collect();
+                        let cands: Vec<Vec<Vec<usize>>> = (0..rep.len()).map(|i| offer(rep, &arm, i)).collect();
                         done = striatum.choose_among(CH_MOTOR, &cands, if learn { Some(&mut rng) } else { None });
+                        motor_released += done.is_some() as usize;
                     }
                     let mut opened = None;
                     if let Some(i) = done {
@@ -1372,6 +1401,7 @@ fn main() {
                         let code = rep.code(i).clone();
                         let err = arm.observe(&code, &BitVector::from_bits(&outcome, 256), &mut rng);
                         let cur = rep.observe(i, err);
+                        pending_cmd = Some(i);
                         motor_uses[i] += 1;
                         if learn {
                             curiosity_sum += cur as i64;
@@ -1865,7 +1895,8 @@ fn main() {
         }
         let parts: Vec<String> = kinds.iter().map(|(k, (n, u))| format!("{k}: {n} ({u} uses)")).collect();
         println!(
-            "motor repertoire: {} actions now, {} proposed, {} replaced; mean curiosity per training trial {:+.3}; {}",
+            "motor repertoire: {} released by the basal ganglia; {} actions now, {} proposed, {} replaced; mean curiosity per training trial {:+.3}; {}",
+            motor_released,
             rep.len(),
             rep.stats.0,
             rep.stats.1,

@@ -17,7 +17,8 @@
 //!   a population's response is the number of cells whose threshold the net input reaches:
 //!   - **GPe** (per action): tonically active, inhibited by its action's D2 cells;
 //!   - **STN** (per channel): a tonic baseline, excited by the cortex when several options are
-//!     driven at once (the hyperdirect path: conflict) and inhibited by GPe;
+//!     driven about as strongly as the strongest (the hyperdirect path: conflict) and inhibited
+//!     by GPe;
 //!   - **GPi / SNr** (per action): tonically active, inhibited by its action's D1 cells (direct
 //!     path) and by GPe, excited by STN, with noisy tonic firing (exploration).
 //!   
@@ -66,6 +67,8 @@ const DA_BASE: i32 = 8;
 const RELEASE: i32 = 3;
 /// Discounting: the next state's value counts 1 − 1/`GAMMA_DIV`.
 const GAMMA_DIV: i32 = 8;
+/// Options whose go drive is within this many cells of the strongest compete (conflict).
+const CLOSE: i32 = 2;
 /// Hyperdirect excitation of STN per extra option driven at once.
 const HYPER: i32 = 4;
 
@@ -414,9 +417,11 @@ impl Striatum {
         let pop = |x: i32| x.clamp(0, POP);
         // GPe: tonic, inhibited by D2
         let gpe: Vec<i32> = st.iter().map(|&(_, d2)| pop(GPE_TONIC - d2)).collect();
-        // STN: tonic, excited by the cortex when more than one option is driven (hyperdirect),
+        // STN: tonic, excited by the cortex when options compete closely (hyperdirect: conflict
+        // is several options driven about as strongly as the strongest, not many driven at all),
         // inhibited by GPe (less GPe, more STN)
-        let driven = st.iter().filter(|x| x.0 > 0).count() as i32;
+        let top = st.iter().map(|x| x.0).max().unwrap_or(0);
+        let driven = st.iter().filter(|x| x.0 > 0 && x.0 + CLOSE >= top).count() as i32;
         let gpe_mean = gpe.iter().sum::<i32>() / n.max(1) as i32;
         let stn = pop(STN_TONIC + HYPER * (driven - 1).max(0) + (GPE_TONIC - gpe_mean) / 2);
         // GPi / SNr: tonic, excited by STN, inhibited by D1 and by GPe

@@ -966,8 +966,10 @@ fn main() {
     // curiosity: the cortex's misses at predicting what follows, one bit per waiting step (a
     // shift register); its learning progress is the long-run miss rate minus the recent one
     let mut misses: u64 = u64::MAX;
-    // (babbled, released, left, right, clicks, books opened)
-    let mut mouse_stats = [0usize; 6];
+    // (babbled, released, left, right, clicks, books opened, steps shown by the teacher)
+    let mut mouse_stats = [0usize; 7];
+    // RT_TEACH=none: the teacher never shows how to use the mouse
+    let teach_mouse = std::env::var("RT_TEACH").map_or(true, |v| v != "none");
     let mut curiosity_sum = 0i64;
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
@@ -1004,13 +1006,17 @@ fn main() {
     // the hold is given, reinstating is learned
     let ix_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle");
     let hold_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle" || v == "hold");
-    // RT_RESTART=off: no reinstating while retrieving (else it starts the sequence over)
-    let restart = std::env::var("RT_RESTART").map_or(true, |v| v != "off");
+    // RT_RESTART=on: reinstating while retrieving, which starts the sequence over (default off:
+    // the gate then fires on almost every step)
+    let restart = std::env::var("RT_RESTART").map_or(false, |v| v == "on");
+    // RT_IX_HOLD=pause (diagnosis only): the driver triggers retrieval as the task begins, the
+    // hippocampus going back to the pause it recalls best (the learned gate is off)
+    let pause_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause");
     let sleep_every: usize = env("RT_SLEEP_EVERY", 10);
     let replays: usize = env("RT_REPLAY", 3);
     let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
     if let Some(x) = ix.as_mut() {
-        x.gates_off = ix_oracle;
+        x.gates_off = ix_oracle || std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause");
         x.hold_off = hold_oracle;
         // RT_RETRIEVE=pause (default): one retrieve gate, the hippocampus going back to the
         // recent pause it recalls best; =hold: the striatum's hold and reinstate gates
@@ -1352,10 +1358,13 @@ fn main() {
         // the teacher waits before starting (three pauses; in "find" trials long enough to reach
         // any place on the shelf); the network may use the mouse meanwhile. Once the teacher
         // starts, it goes on whether a book is open or not.
-        let waits = if find { 3 + shelf_k } else { 3 };
+        // (with a book to open, long enough for the teacher to show how from anywhere)
+        let waits = if find || read { 3 + shelf_k } else { 3 };
+        // where the book to open lies, if there is one to open (the teacher shows it)
+        let target_pos: Option<usize> = if read { Some(0) } else if find { Some(1 + find_at) } else { None };
         let mut sensed = silence.clone();
         if !book_open {
-            for _ in 0..waits {
+            for k in 0..waits {
                 // the eye sees the screen: where the cursor is (the striatum's visual input)
                 eye_now = cursor_seen[cursor].clone();
                 if ix.is_some() {
@@ -1380,7 +1389,25 @@ fn main() {
                         cands.push((best, pat));
                     }
                 }
-                let command: Option<BitVector> = if learn && rng.gen_range(0..BABBLE) == 0 {
+                // the teacher shows how (training, RT_TEACH=mouse, default): if the network has not
+                // opened the book by the time the teacher needs the remaining steps, the teacher
+                // moves the cursor to it and clicks, a step at a time. The network sees the cursor
+                // move and senses each motion as it would its own; the cortex learns the sequence
+                // as it learns the teacher's words. It is the teacher's act, not the network's:
+                // the basal ganglia are not tagged.
+                let shown: Option<usize> = target_pos.filter(|&tp| learn && teach_mouse && waits - k <= cursor.abs_diff(tp) + 1).map(|tp| {
+                    if cursor > tp {
+                        LEFT
+                    } else if cursor < tp {
+                        RIGHT
+                    } else {
+                        CLICK
+                    }
+                });
+                mouse_stats[6] += shown.is_some() as usize;
+                let command: Option<BitVector> = if shown.is_some() {
+                    None
+                } else if learn && rng.gen_range(0..BABBLE) == 0 {
                     let m = rng.gen_range(0..MOUSE);
                     striatum.did_among(CH_ACT, &[ones(&motion[m]).into_iter().map(|b| ACT_BASE + b).collect()]);
                     mouse_stats[0] += 1;
@@ -1396,7 +1423,7 @@ fn main() {
                     }
                 };
                 // the world: the mouse does what the command articulates
-                let done = command.as_ref().and_then(|c| mouse.articulate(c));
+                let done = shown.or_else(|| command.as_ref().and_then(|c| mouse.articulate(c)));
                 if let (Some(c), Some(m)) = (command.as_ref(), done) {
                     hand.observe(c, &motion[m], &mut rng);
                 }
@@ -1410,7 +1437,7 @@ fn main() {
                         striatum.reward(progress * ONE as i32 / 8);
                         curiosity_sum += (progress * ONE as i32 / 8) as i64;
                     }
-                    if done.is_some() {
+                    if done.is_some() && shown.is_none() {
                         striatum.reward(-EFFORT);
                     }
                 }
@@ -1457,6 +1484,14 @@ fn main() {
                         reach_delta[k].1 += 1;
                     }
                     break;
+                }
+            }
+        }
+        if pause_oracle && !read && !make {
+            let pause = ones(&net.assoc_of(&zero(), &silence, false, &mut rng));
+            if let Some(x) = ix.as_mut() {
+                if let Some(r) = x.pause_row(&pause) {
+                    x.reinstate_row(r);
                 }
             }
         }
@@ -1871,9 +1906,10 @@ fn main() {
     }
     println!("\nbasal ganglia: {}", striatum.report());
     println!(
-        "mouse: {} babbled, {} released by the basal ganglia ({} left, {} right, {} clicks in all), {} books opened; curiosity per training trial {:+.3}; motor area {:?}",
+        "mouse: {} babbled, {} released by the basal ganglia, {} shown by the teacher ({} left, {} right, {} clicks in all), {} books opened; curiosity per training trial {:+.3}; motor area {:?}",
         mouse_stats[0],
         mouse_stats[1],
+        mouse_stats[6],
         mouse_stats[2],
         mouse_stats[3],
         mouse_stats[4],

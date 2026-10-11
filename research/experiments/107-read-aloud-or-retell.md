@@ -1676,9 +1676,56 @@ feedback onto layer 1's tufts, and agranular motor cortex. Where the model diffe
   eye+ear column alone offered sounds (58% right), and eye+hand, ear+hand, hand+seen acts and the
   full column offered only mouse acts.
 
+### Self-organizing, streams, the story's credit, and play: results
+Seeds 0 and 2, 1,500 training trials, the teacher's own cursor, first test table.
+
+| | read right | tell closed | silent | reach (test) | recall right |
+|---|---|---|---|---|---|
+| self-organizing | 0% / 0% | 0% / 0% | 100% / 100% | 0 / 0 | 8.3% / 6.6% |
+| explicit streams | 1% / 5–12% | 0% / 6% | ~50% / 54–82% | 0 / 100% | 0.4% / 0.5% |
+| self-organizing + touch + play (300) | 0–2% / 6–7% | 0% / 0% | ~80% / 29–100% | 0 / 100% | 3.0% / 9.2% |
+| areas + the wait as its own credit episode | 0% / 0% | 0% / 0% | 100% / 100% | 0 / 0 | 0.3% / 0% |
+
+None comes near the shared layers (read 40–50%, tell closed 20–40%). The rebuilt cortex is a
+regression on the task so far.
+
+- **Streams self-organize.** In every self-organizing run the eye+ear column alone offered sounds
+  (right 61–62% in training); eye+hand, ear+hand, hand+seen acts and the full column offered only
+  mouse acts (right 42–60%). Nothing wired that split: it follows where each column's input is
+  active.
+- **But the self-organizing network is silent at test.** The eye+ear column's goals were right in
+  training, yet nothing is said. Something between its goal and the voice breaks; not diagnosed.
+- **The story's credit, confirmed.** Ending the basal ganglia's episode with the wait (so the
+  story's rewards cannot reach the wait's acts) removed the LEFT habit on the book (LEFT released
+  there 54–57 times in training, against 1,228). But then acting earned only its effort cost and
+  the rare opening, and the network stopped acting: at test it released nothing (proposals of
+  LEFT, CLICK and RIGHT, none released), and it was silent.
+- **Play opened a book in 297 of 300 trials, but did not teach clicking on a book:** chosen
+  clicks landed on a book 57% then 47% (seed 0) and 50% then 44% (seed 2), with books on half
+  the places. (A 150-trial check had suggested 47% then 65%: noise.)
+- **Imagining the click lands on the story's opening:** 10 of 10 (seed 0) and 164 of 309 (seed
+  2) imagined clicks while telling went to the row holding this story's opening. The association
+  of opening and text is there; going on from it is what fails (recall right 3–9%).
+
+**What was built for the mouse:**
+- **Touch** (`RT_TOUCH=1`): moving, the hand feels the motion (a vibration); at rest, the texture of
+  the book under the cursor (each place's its own); an empty place feels like nothing.
+- **Play** (`RT_PLAY`): trials before any teaching, no teacher and no story, books on half the
+  places; the network moves (babbling half the steps) and clicks; a click on a book opens it,
+  which rewards the act (contingent sensory change is rewarding in itself to an infant), and the
+  page's first words come into view one after another, so the columns learn that after a click
+  on a book words begin. A click on an empty place does nothing and is sensed as nothing.
+
+**Defaults now** (as asked): the self-organizing columns and the teacher's own cursor
+(`RT_SELFORG=0` for the shared layers, `RT_TEACHER_CURSOR=0` for the teacher on the network's
+cursor). Touch and play stay off by default.
+
 ## Next
-- **Self-organizing vs explicit streams, and the story's credit**, on seeds 0 and 2 (running).
-- **The mouse:** why the network rarely opens its own book once the teacher has a cursor.
-- **Hippocampal recall with areas.**
-- **The always-completing hippocampus**, measured on 4 seeds.
+- **Why the self-organizing network is silent at test** although its eye+ear column's goals are
+  right in training: trace the path from goal to relay to voice.
+- **Acting's own value:** the story's credit made superstitions; without it the network stops
+  acting. Play is meant to give acts value of their own early, but did not teach clicking on a
+  book; why (the striatum's state during play, babbling half the steps, the reward size).
+- **Going on from the recalled opening** (recall right 3–9% though the opening is found).
+- **The always-completing hippocampus**, measured.
 - **Whether the story heard should cue telling** without the instruction.

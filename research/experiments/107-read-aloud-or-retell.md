@@ -1466,8 +1466,103 @@ teacher read, not from seeing the page. Top-3 recall is right on slightly more t
 (about +1 point); on what is said, it is mixed, within seed-to-seed noise. Top-1 stays the default.
 With the instruction removed, both are 85–100% silent (above).
 
+### Superstition again: a click on nothing, and the edge
+**Seeds 0 and 2 stopped reaching at test** with blocked edge moves. Logging where the cursor sat
+and what was proposed there: at test it stayed at a shelf place (left there by the last find
+trial) and clicked, every step (seed 0: 119 of 119; seed 2: 140 of 140), though LEFT was
+proposed (60 times on seed 0). A click on nothing was still sensed, and the teacher's eventual
+move and click credited it: the LEFT superstition in another form.
+
+**A click that opens nothing now senses nothing too** (part of the default blocked world). Seed 0:
+reaches 100%, reads 46–51%, tells with the book closed 33%. Seed 2 slid into a third form: at
+the right edge it pressed RIGHT (79 of 84 test steps, LEFT proposed 76 times), and its speech
+collapsed (3–5% right, 50–70% silent).
+
+**Two credit fixes that did not hold:**
+
+| | seed 0 | seed 2 |
+|---|---|---|
+| blocked clicks + the teacher's act tagged (`RT_OBSERVE=1`) | reads 53–59%, reaches 100% | silent; the cortex proposes no mouse act (84 of 84 steps) |
+| blocked clicks + the teacher seen, not felt (`RT_TEACH_SEEN=1`) + the check (`RT_CHECK=1`) | silent; no proposals at place 4 (161 of 161) | RIGHT at the edge (133); reads 26–28% |
+
+- **Seeing the teacher instead of feeling it**, without a mirror, removed the demonstrations
+  from what the cortex learns as motion: CLICK was proposed on the book 12 times in 148.
+- **The check trigger:** when a reward follows the network's own acts, each is marked due a
+  check; the next time it is done, the forward model's expected effect is compared with what
+  comes, and no effect at all is a dip. About 820 checks per seed, 150–170 found no effect, but
+  the RIGHT habit at the edge survived.
+
+**Why speech dies with the mouse** (trace of seed 2, telling with the book closed): the
+prefrontal content is there and recall gives 32 bits, but it is the story's last word (".")
+at every step; the cortex makes no plan from it. Imagining the opening is what takes recall
+back to the story's start, and imagining uses the cortex's mouse proposals: when those die, so
+does imagining, so recall is stuck at the end and the network is silent. The mouse failure and
+the speech failure are one failure.
+
+### Cortical curiosity
+Curiosity's noise now comes from the cortex itself (`RT_CURIOSITY=cortex`, the default). Each
+layer 5 cell keeps its own record of its last 16 predictions as winner (hit or miss, one bit
+each). When it predicts, its learning progress (misses 9–16 back minus those of the last 8,
+less one) is the extra GPi noise, 0 to ±2. The per-context miss registers hashed in the driver
+are gone from the default. `RT_LC_DAMP=1` adds the locus coeruleus's brake: no extra noise while
+the critic expects reward. The noise is small (+0.09 on average). On 4 seeds (before blocked
+clicks): seeds 0 and 1 work (reach 100%, tell closed 34–37%); seeds 2 and 3 click at a shelf
+place at test.
+
+### An always-completing hippocampus
+`RT_HC_AUTO=1`: no cue and no request. Every step the entorhinal input (the context, and the
+association area's assembly for whatever the cortex represents: heard, seen, said, meant or
+imagined) is completed to its best stored row (not the one just written: that was the other half
+of the theta cycle). The row that followed it is the output, and the context is pulled half way
+toward the completed row's own. Acetylcholine alone sets the mode: high (after a mismatch), the
+output is suppressed (encoding); low, it reaches the cortex (retrieval). Writing goes on in both,
+except for its own speech. Imagining the opening just makes the cortex represent it, and the
+hippocampus completes it. A 60-trial check runs; not yet measured fully. A concern: the context's
+rare bits may outweigh an imagined content seen in every episode (why the earlier cue used
+content alone).
+
+### An area per device, and association that grows
+`src/program/area.rs`:
+- **`Brain::attach(name, Sensor | Motor | SensorMotor)`** gives a device its own cortical area: a
+  sensory side (its own layer 4, a pool that recruits cells as new inputs need them: `k` cells per
+  new input, a cell fires when 10 of its 16 synapses are on) and a motor side (inverse and
+  forward models). Issuing a command keeps the efference copy; what is sensed next is compared
+  with it (the act's effect error).
+- **Pairwise association areas** grow for two areas active together often enough (8 steps);
+  their cells take half their synapses from each, and fire on either half alone (8 of 16), so
+  one sense evokes the pair's code.
+- **A full association area** grows once there are two pairwise areas, conjoining them. The
+  output is the highest level that is active (the full area recruits only when two pairs are
+  active together; before the fix it returned nothing, and a word seen and heard shared 0 of 32
+  cells; now 28.1, against 16.5 with the old association layer).
+- **A synapse moves only within its own source, and only if that source was active,** so a pair's
+  cell keeps both halves when one sense comes alone (as layer 4's pathways rule).
+- **The mirror** (`Brain::mirror`): one side of a pair evokes the cells that conjoined it with the
+  other; their synapses on the other side project back to that area's layer 4 code, and that
+  code back to its input (`Pool::backproject`, by vote). Biology: mirror neurons are learned from
+  correlated experience (Heyes; Keysers & Perrett): acting, one sees one's own hand, and the visual
+  (STS) and motor (premotor) representations are linked by Hebbian learning.
+
+**In readtell** (`RT_AREAS=1`): eye, ear, hand (sensorimotor), voice (motor) and **seen acts** (the
+STS stream: what an act looks like, wherever it happens). The hand's felt motion is its own basal
+frame in layers 2/3 and 5 (the mouse no longer borrows the ear). The voice babbles in its own area;
+saying a word keeps its efference copy, compared with what the ear hears. Own acts, seen and felt,
+grow the association of seen acts with the hand; with `RT_TEACH_SEEN=1` the teacher's act, only
+seen, is mirrored to the felt motion, and the cortex takes that as what came. In a 100-trial
+check, 126 of 157 of the teacher's acts were mirrored to the right felt motion (the misses come
+before own acts have built the link). The mirror needed its own visual stream: with the eye's
+whole scene (the cursor's place and the act) as one code, own acts at one place did not carry over
+to the teacher's at another (15 of 119).
+
+Before the association fix, the area port worked on seed 0 (reads 34–46%, tells closed 38%,
+reaches 100%) and failed on seed 1 (RIGHT at the edge, silent); with the voice in its own area too,
+both seeds pressed RIGHT and were silent (the voice itself: 46 words said, none heard other than
+its efference copy expected).
+
 ## Next
-- **Cortical curiosity:** a running rate of cortical bursts as the noise gain, in place of the
-  per-context miss registers.
-- **Test-time reaching** on seeds 0 and 2 with the new defaults (being traced).
+- **The area port and the mirror** after the association fix, on 4 seeds.
+- **The superstition at its root:** the striatum credits its own useless acts when the teacher
+  finishes the job; the mirror (seeing the teacher do it, in one's own motor terms) and the check
+  are the candidates.
+- **The always-completing hippocampus**, measured on 4 seeds.
 - **Whether the story heard should cue telling** without the instruction.

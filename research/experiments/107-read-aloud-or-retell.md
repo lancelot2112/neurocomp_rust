@@ -1279,12 +1279,83 @@ bandit, not readtell. A mask that grows is several masks per action, each voting
 `|C & M_i| ≥ θ`, which is a striatal cell with a large receptive field. The two designs meet:
 the cell striatum's growth with the mask striatum's learning rules.
 
+### A mask striatum that grows
+**Grow mode** (`MaskStriatum::grow`; readtell `RT_MASK_GROW=1`): the cell striatum's growth with
+the mask striatum's learning rules.
+- **Pools of mask-cells.** Each action has a pool of go cells and one of no-go cells, and the
+  critic has a positive and a negative pool. Each cell is a 16-bit mask over the context that
+  fires when at least 10 of its bits are in it: a striatal cell with a large receptive field.
+  q = go cells firing − no-go cells firing.
+- **A burst:** go cells that fired tighten toward the context by one bit and consolidate (slow
+  habits); n new go cells are recruited from the context (n from |δ|, as in the cell striatum);
+  up to n no-go cells that fired move away from it.
+- **A dip** does the reverse: go cells that fired move away (go LTD) and their habits loosen; n
+  no-go cells are recruited.
+- **A full pool** (2,048 cells) drops, of a few sampled, the cell unused longest.
+- **Exploration** is GPi's tonic noise (±3 per option). Dropout would silence threshold cells:
+  keeping half the bits leaves almost no cell with 10 of its 16.
+
+**Three bugs found on the way:**
+- **Recruiting only "if too few fired"** capped a value at about n cells (¼ reward): the critic
+  never learned a full reward. Like the cell striatum, every burst now recruits n.
+- **A swap that did not preserve density.** When a mask's bits all lay inside the context there
+  was nothing to remove, but a bit was still added. Each burst then grew the mask by one bit,
+  until a cell covered the shared pathway and fired in every context (pools of 400+ cells firing
+  everywhere). Swaps now add only as many bits as they remove. The plain masks had the same
+  drift, which is the density problem the audit warned of.
+- **Dropout in grow mode** made training choices near random (60% on the bandit while the test
+  was 100%).
+
+| contextual bandit (5 seeds) | first block | last block | test |
+|---|---|---|---|
+| cells | 46% | 95% | 98.1% |
+| masks (no hold, sticky, pairs, swap) | 47% | 96% | 97.8% |
+| growing masks, sticky | 53% | 90% | 91.4% |
+
+| hold ladder, hold given (3 seeds) | reinstated after the instruction | reinstated mid-story | words retold right |
+|---|---|---|---|
+| cells | 99.4% | 0.7% | 100% |
+| masks | 3.6% | 420% | 75.6% |
+| **growing masks, sticky** | **100%** | **0%** | 73.2% |
+
+**readtell, growing masks, all learned, 4 seeds (1,500 trials; the first test table, with the
+instruction held):**
+
+| seed | read (same / another book) | tell, book closed | recall right | book opened at test |
+|---|---|---|---|---|
+| 0 | 47.8 / 45.7% | 38.9% | 24% | 100% |
+| 1 | 5.0 / 8.6% | 2.9% | 4% | 0% |
+| 2 | 50.6 / 49.3% | 46.8% | 20% | 100% |
+| 3 | **57.6 / 56.6%** | **54.2%** | 22% | 100% |
+
+**Findings:**
+- **The best fully learned results so far.** Three of four seeds open the book every time at test,
+  read 46–58% and retell 39–54% with the book closed. The mouse problem is gone: the pools grow
+  to hold cursor place × instruction × step, where one fixed mask pair could not.
+- **Seed 1 fails.** Its mouse mostly moves right, and the cursor wanders off the book.
+- **With the prefrontal content removed (the second test table) it falls silent** (84–100%),
+  where the cells did not. This is not yet understood.
+
+### Audit items, continued
+- **Per-pathway permutations.** Each input pathway now has its own min-hash permutation, so their
+  picks are not correlated.
+- **Rarity weights as power-of-two tiers.** The index's vote for a cue index used by n rows is
+  2^−⌊log₂ n⌋ (a leading-zero count and a shift) instead of 1/n from a reciprocal table
+  (`IndexConfig::tiers`; readtell's default, `RT_HC_TIERS=0` for 1/n).
+- **Curiosity without a divide, per context.** Progress is the misses 9–16 steps back minus
+  those of the last 8. Each context has its own register (the working memory's content and the
+  cursor's place, hashed into 64), so learning in one situation is not averaged with others.
+- **A step is one represented event:** a heard or seen word, a pause, a mouse motion, or while
+  retrieving, a recalled word. The context drifts once per step.
+- **Context at several timescales** (`RT_CTX_BANKS=1`). Besides the fast bank (32 slots, 4 per
+  step, a half-life of about 5 steps), two slower banks (16 and 32 slots, one per step: about
+  11 and 22 steps). Event boundaries jump only the fast bank, so the slow banks carry the episode
+  across boundaries. The replay uses the same per-bank drift. Results are pending.
+- **Top-k recall** (`RT_HC_K`). When recall does not follow a link, the k best matches vote and
+  the output keeps the bits most of them share (a majority). Not yet measured.
+
 ## Next
-- **Trace the masks' silence in readtell:** which gate (working memory load, imagine, act)
-  drives it, with each gate swapped to the cell striatum in turn.
-- **From the audit, still open:**
-  - define "a step", and keep context at several timescales (log-spaced banks on a history
-    ring);
-  - curiosity per context, feeding exploration (τ);
-  - per-pathway permutations;
-  - power-of-two rarity tiers.
+- **Context banks and top-k recall:** measure on 4 seeds.
+- **Why the growing masks fall silent with the prefrontal content removed,** and why seed 1's
+  mouse wanders.
+- **Make the growing masks the default** once those hold.

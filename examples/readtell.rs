@@ -517,6 +517,8 @@ struct IndexHc {
     stored_now: Option<u32>,
     /// a xorshift state for the context blend
     blend_rng: u64,
+    /// how many best matches vote on the output when recall does not follow a link
+    top_k: usize,
     /// the row recalled since the last sound heard, to relearn if the cortex completes it
     to_reconsolidate: Option<u32>,
     /// the prefrontal cortex's standing request to retrieve (through the nucleus reuniens):
@@ -579,6 +581,7 @@ impl IndexHc {
             ordered: std::collections::HashMap::new(),
             stored_now: None,
             blend_rng: 0x9E37_79B9_7F4A_7C15 ^ seed,
+            top_k: env("RT_HC_K", 1usize),
             to_reconsolidate: None,
             request: false,
             ach: 0,
@@ -683,6 +686,7 @@ impl IndexHc {
             println!("    recall: last {:?} successor {:?} best row {:?} overlap {} -> follow {}", self.last_recalled, sm, best.ca3.first(), best_overlap, follow.is_some());
         }
         self.had_prev += self.last_recalled.is_some() as usize;
+        let followed = follow.is_some();
         let mut r = match follow {
             Some(_) => {
                 self.followed += 1;
@@ -690,6 +694,25 @@ impl IndexHc {
             }
             None => best,
         };
+        // top-k (RT_HC_K): when recall does not follow a link, the k best matches vote, and the
+        // output keeps the bits most of them share (a bit-sliced majority)
+        if !followed && self.top_k > 1 && !r.ec.is_empty() {
+            let rows = self.mem.matches(&self.ctx, self.top_k);
+            if rows.len() > 1 {
+                let mut votes: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+                for &(row, _) in &rows {
+                    for &b in self.mem.out_of(row) {
+                        *votes.entry(b).or_default() += 1;
+                    }
+                }
+                let need = rows.len() / 2 + 1;
+                let mut ec: Vec<usize> = votes.into_iter().filter(|&(_, v)| v >= need).map(|(b, _)| b).collect();
+                ec.sort_unstable();
+                if !ec.is_empty() {
+                    r.ec = ec;
+                }
+            }
+        }
         if r.ec.is_empty() {
             if let Some(l) = self.last_recalled {
                 r = self.mem.successor(l);
@@ -1146,7 +1169,9 @@ fn main() {
     let mut cursor = 0usize;
     // curiosity: the cortex's misses at predicting what follows, one bit per waiting step (a
     // shift register); its learning progress is the long-run miss rate minus the recent one
-    let mut misses: u64 = u64::MAX;
+    // one register per context (the working memory's content and the cursor's place, hashed
+    // into 64): progress is learning in this situation, not on average
+    let mut misses: Vec<u64> = vec![u64::MAX; 64];
     // (babbled, released, left, right, clicks, books opened, steps shown by the teacher)
     let mut mouse_stats = [0usize; 7];
     // RT_TEACH=none: the teacher never shows how to use the mouse
@@ -1668,9 +1693,13 @@ fn main() {
                 }
                 let next = done.map_or(silence.clone(), |m| motion[m].clone());
                 // the cortex learns what came; curiosity is the progress of its predictions here
-                misses = misses << 1 | (overlap(&st.plan, &next) < 24) as u64;
+                let here = {
+                    let wm: u64 = ones(&net.wm.content()).iter().take(4).fold(0u64, |h, &b| (h ^ b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+                    ((wm ^ (cursor as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)) >> 58) as usize
+                };
+                misses[here] = misses[here] << 1 | (overlap(&st.plan, &next) < 24) as u64;
                 // misses 9..16 steps back minus the last 8 (no divide), beyond one of noise
-                let progress = (misses & 0xFF00).count_ones() as i32 - (misses & 0xFF).count_ones() as i32 - 1;
+                let progress = (misses[here] & 0xFF00).count_ones() as i32 - (misses[here] & 0xFF).count_ones() as i32 - 1;
                 if learn {
                     net.learn(&st, &next, &mut rng);
                     if progress > 0 {

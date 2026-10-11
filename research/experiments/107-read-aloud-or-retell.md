@@ -1107,10 +1107,55 @@ words; the mouse had no teacher.
 - **Retrieval is still not learned** with either striatum: the rule for where to go back to
   points at the wrong pause.
 
+### The teacher reads from a book; imagining the opening cues recall
+**Why the pause went.** The pause cue was chosen by hand, not learned by the hippocampus, and it
+was the wrong cue: the most recent pause is the one after the story. The trigger should be how
+the episode began, as the cortex represents it: here, the opening of the book. Imagining someone
+opening it is the cortex producing that same pattern without acting.
+
+**What was built:**
+- **The teacher reads the story from a book** (`RT_STORY=book`, default). The book is opened with
+  a click the network sees; the hippocampus stores it like any event, and the story's words
+  follow, linked. The network sees each word as it is read.
+- **Imagine or do** (`RT_RETRIEVE=imagine`, default). The cortex's layer 5 predictions of a mouse
+  motion are offered to two channels:
+  - *do* sends one to the mouse's motor area;
+  - *imagine* sends one to the hippocampus as a content cue.
+- **Three repairs to recall, found by tracing it:**
+  - **Cue by what is imagined alone.** With the current context in the cue too, the context's
+    rare bits outweighed a content that every episode shares, and recall went to whatever was
+    stored last. That also sank the pause cue. Cued by content alone, every opening matches as
+    well, and the most recent wins: this story's.
+  - **Refractoriness.** The rows recalled in the last 4 steps do not win again, so recall moves
+    on along the links instead of repeating the opening.
+  - **Retrieved context** (the temporal context model). While retrieving, the recalled row's
+    context becomes the current one, so the context walks forward with the story. Before, the
+    opening kept winning because nothing moved the context during a retelling.
+- The pause cue and pause rows are kept only as `RT_RETRIEVE=pause`.
+
+**Results (1,500 trials, one seed per row):**
+
+| | tell, book closed (two test tables) | recall right | read (two test tables) | book opened for reading |
+|---|---|---|---|---|
+| driver imagines the click at the task's start | 40.8 / 47.5% | 32% | 22–28 / 15–16% | 0% |
+| **masks, seed 0, all learned** | **9.3 / 42.4%** | 20% | 42–49 / 26–34% | 75–83% |
+| masks, seed 1, all learned | 0 / 0% (silent) | 14% | 18–30 / 0% | 0% |
+| cells, all learned | 20.1 / 15.5% | 25% | 28–33 / 11–17% | 0% |
+
+**Findings:**
+- **The first learned retelling with the book closed:** 42% (masks, seed 0) and 15–20% (cells).
+  The network imagines the opening of the book, and that cue lands on the story's start. Nothing
+  says which cue to use; the imagine channel learns it.
+- **Before the three repairs, the same cue gave 0.2%** even when the driver imagined it at the
+  right moment. The cue was right; recall was not following it.
+- **Not reliable yet.** Masks on seed 1 fell silent on the second test. The cells learned
+  retelling but stopped opening the book (they mostly moved left). The mouse and the imagine
+  channel share the same proposals, and how they settle varies by seed.
+- **Reading is lower than with the book given** (26–49% against 72–78%). Opening by mouse is
+  still part of every reading trial.
+
 ## Next
-- **Where to go back to.** Not "the most recent pause" (that is the one after the story). The
-  hippocampus could rank pauses by the event they began; or the teacher's retelling (in
-  training) could cue the story's first row by content, so the gate learns to go there.
-- **Why masks do not learn the mouse when cells do:** the same ladder treatment (a mouse rung
-  with demonstration).
-- **Seeds 1–4** once retrieval and the mouse work.
+- **Seeds 0–3 for masks and cells** with this setup, and longer training (3,000 trials), to see
+  whether retelling and opening the book settle together.
+- **Why seed 1 fell silent,** and why the cells stopped opening the book: whether doing and
+  imagining the same proposals compete.

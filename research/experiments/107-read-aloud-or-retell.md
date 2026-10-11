@@ -1046,10 +1046,71 @@ The mask striatum keeps the current state, so it takes the same calls as the cel
   made this worse (every step); slower ones only reduced it.
 - One seed per row: the differences in reading are within what one seed can swing.
 
+### Bookmarks dropped; what breaks, found by ablation; the teacher shows the mouse
+**Why bookmarks went.** The striatum had to learn *which* past moment to go back to and *when*.
+On the ladder (a bookmark rung: every boundary kept, offered on every step):
+- the masks went back on 8–16 of 16 story steps, whatever the effort cost or the features (pair
+  features included);
+- the cells never went back.
+
+So the choice of *where* moved to the hippocampus. The striatum keeps one gate, *retrieve now*,
+and the hippocampus, cued with a pause in the current context, goes back to the row it recalls
+best.
+
+**Four seeds, everything learned (masks): it fails.** Reading 0–12%, retelling with the book
+closed 0–6%, silent 47–100%. The retrieve gate fired about 24 times a trial, and recall was 0%.
+
+**Ablations (one seed each) show two separate faults:**
+
+| | read (same / another book) | tell, book closed | recall right |
+|---|---|---|---|
+| book open from the start, masks | 56 / 66% | 1.5% | 0% |
+| book open from the start, cells | 56 / 60% | 4.0% | 0.1% |
+| book open, oracle retrieval | 49 / 57% | 54 / 65% | 61% |
+| book open, gate may not restart retrieval (masks) | **72 / 64%** | 5–13% | 0.2% |
+| book open, driver retrieves the recalled pause at the task's start | **78 / 76%** | 0–5% | 0.3% |
+
+1. **The mouse broke reading.** With the book open from the start, reading is back for both
+   striata.
+2. **Restarting made the gate fire on every step:** each firing sent recall back to the start.
+   Without restarting it fires about twice a trial. Restarting is now off by default.
+3. **The recalled pause is the wrong one.** Even retrieving exactly when the task begins, recall
+   is 0.3%. By then the context has drifted away from every old pause, so the most recent one
+   wins: the pause *after* the story, whose link leads to the instruction. "The most recent
+   pause" is the wrong rule.
+
+**The teacher shows the mouse** (`RT_TEACH=mouse`, default). Speech is learned from the teacher's
+words; the mouse had no teacher.
+- In training, if a book is to be opened ("read", "find") and the network has not opened it by
+  the time the teacher needs the remaining steps, the teacher moves the cursor to it and clicks,
+  a step at a time.
+- The network sees the cursor move and senses each motion as it would its own, so the cortex
+  learns the sequence like the teacher's words.
+- It is the teacher's act: the basal ganglia are not tagged.
+- The teacher now waits long enough to show it from anywhere (3 + 4 pauses when there is a book
+  to open).
+- The striatum now also sees the cursor at the wait. It did not before, so it could not learn
+  "go to the desk, then click".
+
+| taught mouse, 1,500 trials | read (first / second test) | tell, book closed | book opened at test (read) |
+|---|---|---|---|
+| masks, seed 0 | 33 / 18%; 0 / 0% | 0% | 43 / 29% |
+| masks, seed 1 | 15 / 4%; 8 / 7% | 6–8% | 20 / 0% |
+| masks, oracle retrieval | 20 / 27%; 63 / 66% | 52 / 60% | 36 / 44% |
+| **cells** | **61 / 66%; 70 / 72%** | 0–7% | **100 / 100%** |
+
+**Findings:**
+- **Taught, the cell striatum learns the mouse.** It opens the book every time for reading, and
+  reading is back to 61–72%.
+- **The mask striatum does not yet.** It opens the book 0–44% of the time, and with a book open
+  it is often silent.
+- **Retrieval is still not learned** with either striatum: the rule for where to go back to
+  points at the wrong pause.
+
 ## Next
-- **Why the bookmark channel releases on every step.** Candidates are offered on every step;
-  reinstating should be rare and its credit immediate. Test it on the ladder with candidates
-  offered every step, then fix it in readtell.
-- **A reliable click on the book.** The mouse's credit has to reach a click several steps before
-  reading pays.
-- **Seeds 1–4** for every row, before reading anything into single-run differences.
+- **Where to go back to.** Not "the most recent pause" (that is the one after the story). The
+  hippocampus could rank pauses by the event they began; or the teacher's retelling (in
+  training) could cue the story's first row by content, so the gate learns to go there.
+- **Why masks do not learn the mouse when cells do:** the same ladder treatment (a mouse rung
+  with demonstration).
+- **Seeds 1–4** once retrieval and the mouse work.

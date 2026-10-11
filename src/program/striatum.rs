@@ -107,11 +107,12 @@ impl Pool {
     }
 }
 
-/// One eligible step: the state's groups and the choices made (channel, action).
+/// One eligible step: the state's groups and the choices made (channel, action, and for a
+/// candidate chosen with `choose_among`, the candidate's own groups).
 #[derive(Clone)]
 struct Step {
     groups: Vec<Vec<u32>>,
-    choices: Vec<(usize, usize)>,
+    choices: Vec<(usize, usize, Vec<Vec<u32>>)>,
     /// false for a re-armed tag (an old state): the critic does not learn from it
     critic: bool,
 }
@@ -241,6 +242,25 @@ impl Striatum {
         Some(Spiny { syn, last: std::cell::Cell::new(now) })
     }
 
+    /// A cell for a candidate in a state: half its synapses from one of the state's pathways,
+    /// half from one of the candidate's (a conjunction: "in states like this, candidates like
+    /// that").
+    fn recruit_pair<R: Rng>(groups: &[Vec<u32>], extra: &[Vec<u32>], now: u32, rng: &mut R) -> Option<Spiny> {
+        let live = |gs: &[Vec<u32>]| -> Vec<Vec<u32>> { gs.iter().filter(|g| g.len() >= THETA / 2).cloned().collect() };
+        let (a, b) = (live(groups), live(extra));
+        if b.is_empty() {
+            return Self::recruit(groups, false, now, rng);
+        }
+        let h = &b[rng.gen_range(0..b.len())];
+        let g = if a.is_empty() { h } else { &a[rng.gen_range(0..a.len())] };
+        let mut syn = [0u32; SYN];
+        for (i, s) in syn.iter_mut().enumerate() {
+            let src = if i % 2 == 0 { g } else { h };
+            *s = src[rng.gen_range(0..src.len())];
+        }
+        Some(Spiny { syn, last: std::cell::Cell::new(now) })
+    }
+
     /// Apply one dopamine signal to the eligible steps (newest first, credit fading per step).
     fn learn<R: Rng>(&mut self, delta: i32, rng: &mut R) {
         self.stats.0 += 1;
@@ -292,12 +312,18 @@ impl Striatum {
             if !pause {
                 continue;
             }
-            for (ch, a) in st.choices {
+            for (ch, a, extra) in st.choices {
+                // a candidate's cells see the state and the candidate together
+                let mut cbits = bits.clone();
+                cbits.extend(extra.iter().flatten().copied());
+                cbits.sort_unstable();
+                let was_c = |s: u32| cbits.binary_search(&s).is_ok();
                 let (go, nogo) = &mut self.actors[ch][a];
                 let (grow, shrink) = if delta > 0 { (go, nogo) } else { (nogo, go) };
-                let fired = shrink.firing(&was, self.clock);
+                let fired = shrink.firing(&was_c, self.clock);
                 for _ in 0..n {
-                    if let Some(c) = Self::recruit(&st.groups, self.mixed, self.clock, rng) {
+                    let c = if extra.is_empty() { Self::recruit(&st.groups, self.mixed, self.clock, rng) } else { Self::recruit_pair(&st.groups, &extra, self.clock, rng) };
+                    if let Some(c) = c {
                         grow.add(c, self.prune, rng, &mut self.changes);
                     }
                 }
@@ -379,6 +405,12 @@ impl Striatum {
     /// added to each one's tonic drive (0 without exploration).
     fn pallidum(&mut self, channel: usize, n: usize, noise: &[i32]) -> Vec<i32> {
         let st = self.striatal(channel, n);
+        Self::pallidal(&st, noise)
+    }
+
+    /// GPe, STN and GPi / SNr from the striatum's (D1, D2) counts per option.
+    fn pallidal(st: &[(i32, i32)], noise: &[i32]) -> Vec<i32> {
+        let n = st.len();
         let pop = |x: i32| x.clamp(0, POP);
         // GPe: tonic, inhibited by D2
         let gpe: Vec<i32> = st.iter().map(|&(_, d2)| pop(GPE_TONIC - d2)).collect();
@@ -419,9 +451,63 @@ impl Striatum {
             return 0;
         }
         if let Some(st) = self.recent.last_mut() {
-            st.choices.push((channel, best));
+            st.choices.push((channel, best, Vec::new()));
         }
         best
+    }
+
+    /// The cortex proposes candidates, the loop picks one or none: each candidate is a list of
+    /// input groups (its own activity: a bookmark's age and onset, a motor command's bits),
+    /// scored by `channel`'s one pair of go / no-go pools on the current state together with
+    /// it. The pallidal competition runs across the candidates; if none is released, nothing
+    /// is done (`None`, not learned). With `rng`, exploration noise. The chosen candidate
+    /// becomes eligible with its groups, so learning generalises to candidates like it.
+    pub fn choose_among<R: Rng>(&mut self, channel: usize, candidates: &[Vec<Vec<usize>>], rng: Option<&mut R>) -> Option<usize> {
+        if candidates.is_empty() {
+            return None;
+        }
+        self.ensure(channel, 2);
+        let hashed: Vec<Vec<Vec<u32>>> = candidates.iter().map(|c| c.iter().map(|g| g.iter().map(|&b| self.hash(b)).collect()).collect()).collect();
+        let raw: Vec<(i32, i32)> = hashed
+            .iter()
+            .map(|c| {
+                let mut extra: Vec<u32> = c.iter().flatten().copied().collect();
+                extra.sort_unstable();
+                let act = |s: u32| self.is_active(s) || extra.binary_search(&s).is_ok();
+                let (go, nogo) = &self.actors[channel][1];
+                (go.firing(&act, self.clock).len() as i32, nogo.firing(&act, self.clock).len() as i32)
+            })
+            .collect();
+        // the fast-spiking interneurons normalise across the candidates
+        let total: i32 = raw.iter().map(|x| x.0 + x.1).sum();
+        let st: Vec<(i32, i32)> = if total <= POP { raw } else { raw.iter().map(|&(g, s)| (g * POP / total, s * POP / total)).collect() };
+        let noise: Vec<i32> = match rng {
+            Some(rng) => (0..st.len()).map(|_| rng.gen_range(-(self.noise as i32)..=self.noise as i32)).collect(),
+            None => vec![0; st.len()],
+        };
+        let gpi = Self::pallidal(&st, &noise);
+        let mut best = None;
+        let mut lowest = GPI_TONIC - RELEASE + 1;
+        for (i, &g) in gpi.iter().enumerate() {
+            if g < lowest {
+                lowest = g;
+                best = Some(i);
+            }
+        }
+        if let (Some(i), Some(st)) = (best, self.recent.last_mut()) {
+            st.choices.push((channel, 1, hashed[i].clone()));
+        }
+        best
+    }
+
+    /// Candidate `c` was done on `channel` without the loop choosing it (the cortex initiated
+    /// it): it is tagged as a choice would be.
+    pub fn did_among(&mut self, channel: usize, candidate: &[Vec<usize>]) {
+        self.ensure(channel, 2);
+        let h: Vec<Vec<u32>> = candidate.iter().map(|g| g.iter().map(|&b| self.hash(b)).collect()).collect();
+        if let Some(st) = self.recent.last_mut() {
+            st.choices.push((channel, 1, h));
+        }
     }
 
     /// Action `a` of `n` on `channel` was done without the loop choosing it (the motor cortex
@@ -429,7 +515,7 @@ impl Striatum {
     pub fn did(&mut self, channel: usize, n: usize, a: usize) {
         self.ensure(channel, n);
         if let Some(st) = self.recent.last_mut() {
-            st.choices.push((channel, a));
+            st.choices.push((channel, a, Vec::new()));
         }
     }
 
@@ -516,6 +602,7 @@ fn remove<R: Rng>(pool: &mut Pool, fired: &[usize], n: usize, rng: &mut R, count
 mod tests {
     use super::*;
     use rand::rngs::StdRng;
+    use rand::seq::SliceRandom;
     use rand::SeedableRng;
 
     /// A delayed payoff: in state A the agent picks 0 or 1; three neutral steps follow; then a
@@ -537,6 +624,42 @@ mod tests {
         }
         st.begin_groups(&a, false, &mut rng);
         assert_eq!(st.choose::<StdRng>(0, 2, None), 1);
+    }
+
+    /// Candidates proposed fresh each trial (a feature and identity bits never seen again): the
+    /// right feature depends on the context, and the choice must generalise to new candidates.
+    #[test]
+    fn chooses_among_new_candidates_by_their_features() {
+        let mut st = Striatum::new(1 << 16);
+        let mut rng = StdRng::seed_from_u64(5);
+        let ctx = |k: usize| -> Vec<Vec<usize>> { vec![(1000 * k + 50..1000 * k + 66).collect()] };
+        let feature = |f: usize| -> Vec<usize> { (20000 + 100 * f..20000 + 100 * f + 16).collect() };
+        let mut fresh = |rng: &mut StdRng| -> Vec<Vec<Vec<usize>>> {
+            let mut fs = vec![0, 1, 2];
+            fs.shuffle(rng);
+            fs.iter().map(|&f| vec![feature(f), (0..16).map(|_| rng.gen_range(100_000..1_000_000)).collect()]).collect()
+        };
+        let mut feats = Vec::new();
+        for i in 0..1500 {
+            let k = i % 2;
+            let cands = fresh(&mut rng);
+            let fs: Vec<usize> = cands.iter().map(|c| (c[0][0] - 20000) / 100).collect();
+            st.begin_groups(&ctx(k), true, &mut rng);
+            let c = st.choose_among(0, &cands, Some(&mut rng));
+            st.reward(if c.map(|c| fs[c]) == Some(k) { ONE as i32 } else { 0 });
+            st.end(true, &mut rng);
+            feats.push(fs);
+        }
+        let mut right = 0;
+        for i in 0..100 {
+            let k = i % 2;
+            let cands = fresh(&mut rng);
+            let fs: Vec<usize> = cands.iter().map(|c| (c[0][0] - 20000) / 100).collect();
+            st.begin_groups(&ctx(k), false, &mut rng);
+            right += (st.choose_among::<StdRng>(0, &cands, None).map(|c| fs[c]) == Some(k)) as usize;
+            st.end(false, &mut rng);
+        }
+        assert!(right >= 90, "{right} of 100");
     }
 
     /// Two contexts, opposite best actions: the cells must learn each from its own pathway bits.

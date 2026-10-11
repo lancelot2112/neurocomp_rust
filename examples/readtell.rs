@@ -448,6 +448,22 @@ const CH_PLACE: usize = 4;
 /// the motor repertoire's channel, its size, and how often the motor cortex babbles (1 in this
 /// many motor opportunities while learning)
 const CH_MOTOR: usize = 5;
+/// the bookmark channel (candidates: the hippocampus's recent boundaries), how many are kept,
+/// and where their features sit in the striatum's input ids
+const CH_MARK: usize = 6;
+const MARKS: usize = 16;
+const MARK_BASE: usize = 1 << 24;
+/// where motor commands' bits sit in the striatum's input ids
+const MOTOR_BASE: usize = 1 << 25;
+
+/// A bookmark: a boundary's context, strength, step, and the association cells before and at it.
+struct Mark {
+    ctx: Vec<usize>,
+    strength: i32,
+    at: usize,
+    before: Vec<usize>,
+    cells: Vec<usize>,
+}
 const MOTOR_CAP: usize = 32;
 const BABBLE: u32 = 8;
 
@@ -541,6 +557,13 @@ struct IndexHc {
     /// rose above its threshold), in a few slots; strengths fade at each boundary and a new
     /// anchor replaces the weakest only if it is stronger. What is "held" is the strongest.
     anchors: Option<Vec<(Vec<usize>, i32)>>,
+    /// bookmarks to choose among when needed (RT_ANCHOR=choose, default): the last `MARKS`
+    /// boundaries, each with its context, strength, when it came, the association-area cells
+    /// before it and at it
+    marks: Option<Vec<Mark>>,
+    /// steps heard so far, and the association cells heard last
+    clock: usize,
+    last_cells: Vec<usize>,
     /// storing goes on while retrieving (encoding and retrieval alternate within each theta
     /// cycle), except for its own speech (corollary discharge)
     theta: bool,
@@ -586,6 +609,9 @@ impl IndexHc {
             gates_off: false,
             hold_off: false,
             anchors: None,
+            marks: None,
+            clock: 0,
+            last_cells: Vec::new(),
             theta: false,
             phase: 3,
             anchor_stats: [(0, 0, 0); 4],
@@ -705,10 +731,19 @@ impl IndexHc {
         self.last_word = key;
         let fired = self.boundary.observe(&cells);
         self.log.push((fired, self.last_recalled));
+        self.clock += 1;
+        let before = std::mem::replace(&mut self.last_cells, cells.clone());
         if fired {
             self.boundaries += 1;
             self.drift(&cells, self.ctx.len() / 2, 2);
             let strength = self.boundary.excess();
+            if let Some(m) = self.marks.as_mut() {
+                if m.len() >= MARKS {
+                    m.remove(0);
+                }
+                m.push(Mark { ctx: self.ctx.clone(), strength, at: self.clock, before, cells: cells.clone() });
+                self.held = Some(self.ctx.clone());
+            }
             let st = &mut self.anchor_stats[self.phase];
             st.0 += 1;
             st.1 += strength as i64;
@@ -784,6 +819,35 @@ impl IndexHc {
         self.held = Some(self.ctx.clone());
         self.request = false;
         self.holds += 1;
+    }
+
+    /// The bookmarks as the cortex offers them to the striatum: each one's age (time cells, a
+    /// band of steps since it), its strength (a band), the sounds before it and at it.
+    fn candidates(&self) -> Vec<Vec<Vec<usize>>> {
+        let Some(m) = self.marks.as_ref() else { return Vec::new() };
+        let band = |d: usize| [0, 1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7].get(d).copied().unwrap_or(if d < 24 { 8 } else if d < 32 { 9 } else if d < 48 { 10 } else { 11 });
+        m.iter()
+            .map(|k| {
+                let age = band(self.clock - k.at);
+                let st = (k.strength / (ONE as i32 / 16)).clamp(-4, 8) + 4;
+                vec![
+                    (0..16).map(|j| MARK_BASE + age * 16 + j).collect(),
+                    (0..16).map(|j| MARK_BASE + 256 + st as usize * 16 + j).collect(),
+                    k.before.iter().map(|&c| MARK_BASE + 1024 + c).collect(),
+                    k.cells.iter().map(|&c| MARK_BASE + 1024 + BITS + c).collect(),
+                ]
+            })
+            .collect()
+    }
+
+    /// Bookmark `i` is reinstated: its context becomes the current one, and retrieval begins.
+    fn reinstate_mark(&mut self, i: usize) {
+        if let Some(k) = self.marks.as_ref().and_then(|m| m.get(i)) {
+            self.ctx = k.ctx.clone();
+            self.last_recalled = None;
+            self.request = true;
+            self.reinstated += 1;
+        }
     }
 
     /// The held context is reinstated as the current one, and retrieval begins.
@@ -907,12 +971,19 @@ fn main() {
         x.gates_off = ix_oracle;
         x.hold_off = hold_oracle;
         // RT_ANCHOR=off: the striatum's hold gate instead of automatic anchors
-        if std::env::var("RT_ANCHOR").map_or(true, |v| v != "off") && !hold_oracle {
+        // RT_ANCHOR: choose (default: bookmarks chosen when needed), strongest (the strongest
+        // anchor is held), off (the striatum's hold gate)
+        let anchor = std::env::var("RT_ANCHOR").unwrap_or_else(|_| "choose".into());
+        if anchor != "off" && !hold_oracle {
             x.anchors = Some(Vec::new());
             x.hold_off = true;
+            if anchor == "choose" {
+                x.marks = Some(Vec::new());
+            }
         }
-        // RT_THETA=off: retrieval mode stops all storing
-        x.theta = std::env::var("RT_THETA").map_or(true, |v| v != "off");
+        // RT_THETA=on: storing goes on while retrieving (default off: it files the retelling
+        // under the reinstated context, and those rows then win recall)
+        x.theta = std::env::var("RT_THETA").map_or(false, |v| v == "on");
     }
     // the hippocampus hears word `w`: the index learns its boundary and (with `store`) stores
     // the event; the circuit stores it with `cue` when `store`
@@ -966,7 +1037,15 @@ fn main() {
                     // start the sequence over)
                     // the held content's tag is kept with it, and re-armed when it is used, so the
                     // dopamine that follows using it reaches the decision to hold it
-                    if held && (!retr || restart) && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
+                    if x.marks.is_some() {
+                        // which bookmark, if any, to go back to
+                        if !retr || restart {
+                            let cands = x.candidates();
+                            if let Some(i) = striatum.choose_among(CH_MARK, &cands, if $explore { Some(&mut rng) } else { None }) {
+                                x.reinstate_mark(i);
+                            }
+                        }
+                    } else if held && (!retr || restart) && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
                         x.reinstate();
                         striatum.retag(CH_HOLD);
                     } else if $fired && !x.hold_off && striatum.choose(CH_HOLD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
@@ -1256,22 +1335,21 @@ fn main() {
                 // the basal ganglia release (or the motor cortex babbles); else the old
                 // hand-made channels. `opened`: the shelf place whose book came into view.
                 let opened: Option<usize> = if let Some(rep) = repertoire.as_mut() {
-                    let mut done: Option<usize> = None;
+                    let done: Option<usize>;
+                    // the commands as the motor cortex offers them: each one's own bits
+                    let offer = |rep: &Repertoire, i: usize| -> Vec<Vec<usize>> { vec![ones(rep.code(i)).into_iter().map(|b| MOTOR_BASE + b).collect()] };
                     if learn && (rep.is_empty() || rng.gen_range(0..BABBLE) == 0) {
-                        // babbling: a new pattern, done now (its efference copy tags the
-                        // striatal cells that will stand for it)
+                        // babbling: a new command, done now (its efference copy tags the
+                        // striatal cells that see it)
                         let (i, replaced) = rep.propose(&mut rng);
                         if replaced {
-                            striatum.reset_action(CH_MOTOR, i + 1);
                             motor_uses[i] = 0;
                         }
-                        striatum.did(CH_MOTOR, rep.len() + 1, i + 1);
+                        striatum.did_among(CH_MOTOR, &offer(rep, i));
                         done = Some(i);
                     } else {
-                        let c = striatum.choose(CH_MOTOR, rep.len() + 1, if learn { Some(&mut rng) } else { None });
-                        if c > 0 {
-                            done = Some(c - 1);
-                        }
+                        let cands: Vec<Vec<Vec<usize>>> = (0..rep.len()).map(|i| offer(rep, i)).collect();
+                        done = striatum.choose_among(CH_MOTOR, &cands, if learn { Some(&mut rng) } else { None });
                     }
                     let mut opened = None;
                     if let Some(i) = done {

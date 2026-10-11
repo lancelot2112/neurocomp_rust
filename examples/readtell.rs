@@ -1184,6 +1184,9 @@ fn main() {
     let mut misses: Vec<u64> = vec![0; 64];
     // (babbled, released, left, right, clicks, books opened, steps shown by the teacher)
     let mut mouse_stats = [0usize; 7];
+    // diagnosis, read trials with the cursor on the book (training, test): steps, CLICK
+    // proposed by the cortex, LEFT proposed, CLICK released, LEFT released
+    let mut on_book = [[0usize; 5]; 2];
     // RT_TEACH=none: the teacher never shows how to use the mouse
     let teach_mouse = std::env::var("RT_TEACH").map_or(true, |v| v != "none");
     // RT_STORY=book (default): the teacher reads the story from a book, opened with a click the
@@ -1708,8 +1711,18 @@ fn main() {
                     Some(mouse.command(m).clone())
                 } else {
                     let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
+                    let ob = if read && cursor == 0 && !no_instr { Some(testing as usize) } else { None };
+                    if let Some(k) = ob {
+                        on_book[k][0] += 1;
+                        on_book[k][1] += cands.iter().any(|c| c.0 == CLICK) as usize;
+                        on_book[k][2] += cands.iter().any(|c| c.0 == LEFT) as usize;
+                    }
                     match striatum.choose_among(CH_ACT, &offer, if learn { Some(&mut rng) } else { None }) {
                         Some(i) => {
+                            if let Some(k) = ob {
+                                on_book[k][3] += (cands[i].0 == CLICK) as usize;
+                                on_book[k][4] += (cands[i].0 == LEFT) as usize;
+                            }
                             mouse_stats[1] += 1;
                             hand.plan(&cands[i].1)
                         }
@@ -2233,4 +2246,5 @@ fn main() {
         curiosity_sum as f64 / n_train.max(1) as f64 / ONE as f64,
         hand.stats()
     );
+    println!("read trials, cursor on the book (steps, CLICK proposed, LEFT proposed, CLICK released, LEFT released): training {:?}, test {:?}", on_book[0], on_book[1]);
 }

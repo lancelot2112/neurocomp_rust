@@ -390,6 +390,12 @@ impl BitCells {
         self.cached.as_ref().map_or(Vec::new(), |(_, e)| e.fired.iter().map(|x| x.0).collect())
     }
 
+    /// Every cell that fired at the latest prediction, as its output and whether it burst: the
+    /// layer's competing proposals (the winner is one of them).
+    pub fn proposals(&self, out_bits: usize) -> Vec<(BitVector, bool)> {
+        self.cached.as_ref().map_or(Vec::new(), |(_, e)| e.fired.iter().map(|&(c, _, b)| (self.output(c, out_bits), b)).collect())
+    }
+
     /// The winner's output, its priming and whether it burst; None: nothing fired.
     pub fn predict(&mut self, row: &BitVector, out_bits: usize) -> Option<(BitVector, Q16, bool)> {
         self.tick += 1;

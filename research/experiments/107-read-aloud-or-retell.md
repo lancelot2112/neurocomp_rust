@@ -1823,12 +1823,73 @@ Left: the find trials' place cells (the driver's shelf index), recall routed to 
 column by the driver's knowledge of where pointers point, the fixed effort cost, and the reading
 reward computed by comparing the plan with the teacher's word.
 
+### The deconstructed version, the ablation, and the hippocampus integrated
+**The first deconstructed version (items 1–7) went silent** (55–93% silent, recall 0.1–0.4%).
+Switching off each change in turn (seeds 2 and 3):
+
+| | read | tell closed | silent | recall right |
+|---|---|---|---|---|
+| all items | 0–4% | 0–3% | 55–93% | 0.1–0.4% |
+| the imagine route back (`RT_HC_AUTO=0`) | 4–18% | 5–17% | 9–34% | 8.3–8.6% |
+| no practice (`RT_PRACTICE=0`) | 0–2% | 0–7% | 65–86% | 0–0.1% |
+
+The always-completing hippocampus was the cause. Its readout said why: three quarters of its
+completions were in encoding mode, because acetylcholine rose at any mismatch (a new story
+mismatches at almost every word) and decayed only when something was heard, so in silence it
+never fell.
+
+**Integrated, not reverted.** What the imagine route did, done by the always-completing
+hippocampus itself:
+- **Acetylcholine follows attention to the outside** (Hasselmo): hearing someone raises it;
+  it decays a quarter every step; imagining (attention turned inward) halves it.
+- **Hold, follow or jump.** Each step recall offers what comes next. Nothing new represented
+  (a pause): the offer holds. The cortex says or hears what was offered: the sequence moves on.
+  It represents something else: the content is completed, **what before when** (among rows whose
+  content matches about as well as the best, the one whose context is closest, then the most
+  recent; not the row just written, not one offered in the last 4 steps), and that jump
+  **reinstates the row's context** (retrieved context, as the temporal context model has it);
+  following, the context blends a quarter.
+- Imagining is the cortex representing the act; there is no separate door.
+
+**The full defaults** (integrated hippocampus, multi-area index, the motion stream, salience,
+and everything before), 4 seeds:
+
+| seed | read same / other | tell same / other | tell closed | silent | recall right |
+|---|---|---|---|---|---|
+| 0 | 18.5% / 20.7% | 22.1% / 22.6% | 14.9% | 13–18% | 14.9% |
+| 1 | 6.8% / 11.7% | 2.4% / 3.7% | 4.5% | 27–65% | 13.1% |
+| 2 | 3.1% / 3.4% | 27.1% / 33.0% | 28.7% | 11–63% | 15.0% |
+| 3 | 15.2% / 2.9% | 24.6% / 14.4% | 12.4% | 22–57% | 15.2% |
+
+- **Telling with the book closed works on every seed** (4.5–28.7%), with recall right 13–15% on
+  all four: the most even result yet, with no imagine door, no decoded labels, no driver-routed
+  recall, no hand-labelled acts.
+- **Still poor:** reaching the book at test (no seed opened it itself), so reading leans on
+  hearing; reading 3–21%.
+
+### Imagining, and where it happens
+Imagery reuses the cortex that perceives or acts in that modality, run top-down: visual imagery
+reactivates visual cortex down to V1 for fine detail (Kosslyn; Pearson), inner speech the
+auditory and speech-motor areas, motor imagery premotor, supplementary motor and parietal cortex
+(the plan runs, the output is inhibited). Laminar recordings put imagery and expectation in the
+feedback layers (the tufts), not layer 4 (Muckli; Kok; Lawrence). Scenes are constructed by the
+hippocampus and the default-mode network (amnesic patients cannot imagine new scenes; Hassabis
+and Maguire; remembering and imagining the future share a network, Schacter and Addis); the
+prefrontal cortex holds the goal; the basal ganglia and thalamus gate what is run internally;
+reality monitoring (imagined or real) involves the prefrontal cortex.
+
+Here imagining is narrow: one striatal channel picks a mouse proposal, run through the hand's
+forward model and the mirror, as a cue to the hippocampus; nothing reaches the sensory columns'
+tufts, and there is no inner speech or visual imagery. A general version: any column's goal can
+be released to its motor area (do) or held from the body and run around the loop (imagine), the
+basal ganglia choosing; the motor area's forward model predicts what it would produce, and that
+reaches the matching sensory column on its tuft; recall arrives on the tufts too, as feedback
+(not as if sensed); feedforward through layer 4 means real, tuft-only means imagined.
+
 ## Next
-- **The new defaults on 4 seeds** (running): self-organizing columns, the senses' goals, recall
-  reaching every column, touch, play.
-- **Acting's own value:** the story's credit made superstitions; without it the network stops
-  acting. Play is meant to give acts value of their own early, but did not teach clicking on a
-  book; why (the striatum's state during play, babbling half the steps, the reward size).
-- **Going on from the recalled opening** (recall right 3–9% though the opening is found).
-- **The always-completing hippocampus**, measured.
+- **Imagining as one operation for every modality** (do or imagine, forward models onto the
+  tufts, recall as feedback).
+- **The mouse at test:** no seed opens the book itself; play does not teach clicking on a book.
+- **Place without place cells:** the eye should see the scene while a shelf book is read, so the
+  multi-area index carries "where".
 - **Whether the story heard should cue telling** without the instruction.

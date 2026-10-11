@@ -1559,10 +1559,66 @@ reaches 100%) and failed on seed 1 (RIGHT at the edge, silent); with the voice i
 both seeds pressed RIGHT and were silent (the voice itself: 46 words said, none heard other than
 its efference copy expected).
 
+### The areas after the association fix, the mirror, and the teacher's own cursor
+Seeds 0 and 2, first test table; "reach" is the share of test trials in which the network opened
+the book itself.
+
+| | seed 0: read / tell closed / reach | seed 2: read / tell closed / reach | the mirror right |
+|---|---|---|---|
+| areas | 6% / 14% / 0 (RIGHT at the edge, 112 of 119) | 38–39% / 2.5% / 91–100% | — |
+| areas + the teacher seen, mirrored | silent / 0 (RIGHT at the edge) | silent / 0 (RIGHT at the edge, 133) | 98% (2,448 of 2,489; 2,484 of 2,514) |
+| areas + the teacher's own cursor | 1% / 5% / 0 (LEFT on the book) | 13% / 2% / 100% | 98% (1,439 of 1,469); 96% (1,110 of 1,152) |
+
+- **The association fix holds:** a word seen and the same word heard share 26.5–28.3 of 32 cells.
+- **The mirror works:** 96–98% of the teacher's acts evoke the right felt motion. But mirroring the
+  teacher's acts while they still move the network's own cursor does not stop the RIGHT habit:
+  the teacher's completion still credits the network's useless presses.
+- **The teacher's own cursor** (`RT_TEACHER_CURSOR=1`): the teacher shows how on their own copy of
+  the book, with a cursor of their own; the network's cursor stays put and its book opens only
+  when it clicks it itself, so reward follows only its own acts. The eye sees both cursors (a
+  cursor looks the same whoever's it is), and the teacher's act is seen and mirrored. Seed 2
+  reached on every test trial, the first time this seed did so with areas; seed 0 kept a LEFT
+  habit on the book (CLICK never proposed there at test). The network opened its own book far
+  less often in training (255 and 585 times, against about 900 when the teacher opened it), so it
+  saw the page less: reading fell.
+- **Hippocampal recall is broken with areas:** it held the wanted word on 0–1.6% of telling
+  steps (about 20% before), so telling with the book closed fails even where the mouse works.
+  Not yet diagnosed.
+- **The voice's corollary discharge:** in every run, every word said was heard as its efference
+  copy expected (908 and 1,332 words where it spoke).
+
+### One column for every area
+Are the association areas cortex? Until now, no. The cortex was three mechanisms: layer 4 pools
+(encoding only: the senses and the association areas), one shared pair of layers 2/3 and 5 (the
+only prediction, for every modality at once), and predictive kernels for the motor maps. The
+cortex is largely one six-layer circuit everywhere (Mountcastle); areas differ in their
+connections: sensory cortex has a thick layer 4, motor cortex almost none (agranular: layer 5
+drives the muscles, and the forward prediction is the column predicting the sensory result),
+association cortex is the same circuit fed by other areas, predicting and sending feedback.
+
+`src/program/column.rs`: one `Column` for every area.
+- **Layer 4:** the growing pool (none in an agranular motor column).
+- **Layer 2/3:** primed bit cells predicting the column's next input from its input, its own
+  previous activity and context on the tuft (from above). With a command as its input, its
+  prediction is what the command will be sensed as: the forward model, and the efference copy.
+- **Layer 5:** the output; in a motor column, what is meant → the command (the inverse model).
+- Both layers grow a cell for the moment where nothing predicted the target.
+- **Tests:** a motor column learns by babbling to say and to predict 60 words (95%+; the kernels
+  did the same); a sensory column predicts the next input of a sequence; association columns
+  predict the next scene of a story read aloud (at least 7 in 8).
+
+**Ported** (`RT_COLUMNS=1`, which implies areas): the voice's and the hand's motor sides are
+agranular columns (`Motor::Column`), learned by babbling; association areas are columns whose
+layer 4 is the conjunction pool and whose layer 2/3 predicts their next code. In a 100-trial check
+the association columns predicted the next scene 59% of the time, the voice said 46 words (all
+heard as expected), and 60 of the teacher's 73 acts were mirrored right. Still to port: the senses
+as full columns, and the shared layers 2/3 and 5 replaced by the top association column, with
+feedback down as tuft context.
+
 ## Next
-- **The area port and the mirror** after the association fix, on 4 seeds.
-- **The superstition at its root:** the striatum credits its own useless acts when the teacher
-  finishes the job; the mirror (seeing the teacher do it, in one's own motor terms) and the check
-  are the candidates.
+- **The columns on 4 seeds** (running), then the senses as full columns and the shared layers
+  2/3 and 5 replaced by the top association column, with feedback.
+- **Hippocampal recall with areas** (0–1.6% of telling steps): why.
+- **Seed 0's LEFT habit on the book** with the teacher's own cursor.
 - **The always-completing hippocampus**, measured on 4 seeds.
 - **Whether the story heard should cue telling** without the instruction.

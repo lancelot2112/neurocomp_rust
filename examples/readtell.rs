@@ -1167,41 +1167,86 @@ impl IndexHc {
         v
     }
 
-    /// Always completing (`auto`): the entorhinal input now (context and content) is completed
-    /// to the best matching row other than the one just written; the row that followed it is
-    /// the output (CA3's sequence step), and in retrieval mode the context is pulled half way
-    /// toward the completed row's own (each slot with probability 1/2).
+    /// Always completing (`auto`), one mechanism for following and for jumping. Each step
+    /// recall offers what comes next (the row `last_recalled`):
+    /// - **nothing new represented** (silence): the offer holds (recall does not race ahead);
+    /// - **the cortex represents what was offered** (said or heard it): the sequence moves on, to
+    ///   that row's successor (CA3's sequence drive);
+    /// - **it represents something else** (another word, an act imagined): the content is
+    ///   completed, what before when: among the rows whose content matches about as well as the
+    ///   best (not the row just written, not one offered in the last few steps), the one whose
+    ///   context is closest, then the most recent. That is a jump, and it reinstates the jumped
+    ///   to row's context (retrieved context); following, the context blends a quarter.
+    /// Acetylcholine decides whether the offer reaches the cortex (retrieval) or not (encoding).
     fn complete(&mut self) -> BitVector {
         self.recalls += 1;
-        // acetylcholine decays with time, heard or not (a quarter per step): in silence the
-        // hippocampus drifts toward retrieval
+        // acetylcholine decays with time, heard or not (a quarter per step)
         self.ach -= self.ach / 4;
-        let cue = self.ec(&self.content);
-        let c = self.mem.matches(&cue, 2).into_iter().map(|x| x.0).find(|&r| Some(r) != self.just_stored);
-        let r = c.map_or_else(Default::default, |c| self.mem.successor(c));
-        self.last_recalled = r.ca3.first().copied();
-        self.to_reconsolidate = self.last_recalled;
+        let content_keys: Vec<usize> = self.content.iter().map(|&c| CONTENT_BASE + c).collect();
+        let need = (content_keys.len() / 2).max(1);
+        let has = |mem: &IndexMemory, r: u32| -> usize {
+            let k = mem.keys_of(r);
+            content_keys.iter().filter(|&&c| k.binary_search(&(c as u32)).is_ok()).count()
+        };
+        let expected = self.last_recalled;
+        let (now, jumped): (Option<u32>, bool) = if content_keys.is_empty() {
+            (None, false)
+        } else if let Some(e) = expected.filter(|&e| has(&self.mem, e) >= need) {
+            (Some(e), false)
+        } else {
+            let cands: Vec<(u32, u64)> = self.mem.matches(&content_keys, 32).into_iter().filter(|&(r, _)| Some(r) != self.just_stored && !self.refractory.contains(&r)).collect();
+            let top = cands.first().map_or(0, |x| x.1);
+            let ctx: std::collections::HashSet<u32> = self.ctx.iter().map(|&c| c as u32).collect();
+            let best = cands
+                .iter()
+                .filter(|&&(_, sc)| sc * 4 >= top * 3)
+                .max_by_key(|&&(r, _)| (self.mem.keys_of(r).iter().filter(|k| ctx.contains(k)).count(), r))
+                .map(|x| x.0);
+            (best, best.is_some())
+        };
+        let out_row = match now {
+            Some(n) => self.mem.successor(n).ca3.first().copied(),
+            None => expected,
+        };
         self.completions.0 += 1;
-        self.completion_why[if c.is_none() { 0 } else if r.ec.is_empty() { 1 } else if !self.retrieving() { 2 } else { 3 }] += 1;
+        self.completion_why[if out_row.is_none() { 0 } else if self.mem.out_of(out_row.unwrap()).is_empty() { 1 } else if !self.retrieving() { 2 } else { 3 }] += 1;
+        if out_row != expected {
+            if let Some(o) = out_row {
+                self.refractory.push(o);
+                if self.refractory.len() > 4 {
+                    self.refractory.remove(0);
+                }
+            }
+        }
+        self.last_recalled = out_row;
+        self.to_reconsolidate = out_row;
         let mut v = BitVector::new(self.out_bits, Some(0));
         if !self.retrieving() {
             return v;
         }
-        if let Some((stored, _)) = c.and_then(|c| self.ordered.get(&c)) {
+        // the context: a jump reinstates the completed row's own; following, a quarter of it
+        let (src, all) = if jumped { (now, true) } else { (out_row, false) };
+        if let Some((stored, _)) = src.and_then(|r| self.ordered.get(&r)) {
             if stored.len() == self.ctx.len() {
-                for i in 0..self.ctx.len() {
-                    self.blend_rng ^= self.blend_rng << 13;
-                    self.blend_rng ^= self.blend_rng >> 7;
-                    self.blend_rng ^= self.blend_rng << 17;
-                    if self.blend_rng & 1 == 0 {
-                        self.ctx[i] = stored[i];
+                if all {
+                    self.ctx = stored.clone();
+                } else {
+                    for i in 0..self.ctx.len() {
+                        self.blend_rng ^= self.blend_rng << 13;
+                        self.blend_rng ^= self.blend_rng >> 7;
+                        self.blend_rng ^= self.blend_rng << 17;
+                        if self.blend_rng & 3 == 0 {
+                            self.ctx[i] = stored[i];
+                        }
                     }
                 }
             }
         }
         self.completions.1 += 1;
-        for &b in r.ec.iter().filter(|&&b| b < self.out_bits) {
-            v.bit_set(b);
+        if let Some(o) = out_row {
+            for &b in self.mem.out_of(o).iter().filter(|&&b| b < self.out_bits) {
+                v.bit_set(b);
+            }
         }
         v
     }
@@ -1211,6 +1256,8 @@ impl IndexHc {
     fn represent(&mut self, cells: &[usize]) {
         self.content = cells.to_vec();
         self.step_drift(cells);
+        // attention turned inward (imagining): acetylcholine falls
+        self.ach /= 2;
     }
 
     /// A sound is heard (`key` its word, `code` its sensory code, `cells` its layer 4 cells):
@@ -1253,7 +1300,8 @@ impl IndexHc {
         // retrieval mode (requested and acetylcholine low): nothing new is stored (encoding and
         // retrieval are separate modes, Hasselmo)
         if self.auto {
-            self.content = ones(heard);
+            // what the cortex represents now; nothing, when what came is not an event (a pause)
+            self.content = if store || own { ones(heard) } else { Vec::new() };
             self.just_stored = None;
         }
         let may_store = if self.auto { !own } else { !self.retrieving() || (self.theta && !own) };

@@ -238,7 +238,7 @@ struct Net {
     streams: Option<Streams>,
     /// what the senses send up: their layer 4 code and layer 2/3 activity (RT_FF=l4: the code)
     ff_l4: bool,
-    /// RT_SELFORG=1: no streams wired: every association column grown by co-activity has
+    /// self-organizing (the default; RT_SELFORG=0 off): no streams wired: every association column grown by co-activity has
     /// layers 2/3 and 5, and every column's layer 5 offers goals to every motor area; which
     /// column drives which is learned (the relay's reliability per source and context), and a
     /// column learns only where its input is active
@@ -311,7 +311,8 @@ impl Net {
         // replaces the shared layers
         let top = std::env::var("RT_TOP").map_or(false, |v| v == "1");
         let streams = std::env::var("RT_STREAMS").map_or(false, |v| v == "1");
-        let selforg = std::env::var("RT_SELFORG").map_or(false, |v| v == "1");
+        // (the default; RT_SELFORG=0: the shared layers, or what RT_TOP / RT_STREAMS / RT_AREAS ask)
+        let selforg = !top && !streams && std::env::var("RT_SELFORG").map_or(true, |v| v != "0") && std::env::var("RT_AREAS").map_or(true, |v| v != "0");
         let columns = top || streams || selforg || std::env::var("RT_COLUMNS").map_or(false, |v| v == "1");
         let areas = columns || std::env::var("RT_AREAS").map_or(false, |v| v == "1");
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
@@ -1528,10 +1529,11 @@ fn main() {
     // does it; drawn from its own generator so the other codes stay as they were
     let motion_seen = Encoder::new(MOUSE, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0x5EE5)).codes;
     // RT_TEACH_SEEN=1: the teacher's act is seen (on the screen), not felt as one's own motion
-    // RT_TEACHER_CURSOR=1: the teacher shows how with a cursor of their own, on their own copy
+    // the teacher shows how with a cursor of their own, on their own copy
     // of the book: the network's cursor stays where it is, its book opens only when it clicks it
     // itself, and the teacher's act is seen (implies RT_TEACH_SEEN=1)
-    let teacher_cursor = std::env::var("RT_TEACHER_CURSOR").map_or(false, |v| v == "1");
+    // (the default; RT_TEACHER_CURSOR=0: the teacher moves the network's own cursor)
+    let teacher_cursor = std::env::var("RT_TEACHER_CURSOR").map_or(true, |v| v != "0");
     let teach_seen = teacher_cursor || std::env::var("RT_TEACH_SEEN").map_or(false, |v| v == "1");
     // (the teacher's demonstrations that ended with their book open)
     let mut teacher_opened = 0usize;

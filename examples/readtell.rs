@@ -1171,7 +1171,9 @@ fn main() {
     // shift register); its learning progress is the long-run miss rate minus the recent one
     // one register per context (the working memory's content and the cursor's place, hashed
     // into 64): progress is learning in this situation, not on average
-    let mut misses: Vec<u64> = vec![u64::MAX; 64];
+    // A register starts empty: a situation with no history shows no progress (starting it full of
+    // misses made every newly visited situation look like learning, and paid the mouse to wander)
+    let mut misses: Vec<u64> = vec![0; 64];
     // (babbled, released, left, right, clicks, books opened, steps shown by the teacher)
     let mut mouse_stats = [0usize; 7];
     // RT_TEACH=none: the teacher never shows how to use the mouse
@@ -1183,6 +1185,8 @@ fn main() {
     // (imagined, of which while retelling)
     let mut imagined = (0usize, 0usize);
     let mut curiosity_sum = 0i64;
+    // RT_CURIOSITY=0: learning progress is not rewarded
+    let curiosity_on = std::env::var("RT_CURIOSITY").map_or(true, |v| v != "0");
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
     let mut shelf: Vec<Vec<&str>> = Vec::new();
@@ -1702,7 +1706,7 @@ fn main() {
                 let progress = (misses[here] & 0xFF00).count_ones() as i32 - (misses[here] & 0xFF).count_ones() as i32 - 1;
                 if learn {
                     net.learn(&st, &next, &mut rng);
-                    if progress > 0 {
+                    if progress > 0 && curiosity_on {
                         striatum.reward(progress * ONE as i32 / 8);
                         curiosity_sum += (progress * ONE as i32 / 8) as i64;
                     }

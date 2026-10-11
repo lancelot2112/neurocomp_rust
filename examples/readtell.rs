@@ -46,7 +46,7 @@ mod common;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
-use neurocomp::program::area::{Brain, Kind};
+use neurocomp::program::area::{Brain, Kind, Motor};
 use neurocomp::program::{
     BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
     MaskStriatum, Striatum, ThalamicRelay, VocalTract, WorkingMemory,
@@ -264,7 +264,9 @@ impl Net {
             l.set_settling(std::env::var("RT_L4_SETTLE").map_or(true, |v| v != "0"));
             l
         };
-        let areas = std::env::var("RT_AREAS").map_or(false, |v| v == "1");
+        // RT_COLUMNS=1: areas (implied) whose motor sides and association areas are columns
+        let columns = std::env::var("RT_COLUMNS").map_or(false, |v| v == "1");
+        let areas = columns || std::env::var("RT_AREAS").map_or(false, |v| v == "1");
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
         cb.set_rates(2, 0);
         cb.set_cross_frames(true);
@@ -285,6 +287,7 @@ impl Net {
             l5: mk(8192, if areas { 3 } else { 2 }),
             brain: areas.then(|| {
                 let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
+                b.columns = columns;
                 b.attach("eye", Kind::Sensor);
                 b.attach("ear", Kind::Sensor);
                 b.attach("hand", Kind::SensorMotor);
@@ -1320,7 +1323,7 @@ fn main() {
     // the mirror (with areas and RT_TEACH_SEEN=1): (teacher's acts seen, mirrored to the right felt motion)
     let mut mirror_stats = (0usize, 0usize);
     let mouse = VocalTract::new(MOUSE, BITS, ACTIVE, &mut rng);
-    let mut hand = MotorArea::new(BITS);
+    let mut hand = Motor::Kernels(MotorArea::new(BITS));
     hand.babble(&mouse, &motion, 3, &mut rng);
     let mut cursor = 0usize;
     // curiosity: the cortex's misses at predicting what follows, one bit per waiting step (a
@@ -1387,6 +1390,18 @@ fn main() {
     // with areas, the voice's own motor area learns by babbling (the shared one is unused)
     if let Some(b) = net.brain.as_mut() {
         b.areas[VOICE].motor.as_mut().unwrap().babble(&tract, &sounds, 3, &mut rng);
+    }
+    // with areas, the hand's own area's motor side learns by babbling too, and is the one used
+    if let Some(b) = net.brain.as_mut() {
+        b.areas[HAND].motor.as_mut().unwrap().babble(&mouse, &motion, 3, &mut rng);
+    }
+    macro_rules! hand {
+        () => {
+            match net.brain.as_mut().and_then(|b| b.areas[HAND].motor.as_mut()) {
+                Some(m) => m,
+                None => &mut hand,
+            }
+        };
     }
     // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
     let mut voice_check = (0usize, 0usize);
@@ -1977,7 +1992,7 @@ fn main() {
                                 on_book[k][4] += (cands[i].0 == LEFT) as usize;
                             }
                             mouse_stats[1] += 1;
-                            hand.plan(&cands[i].1)
+                            hand!().plan(&cands[i].1)
                         }
                         None => {
                             if off {
@@ -2005,7 +2020,7 @@ fn main() {
                     }
                 }
                 if let (Some(c), Some(m)) = (command.as_ref(), done) {
-                    hand.observe(c, &motion[m], &mut rng);
+                    hand!().observe(c, &motion[m], &mut rng);
                 }
                 // what is sensed is the act's effect on the screen: a move against the screen's
                 // edge moves nothing, and nothing is sensed (RT_BLOCKED=0: the
@@ -2043,7 +2058,7 @@ fn main() {
                     own_acts.push(m);
                     if check_mode == "always" || (check_mode == "1" && check_due[m]) {
                         check_due[m] = false;
-                        let expected = hand.predict(c).unwrap_or_else(zero);
+                        let expected = hand!().predict(c).unwrap_or_else(zero);
                         checks.0 += 1;
                         if expected.count_ones() > 0 && overlap(&expected, &next) * 2 < ACTIVE as u32 {
                             checks.1 += 1;
@@ -2565,14 +2580,18 @@ fn main() {
         mouse_stats[4],
         mouse_stats[5],
         curiosity_sum as f64 / n_train.max(1) as f64 / ONE as f64,
-        hand.stats()
+        hand!().stats()
     );
     println!("read trials, cursor on the book (steps, CLICK proposed, LEFT proposed, CLICK released, LEFT released): training {:?}, test {:?}", on_book[0], on_book[1]);
     if let Some(x) = ix.as_ref().filter(|x| x.auto) {
         println!("always completing: {} completions, {} reached the cortex (retrieval mode)", x.completions.0, x.completions.1);
     }
     if let Some(b) = net.brain.as_ref() {
-        println!("areas: {:?}; association areas (pair, cells): {:?}; full area: {:?} cells", b.areas.iter().map(|a| (a.name.as_str(), a.l4.as_ref().map_or(0, |p| p.cells()))).collect::<Vec<_>>(), b.pairs.iter().map(|p| (p.0, p.1.cells())).collect::<Vec<_>>(), b.full.as_ref().map(|f| f.cells()));
+        println!("areas: {:?}; association areas (pair, cells): {:?}; full area: {:?} cells", b.areas.iter().map(|a| (a.name.as_str(), a.l4.as_ref().map_or(0, |p| p.cells()))).collect::<Vec<_>>(), b.pairs.iter().map(|p| (p.0, p.1.l4.as_ref().map_or(0, |x| x.cells()))).collect::<Vec<_>>(), b.full.as_ref().map(|f| f.l4.as_ref().map_or(0, |x| x.cells())));
+        if b.columns {
+            let (n, right) = b.assoc_hits();
+            println!("association columns: predicted the next scene {right} of {n} times");
+        }
     }
     if net.brain.is_some() {
         println!("voice area: {} words said, {} not heard as its efference copy expected", voice_check.0, voice_check.1);

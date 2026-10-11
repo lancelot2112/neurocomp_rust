@@ -21,7 +21,72 @@
 use std::collections::HashMap;
 
 use crate::bitvec::BitVector;
-use crate::program::motor::MotorArea;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::SeedableRng;
+
+use crate::program::column::Column;
+use crate::program::motor::{MotorArea, VocalTract};
+
+/// A motor side: the predictive kernels (`MotorArea`), or a column (agranular: layer 5 the
+/// inverse model, layer 2/3 the forward model).
+pub enum Motor {
+    Kernels(MotorArea),
+    Column(Box<Column>),
+}
+
+impl Motor {
+    /// The command for what is meant (the inverse model).
+    pub fn plan(&mut self, meant: &BitVector) -> Option<BitVector> {
+        match self {
+            Motor::Kernels(m) => m.plan(meant),
+            Motor::Column(c) => c.command_for(meant),
+        }
+    }
+
+    /// What a command will be sensed as (the forward model: the efference copy).
+    pub fn predict(&mut self, command: &BitVector) -> Option<BitVector> {
+        match self {
+            Motor::Kernels(m) => m.predict(command),
+            Motor::Column(c) => c.predict_result(command),
+        }
+    }
+
+    /// A command and what it produced; returns the forward model's error before learning.
+    pub fn observe<R: rand::Rng>(&mut self, command: &BitVector, sensed: &BitVector, rng: &mut R) -> u32 {
+        match self {
+            Motor::Kernels(m) => m.observe(command, sensed, rng),
+            Motor::Column(c) => c.observe(command, sensed, rng),
+        }
+    }
+
+    /// Babble: `rounds` times through the effector's repertoire in random order, each command
+    /// issued and its result sensed (`heard[w]`).
+    pub fn babble<R: rand::Rng>(&mut self, tract: &VocalTract, heard: &[BitVector], rounds: usize, rng: &mut R) {
+        if let Motor::Kernels(m) = self {
+            m.babble(tract, heard, rounds, rng);
+            return;
+        }
+        let mut order: Vec<usize> = (0..tract.len().min(heard.len())).collect();
+        for _ in 0..rounds {
+            order.shuffle(rng);
+            for &w in &order {
+                let m = tract.command(w).clone();
+                if let Some(said) = tract.articulate(&m) {
+                    self.observe(&m, &heard[said], rng);
+                }
+            }
+        }
+    }
+
+    /// (inverse cells, forward cells, -) for a column; the kernels' own stats otherwise
+    pub fn stats(&self) -> (usize, usize, usize) {
+        match self {
+            Motor::Kernels(m) => m.stats(),
+            Motor::Column(c) => (c.l5.committed(), c.l23.committed(), 0),
+        }
+    }
+}
 
 /// A pool of cells over several sources (each `src_bits` bits), recruited as needed.
 pub struct Pool {
@@ -282,7 +347,7 @@ pub struct Area {
     /// layer 4 (sensory side)
     pub l4: Option<Pool>,
     /// inverse and forward models (motor side)
-    pub motor: Option<MotorArea>,
+    pub motor: Option<Motor>,
     /// the latest sensory code (layer 4's winners)
     pub code: BitVector,
     /// the efference copy of the latest command (what it should be sensed as)
@@ -315,14 +380,14 @@ impl Area {
     }
 
     /// The command for what is meant (a sensory code), from the inverse model.
-    pub fn command_for(&self, meant: &BitVector) -> Option<BitVector> {
-        self.motor.as_ref().and_then(|m| m.plan(meant))
+    pub fn command_for(&mut self, meant: &BitVector) -> Option<BitVector> {
+        self.motor.as_mut().and_then(|m| m.plan(meant))
     }
 
     /// A command is issued: its efference copy (the forward model's prediction) is kept, to be
     /// compared with what is sensed next. Returns the prediction.
     pub fn issue(&mut self, command: &BitVector) -> Option<BitVector> {
-        let p = self.motor.as_ref().and_then(|m| m.predict(command));
+        let p = self.motor.as_mut().and_then(|m| m.predict(command));
         self.expect = Some(p.clone().unwrap_or_else(|| BitVector::new(command.bit_len(), Some(0))));
         p
     }
@@ -340,15 +405,22 @@ pub struct Brain {
     bits: usize,
     k: usize,
     pub areas: Vec<Area>,
-    /// ((area a, area b), its pool)
-    pub pairs: Vec<((usize, usize), Pool)>,
+    /// ((area a, area b), its column: layer 4 the conjunction pool)
+    pub pairs: Vec<((usize, usize), Column)>,
     /// co-activity counts of pairs without an association area yet
     together: HashMap<(usize, usize), u32>,
     /// a pair gets an association area after this many co-active steps
     pub pair_after: u32,
-    pub full: Option<Pool>,
+    pub full: Option<Column>,
     seed: u64,
+    /// columns: motor sides are agranular columns, and association areas predict their next
+    /// code (layer 2/3); else motor sides are kernels and association areas only conjoin
+    pub columns: bool,
+    rng: StdRng,
 }
+
+/// Cells a column's layers may grow to.
+const CAP: usize = 8192;
 
 /// Room for this many pairwise association areas as sources of the full one.
 const MAX_PAIRS: usize = 16;
@@ -356,7 +428,7 @@ const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -364,7 +436,7 @@ impl Brain {
     pub fn attach(&mut self, name: &str, kind: Kind) -> usize {
         let i = self.areas.len();
         let l4 = (kind != Kind::Motor).then(|| Pool::new(1, self.bits, self.bits, self.k, 1, self.seed.wrapping_add(17 * i as u64 + 1)));
-        let motor = (kind != Kind::Sensor).then(|| MotorArea::new(self.bits));
+        let motor = (kind != Kind::Sensor).then(|| if self.columns { Motor::Column(Box::new(Column::agranular(self.bits, CAP))) } else { Motor::Kernels(MotorArea::new(self.bits)) });
         self.areas.push(Area { name: name.to_string(), kind, l4, motor, code: BitVector::new(self.bits, Some(0)), expect: None, effect_error: None });
         i
     }
@@ -393,6 +465,24 @@ impl Brain {
         }
     }
 
+    /// An association column's code for this input. Learning, with columns, it is sensed: layer
+    /// 2/3 learns that this code followed what it predicted, and predicts the next. Otherwise
+    /// (and for what is only considered) layer 4 alone.
+    fn code_of(col: &mut Column, input: &[(usize, &BitVector)], learn: bool, columns: bool, rng: &mut StdRng) -> BitVector {
+        if learn && columns {
+            col.sense(input, None, true, rng)
+        } else if learn {
+            col.l4.as_mut().unwrap().learn(input)
+        } else {
+            col.l4.as_ref().unwrap().encode(input)
+        }
+    }
+
+    /// The association columns' predictions: (checked, right), over pairs and the full area.
+    pub fn assoc_hits(&self) -> (u64, u64) {
+        self.pairs.iter().map(|p| &p.1).chain(self.full.iter()).fold((0, 0), |a, c| (a.0 + c.hits.0, a.1 + c.hits.1))
+    }
+
     /// As `associate`, for given codes (one per area, in order; empty for a silent area).
     pub fn associate_codes(&mut self, codes: &[BitVector], learn: bool) -> BitVector {
         let active: Vec<usize> = (0..codes.len()).filter(|&i| codes[i].count_ones() > 0).collect();
@@ -408,25 +498,26 @@ impl Brain {
                     if *n >= self.pair_after {
                         self.together.remove(&key);
                         let seed = self.seed.wrapping_add(1000 + 31 * self.pairs.len() as u64);
-                        self.pairs.push((key, Pool::new(2, self.bits, self.bits, self.k, 2, seed)));
+                        self.pairs.push((key, Column::granular(self.bits, Pool::new(2, self.bits, self.bits, self.k, 2, seed), CAP)));
                     }
                 }
             }
         }
         let mut pair_codes: Vec<BitVector> = Vec::with_capacity(self.pairs.len());
         let silent = BitVector::new(self.bits, Some(0));
-        for ((a, b), pool) in self.pairs.iter_mut() {
+        let columns = self.columns;
+        for ((a, b), col) in self.pairs.iter_mut() {
             // an area not given is silent
             let input = [(0usize, codes.get(*a).unwrap_or(&silent)), (1usize, codes.get(*b).unwrap_or(&silent))];
-            pair_codes.push(if learn { pool.learn(&input) } else { pool.encode(&input) });
+            pair_codes.push(Self::code_of(col, &input, learn, columns, &mut self.rng));
         }
         if self.full.is_none() && self.pairs.len() >= 2 {
-            self.full = Some(Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)));
+            self.full = Some(Column::granular(self.bits, Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)), CAP));
         }
         // the highest level active: the full area when it has a code, else the pairwise codes
         if let Some(full) = self.full.as_mut() {
             let input: Vec<(usize, &BitVector)> = pair_codes.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
-            let c = if learn { full.learn(&input) } else { full.encode(&input) };
+            let c = Self::code_of(full, &input, learn, columns, &mut self.rng);
             if c.count_ones() > 0 {
                 return c;
             }
@@ -449,9 +540,10 @@ impl Brain {
     /// the pair has no association area yet.
     pub fn mirror(&self, from: usize, code: &BitVector, to: usize) -> BitVector {
         let none = BitVector::new(self.bits, Some(0));
-        let Some(((a, _), pool)) = self.pairs.iter().find(|p| p.0 == (from, to) || p.0 == (to, from)) else {
+        let Some(((a, _), col)) = self.pairs.iter().find(|p| p.0 == (from, to) || p.0 == (to, from)) else {
             return none;
         };
+        let pool = col.l4.as_ref().unwrap();
         let (side_from, side_to) = if *a == from { (0, 1) } else { (1, 0) };
         let cells = pool.encode(&[(side_from, code)]);
         if cells.count_ones() == 0 {
@@ -591,6 +683,35 @@ mod tests {
                 assert!(ov(&m, &felt[j]) * 4 < K as u32, "act {i} evokes act {j}");
             }
         }
+    }
+
+    #[test]
+    fn association_columns_predict_the_next_scene() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let mut brain = Brain::new(BITS, K, 5);
+        brain.columns = true;
+        let eye = brain.attach("eye", Kind::Sensor);
+        let ear = brain.attach("ear", Kind::Sensor);
+        let voice = brain.attach("voice", Kind::Motor);
+        assert!(matches!(brain.areas[voice].motor, Some(Motor::Column(_))));
+        // a story read aloud, over and over: word i seen and heard, then word i+1
+        let words: Vec<(BitVector, BitVector)> = (0..8).map(|_| (rand_code(&mut rng), rand_code(&mut rng))).collect();
+        for _ in 0..40 {
+            for (seen, heard) in &words {
+                brain.areas[eye].sense(seen, true);
+                brain.areas[ear].sense(heard, true);
+                brain.associate(true);
+            }
+        }
+        let before = brain.assoc_hits();
+        for (seen, heard) in &words {
+            brain.areas[eye].sense(seen, true);
+            brain.areas[ear].sense(heard, true);
+            brain.associate(true);
+        }
+        let after = brain.assoc_hits();
+        let (n, right) = (after.0 - before.0, after.1 - before.1);
+        assert!(right * 8 >= n * 7, "the association column predicted the next scene {right} of {n} times");
     }
 
     #[test]

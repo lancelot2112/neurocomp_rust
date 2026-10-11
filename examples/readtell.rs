@@ -562,7 +562,9 @@ struct IndexHc {
 impl IndexHc {
     fn new(seed: u64) -> Self {
         let mut rng = StdRng::seed_from_u64(seed.wrapping_add(4242));
-        let ctx = (0..ACTIVE).map(|_| rng.gen_range(0..CTX_POOL)).collect();
+        // RT_CTX_BANKS=1: two slower banks follow the fast one (16 and 32 slots)
+        let slots = if std::env::var("RT_CTX_BANKS").map_or(false, |v| v == "1") { ACTIVE + 48 } else { ACTIVE };
+        let ctx = (0..slots).map(|_| rng.gen_range(0..CTX_POOL)).collect();
         // RT_HC_TIERS=0: rarity weights 1/n (default: powers of two, 2^−⌊log₂ n⌋)
         let cfg = IndexConfig { min_overlap: 12, tiers: std::env::var("RT_HC_TIERS").map_or(true, |v| v != "0"), ..Default::default() };
         Self {
@@ -616,10 +618,35 @@ impl IndexHc {
         };
         let mut acting: Vec<(u64, usize)> = cells.iter().map(|&c| (mix(c as u64 ^ salt.wrapping_mul(0xC2B2_AE3D_27D4_EB4F)), c)).collect();
         acting.sort_unstable();
-        let len = self.ctx.len() as u64;
+        // the fast bank: the first ACTIVE slots (the slower banks, if any, follow it)
+        let len = ACTIVE.min(self.ctx.len()) as u64;
         for &(h, c) in acting.iter().take(n) {
             let slot = (h % len) as usize;
             self.ctx[slot] = (mix(c as u64 ^ (self.ctx[slot] as u64).rotate_left(21) ^ salt) % CTX_POOL as u64) as usize;
+        }
+    }
+
+    /// One step's drift: 4 of the fast bank's slots, and with banks (RT_CTX_BANKS=1) one slot of
+    /// each slower bank (16 slots: a half-life of about 11 steps; 32 slots: about 22).
+    fn step_drift(&mut self, cells: &[usize]) {
+        self.drift(cells, 4, 1);
+        let mut start = ACTIVE;
+        for (bank, size) in [(1u64, 16usize), (2, 32)] {
+            if self.ctx.len() < start + size {
+                break;
+            }
+            let mix = |x: u64| {
+                let mut y = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                y ^= y >> 29;
+                y = y.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+                y ^ (y >> 31)
+            };
+            if let Some(&c) = cells.iter().min_by_key(|&&c| mix(c as u64 ^ bank.wrapping_mul(0xA24B_AED4_963E_E407))) {
+                let h = mix(c as u64 ^ bank.wrapping_mul(0xA24B_AED4_963E_E407));
+                let slot = start + (h % size as u64) as usize;
+                self.ctx[slot] = (mix(c as u64 ^ (self.ctx[slot] as u64).rotate_left(13) ^ (bank << 40)) % CTX_POOL as u64) as usize;
+            }
+            start += size;
         }
     }
 
@@ -637,10 +664,10 @@ impl IndexHc {
         if let (Some(l), true) = (self.last_recalled, self.retrieving()) {
             let cells: Vec<usize> = self.mem.out_of(l).to_vec();
             if !cells.is_empty() {
-                self.drift(&cells, 4, 1);
+                self.step_drift(&cells);
                 // the event boundary that followed it then (the context jumped by half)
                 if self.ordered.get(&l).map_or(false, |x| x.1) {
-                    self.drift(&cells, self.ctx.len() / 2, 2);
+                    self.drift(&cells, ACTIVE / 2, 2);
                 }
             }
         }
@@ -757,7 +784,7 @@ impl IndexHc {
         // network's own speech does not move it (it is predicted: corollary discharge), the
         // recall does (see `recall`)
         if !(own && self.retrieving()) {
-            self.drift(&cells, 4, 1);
+            self.step_drift(&cells);
         }
         self.last_word = key;
         let fired = self.boundary.observe(&cells);
@@ -771,7 +798,7 @@ impl IndexHc {
         }
         if fired {
             self.boundaries += 1;
-            self.drift(&cells, self.ctx.len() / 2, 2);
+            self.drift(&cells, ACTIVE / 2, 2);
             if let Some(e) = self.stored_now.and_then(|id| self.ordered.get_mut(&id)) {
                 e.1 = true;
             }
@@ -791,7 +818,7 @@ impl IndexHc {
     fn reach_event(&mut self) {
         self.boundaries += 1;
         let c = self.ctx.clone();
-        self.drift(&c, self.ctx.len() / 2, 3);
+        self.drift(&c, ACTIVE / 2, 3);
     }
 
     /// The entorhinal input now, the only way anything cues the hippocampus: the context cells,
@@ -828,7 +855,7 @@ impl IndexHc {
     fn drift_with(&mut self, cells: &[usize]) {
         // while retrieving, the cortex represents what is recalled, and that moved it already
         if !self.retrieving() {
-            self.drift(cells, 4, 1);
+            self.step_drift(cells);
         }
     }
 

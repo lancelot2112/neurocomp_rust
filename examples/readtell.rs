@@ -1184,6 +1184,8 @@ fn main() {
     let mut misses: Vec<u64> = vec![0; 64];
     // (babbled, released, left, right, clicks, books opened, steps shown by the teacher)
     let mut mouse_stats = [0usize; 7];
+    let observe = std::env::var("RT_OBSERVE").map_or(false, |v| v == "1");
+    let blocked_senses = std::env::var("RT_BLOCKED").map_or(false, |v| v == "1");
     // diagnosis, read trials with the cursor on the book (training, test): steps, CLICK
     // proposed by the cortex, LEFT proposed, CLICK released, LEFT released
     let mut on_book = [[0usize; 5]; 2];
@@ -1702,7 +1704,13 @@ fn main() {
                         imagined.1 += (!read && !make && !find) as usize;
                     }
                 }
-                let command: Option<BitVector> = if shown.is_some() {
+                let command: Option<BitVector> = if let Some(m) = shown {
+                    // RT_OBSERVE=1: the teacher's act, seen, is tagged as if done (the
+                    // mirror system's view of it), so the dopamine that follows credits it and not
+                    // whatever the network did before
+                    if observe {
+                        striatum.did_among(CH_ACT, &[ones(&motion[m]).into_iter().map(|b| ACT_BASE + b).collect()]);
+                    }
                     None
                 } else if learn && rng.gen_range(0..BABBLE) == 0 {
                     let m = rng.gen_range(0..MOUSE);
@@ -1735,7 +1743,9 @@ fn main() {
                 if let (Some(c), Some(m)) = (command.as_ref(), done) {
                     hand.observe(c, &motion[m], &mut rng);
                 }
-                let next = done.map_or(silence.clone(), |m| motion[m].clone());
+                // RT_BLOCKED=1: a move against the screen's edge moves nothing, and nothing is sensed
+                let blocked = blocked_senses && matches!((done, cursor), (Some(LEFT), 0)) || blocked_senses && done == Some(RIGHT) && cursor + 1 == npos;
+                let next = if blocked { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
                 // the cortex learns what came; curiosity is the progress of its predictions here
                 misses[here] = misses[here] << 1 | (overlap(&st.plan, &next) < 24) as u64;
                 // misses 9..16 steps back minus the last 8 (no divide), beyond one of noise

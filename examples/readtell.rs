@@ -510,6 +510,11 @@ struct IndexHc {
     last_recalled: Option<u32>,
     /// the rows recalled in the last few steps (refractory)
     refractory: Vec<u32>,
+    /// each row's context slot by slot, as it was stored (the keys keep it only as a set)
+    /// (and whether an event boundary followed it, moving the context by half)
+    ordered: std::collections::HashMap<u32, (Vec<usize>, bool)>,
+    /// the row stored at this step, if any
+    stored_now: Option<u32>,
     /// the row recalled since the last sound heard, to relearn if the cortex completes it
     to_reconsolidate: Option<u32>,
     /// the prefrontal cortex's standing request to retrieve (through the nucleus reuniens):
@@ -566,6 +571,8 @@ impl IndexHc {
             last_word: 0,
             last_recalled: None,
             refractory: Vec::new(),
+            ordered: std::collections::HashMap::new(),
+            stored_now: None,
             to_reconsolidate: None,
             request: false,
             ach: 0,
@@ -620,6 +627,19 @@ impl IndexHc {
         // expected, and is recalled unless another row matches the cue clearly better (by 12 of
         // 32 cells): the context finds where a sequence starts and corrects large jumps; the
         // links carry it on through boundaries that fall differently the second time
+        // while retrieving, what the cortex represents is the recalled assembly (the cells that
+        // were active when the last row was stored), and it moves the context as they did then:
+        // the context replays its trajectory along the episode
+        if let (Some(l), true) = (self.last_recalled, self.retrieving()) {
+            let cells: Vec<usize> = self.mem.out_of(l).to_vec();
+            if !cells.is_empty() {
+                self.drift(&cells, 4, 1);
+                // the event boundary that followed it then (the context jumped by half)
+                if self.ordered.get(&l).map_or(false, |x| x.1) {
+                    self.drift(&cells, self.ctx.len() / 2, 2);
+                }
+            }
+        }
         let best = self.mem.recall(&self.ctx);
         let best_overlap = best.strength / 16;
         // the rows recalled in the last few steps are refractory: if one is still the best match,
@@ -645,14 +665,6 @@ impl IndexHc {
             }
         }
         self.last_recalled = r.ca3.first().copied();
-        // retrieved context: while retrieving, the recalled row's context becomes the current
-        // one (the temporal context model), so the context walks forward with what is recalled
-        if let (Some(l), true) = (self.last_recalled, self.retrieving()) {
-            let c: Vec<usize> = self.mem.keys_of(l).iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect();
-            if !c.is_empty() {
-                self.ctx = c;
-            }
-        }
         if let Some(l) = self.last_recalled {
             self.refractory.push(l);
             if self.refractory.len() > 4 {
@@ -713,10 +725,19 @@ impl IndexHc {
                 keys.extend((0..16).map(|j| PLACE_BASE + k * 16 + j));
             }
             keys.extend(ones(heard).into_iter().map(|c| CONTENT_BASE + c));
+            let id = self.mem.rows() as u32;
             self.mem.store_split(&keys, &[], &cells);
+            if self.mem.rows() as u32 > id {
+                self.ordered.insert(id, (self.ctx.clone(), false));
+                self.stored_now = Some(id);
+            }
         }
-        // the context moves on with layer 4's cells, not the raw sound
-        self.drift(&cells, 4, 1);
+        // the context moves on with layer 4's cells, not the raw sound; while retrieving, the
+        // network's own speech does not move it (it is predicted: corollary discharge), the
+        // recall does (see `recall`)
+        if !(own && self.retrieving()) {
+            self.drift(&cells, 4, 1);
+        }
         self.last_word = key;
         let fired = self.boundary.observe(&cells);
         self.log.push((fired, self.last_recalled));
@@ -730,7 +751,11 @@ impl IndexHc {
         if fired {
             self.boundaries += 1;
             self.drift(&cells, self.ctx.len() / 2, 2);
+            if let Some(e) = self.stored_now.and_then(|id| self.ordered.get_mut(&id)) {
+                e.1 = true;
+            }
         }
+        self.stored_now = None;
         fired
     }
 
@@ -777,6 +802,15 @@ impl IndexHc {
         (*n > 0).then_some(best)
     }
 
+    /// The cortex's own state moves the context when nothing is heard: the association area's
+    /// assembly of what it represents (its plan: a word recalled or meant, said or not).
+    fn drift_with(&mut self, cells: &[usize]) {
+        // while retrieving, the cortex represents what is recalled, and that moved it already
+        if !self.retrieving() {
+            self.drift(cells, 4, 1);
+        }
+    }
+
     /// The prefrontal cortex holds the context in force: where this episode begins.
     fn hold(&mut self) {
         self.held = Some(self.ctx.clone());
@@ -805,7 +839,7 @@ impl IndexHc {
     /// Row `r` is gone back to: its context becomes the current one, recall carries on from it
     /// along the links, and retrieval begins.
     fn reinstate_row(&mut self, r: u32) {
-        self.ctx = self.mem.keys_of(r).iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect();
+        self.ctx = self.ordered.get(&r).map(|x| x.0.clone()).unwrap_or_else(|| self.mem.keys_of(r).iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect());
         self.last_recalled = Some(r);
         self.refractory = vec![r];
         self.request = true;
@@ -1117,6 +1151,16 @@ fn main() {
     }
     // a new step for the striatum (after a sound): the TD update, then the hippocampal gates:
     // reinstate what is held, or (at a boundary) hold where this episode begins
+    // the context moves every step with what the cortex represents: what is heard (in `hear`),
+    // or when nothing is, its plan (a word recalled or meant, said or not)
+    macro_rules! cortex_drift {
+        ($plan:expr) => {{
+            if ix.is_some() && ($plan).count_ones() > 0 {
+                let cells = ones(&net.assoc_of(&eye_now, $plan, false, &mut rng));
+                ix.as_mut().unwrap().drift_with(&cells);
+            }
+        }};
+    }
     macro_rules! td_step {
         ($fired:expr, $explore:expr) => {{
             let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.request, x.held.is_some()));
@@ -1666,6 +1710,9 @@ fn main() {
                         if heard_correction && !ok {
                             hc_hear!(want, &cue, store_all, true, false);
                         }
+                        if said.is_none() && !(heard_correction && !ok) {
+                            cortex_drift!(&st.plan);
+                        }
                     } else if store_all {
                         let w = if ok || heard_correction { Some(want) } else { said };
                         if let Some(w) = w {
@@ -1715,6 +1762,7 @@ fn main() {
                     None => {
                         tally.silent += 1;
                         prev2 = if heard_plan { prev.replace(st.plan.clone()) } else { prev.take() };
+                        cortex_drift!(&st.plan);
                     }
                 }
             }

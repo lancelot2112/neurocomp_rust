@@ -1538,6 +1538,10 @@ fn main() {
     // (the teacher's demonstrations that ended with their book open)
     let mut teacher_opened = 0usize;
     let wait_end = std::env::var("RT_WAIT_END").map_or(false, |v| v == "1");
+    // the row holding this trial's story's opening, and (imagined clicks while telling, landing
+    // on it)
+    let mut story_open_row: Option<u32> = None;
+    let mut open_recall = (0usize, 0usize);
     // RT_CHECK=1: an act just credited by a reward is checked the next time it is done: if it
     // has none of the effect the forward model expects, that is a dip; =always: every act
     let check_mode = std::env::var("RT_CHECK").unwrap_or_default();
@@ -1960,6 +1964,14 @@ fn main() {
                     play_opened += 1;
                     striatum.reward(ONE as i32 / 2);
                     td_step!(true, true);
+                    // the page: a text's first words come into view, one after another (the
+                    // cortex's columns learn that after a click on a book, words begin)
+                    let text = story(&mut rng);
+                    net.felt = zero();
+                    for w in text.iter().take(3) {
+                        eye_now = eye.codes[id(w)].clone();
+                        net.step(&eye_now.clone(), &silence, &zero(), true, 0, &mut rng);
+                    }
                     break;
                 }
                 _ => {}
@@ -1990,7 +2002,10 @@ fn main() {
             // (with areas, the click is seen, not heard: an act, as the cortex represents acts)
             let cells = act_assembly!(CLICK);
             if ix.is_some() {
+                let before = ix.as_ref().unwrap().mem.rows();
                 let fired = ix.as_mut().unwrap().hear(quiet, &motion[CLICK], &cells, &cells, true, false);
+                // the row that holds this story's opening (diagnosis)
+                story_open_row = (ix.as_ref().unwrap().mem.rows() > before).then_some(before as u32);
                 prev_assoc = std::mem::replace(&mut last_assoc, cells);
                 td_step!(fired, learn);
             }
@@ -2339,6 +2354,12 @@ fn main() {
                                 last_recall = x.complete();
                             } else if let Some(r) = x.best_row(&cue) {
                                 x.reinstate_row(r);
+                                // diagnosis: imagining the click while telling, did recall land on
+                                // this story's opening?
+                                if cands[i].0 == CLICK && !read && !make && !find {
+                                    open_recall.0 += 1;
+                                    open_recall.1 += (Some(r) == story_open_row) as usize;
+                                }
                             }
                         }
                         imagined.0 += 1;
@@ -3016,6 +3037,7 @@ fn main() {
         println!("teacher's cursor: {teacher_opened} demonstrations ended with the teacher's book open");
     }
     println!("mirror: {} of the teacher's acts seen, {} evoked the right felt motion", mirror_stats.0, mirror_stats.1);
+    println!("imagining the click while telling: {} times, recall went to this story's opening {} times", open_recall.0, open_recall.1);
     println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);
     println!("read trials at test, cursor off the book (place:proposed>released): {off_book:?}");

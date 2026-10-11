@@ -515,6 +515,8 @@ struct IndexHc {
     ordered: std::collections::HashMap<u32, (Vec<usize>, bool)>,
     /// the row stored at this step, if any
     stored_now: Option<u32>,
+    /// a xorshift state for the context blend
+    blend_rng: u64,
     /// the row recalled since the last sound heard, to relearn if the cortex completes it
     to_reconsolidate: Option<u32>,
     /// the prefrontal cortex's standing request to retrieve (through the nucleus reuniens):
@@ -573,6 +575,7 @@ impl IndexHc {
             refractory: Vec::new(),
             ordered: std::collections::HashMap::new(),
             stored_now: None,
+            blend_rng: 0x9E37_79B9_7F4A_7C15 ^ seed,
             to_reconsolidate: None,
             request: false,
             ach: 0,
@@ -665,6 +668,23 @@ impl IndexHc {
             }
         }
         self.last_recalled = r.ca3.first().copied();
+        // context reinstatement, partial: while retrieving, each slot takes the recalled row's
+        // stored value with probability 1/4, so the context stays in this episode even as the
+        // replay slips (a word's assembly is the same in every episode; its stored context is not)
+        if let (Some(l), true) = (self.last_recalled, self.retrieving()) {
+            if let Some((stored, _)) = self.ordered.get(&l) {
+                if stored.len() == self.ctx.len() {
+                    for i in 0..self.ctx.len() {
+                        self.blend_rng ^= self.blend_rng << 13;
+                        self.blend_rng ^= self.blend_rng >> 7;
+                        self.blend_rng ^= self.blend_rng << 17;
+                        if self.blend_rng & 3 == 0 {
+                            self.ctx[i] = stored[i];
+                        }
+                    }
+                }
+            }
+        }
         if let Some(l) = self.last_recalled {
             self.refractory.push(l);
             if self.refractory.len() > 4 {

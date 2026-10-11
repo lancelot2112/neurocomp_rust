@@ -137,6 +137,36 @@ impl Mask {
         }
     }
 
+    /// Move away from `c` by `k` bits at constant density: clear `k` (non-sticky) bits the mask
+    /// has inside `c`, set as many it lacks outside `c`.
+    fn away(&mut self, c: &[u64], k: usize, rng: &mut StdRng) {
+        let mut inside = Vec::new();
+        let mut outside = Vec::new();
+        for w in 0..c.len() {
+            let (mut x, mut y) = (self.bits[w] & c[w] & !self.sticky[w], !self.bits[w] & !c[w]);
+            while x != 0 {
+                inside.push(w * 64 + x.trailing_zeros() as usize);
+                x &= x - 1;
+            }
+            // outside the context, a random sample is enough (most bits are free)
+            y &= rng.next_u64() & rng.next_u64() & rng.next_u64();
+            while y != 0 {
+                outside.push(w * 64 + y.trailing_zeros() as usize);
+                y &= y - 1;
+            }
+        }
+        let k = k.min(inside.len()).min(outside.len());
+        for i in 0..k {
+            let j = rng.gen_range(i..inside.len());
+            inside.swap(i, j);
+            self.bits[inside[i] / 64] &= !(1 << (inside[i] % 64));
+            let j = rng.gen_range(i..outside.len());
+            outside.swap(i, j);
+            self.bits[outside[i] / 64] |= 1 << (outside[i] % 64);
+        }
+        self.untag();
+    }
+
     /// Forget the tags of bits no longer in the mask.
     fn untag(&mut self) {
         for w in 0..self.bits.len() {
@@ -231,6 +261,8 @@ pub struct MaskStriatum {
     /// keeps its total density; else the swap rule (each mask at constant density, bits outside
     /// the context cleared)
     pub push_pull: bool,
+    /// with the swap rule, a dip also moves the go mask away from the context (go LTD)
+    pub go_ltd: bool,
     pub gamma_div: i32,
     pub pause_min: i32,
     /// (dopamine events, sum of |δ|)
@@ -277,6 +309,7 @@ impl MaskStriatum {
             sticky: false,
             conj: false,
             push_pull: true,
+            go_ltd: true,
             gamma_div: 8,
             pause_min: 2,
             stats: (0, 0),
@@ -499,6 +532,12 @@ impl MaskStriatum {
                 } else {
                     up.swap(x, bits, stick, &mut self.rng);
                     self.swaps += bits as u64;
+                    // the other side of the three-factor rule: a dip also depresses the go
+                    // pathway (LTD), moving the go mask away from the context at constant density
+                    if delta < 0 && self.go_ltd {
+                        pair.0.away(x, bits, &mut self.rng);
+                        self.swaps += bits as u64;
+                    }
                 }
             }
         }

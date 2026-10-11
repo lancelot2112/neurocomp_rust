@@ -965,6 +965,13 @@ impl Bg {
             }
         }
     }
+    fn value(&self) -> i32 {
+        match self {
+            Bg::Cells(_) => 0,
+            Bg::Masks(x) => x.value(),
+            Bg::Mixed(_, m, _) => m.value(),
+        }
+    }
     /// curiosity as noise: extra GPi noise for the next choices (masks in grow mode only)
     fn set_noise(&mut self, n: i32) {
         match self {
@@ -1182,6 +1189,8 @@ fn main() {
     // A register starts empty: a situation with no history shows no progress (starting it full of
     // misses made every newly visited situation look like learning, and paid the mouse to wander)
     let mut misses: Vec<u64> = vec![0; 64];
+    // cortical curiosity: (sum of the extra noise, choices)
+    let mut curiosity_stats = (0usize, 0usize);
     // (babbled, released, left, right, clicks, books opened, steps shown by the teacher)
     let mut mouse_stats = [0usize; 7];
     let observe = std::env::var("RT_OBSERVE").map_or(false, |v| v == "1");
@@ -1202,9 +1211,13 @@ fn main() {
     let mut imagined = (0usize, 0usize);
     let mut curiosity_sum = 0i64;
     // RT_CURIOSITY=0: learning progress is not rewarded
-    // curiosity: RT_CURIOSITY=noise (default) adds a little exploration noise where the cortex's
+    // curiosity: RT_CURIOSITY=noise adds a little exploration noise where the cortex's
     // predictions are improving; =reward pays it as reward; =0 off
-    let curiosity_mode = std::env::var("RT_CURIOSITY").unwrap_or_else(|_| "noise".into());
+    // =cortex (default): the noise is the learning progress of the layer 5 cell predicting now
+    // (its own record of hits and misses), damped while reward is expected (RT_LC_DAMP=1)
+    let curiosity_mode = std::env::var("RT_CURIOSITY").unwrap_or_else(|_| "cortex".into());
+    let curiosity_cortex = curiosity_mode == "cortex";
+    let lc_damp = std::env::var("RT_LC_DAMP").map_or(false, |v| v == "1");
     let curiosity_on = curiosity_mode == "reward" || curiosity_mode == "1";
     let curiosity_noise = curiosity_mode == "noise";
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
@@ -1668,6 +1681,16 @@ fn main() {
                     let p = (misses[here] & 0xFF00).count_ones() as i32 - (misses[here] & 0xFF).count_ones() as i32 - 1;
                     striatum.set_noise(p.clamp(0, 2));
                 }
+                // cortical curiosity, as the locus coeruleus's tonic gain: where the cortex is
+                // getting better at predicting what comes, choices loosen a little; while reward is
+                // expected (the critic's value above zero), they do not (phasic mode, exploit)
+                if curiosity_cortex {
+                    let p = net.l5.progress().clamp(0, 2);
+                    let n = if lc_damp && striatum.value() > 0 { 0 } else { p };
+                    striatum.set_noise(n);
+                    curiosity_stats.0 += n as usize;
+                    curiosity_stats.1 += 1;
+                }
                 let mut cands: Vec<(usize, BitVector)> = Vec::new();
                 for (pat, _) in net.l5.proposals(BITS) {
                     let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
@@ -1757,9 +1780,12 @@ fn main() {
                 if let (Some(c), Some(m)) = (command.as_ref(), done) {
                     hand.observe(c, &motion[m], &mut rng);
                 }
-                // a move against the screen's edge moves nothing, and nothing is sensed (RT_BLOCKED=0: the
+                // what is sensed is the act's effect on the screen: a move against the screen's
+                // edge moves nothing, and nothing is sensed (RT_BLOCKED=0: the
                 // motion is sensed anyway)
-                let blocked = blocked_senses && matches!((done, cursor), (Some(LEFT), 0)) || blocked_senses && done == Some(RIGHT) && cursor + 1 == npos;
+                // (likewise a click on nothing: nothing opens)
+                let opens = if find { cursor >= 1 && cursor <= shelf_k } else { cursor == 0 && !p.is_empty() };
+                let blocked = blocked_senses && (matches!((done, cursor), (Some(LEFT), 0)) || done == Some(RIGHT) && cursor + 1 == npos || done == Some(CLICK) && !opens);
                 let next = if blocked { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
                 // the cortex learns what came; curiosity is the progress of its predictions here
                 misses[here] = misses[here] << 1 | (overlap(&st.plan, &next) < 24) as u64;
@@ -2272,5 +2298,6 @@ fn main() {
         hand.stats()
     );
     println!("read trials, cursor on the book (steps, CLICK proposed, LEFT proposed, CLICK released, LEFT released): training {:?}, test {:?}", on_book[0], on_book[1]);
+    println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);
     println!("read trials at test, cursor off the book (place:proposed>released): {off_book:?}");
 }

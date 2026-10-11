@@ -67,6 +67,8 @@ struct Cell {
     out: Vec<u32>,
     trace: u32,
     misses: u16,
+    /// the cell's last 16 predictions as winner, newest in bit 0: 1 = missed
+    hist: u16,
     bursty: u32,
     /// present basal synapses, active apical synapses (kept as the masks change)
     nb: u32,
@@ -117,6 +119,8 @@ pub struct BitCells {
     sst: Q16,
     vip: Q16,
     cached: Option<(Vec<u64>, Eval)>,
+    /// the winner at the latest prediction
+    last_win: Option<usize>,
     /// (bursts won, spikes won, nothing fired, commitments, freed)
     pub stats: [u64; 5],
 }
@@ -142,6 +146,7 @@ impl BitCells {
             sst: ONE / 2,
             vip: 0,
             cached: None,
+            last_win: None,
             stats: [0; 5],
         }
     }
@@ -384,6 +389,16 @@ impl BitCells {
         v
     }
 
+    /// The latest winner's learning progress, from its own record: its misses 9–16 predictions
+    /// back minus those of the last 8, less one for noise (positive: it is getting better at
+    /// predicting here). 0 when nothing fired.
+    pub fn progress(&self) -> i32 {
+        self.last_win.map_or(0, |c| {
+            let h = self.cells[c].hist;
+            (h & 0xFF00).count_ones() as i32 - (h & 0xFF).count_ones() as i32 - 1
+        })
+    }
+
     /// The cells that fired (spike or burst) at the latest prediction: layer 5's output
     /// population, as the pons receives it.
     pub fn last_fired(&self) -> Vec<usize> {
@@ -405,6 +420,7 @@ impl BitCells {
             self.cells[c].prime_tick = self.tick;
         }
         let w = self.winner(&e);
+        self.last_win = w.map(|x| x.0);
         self.cached = Some((row.as_words().to_vec(), e));
         if self.interneurons {
             let burst = w.map_or(false, |x| x.2);
@@ -521,6 +537,7 @@ impl BitCells {
         cell.thr = 0;
         cell.trace = ONE / 2;
         cell.misses = 0;
+        cell.hist = 0;
         cell.prime = 0;
         cell.bursty = 0;
         self.stats[4] += 1;
@@ -552,6 +569,11 @@ impl BitCells {
         let predicts = |cell: &Cell| !cell.out.is_empty() && cell.out.iter().filter(|&&b| (b as usize) < target.bit_len() && target.bit_get(b as usize)).count() * 2 >= cell.out.len();
         let w = self.winner(&e);
         let mut confirmed = false;
+        if let Some((wc, _, _)) = w {
+            let missed = !predicts(&self.cells[wc]);
+            let cell = &mut self.cells[wc];
+            cell.hist = cell.hist << 1 | missed as u16;
+        }
         if let Some((wc, _, burst)) = w {
             // one plasticity event: one random word; its bytes index the synapses changed
             // and its high bits gate the rarer changes

@@ -29,8 +29,11 @@
 //!   - Eligibility: the states and choices of the last steps, credit fading ⅘ per step; or with
 //!     `taps`, the states 1, 2, 4, 8 and 16 steps back (log-spaced, several timescales).
 //!   - Actors change only when the cholinergic interneurons pause (|δ| ≥ `pause_min` units).
-//!   - With `sticky`: bits that a burst confirms become sticky now and then (a habit) and are
-//!     never cleared by a swap.
+//!   - With `sticky`: a bit that bursts keep confirming becomes sticky (a habit) and is never
+//!     cleared. It passes two tags first, each step with probability 1/8 per confirming burst
+//!     (about 24 bursts in all), and loses its tags if it is cleared before. A dip loosens a
+//!     contradicted habit: its sticky bits in the context go back to the second tag, each with
+//!     probability 1/8.
 
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore};
@@ -52,12 +55,15 @@ const DA_BASE: i32 = 8;
 struct Mask {
     bits: Vec<u64>,
     sticky: Vec<u64>,
+    /// the two tags a bit passes on its way to sticky (synaptic tagging and capture)
+    tag1: Vec<u64>,
+    tag2: Vec<u64>,
 }
 
 impl Mask {
     /// A random mask of density 1/8 (the AND of three random words).
     fn random(words: usize, rng: &mut StdRng) -> Self {
-        Self { bits: (0..words).map(|_| rng.next_u64() & rng.next_u64() & rng.next_u64()).collect(), sticky: vec![0; words] }
+        Self { bits: (0..words).map(|_| rng.next_u64() & rng.next_u64() & rng.next_u64()).collect(), sticky: vec![0; words], tag1: vec![0; words], tag2: vec![0; words] }
     }
 
     fn overlap(&self, c: &[u64], keep: Option<&[u64]>) -> i32 {
@@ -100,15 +106,45 @@ impl Mask {
         for b in del {
             self.bits[b / 64] &= !(1 << (b % 64));
         }
+        self.untag();
         if stick {
-            for w in 0..c.len() {
-                self.sticky[w] |= self.bits[w] & c[w] & rng.next_u64() & rng.next_u64() & rng.next_u64();
-            }
+            self.consolidate(c, rng);
         }
     }
 }
 
 impl Mask {
+    /// A burst confirms the mask's bits in `c`: each, with probability 1/8, moves one stage
+    /// toward a habit (untagged → first tag → second tag → sticky), so a bit becomes sticky
+    /// only after about 24 confirming bursts.
+    fn consolidate(&mut self, c: &[u64], rng: &mut StdRng) {
+        for w in 0..c.len() {
+            let r = self.bits[w] & c[w] & rng.next_u64() & rng.next_u64() & rng.next_u64();
+            let (t1, t2) = (self.tag1[w], self.tag2[w]);
+            self.sticky[w] |= t2 & r;
+            self.tag2[w] |= t1 & r;
+            self.tag1[w] |= r;
+        }
+    }
+
+    /// A dip contradicts the habit: each sticky bit in `c`, with probability 1/8, is no longer
+    /// sticky (it keeps its second tag, so it can be relearned faster).
+    fn loosen(&mut self, c: &[u64], rng: &mut StdRng) {
+        for w in 0..c.len() {
+            let r = self.sticky[w] & c[w] & rng.next_u64() & rng.next_u64() & rng.next_u64();
+            self.sticky[w] &= !r;
+            self.tag2[w] |= r;
+        }
+    }
+
+    /// Forget the tags of bits no longer in the mask.
+    fn untag(&mut self) {
+        for w in 0..self.bits.len() {
+            self.tag1[w] &= self.bits[w];
+            self.tag2[w] &= self.bits[w];
+        }
+    }
+
     /// Clear `k` (non-sticky) bits of the mask inside `c` (long-term depression of the synapses
     /// the context drove). Returns how many were cleared.
     fn pull(&mut self, c: &[u64], k: usize, rng: &mut StdRng) -> usize {
@@ -126,6 +162,7 @@ impl Mask {
             v.swap(i, j);
             self.bits[v[i] / 64] &= !(1 << (v[i] % 64));
         }
+        self.untag();
         k
     }
 
@@ -146,9 +183,7 @@ impl Mask {
             self.bits[v[i] / 64] |= 1 << (v[i] % 64);
         }
         if stick {
-            for w in 0..c.len() {
-                self.sticky[w] |= self.bits[w] & c[w] & rng.next_u64() & rng.next_u64() & rng.next_u64();
-            }
+            self.consolidate(c, rng);
         }
         k
     }
@@ -400,6 +435,11 @@ impl MaskStriatum {
             for (ch, a, x) in &st.choices {
                 let stick = self.sticky && delta > 0;
                 let pair = &mut self.actors[*ch][*a];
+                // a dip loosens the habit it contradicts: sticky go bits in this context go back
+                // to their second tag now and then
+                if delta < 0 && self.sticky {
+                    pair.0.loosen(x, &mut self.rng);
+                }
                 let (up, down) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
                 if self.push_pull {
                     let a = up.push(x, bits, stick, &mut self.rng);

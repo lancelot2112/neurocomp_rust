@@ -607,6 +607,19 @@ impl Brain {
         Some((col.code.clone(), col.expected.clone().unwrap_or_else(|| BitVector::new(col.code.bit_len(), Some(0)))))
     }
 
+    /// A sensory column's surprise at its latest input (`Q16`): the share of its code that its
+    /// layer 2/3 did not expect (all of it if nothing was expected; 0 if nothing came).
+    pub fn surprise(&self, a: usize) -> u32 {
+        let one = crate::fixed::ONE;
+        let Some(col) = self.areas[a].col.as_ref() else { return 0 };
+        let n = col.code.count_ones() as u32;
+        if n == 0 {
+            return 0;
+        }
+        let hit = col.last_hit;
+        one - hit.min(n) * one / n
+    }
+
     /// The sensory columns' predictions: (checked, right).
     pub fn sense_hits(&self) -> (u64, u64) {
         self.areas.iter().filter_map(|a| a.col.as_ref()).fold((0, 0), |a, c| (a.0 + c.hits.0, a.1 + c.hits.1))

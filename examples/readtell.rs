@@ -243,6 +243,11 @@ struct Net {
     /// column drives which is learned (the relay's reliability per source and context), and a
     /// column learns only where its input is active
     selforg: bool,
+    /// the motion stream (with self-organizing columns; RT_MOTION_STREAM=0 off): the "seen acts"
+    /// area sees what changed since the eye's last glimpse (onsets), as the brain's motion areas
+    /// do, rather than being handed the act; the eye's last input
+    motion_stream: bool,
+    prev_eye: BitVector,
     /// self-organizing, diagnosis: per association column, (goals offered, right) for sounds
     /// and for mouse acts
     goal_hits: Vec<[(u64, u64); 2]>,
@@ -352,6 +357,8 @@ impl Net {
             ff_l4: std::env::var("RT_FF").map_or(false, |v| v == "l4"),
             selforg,
             goal_hits: Vec::new(),
+            motion_stream: selforg && std::env::var("RT_MOTION_STREAM").map_or(true, |v| v != "0"),
+            prev_eye: zero(),
             learning_motion: false,
             cb,
             relay: ThalamicRelay::new(),
@@ -473,14 +480,39 @@ impl Net {
             props.push((2, Driver::Tonic(0), cb_out.clone()));
         }
         if let (true, Some(b)) = (self.selforg, self.brain.as_mut()) {
-            let h4 = h4.unwrap_or_else(zero);
+            let mut h4 = h4.unwrap_or_else(zero);
+            // the motion stream: what changed in view (onsets) is what the "seen acts" area sees;
+            // any act seen evokes through the mirror how it would feel, which joins what the
+            // hand's area represents (watching an act activates one's own motor and touch areas)
+            let acts4 = if self.motion_stream {
+                let mut onset = eye.clone();
+                for (w, x) in onset.as_words_mut().iter_mut().zip(self.prev_eye.as_words()) {
+                    *w &= !x;
+                }
+                self.prev_eye = eye.clone();
+                let c = b.encode(ACTS, &onset, learn);
+                if c.count_ones() > 0 {
+                    let res = b.mirror(ACTS, &c, HAND);
+                    if res.count_ones() > 0 {
+                        let mut felt = self.felt.clone();
+                        for (w, x) in felt.as_words_mut().iter_mut().zip(res.as_words()) {
+                            *w |= x;
+                        }
+                        h4 = b.encode(HAND, &felt, learn);
+                    }
+                }
+                c
+            } else {
+                zero()
+            };
             // the senses' columns, with the association columns' activity as feedback
             let (fb, _) = b.columns_activity();
             b.sense_step(EYE, &e4, Some(&fb), learn);
             b.sense_step(EAR, &a4, Some(&fb), learn);
             b.sense_step(HAND, &h4, Some(&fb), learn);
-            // association areas grow from this step's co-activity
-            b.associate_codes(&[e4.clone(), a4.clone(), h4.clone()], learn);
+            b.sense_step(ACTS, &acts4, Some(&fb), learn);
+            // association areas grow from this step's co-activity (any areas active together)
+            b.associate_codes(&[e4.clone(), a4.clone(), h4.clone(), zero(), acts4.clone()], learn);
             let mut tuft = pfc.clone();
             for (w, x) in tuft.as_words_mut().iter_mut().zip(cb_out.as_words()) {
                 *w |= x;
@@ -488,10 +520,10 @@ impl Net {
             // recall: the index's pointers name cells of the eye–ear association (a word seen or
             // heard); the hippocampus reinstates those cells there, and nowhere else
             let extra: Vec<(usize, BitVector)> = b.pair_index(EYE, EAR).filter(|_| recall.count_ones() > 0).map(|i| (i, recall.clone())).into_iter().collect();
-            let outs = b.step_columns(&[e4.clone(), a4.clone(), h4.clone()], &extra, &tuft, learn);
+            let outs = b.step_columns(&[e4.clone(), a4.clone(), h4.clone(), zero(), acts4.clone()], &extra, &tuft, learn);
             // every area's layer 5 offers a goal, the senses' too (sources 30 + the area)
             let mut sense_ins = Vec::new();
-            for a in [EYE, EAR, HAND] {
+            for a in [EYE, EAR, HAND, ACTS] {
                 if let Some((code, exp)) = b.sense_state(a) {
                     if code.count_ones() > 0 {
                         if let Some((o, burst)) = b.sense_goal(a, &tuft) {
@@ -2024,6 +2056,8 @@ fn main() {
     // and the cortex what each act does to what is seen and felt.
     let n_play: usize = env("RT_PLAY", 300);
     let mut play_opened = 0usize;
+    let salience = std::env::var("RT_SALIENCE").map_or(true, |v| v != "0");
+    let mut salience_sum = 0i64;
     // (clicks on a book, clicks in all) in the first and the last half of play, chosen (not babbled)
     let mut play_clicks = [(0usize, 0usize); 2];
     for play_trial in 0..n_play {
@@ -2098,7 +2132,7 @@ fn main() {
             // edge, nothing happens and nothing is sensed
             let blocked = matches!((done, cursor), (Some(LEFT), 0)) || done == Some(RIGHT) && cursor + 1 == npos || done == Some(CLICK) && !present[cursor];
             let next = if blocked { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
-            if let (Some(b), Some(m), false) = (net.brain.as_mut(), done, blocked) {
+            if let (Some(b), Some(m), false, false) = (net.brain.as_mut(), done, blocked, net.motion_stream) {
                 let e = b.encode(ACTS, &motion_seen[m], true);
                 let h = b.encode(HAND, &motion[m], true);
                 b.associate_codes(&[zero(), zero(), h, zero(), e], true);
@@ -2115,15 +2149,29 @@ fn main() {
                 Some(CLICK) => {
                     // the page appears: its own act changed what it sees
                     play_opened += 1;
-                    striatum.reward(ONE as i32 / 2);
+                    if !salience {
+                        striatum.reward(ONE as i32 / 2);
+                    }
                     td_step!(true, true);
                     // the page: a text's first words come into view, one after another (the
                     // cortex's columns learn that after a click on a book, words begin)
                     let text = story(&mut rng);
                     net.felt = zero();
-                    for w in text.iter().take(3) {
+                    for (k, w) in text.iter().take(3).enumerate() {
                         eye_now = eye.codes[id(w)].clone();
                         net.step(&eye_now.clone(), &silence, &zero(), true, 0, &mut rng);
+                        // salience (the default; RT_SALIENCE=0: a fixed reward for an opened
+                        // book): a sudden change in view right after its own act, as unexpected
+                        // as the eye's column finds it, is a short dopamine burst (the superior
+                        // colliculus's route; Redgrave and Gurney): agency discovered, fading
+                        // as the change comes to be expected
+                        if salience && k == 0 {
+                            if let Some(b) = net.brain.as_ref() {
+                                let r = b.surprise(EYE) as i32 / 2;
+                                salience_sum += r as i64;
+                                striatum.reward(r);
+                            }
+                        }
                     }
                     break;
                 }
@@ -2139,6 +2187,9 @@ fn main() {
             "play: {n_play} trials, a book opened in {play_opened}; chosen clicks on a book: first half {} of {}, second half {} of {} (books on half the places)",
             play_clicks[0].0, play_clicks[0].1, play_clicks[1].0, play_clicks[1].1
         );
+        if salience {
+            println!("  salience: mean reward per opening {:.3}", salience_sum as f64 / play_opened.max(1) as f64 / ONE as f64);
+        }
     }
     for trial in 0..n_train + 2 * n_test {
         let testing = trial >= n_train;
@@ -2602,7 +2653,7 @@ fn main() {
                 // (with RT_TEACH_SEEN=1 the teacher's act is not felt: it is seen, at the next step)
                 let mut next = if blocked || (teach_seen && shown.is_some()) { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
                 let mut resonance: Option<BitVector> = None;
-                if let (Some(b), Some(m), false) = (net.brain.as_mut(), done.or(shown), blocked) {
+                if let (Some(b), Some(m), false, false) = (net.brain.as_mut(), done.or(shown), blocked, net.motion_stream) {
                     if shown.is_none() {
                         // an own act, seen and felt: the association of seen acts and the hand
                         // learns the pair

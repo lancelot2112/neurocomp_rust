@@ -125,6 +125,8 @@ pub struct Column {
     last: Option<(BitVector, BitVector)>,
     /// (predictions checked, right)
     pub hits: (u64, u64),
+    /// how many of the latest code's bits were expected
+    pub last_hit: u32,
 }
 
 impl Column {
@@ -140,7 +142,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z, expected: None, last: None, hits: (0, 0) }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z, expected: None, last: None, hits: (0, 0), last_hit: 0 }
     }
 
     fn project(&self, cells: &[usize]) -> BitVector {
@@ -171,6 +173,7 @@ impl Column {
     /// itself sparse).
     pub fn sense_code<R: rand::Rng + ?Sized>(&mut self, code: &BitVector, ctx: Option<&BitVector>, learn: bool, rng: &mut R) -> BitVector {
         self.code = code.clone();
+        self.last_hit = self.expected.as_ref().map_or(0, |e| overlap(e, &self.code));
         if self.code.count_ones() > 0 {
             if let Some(e) = self.expected.as_ref() {
                 self.hits.0 += 1;

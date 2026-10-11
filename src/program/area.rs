@@ -419,6 +419,9 @@ pub struct Brain {
     /// columns: motor sides are agranular columns, and association areas predict their next
     /// code (layer 2/3); else motor sides are kernels and association areas only conjoin
     pub columns: bool,
+    /// self-organizing (with columns): the association columns' layers 2/3 and 5 are stepped by
+    /// `step_columns`, every column's layer 5 offering goals to every motor area
+    pub selforg: bool,
     rng: StdRng,
 }
 
@@ -431,7 +434,7 @@ const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -482,6 +485,87 @@ impl Brain {
         }
     }
 
+    /// The association columns, pairs then the full one.
+    fn assoc_columns(&mut self) -> Vec<&mut Column> {
+        self.pairs.iter_mut().map(|p| &mut p.1).chain(self.full.iter_mut()).collect()
+    }
+
+    /// Self-organizing: every association column steps. Its input is its layer 4's code for the
+    /// areas' codes (`codes`) with `extra` (the hippocampus's return); its layer 2/3 predicts its
+    /// next input with `tuft` on its tuft; its layer 5 offers a goal (what a motor area should
+    /// produce) from its input, tuft and expectation. Returns, per column: (its layer 5's goal
+    /// and whether it burst, its input, its expectation), to learn from and to mix.
+    pub fn step_columns(&mut self, codes: &[BitVector], extra: &BitVector, tuft: &BitVector, learn: bool) -> Vec<(Option<(BitVector, bool)>, BitVector, BitVector)> {
+        let silent = BitVector::new(self.bits, Some(0));
+        let inputs: Vec<BitVector> = {
+            let pair_inputs = self.pairs.iter().map(|((a, b), col)| col.l4.as_ref().unwrap().encode(&[(0, codes.get(*a).unwrap_or(&silent)), (1, codes.get(*b).unwrap_or(&silent))]));
+            let mut v: Vec<BitVector> = pair_inputs.collect();
+            if let Some(full) = self.full.as_ref() {
+                let input: Vec<(usize, &BitVector)> = v.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
+                let f = full.l4.as_ref().unwrap().encode(&input);
+                v.push(f);
+            }
+            v
+        };
+        let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
+        let mut out = Vec::new();
+        for (col, inp) in self.assoc_columns().into_iter().zip(inputs) {
+            let mut x = inp;
+            if x.count_ones() > 0 {
+                for (w, y) in x.as_words_mut().iter_mut().zip(extra.as_words()) {
+                    *w |= y;
+                }
+            }
+            col.sense_code(&x, Some(tuft), learn, &mut rng);
+            let exp = col.expected.clone().unwrap_or_else(|| BitVector::new(x.bit_len(), Some(0)));
+            let goal = col.l5.predict_full(&x, Some(tuft), Some(&exp));
+            out.push((goal, x, exp));
+        }
+        self.rng = rng;
+        out
+    }
+
+    /// Self-organizing: association column `i`'s layer 5 learns that `target` was the goal for
+    /// this input (it learns only where its input was active: what it sees is what it learns).
+    pub fn learn_goal(&mut self, i: usize, input: &BitVector, tuft: &BitVector, exp: &BitVector, target: &BitVector) {
+        let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
+        if let Some(col) = self.assoc_columns().into_iter().nth(i) {
+            col.l5.learn(input, Some(tuft), Some(exp), target, &mut rng);
+        }
+        self.rng = rng;
+    }
+
+    /// Self-organizing: every association column's layer 5 proposals (the motor areas' options),
+    /// with the column's index.
+    pub fn goal_proposals(&mut self) -> Vec<(usize, BitVector, bool)> {
+        let mut v = Vec::new();
+        for (i, col) in self.assoc_columns().into_iter().enumerate() {
+            for (p, b) in col.l5.proposals() {
+                v.push((i, p, b));
+            }
+        }
+        v
+    }
+
+    /// The association columns' activity (layer 2/3, projected) and their layer 5's (the cells
+    /// that fired), merged: feedback for the areas below, and what the basal ganglia and pons see.
+    pub fn columns_activity(&mut self) -> (BitVector, Vec<usize>) {
+        let mut act = BitVector::new(self.bits, Some(0));
+        let mut fired = Vec::new();
+        for (i, col) in self.assoc_columns().into_iter().enumerate() {
+            for (w, y) in act.as_words_mut().iter_mut().zip(col.activity().as_words()) {
+                *w |= y;
+            }
+            fired.extend(col.l5.last_fired().into_iter().map(|c| c * 64 + i));
+        }
+        (act, fired)
+    }
+
+    /// Self-organizing: the largest learning progress among the columns' layer 5 winners.
+    pub fn goal_progress(&mut self) -> i32 {
+        self.assoc_columns().into_iter().map(|c| c.l5.progress()).max().unwrap_or(0)
+    }
+
     /// A sensory column's step (with columns): layer 2/3 learns that `code` (layer 4's, this
     /// step) followed what it predicted, and predicts the next, with `feedback` (the activity of
     /// the area above) on its tuft.
@@ -523,7 +607,8 @@ impl Brain {
         }
         let mut pair_codes: Vec<BitVector> = Vec::with_capacity(self.pairs.len());
         let silent = BitVector::new(self.bits, Some(0));
-        let columns = self.columns;
+        // (self-organizing: their layers 2/3 and 5 are stepped by `step_columns`)
+        let columns = self.columns && !self.selforg;
         for ((a, b), col) in self.pairs.iter_mut() {
             // an area not given is silent
             let input = [(0usize, codes.get(*a).unwrap_or(&silent)), (1usize, codes.get(*b).unwrap_or(&silent))];

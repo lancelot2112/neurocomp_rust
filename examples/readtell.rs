@@ -238,6 +238,16 @@ struct Net {
     streams: Option<Streams>,
     /// what the senses send up: their layer 4 code and layer 2/3 activity (RT_FF=l4: the code)
     ff_l4: bool,
+    /// RT_SELFORG=1: no streams wired: every association column grown by co-activity has
+    /// layers 2/3 and 5, and every column's layer 5 offers goals to every motor area; which
+    /// column drives which is learned (the relay's reliability per source and context), and a
+    /// column learns only where its input is active
+    selforg: bool,
+    /// self-organizing, diagnosis: per association column, (goals offered, right) for sounds
+    /// and for mouse acts
+    goal_hits: Vec<[(u64, u64); 2]>,
+    /// the target being learned is a mouse act's result (set by `learn_motor`)
+    learning_motion: bool,
 }
 
 /// The hierarchy as streams (RT_STREAMS=1), after the cortex's:
@@ -269,6 +279,8 @@ struct Step {
     top_in: Option<(BitVector, BitVector, BitVector)>,
     /// with streams: (auditory–motor input, visual–motor input, tuft, their layer 2/3s' expectations)
     streams_in: Option<(BitVector, BitVector, BitVector, BitVector, BitVector)>,
+    /// self-organizing: (per association column: its input and expectation; the tuft)
+    selforg_in: Option<(Vec<(BitVector, BitVector)>, BitVector)>,
     l23_row: BitVector,
     l5_row: BitVector,
     mossy: BitVector,
@@ -299,7 +311,8 @@ impl Net {
         // replaces the shared layers
         let top = std::env::var("RT_TOP").map_or(false, |v| v == "1");
         let streams = std::env::var("RT_STREAMS").map_or(false, |v| v == "1");
-        let columns = top || streams || std::env::var("RT_COLUMNS").map_or(false, |v| v == "1");
+        let selforg = std::env::var("RT_SELFORG").map_or(false, |v| v == "1");
+        let columns = top || streams || selforg || std::env::var("RT_COLUMNS").map_or(false, |v| v == "1");
         let areas = columns || std::env::var("RT_AREAS").map_or(false, |v| v == "1");
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
         cb.set_rates(2, 0);
@@ -322,6 +335,7 @@ impl Net {
             brain: areas.then(|| {
                 let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
                 b.columns = columns;
+                b.selforg = selforg;
                 b.attach("eye", Kind::Sensor);
                 b.attach("ear", Kind::Sensor);
                 b.attach("hand", Kind::SensorMotor);
@@ -334,6 +348,9 @@ impl Net {
             top: (top && !streams).then(|| Column::agranular(BITS, 16384)),
             streams: streams.then(|| Streams { ventral: Column::agranular(BITS, 16384), audio_motor: Column::agranular(BITS, 16384), visuo_motor: Column::agranular(BITS, 8192) }),
             ff_l4: std::env::var("RT_FF").map_or(false, |v| v == "l4"),
+            selforg,
+            goal_hits: Vec::new(),
+            learning_motion: false,
             cb,
             relay: ThalamicRelay::new(),
             rec23: zero(),
@@ -453,6 +470,37 @@ impl Net {
         if cb_out.count_ones() > 0 {
             props.push((2, Driver::Tonic(0), cb_out.clone()));
         }
+        if let (true, Some(b)) = (self.selforg, self.brain.as_mut()) {
+            let h4 = h4.unwrap_or_else(zero);
+            // the senses' columns, with the association columns' activity as feedback
+            let (fb, _) = b.columns_activity();
+            b.sense_step(EYE, &e4, Some(&fb), learn);
+            b.sense_step(EAR, &a4, Some(&fb), learn);
+            b.sense_step(HAND, &h4, Some(&fb), learn);
+            // association areas grow from this step's co-activity
+            b.associate_codes(&[e4.clone(), a4.clone(), h4.clone()], learn);
+            let mut tuft = pfc.clone();
+            for (w, x) in tuft.as_words_mut().iter_mut().zip(cb_out.as_words()) {
+                *w |= x;
+            }
+            let outs = b.step_columns(&[e4.clone(), a4.clone(), h4.clone()], recall, &tuft, learn);
+            let (act, fired) = b.columns_activity();
+            self.rec23 = act;
+            self.pons = project(&fired);
+            // every column's goal is a source of the plan (source 10 + its index)
+            let mut spiked = false;
+            for (i, (goal, _, _)) in outs.iter().enumerate() {
+                if let Some((o, burst)) = goal {
+                    props.push((10 + i.min(200) as u8, if *burst { Driver::Burst } else { Driver::Spike }, o.clone()));
+                    spiked |= !burst;
+                }
+            }
+            self.relay.step(spiked);
+            let ctx = frames(&[&pfc, ear]);
+            let plan = self.mix(&props, &ctx, &cb_out, temp, rng);
+            let ins = outs.into_iter().map(|(_, x, e)| (x, e)).collect();
+            return Step { top_in: None, streams_in: None, selforg_in: Some((ins, tuft)), l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
+        }
         if let (Some(sx), Some(b)) = (self.streams.as_mut(), self.brain.as_mut()) {
             let or = |a: &BitVector, b: &BitVector| {
                 let mut v = a.clone();
@@ -501,7 +549,7 @@ impl Net {
             }
             let ctx = frames(&[&pfc, ear]);
             let plan = self.mix(&props, &ctx, &cb_out, temp, rng);
-            return Step { top_in: None, streams_in: Some((am_in, vm_in, tuft, am_exp, vm_exp)), l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
+            return Step { top_in: None, streams_in: Some((am_in, vm_in, tuft, am_exp, vm_exp)), selforg_in: None, l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
         }
         if let (Some(top), Some(b)) = (self.top.as_mut(), self.brain.as_mut()) {
             let h4 = h4.unwrap_or_else(zero);
@@ -538,7 +586,7 @@ impl Net {
             }
             let ctx = frames(&[&pfc, ear]);
             let plan = self.mix(&props, &ctx, &cb_out, temp, rng);
-            return Step { top_in: Some((scene, tuft, expected)), streams_in: None, l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
+            return Step { top_in: Some((scene, tuft, expected)), streams_in: None, selforg_in: None, l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
         }
         let l23_row = match h4.as_ref() {
             Some(h) => frames(&[&e4, &pfc, &cb_out, &a4, recall, &self.rec23, h]),
@@ -563,7 +611,7 @@ impl Net {
         // the relay's context: what the prefrontal cortex holds and what was heard
         let ctx = frames(&[&pfc, ear]);
         let plan = self.mix(&props, &ctx, &cb_out, temp, rng);
-        Step { top_in: None, streams_in: None, l23_row, l5_row, mossy, ctx, props, plan }
+        Step { top_in: None, streams_in: None, selforg_in: None, l23_row, l5_row, mossy, ctx, props, plan }
     }
 
     /// The plan: the relay mixes the sources' proposals, each weighted by its learned
@@ -592,6 +640,12 @@ impl Net {
     /// Learn a mouse act's result (in the wait): with streams, the visual–motor column's layer 5
     /// learns it (the auditory–motor one learns sounds); otherwise as any target.
     fn learn_motor(&mut self, st: &Step, target: &BitVector, rng: &mut StdRng) {
+        if st.selforg_in.is_some() {
+            self.learning_motion = true;
+            self.learn(st, target, rng);
+            self.learning_motion = false;
+            return;
+        }
         if let (Some(sx), Some((_, vm_in, tuft, _, vm_exp))) = (self.streams.as_mut(), st.streams_in.as_ref()) {
             sx.visuo_motor.l5.learn(vm_in, Some(tuft), Some(vm_exp), target, rng);
             self.cb.learn(&st.mossy, target, rng);
@@ -604,7 +658,23 @@ impl Net {
     }
 
     fn learn(&mut self, st: &Step, target: &BitVector, rng: &mut StdRng) {
-        if let (Some(sx), Some((am_in, _, tuft, am_exp, _))) = (self.streams.as_mut(), st.streams_in.as_ref()) {
+        if let (Some(b), Some((ins, tuft))) = (self.brain.as_mut(), st.selforg_in.as_ref()) {
+            for (i, (x, e)) in ins.iter().enumerate() {
+                b.learn_goal(i, x, tuft, e, target);
+            }
+            // which column's goal was right, for which kind of target
+            let kind = self.learning_motion as usize;
+            for (src, _, pat) in &st.props {
+                if *src >= 10 {
+                    let i = (*src - 10) as usize;
+                    if self.goal_hits.len() <= i {
+                        self.goal_hits.resize(i + 1, [(0, 0); 2]);
+                    }
+                    self.goal_hits[i][kind].0 += 1;
+                    self.goal_hits[i][kind].1 += (overlap(pat, target) >= 16) as u64;
+                }
+            }
+        } else if let (Some(sx), Some((am_in, _, tuft, am_exp, _))) = (self.streams.as_mut(), st.streams_in.as_ref()) {
             sx.audio_motor.l5.learn(am_in, Some(tuft), Some(am_exp), target, rng);
         } else if let (Some(top), Some((scene, tuft, expected))) = (self.top.as_mut(), st.top_in.as_ref()) {
             top.l5.learn(scene, Some(tuft), Some(expected), target, rng);
@@ -1465,6 +1535,7 @@ fn main() {
     let teach_seen = teacher_cursor || std::env::var("RT_TEACH_SEEN").map_or(false, |v| v == "1");
     // (the teacher's demonstrations that ended with their book open)
     let mut teacher_opened = 0usize;
+    let wait_end = std::env::var("RT_WAIT_END").map_or(false, |v| v == "1");
     // RT_CHECK=1: an act just credited by a reward is checked the next time it is done: if it
     // has none of the effect the forward model expects, that is a dip; =always: every act
     let check_mode = std::env::var("RT_CHECK").unwrap_or_default();
@@ -2086,6 +2157,7 @@ fn main() {
                 // expected (the critic's value above zero), they do not (phasic mode, exploit)
                 if curiosity_cortex {
                     let p = match (net.streams.as_ref(), net.top.as_ref()) {
+                        _ if net.selforg => net.brain.as_mut().unwrap().goal_progress(),
                         (Some(sx), _) => sx.visuo_motor.l5.progress(),
                         (None, Some(t)) => t.l5.progress(),
                         _ => net.l5.progress(),
@@ -2098,6 +2170,7 @@ fn main() {
                 }
                 let mut cands: Vec<(usize, BitVector)> = Vec::new();
                 let proposals = match (net.streams.as_ref(), net.top.as_ref()) {
+                    _ if net.selforg => net.brain.as_mut().unwrap().goal_proposals().into_iter().map(|(_, p, b)| (p, b)).collect(),
                     (Some(sx), _) => sx.visuo_motor.l5.proposals(),
                     (None, Some(t)) => t.l5.proposals(),
                     _ => net.l5.proposals(BITS),
@@ -2320,6 +2393,11 @@ fn main() {
         }
         // the hand is still once the wait is over
         net.felt = zero();
+        // RT_WAIT_END=1: the wait is an episode of its own for the basal ganglia: its credit
+        // ends with it, so the story's rewards do not reach the acts made while waiting
+        if wait_end {
+            striatum.end(learn, &mut rng);
+        }
         if imagine_oracle && !read && !make {
             let cue = ones(&act_assembly!(CLICK));
             if let Some(x) = ix.as_mut() {
@@ -2781,6 +2859,19 @@ fn main() {
             println!("association columns: predicted the next scene {right} of {n} times");
             let (n, right) = b.sense_hits();
             println!("sensory columns: predicted the next input {right} of {n} times");
+        }
+        if net.selforg {
+            let names: Vec<String> = b.pairs.iter().map(|p| format!("{}+{}", b.areas[p.0 .0].name, b.areas[p.0 .1].name)).chain(b.full.iter().map(|_| "full".to_string())).collect();
+            for (i, h) in net.goal_hits.iter().enumerate() {
+                println!(
+                    "  association column {}: sounds right {} of {} offered, mouse acts right {} of {}",
+                    names.get(i).map_or("?", |x| x.as_str()),
+                    h[0].1,
+                    h[0].0,
+                    h[1].1,
+                    h[1].0
+                );
+            }
         }
         if let Some(sx) = net.streams.as_ref() {
             println!(

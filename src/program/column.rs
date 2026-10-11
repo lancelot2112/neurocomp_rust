@@ -159,11 +159,18 @@ impl Column {
     /// followed what it last predicted from, then predicts the next from this code, its own
     /// activity and the tuft's context `ctx` (from above). Returns the code.
     pub fn sense<R: rand::Rng + ?Sized>(&mut self, input: &[(usize, &BitVector)], ctx: Option<&BitVector>, learn: bool, rng: &mut R) -> BitVector {
-        self.code = match self.l4.as_mut() {
+        let code = match self.l4.as_mut() {
             Some(p) if learn => p.learn(input),
             Some(p) => p.encode(input),
             None => input.first().map_or_else(|| BitVector::new(self.bits, Some(0)), |x| x.1.clone()),
         };
+        self.sense_code(&code, ctx, learn, rng)
+    }
+
+    /// As `sense`, for a code already made (layer 4 bypassed: its code, or an input that is
+    /// itself sparse).
+    pub fn sense_code<R: rand::Rng + ?Sized>(&mut self, code: &BitVector, ctx: Option<&BitVector>, learn: bool, rng: &mut R) -> BitVector {
+        self.code = code.clone();
         if self.code.count_ones() > 0 {
             if let Some(e) = self.expected.as_ref() {
                 self.hits.0 += 1;

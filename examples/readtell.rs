@@ -1152,9 +1152,9 @@ fn main() {
             m.push_pull = false;
             // RT_MASK_RELEASE: the masks' tonic brake (default 2)
             m.release = env("RT_MASK_RELEASE", 2);
-            // RT_MASK_GROW=1: pools of mask-cells recruited as needed; RT_MASK_STICKY=0: no
+            // pools of mask-cells recruited as needed (RT_MASK_GROW=0: one mask per pathway); RT_MASK_STICKY=0: no
             // habit bits
-            m.grow = std::env::var("RT_MASK_GROW").map_or(false, |v| v == "1");
+            m.grow = std::env::var("RT_MASK_GROW").map_or(true, |v| v != "0");
             m.sticky = std::env::var("RT_MASK_STICKY").map_or(true, |v| v != "0");
             // RT_CELLS_FOR (diagnosis): channels handled by cells, the rest by masks
             match std::env::var("RT_CELLS_FOR") {
@@ -1185,7 +1185,7 @@ fn main() {
     // (babbled, released, left, right, clicks, books opened, steps shown by the teacher)
     let mut mouse_stats = [0usize; 7];
     let observe = std::env::var("RT_OBSERVE").map_or(false, |v| v == "1");
-    let blocked_senses = std::env::var("RT_BLOCKED").map_or(false, |v| v == "1");
+    let blocked_senses = std::env::var("RT_BLOCKED").map_or(true, |v| v != "0");
     // diagnosis, read trials with the cursor on the book (training, test): steps, CLICK
     // proposed by the cortex, LEFT proposed, CLICK released, LEFT released
     let mut on_book = [[0usize; 5]; 2];
@@ -1743,7 +1743,8 @@ fn main() {
                 if let (Some(c), Some(m)) = (command.as_ref(), done) {
                     hand.observe(c, &motion[m], &mut rng);
                 }
-                // RT_BLOCKED=1: a move against the screen's edge moves nothing, and nothing is sensed
+                // a move against the screen's edge moves nothing, and nothing is sensed (RT_BLOCKED=0: the
+                // motion is sensed anyway)
                 let blocked = blocked_senses && matches!((done, cursor), (Some(LEFT), 0)) || blocked_senses && done == Some(RIGHT) && cursor + 1 == npos;
                 let next = if blocked { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
                 // the cortex learns what came; curiosity is the progress of its predictions here

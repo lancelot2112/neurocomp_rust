@@ -64,32 +64,56 @@ const GPI_TONIC: i32 = 24;
 const DA_BASE: i32 = 8;
 /// How far below tonic a GPi population must fall to release its action.
 const RELEASE: i32 = 3;
+/// Discounting: the next state's value counts 1 − 1/`GAMMA_DIV`.
+const GAMMA_DIV: i32 = 8;
 /// Hyperdirect excitation of STN per extra option driven at once.
 const HYPER: i32 = 4;
 
 #[derive(Clone)]
-struct Cell {
+struct Spiny {
     syn: [u32; SYN],
+    /// when it last fired (the striatum's step count)
+    last: std::cell::Cell<u32>,
 }
 
 #[derive(Default)]
 struct Pool {
-    cells: Vec<Cell>,
+    cells: Vec<Spiny>,
 }
 
 impl Pool {
-    fn firing(&self, active: &dyn Fn(u32) -> bool) -> Vec<usize> {
-        self.cells.iter().enumerate().filter(|(_, c)| c.syn.iter().filter(|&&s| active(s)).count() >= THETA).map(|(i, _)| i).collect()
+    /// The cells that fire for `active`; each one firing is marked as used at `now`.
+    fn firing(&self, active: &dyn Fn(u32) -> bool, now: u32) -> Vec<usize> {
+        let f: Vec<usize> = self.cells.iter().enumerate().filter(|(_, c)| c.syn.iter().filter(|&&s| active(s)).count() >= THETA).map(|(i, _)| i).collect();
+        for &i in &f {
+            self.cells[i].last.set(now);
+        }
+        f
+    }
+
+    /// Add a cell. A full pool makes room first: of a few cells sampled, the one unused longest
+    /// is pruned (spines that are not used are lost).
+    fn add<R: Rng>(&mut self, c: Spiny, prune: bool, rng: &mut R, changes: &mut (u64, u64)) {
+        if self.cells.len() >= CAP {
+            if !prune {
+                return;
+            }
+            let i = (0..8).map(|_| rng.gen_range(0..self.cells.len())).min_by_key(|&i| self.cells[i].last.get()).unwrap();
+            self.cells.swap_remove(i);
+            changes.1 += 1;
+        }
+        self.cells.push(c);
+        changes.0 += 1;
     }
 }
 
-/// One eligible step: the state's groups, the striosome cells that fired, and the choices made
-/// (channel, action, D1 and D2 cells that fired for it).
+/// One eligible step: the state's groups and the choices made (channel, action).
 #[derive(Clone)]
 struct Step {
     groups: Vec<Vec<u32>>,
-    striosome: Vec<usize>,
-    choices: Vec<(usize, usize, Vec<usize>, Vec<usize>)>,
+    choices: Vec<(usize, usize)>,
+    /// false for a re-armed tag (an old state): the critic does not learn from it
+    critic: bool,
 }
 
 pub struct Striatum {
@@ -115,6 +139,26 @@ pub struct Striatum {
     pub changes: (u64, u64),
     /// cholinergic pauses (plasticity windows)
     pub pauses: u64,
+    /// steps so far (for when cells were last used)
+    clock: u32,
+    /// a full pool prunes its least used cell to take a new one (else it takes none)
+    pub prune: bool,
+    /// the same, for the striosome (critic) pool only
+    pub prune_critic: bool,
+    /// a recruited cell takes its synapses from two pathways (a conjunction), else from one
+    pub mixed: bool,
+    /// the smallest dopamine change (in units) that makes the cholinergic interneurons pause
+    pub pause_min: i32,
+    /// the next value counts 1 − 1/`gamma_div` (0: no discounting)
+    pub gamma_div: i32,
+    /// the critic learns only for the newest state (TD(0)); else for every eligible state
+    pub critic_td0: bool,
+    /// dips are read by high-affinity D2 receptors and reach as far as bursts; else they stop
+    /// at silence
+    pub d2_affinity: bool,
+    /// per channel: the gating choice whose content is being held, with its state (its tag,
+    /// kept alive by the held activity)
+    maintained: Vec<Option<Step>>,
 }
 
 fn mix(x: u64) -> u64 {
@@ -141,6 +185,15 @@ impl Striatum {
             last_delta: 0,
             changes: (0, 0),
             pauses: 0,
+            clock: 0,
+            prune: false,
+            prune_critic: true,
+            mixed: false,
+            pause_min: 2,
+            gamma_div: GAMMA_DIV,
+            critic_td0: true,
+            d2_affinity: true,
+            maintained: Vec::new(),
         }
     }
 
@@ -162,18 +215,30 @@ impl Striatum {
         }
     }
 
-    /// A cell for a state: synapses sampled from one of its pathways (one with enough bits).
-    fn recruit<R: Rng>(groups: &[Vec<u32>], rng: &mut R) -> Option<Cell> {
+    /// A cell for a state: synapses sampled from one of its pathways (one with enough bits), or
+    /// with `mixed`, half from each of two (a conjunction of two pathways converging).
+    fn recruit<R: Rng>(groups: &[Vec<u32>], mixed: bool, now: u32, rng: &mut R) -> Option<Spiny> {
         let live: Vec<&Vec<u32>> = groups.iter().filter(|g| g.len() >= THETA).collect();
         if live.is_empty() {
             return None;
         }
         let g = live[rng.gen_range(0..live.len())];
+        let h = if mixed && live.len() > 1 {
+            loop {
+                let h = live[rng.gen_range(0..live.len())];
+                if !std::ptr::eq(h, g) {
+                    break h;
+                }
+            }
+        } else {
+            g
+        };
         let mut syn = [0u32; SYN];
-        for s in syn.iter_mut() {
-            *s = g[rng.gen_range(0..g.len())];
+        for (i, s) in syn.iter_mut().enumerate() {
+            let src = if i % 2 == 0 { g } else { h };
+            *s = src[rng.gen_range(0..src.len())];
         }
-        Some(Cell { syn })
+        Some(Spiny { syn, last: std::cell::Cell::new(now) })
     }
 
     /// Apply one dopamine signal to the eligible steps (newest first, credit fading per step).
@@ -181,12 +246,14 @@ impl Striatum {
         self.stats.0 += 1;
         self.stats.1 += delta.unsigned_abs() as u64;
         self.last_delta = delta;
-        // the cholinergic interneurons pause only at phasic dopamine; tags become lasting
-        // changes only during a pause
+        // the cholinergic interneurons pause only at phasic dopamine (at least `pause_min`
+        // units); the actors' tags become lasting changes only during a pause. The critic
+        // learns from every error.
         if delta == 0 {
             return;
         }
-        self.pauses += 1;
+        let pause = delta.abs() >= self.pause_min * UNIT;
+        self.pauses += pause as u64;
         let mut weight = ONE as u64;
         for k in (0..self.recent.len()).rev() {
             // cells to change for this step: |δ| / UNIT × its credit × the rate (a change happens
@@ -202,30 +269,36 @@ impl Striatum {
                 continue;
             }
             let st = self.recent[k].clone();
-            // the critic: a burst adds striosome cells for this state, a dip removes some that fired
-            if delta > 0 {
+            // the cells that fired in that state (counted now: the pools change in between)
+            let mut bits: Vec<u32> = st.groups.iter().flatten().copied().collect();
+            bits.sort_unstable();
+            let was = |s: u32| bits.binary_search(&s).is_ok();
+            // the critic: a burst adds striosome cells for the state the error belongs to (the
+            // newest; earlier states' values are corrected in turn, step by step), a dip removes
+            // some that fired
+            if !st.critic || (self.critic_td0 && k + 1 != self.recent.len()) {
+            } else if delta > 0 {
                 for _ in 0..n {
-                    if self.striosome.cells.len() < CAP {
-                        if let Some(c) = Self::recruit(&st.groups, rng) {
-                            self.striosome.cells.push(c);
-                            self.changes.0 += 1;
-                        }
+                    if let Some(c) = Self::recruit(&st.groups, self.mixed, self.clock, rng) {
+                        self.striosome.add(c, self.prune || self.prune_critic, rng, &mut self.changes);
                     }
                 }
             } else {
-                remove(&mut self.striosome, &st.striosome, n, rng, &mut self.changes.1);
+                let fired = self.striosome.firing(&was, self.clock);
+                remove(&mut self.striosome, &fired, n, rng, &mut self.changes.1);
             }
             // the actors: a burst adds go cells and removes no-go cells for the chosen actions;
             // a dip adds no-go cells and removes go cells
-            for (ch, a, d1, d2) in st.choices {
+            if !pause {
+                continue;
+            }
+            for (ch, a) in st.choices {
                 let (go, nogo) = &mut self.actors[ch][a];
-                let (grow, shrink, fired) = if delta > 0 { (go, nogo, d2) } else { (nogo, go, d1) };
+                let (grow, shrink) = if delta > 0 { (go, nogo) } else { (nogo, go) };
+                let fired = shrink.firing(&was, self.clock);
                 for _ in 0..n {
-                    if grow.cells.len() < CAP {
-                        if let Some(c) = Self::recruit(&st.groups, rng) {
-                            grow.cells.push(c);
-                            self.changes.0 += 1;
-                        }
+                    if let Some(c) = Self::recruit(&st.groups, self.mixed, self.clock, rng) {
+                        grow.add(c, self.prune, rng, &mut self.changes);
                     }
                 }
                 remove(shrink, &fired, n, rng, &mut self.changes.1);
@@ -235,22 +308,30 @@ impl Striatum {
 
     /// The dopamine neurons: reward and the next value excite them, the current value (the
     /// striosome cells) inhibits them; `drive` is that sum (`Q16`). Their count above or below
-    /// baseline, in units, is the error: a burst can rise to `POP` − `DA_BASE`, a dip only to
-    /// −`DA_BASE` (silence). Returned in `Q16`.
+    /// baseline, in units, is the error: a burst can rise to `POP` − `DA_BASE`. A dip silences
+    /// at most `DA_BASE` cells, but its depth is in how long the pause lasts, which the
+    /// high-affinity D2 receptors read (`d2_affinity`): it then reaches as far as a burst.
+    /// Returned in `Q16`.
     fn dopamine(&self, drive: i32) -> i32 {
+        if drive < 0 && self.d2_affinity {
+            // a dip, read by high-affinity D2 receptors, which sense how long the pause lasts:
+            // it reaches as far as a burst, at the same resolution
+            return (drive / UNIT).max(DA_BASE - POP) * UNIT;
+        }
         let count = (DA_BASE + drive / UNIT).clamp(0, POP);
         (count - DA_BASE) * UNIT
     }
 
     /// The value of the current state (`Q16`): striosome cells firing × `UNIT`.
     fn value_now(&self) -> i32 {
-        self.striosome.firing(&|s| self.is_active(s)).len() as i32 * UNIT
+        self.striosome.firing(&|s| self.is_active(s), self.clock).len() as i32 * UNIT
     }
 
     /// A new state, as groups of active input bits (one per pathway); `learn`: update. The
-    /// dopamine for the step that ends here is the reward gathered + V(this state) − V(the
+    /// dopamine for the step that ends here is the reward gathered + ⅞ V(this state) − V(the
     /// previous one).
     pub fn begin_groups<R: Rng>(&mut self, state: &[Vec<usize>], learn: bool, rng: &mut R) {
+        self.clock += 1;
         self.active.iter_mut().for_each(|w| *w = 0);
         let groups: Vec<Vec<u32>> = state.iter().map(|g| g.iter().map(|&b| self.hash(b)).collect()).collect();
         for g in &groups {
@@ -260,11 +341,12 @@ impl Striatum {
         }
         let v = self.value_now();
         if self.started && learn {
-            let delta = self.dopamine(self.reward + v - self.value);
+            // the next value counts seven-eighths (discounting): a steady reward rate is then
+            // predicted by a steady value, without needing to know how long it will last
+            let delta = self.dopamine(self.reward + v - v / self.gamma_div.max(1) * (self.gamma_div > 0) as i32 - self.value);
             self.learn(delta, rng);
         }
-        let striosome = self.striosome.firing(&|s| self.is_active(s));
-        self.recent.push(Step { groups, striosome, choices: Vec::new() });
+        self.recent.push(Step { groups, choices: Vec::new(), critic: true });
         if self.recent.len() > WINDOW {
             self.recent.remove(0);
         }
@@ -284,7 +366,7 @@ impl Striatum {
         self.ensure(channel, n);
         let ch = &self.actors[channel];
         let act = |s: u32| self.is_active(s);
-        let raw: Vec<(i32, i32)> = (0..n).map(|a| (ch[a].0.firing(&act).len() as i32, ch[a].1.firing(&act).len() as i32)).collect();
+        let raw: Vec<(i32, i32)> = (0..n).map(|a| (ch[a].0.firing(&act, self.clock).len() as i32, ch[a].1.firing(&act, self.clock).len() as i32)).collect();
         let total: i32 = raw.iter().map(|x| x.0 + x.1).sum();
         if total <= POP {
             raw
@@ -336,13 +418,36 @@ impl Striatum {
         if best == 0 {
             return 0;
         }
-        let act = |s: u32| self.is_active(s);
-        let (go, nogo) = &self.actors[channel][best];
-        let (d1, d2) = (go.firing(&act), nogo.firing(&act));
         if let Some(st) = self.recent.last_mut() {
-            st.choices.push((channel, best, d1, d2));
+            st.choices.push((channel, best));
         }
         best
+    }
+
+    /// The action just released on `channel` loaded something that is now held (in the
+    /// prefrontal cortex): its tag is kept with the held activity, replacing the tag of what was
+    /// held before. Call right after `choose` released it.
+    pub fn maintain(&mut self, channel: usize) {
+        while self.maintained.len() <= channel {
+            self.maintained.push(None);
+        }
+        self.maintained[channel] = self.recent.last().and_then(|st| {
+            let c = st.choices.iter().rev().find(|c| c.0 == channel)?.clone();
+            Some(Step { groups: st.groups.clone(), choices: vec![c], critic: false })
+        });
+    }
+
+    /// What is held on `channel` is being used: the held activity re-arms the tag of the
+    /// choice that loaded it, so the dopamine that follows its use also reaches that choice
+    /// (credit for gating is given when what was gated is used: O'Reilly & Frank 2006).
+    pub fn retag(&mut self, channel: usize) {
+        if let Some(Some(st)) = self.maintained.get(channel) {
+            let k = self.recent.len().saturating_sub(1);
+            self.recent.insert(k, st.clone());
+            if self.recent.len() > WINDOW {
+                self.recent.remove(0);
+            }
+        }
     }
 
     /// (the current state's value, action 1's release − action 0's on `channel`, both `Q16`),

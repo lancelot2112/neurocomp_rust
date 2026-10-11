@@ -513,6 +513,8 @@ struct IndexHc {
     debug: bool,
     had_prev: usize,
     followed: usize,
+    /// diagnosis: the hold gate does nothing (the driver holds at the story's start)
+    hold_off: bool,
     /// diagnosis: the gates do nothing (the driver holds and reinstates)
     gates_off: bool,
     /// diagnosis: (boundary fired, recalled row) per heard sound, while tracing
@@ -548,6 +550,7 @@ impl IndexHc {
             had_prev: 0,
             followed: 0,
             gates_off: false,
+            hold_off: false,
             log: Vec::new(),
         }
     }
@@ -822,13 +825,16 @@ fn main() {
     // RT_HC=index (default): the hippocampus as a growing index with learned event boundaries
     // (`IndexHc`); RT_HC=circuit: the fixed circuit cued by the driver's story context
     // RT_IX_HOLD=oracle (diagnosis only): the context is held at the story's first word and
-    // reinstated when the task begins, instead of by the learned gates
+    // reinstated when the task begins, instead of by the learned gates; RT_IX_HOLD=hold: only
+    // the hold is given, reinstating is learned
     let ix_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle");
+    let hold_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "oracle" || v == "hold");
     let sleep_every: usize = env("RT_SLEEP_EVERY", 10);
     let replays: usize = env("RT_REPLAY", 3);
     let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle;
+        x.hold_off = hold_oracle;
     }
     // the hippocampus hears word `w`: the index learns its boundary and (with `store`) stores
     // the event; the circuit stores it with `cue` when `store`
@@ -880,10 +886,14 @@ fn main() {
                 if !x.gates_off {
                     // reinstating is possible only when not already retrieving (it would only
                     // start the sequence over)
+                    // the held content's tag is kept with it, and re-armed when it is used, so the
+                    // dopamine that follows using it reaches the decision to hold it
                     if held && !retr && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
                         x.reinstate();
-                    } else if $fired && striatum.choose(CH_HOLD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
+                        striatum.retag(CH_HOLD);
+                    } else if $fired && !x.hold_off && striatum.choose(CH_HOLD, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
                         x.hold();
+                        striatum.maintain(CH_HOLD);
                     }
                 }
             }
@@ -953,7 +963,7 @@ fn main() {
             if ix.is_some() {
                 // RT_IX_HOLD=oracle (diagnosis only): hold the context in force at the story's
                 // first word, instead of the learned gate
-                if t == 0 && ix_oracle {
+                if t == 0 && hold_oracle {
                     let x = ix.as_mut().unwrap();
                     x.held = Some(x.ctx.clone());
                     x.request = false;

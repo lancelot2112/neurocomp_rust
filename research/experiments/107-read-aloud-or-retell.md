@@ -997,10 +997,59 @@ seeds. The best action is chosen per block of 500 trials, then in a test without
 - **Neither learns holding.** That stays the hippocampus's job (bookmarks), as the earlier
   ladder found.
 
+### The mask striatum in readtell
+The chosen setup (`RT_STRIATUM=masks`, now the default; `RT_STRIATUM=cells` for the old one):
+- no STN hold;
+- sticky habit bits;
+- pair features (conjunctive context bits);
+- the swap rule.
+
+The mask striatum keeps the current state, so it takes the same calls as the cell striatum.
+
+**Before it went in, two habit changes:**
+- **Habits form more slowly.** A confirmed bit becomes sticky in three stages, as in synaptic
+  tagging and capture: a first tag, a second tag, then sticky. Each step happens with
+  probability ⅛ per confirming burst, so a habit takes about 24 bursts. A bit cleared on the way
+  loses its tags.
+- **A dip loosens a contradicted habit.** Sticky go bits in the context drop back to the second
+  tag with probability ⅛, as the cortex's cell layers unstick a contradicted prediction.
+  Without this a habit can never be undone: under the swap rule a dip only grows the no-go
+  mask.
+
+| this setup | bandit test | hold ladder: hold given, words right |
+|---|---|---|
+| habits in one step (⅛) | 95.3% | 16.7% |
+| habits in three steps | 97.4% | 16.7% |
+| three steps, and dips loosen habits | 92.3% | 69.1% |
+| (no sticky bits, for reference) | 86.1% | 81.9% |
+
+**readtell, 1,500 trials, one seed:**
+
+| | read, same / another book | tell, book closed | bookmarks reinstated | books opened |
+|---|---|---|---|---|
+| cells, all learned | 6.8 / 3.2% | 1.8% | about 34 a trial | 494 |
+| masks (habits in one step), all learned | 0.5 / 0.0% | 2.1% | 99,773 (every step) | 391 |
+| masks (habits slower, loosened), all learned | 13.2 / 13.6% | 1.7% | 68,035 | 267 |
+| cells, hold and reinstate given | 2.4 / 2.4% | 46.7 / 55.2% | — | 133 |
+| masks (habits in one step), given | 13.7 / 18.6%; second test 46.8 / 55.1% | 57.1 / 59.7% | — | 413 |
+| masks (habits slower, loosened), given | 0.0 / 0.0% | 52.2 / 52.3% | — | 284 |
+
+**Findings:**
+- **With the start given, masks retell as well as cells or better** (52–60% with the book
+  closed), with recall right about 60% of the time.
+- **Masks used the mouse more evenly** (left, right and click about equally, where the cells
+  almost only moved right). In one run they read 47–55% on the second test. In the next run,
+  with habits slower, the book was never opened at test. Opening the book by mouse is not yet
+  reliable.
+- **With everything learned, nothing works yet.** The bookmark channel releases on almost
+  every step, so retrieval restarts continually and the network falls silent. Faster habits
+  made this worse (every step); slower ones only reduced it.
+- One seed per row: the differences in reading are within what one seed can swing.
+
 ## Next
-- **Fix readtell's default.** Find why retrieval is re-entered on almost every step, and why the
-  network falls silent once the cortex runs at the waiting steps.
-- **Teach the mouse to click on the desk.** With the start given, reading needs it.
-- **Masks for sequential gating:** conjunctive bits with push-pull, and stable phase inputs.
-  Then try the mask striatum in readtell.
-- **Seeds 1–4** for every column.
+- **Why the bookmark channel releases on every step.** Candidates are offered on every step;
+  reinstating should be rare and its credit immediate. Test it on the ladder with candidates
+  offered every step, then fix it in readtell.
+- **A reliable click on the book.** The mouse's credit has to reach a click several steps before
+  reading pays.
+- **Seeds 1–4** for every row, before reading anything into single-run differences.

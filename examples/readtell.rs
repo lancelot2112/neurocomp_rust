@@ -1304,7 +1304,13 @@ fn main() {
     // does it; drawn from its own generator so the other codes stay as they were
     let motion_seen = Encoder::new(MOUSE, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0x5EE5)).codes;
     // RT_TEACH_SEEN=1: the teacher's act is seen (on the screen), not felt as one's own motion
-    let teach_seen = std::env::var("RT_TEACH_SEEN").map_or(false, |v| v == "1");
+    // RT_TEACHER_CURSOR=1: the teacher shows how with a cursor of their own, on their own copy
+    // of the book: the network's cursor stays where it is, its book opens only when it clicks it
+    // itself, and the teacher's act is seen (implies RT_TEACH_SEEN=1)
+    let teacher_cursor = std::env::var("RT_TEACHER_CURSOR").map_or(false, |v| v == "1");
+    let teach_seen = teacher_cursor || std::env::var("RT_TEACH_SEEN").map_or(false, |v| v == "1");
+    // (the teacher's demonstrations that ended with their book open)
+    let mut teacher_opened = 0usize;
     // RT_CHECK=1: an act just credited by a reward is checked the next time it is done: if it
     // has none of the effect the forward model expects, that is a dip; =always: every act
     let check_mode = std::env::var("RT_CHECK").unwrap_or_default();
@@ -1826,6 +1832,10 @@ fn main() {
         // acts in this wait
         let mut seen_motion: Option<usize> = None;
         let mut own_acts: Vec<usize> = Vec::new();
+        // the teacher's cursor (RT_TEACHER_CURSOR=1): where it is once the teacher starts showing,
+        // and whether the teacher has opened their book
+        let mut tcur: Option<usize> = None;
+        let mut tdone = false;
         if !book_open {
             for k in 0..waits {
                 // the eye sees the screen: where the cursor is (the striatum's visual input)
@@ -1844,15 +1854,23 @@ fn main() {
                 // are a mouse motion; the basal ganglia release one or none, and the motor area
                 // turns it into a command. While learning, the mouse also moves on its own now
                 // and then (motor babbling), so the cortex learns what follows what.
+                // (and the teacher's cursor, if it is on the screen: a cursor looks the same
+                // whoever's it is)
+                let mut scene = cursor_seen[cursor].clone();
+                if let Some(t) = tcur {
+                    for (w, x) in scene.as_words_mut().iter_mut().zip(cursor_seen[t].as_words()) {
+                        *w |= x;
+                    }
+                }
                 let eye_in = match seen_motion.filter(|_| teach_seen) {
                     Some(m) => {
-                        let mut v = cursor_seen[cursor].clone();
+                        let mut v = scene.clone();
                         for (w, x) in v.as_words_mut().iter_mut().zip(motion_seen[m].as_words()) {
                             *w |= x;
                         }
                         v
                     }
-                    None => cursor_seen[cursor].clone(),
+                    None => scene,
                 };
                 // with areas, the hand feels its motion in its own area; the ear hears nothing
                 let st = if net.brain.is_some() {
@@ -1894,10 +1912,11 @@ fn main() {
                 // move and senses each motion as it would its own; the cortex learns the sequence
                 // as it learns the teacher's words. It is the teacher's act, not the network's:
                 // the basal ganglia are not tagged.
-                let shown: Option<usize> = target_pos.filter(|&tp| learn && teach_mouse && waits - k <= cursor.abs_diff(tp) + 1).map(|tp| {
-                    if cursor > tp {
+                let from = if teacher_cursor { tcur.unwrap_or(cursor) } else { cursor };
+                let shown: Option<usize> = target_pos.filter(|&tp| learn && teach_mouse && !tdone && (tcur.is_some() || waits - k <= from.abs_diff(tp) + 1)).map(|tp| {
+                    if from > tp {
                         LEFT
-                    } else if cursor < tp {
+                    } else if from < tp {
                         RIGHT
                     } else {
                         CLICK
@@ -1970,7 +1989,21 @@ fn main() {
                 };
                 striatum.set_noise(0);
                 // the world: the mouse does what the command articulates
-                let done = shown.or_else(|| command.as_ref().and_then(|c| mouse.articulate(c)));
+                // with the teacher's own cursor, the teacher's act moves that cursor, not the network's
+                let done = if teacher_cursor && shown.is_some() { None } else { shown.or_else(|| command.as_ref().and_then(|c| mouse.articulate(c))) };
+                if let (true, Some(m), Some(tp)) = (teacher_cursor, shown, target_pos) {
+                    let t = tcur.get_or_insert(cursor);
+                    match m {
+                        LEFT => *t = t.saturating_sub(1),
+                        RIGHT => *t = (*t + 1).min(npos - 1),
+                        _ => {
+                            if *t == tp {
+                                tdone = true;
+                                teacher_opened += 1;
+                            }
+                        }
+                    }
+                }
                 if let (Some(c), Some(m)) = (command.as_ref(), done) {
                     hand.observe(c, &motion[m], &mut rng);
                 }
@@ -1982,7 +2015,7 @@ fn main() {
                 let blocked = blocked_senses && (matches!((done, cursor), (Some(LEFT), 0)) || done == Some(RIGHT) && cursor + 1 == npos || done == Some(CLICK) && !opens);
                 // (with RT_TEACH_SEEN=1 the teacher's act is not felt: it is seen, at the next step)
                 let mut next = if blocked || (teach_seen && shown.is_some()) { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
-                if let (Some(b), Some(m), false) = (net.brain.as_mut(), done, blocked) {
+                if let (Some(b), Some(m), false) = (net.brain.as_mut(), done.or(shown), blocked) {
                     if shown.is_none() {
                         // an own act, seen and felt: the association of seen acts and the hand
                         // learns the pair
@@ -2003,7 +2036,7 @@ fn main() {
                         }
                     }
                 }
-                seen_motion = if blocked { None } else { done };
+                seen_motion = if blocked { None } else { done.or(shown) };
                 // the check: an own act, due for one (or every act, RT_CHECK=always), compared
                 // with what the forward model expected it to do; no effect at all is a dip
                 if let (Some(c), Some(m), true) = (command.as_ref(), done, learn && shown.is_none()) {
@@ -2543,6 +2576,9 @@ fn main() {
     }
     if net.brain.is_some() {
         println!("voice area: {} words said, {} not heard as its efference copy expected", voice_check.0, voice_check.1);
+    }
+    if teacher_cursor {
+        println!("teacher's cursor: {teacher_opened} demonstrations ended with the teacher's book open");
     }
     println!("mirror: {} of the teacher's acts seen, {} evoked the right felt motion", mirror_stats.0, mirror_stats.1);
     println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);

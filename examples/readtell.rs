@@ -485,7 +485,10 @@ impl Net {
             for (w, x) in tuft.as_words_mut().iter_mut().zip(cb_out.as_words()) {
                 *w |= x;
             }
-            let outs = b.step_columns(&[e4.clone(), a4.clone(), h4.clone()], recall, &tuft, learn);
+            // recall: the index's pointers name cells of the eye–ear association (a word seen or
+            // heard); the hippocampus reinstates those cells there, and nowhere else
+            let extra: Vec<(usize, BitVector)> = b.pair_index(EYE, EAR).filter(|_| recall.count_ones() > 0).map(|i| (i, recall.clone())).into_iter().collect();
+            let outs = b.step_columns(&[e4.clone(), a4.clone(), h4.clone()], &extra, &tuft, learn);
             // every area's layer 5 offers a goal, the senses' too (sources 30 + the area)
             let mut sense_ins = Vec::new();
             for a in [EYE, EAR, HAND] {
@@ -1671,6 +1674,9 @@ fn main() {
     }
     // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
     let mut voice_check = (0usize, 0usize);
+    let imitate = std::env::var("RT_IMITATE").map_or(true, |v| v != "0");
+    // (words said through the inverse model, through the imitation route)
+    let mut voice_route = [0usize; 2];
     // a word said: None for nothing said or (with the learned stop) silence. With areas, the
     // voice's area turns the plan into a command and keeps its efference copy, which is compared
     // with what the ear then hears
@@ -1679,8 +1685,18 @@ fn main() {
             let plan: &BitVector = $plan;
             match net.brain.as_mut() {
                 Some(b) => {
+                    // the imitation route first (the meant sound, as the ear would hear it, evokes
+                    // through the ear–voice association the command that says it), else the
+                    // voice's inverse model (RT_IMITATE=0: the inverse model only)
+                    let mirrored = if imitate {
+                        let e = b.encode_only(EAR, plan);
+                        Some(b.mirror(EAR, &e, VOICE)).filter(|m| tract.articulate(m).is_some())
+                    } else {
+                        None
+                    };
+                    voice_route[mirrored.is_some() as usize] += 1;
                     let v = &mut b.areas[VOICE];
-                    let cmd = v.command_for(plan);
+                    let cmd = mirrored.or_else(|| v.command_for(plan));
                     cmd.and_then(|c| {
                         v.issue(&c);
                         let w = tract.articulate(&c);
@@ -3113,7 +3129,7 @@ fn main() {
         }
     }
     if net.brain.is_some() {
-        println!("voice area: {} words said, {} not heard as its efference copy expected", voice_check.0, voice_check.1);
+        println!("voice area: {} words said, {} not heard as its efference copy expected; plans said through the imitation route {}, the inverse model {}", voice_check.0, voice_check.1, voice_route[1], voice_route[0]);
     }
     if teacher_cursor {
         println!("teacher's cursor: {teacher_opened} demonstrations ended with the teacher's book open");

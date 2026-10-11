@@ -485,17 +485,22 @@ impl Brain {
         }
     }
 
+    /// The index of the association column of the pair (`a`, `b`), if it has grown.
+    pub fn pair_index(&self, a: usize, b: usize) -> Option<usize> {
+        self.pairs.iter().position(|p| p.0 == (a, b) || p.0 == (b, a))
+    }
+
     /// The association columns, pairs then the full one.
     fn assoc_columns(&mut self) -> Vec<&mut Column> {
         self.pairs.iter_mut().map(|p| &mut p.1).chain(self.full.iter_mut()).collect()
     }
 
     /// Self-organizing: every association column steps. Its input is its layer 4's code for the
-    /// areas' codes (`codes`) with `extra` (the hippocampus's return); its layer 2/3 predicts its
+    /// areas' codes (`codes`), with any cells `extra` reinstates there; its layer 2/3 predicts its
     /// next input with `tuft` on its tuft; its layer 5 offers a goal (what a motor area should
     /// produce) from its input, tuft and expectation. Returns, per column: (its layer 5's goal
     /// and whether it burst, its input, its expectation), to learn from and to mix.
-    pub fn step_columns(&mut self, codes: &[BitVector], extra: &BitVector, tuft: &BitVector, learn: bool) -> Vec<(Option<(BitVector, bool)>, BitVector, BitVector)> {
+    pub fn step_columns(&mut self, codes: &[BitVector], extra: &[(usize, BitVector)], tuft: &BitVector, learn: bool) -> Vec<(Option<(BitVector, bool)>, BitVector, BitVector)> {
         let silent = BitVector::new(self.bits, Some(0));
         let inputs: Vec<BitVector> = {
             let pair_inputs = self.pairs.iter().map(|((a, b), col)| col.l4.as_ref().unwrap().encode(&[(0, codes.get(*a).unwrap_or(&silent)), (1, codes.get(*b).unwrap_or(&silent))]));
@@ -509,12 +514,14 @@ impl Brain {
         };
         let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
         let mut out = Vec::new();
-        for (col, inp) in self.assoc_columns().into_iter().zip(inputs) {
-            // the hippocampus's return reaches every column, whether or not a sense is active
-            // (recalling with the book shut, nothing is seen or heard)
+        for (i, (col, inp)) in self.assoc_columns().into_iter().zip(inputs).enumerate() {
+            // `extra`: (column, cells) reinstated in that column (the hippocampus's return to the
+            // cells its pointers name, whether or not a sense is active)
             let mut x = inp;
-            for (w, y) in x.as_words_mut().iter_mut().zip(extra.as_words()) {
-                *w |= y;
+            for (_, e) in extra.iter().filter(|(j, _)| *j == i) {
+                for (w, y) in x.as_words_mut().iter_mut().zip(e.as_words()) {
+                    *w |= y;
+                }
             }
             col.sense_code(&x, Some(tuft), learn, &mut rng);
             let exp = col.expected.clone().unwrap_or_else(|| BitVector::new(x.bit_len(), Some(0)));

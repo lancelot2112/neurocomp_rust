@@ -444,14 +444,9 @@ const CH_REINSTATE: usize = 2;
 const CH_LOAD: usize = 3;
 /// what the mouse does (candidates: the cortex's layer 5 predictions of a mouse motion)
 const CH_ACT: usize = 5;
-/// which bookmark to go back to (candidates: the index rows a pause recalls)
-const CH_MARK: usize = 6;
-/// how many rows the hippocampus offers as bookmarks
-const BOOKMARKS: usize = 6;
 /// steps a request to retrieve lasts unless renewed
 const REQUEST_STEPS: usize = 32;
-/// where a candidate's own bits sit in the striatum's input ids (rows; the cortex's proposals)
-const ROW_BASE: usize = 1 << 24;
+/// where the cortex's proposals sit in the striatum's input ids
 const ACT_BASE: usize = 1 << 25;
 /// the mouse's motor primitives: move the cursor left, right, and click
 const MOUSE: usize = 3;
@@ -533,10 +528,10 @@ struct IndexHc {
     followed: usize,
     /// diagnosis: the hold gate does nothing (the driver holds at the story's start)
     hold_off: bool,
-    /// bookmarks are index rows (RT_BOOKMARK=rows, default): pauses are stored like any sound,
-    /// and when one is needed the hippocampus, cued with a pause in the current context, offers
-    /// the rows that match; the striatum picks one (or none). RT_BOOKMARK=hold: the striatum's
-    /// hold and reinstate gates instead.
+    /// going back by recall (RT_RETRIEVE=pause, default): pauses are stored like any sound; when
+    /// the striatum's retrieve gate fires, the hippocampus, cued with a pause in the current
+    /// context, goes back to the row it recalls best (the pause before this story) and recall
+    /// carries on along the links. RT_RETRIEVE=hold: the striatum's hold and reinstate gates.
     bookmarks: bool,
     /// steps the prefrontal request to retrieve lasts unless renewed (with bookmarks, where no
     /// hold ends it)
@@ -763,26 +758,12 @@ impl IndexHc {
         self.holds += 1;
     }
 
-    /// Bookmarks are rows: cued with a pause (`pause`: the association cells of silence) in
-    /// the current context, the hippocampus offers the rows that match best (at most `BOOKMARKS`),
-    /// each by its own keys: its context, its content, and the context it shares with now (how
-    /// far the context has drifted since: its age, in bits). Returns the rows and the offers.
-    fn bookmark_candidates(&self, pause: &[usize]) -> (Vec<u32>, Vec<Vec<Vec<usize>>>) {
-        let now: std::collections::HashSet<usize> = self.ctx.iter().copied().collect();
-        let rows: Vec<u32> = self.mem.matches(&self.ec(pause), BOOKMARKS).into_iter().map(|x| x.0).collect();
-        let offers = rows
-            .iter()
-            .map(|&r| {
-                let keys = self.mem.keys_of(r);
-                let ctx: Vec<usize> = keys.iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect();
-                vec![
-                    ctx.iter().map(|&k| ROW_BASE + k).collect(),
-                    keys.iter().map(|&k| k as usize).filter(|&k| k >= CONTENT_BASE).map(|k| ROW_BASE + k).collect(),
-                    ctx.iter().filter(|k| now.contains(k)).map(|&k| ROW_BASE + (1 << 22) + k).collect(),
-                ]
-            })
-            .collect();
-        (rows, offers)
+    /// Where to go back to: cued with a pause (`pause`: the association cells of silence) in
+    /// the current context, the row the hippocampus recalls best. The pause before this story
+    /// matches best, since the drifting context still overlaps it most; its link leads to the
+    /// story's first word.
+    fn pause_row(&self, pause: &[usize]) -> Option<u32> {
+        self.mem.matches(&self.ec(pause), 1).first().map(|x| x.0)
     }
 
     /// Row `r` is gone back to: its context becomes the current one, recall carries on from it
@@ -1031,9 +1012,9 @@ fn main() {
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle;
         x.hold_off = hold_oracle;
-        // RT_BOOKMARK=rows (default): bookmarks are index rows chosen when needed; =hold: the
-        // striatum's hold and reinstate gates
-        if std::env::var("RT_BOOKMARK").map_or(true, |v| v != "hold") && !hold_oracle {
+        // RT_RETRIEVE=pause (default): one retrieve gate, the hippocampus going back to the
+        // recent pause it recalls best; =hold: the striatum's hold and reinstate gates
+        if std::env::var("RT_RETRIEVE").map_or(true, |v| v != "hold") && !hold_oracle {
             x.bookmarks = true;
             x.hold_off = true;
         }
@@ -1094,12 +1075,12 @@ fn main() {
                     // the held content's tag is kept with it, and re-armed when it is used, so the
                     // dopamine that follows using it reaches the decision to hold it
                     if x.bookmarks {
-                        // which bookmark, if any, to go back to: the rows a pause recalls now
-                        if !retr || restart {
+                        // whether to go back now (the striatum); where to (the hippocampus: the
+                        // recent pause it recalls best)
+                        if (!retr || restart) && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
                             let pause = ones(&net.assoc_of(&zero(), &silence, false, &mut rng));
-                            let (rows, cands) = x.bookmark_candidates(&pause);
-                            if let Some(i) = striatum.choose_among(CH_MARK, &cands, if $explore { Some(&mut rng) } else { None }) {
-                                x.reinstate_row(rows[i]);
+                            if let Some(r) = x.pause_row(&pause) {
+                                x.reinstate_row(r);
                             }
                         }
                     } else if held && (!retr || restart) && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
@@ -1478,10 +1459,6 @@ fn main() {
                     break;
                 }
             }
-        }
-        if !book_open {
-            // no book came into view: the eye sees no page in the task
-            eye_now = zero();
         }
         // RT_IX_HOLD=oracle: the held start is reinstated as the task begins (after the wait)
         if ix_oracle && !read && !make {

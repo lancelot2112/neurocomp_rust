@@ -1199,8 +1199,54 @@ with the prefrontal content removed):**
 - **Doing and imagining still trade off.** The cells retell well but stopped opening the book;
   the masks open it more often but retell less.
 
+### An audit, checked against the code
+An outside audit of the design, written against a one-paragraph summary in bit notation, was
+checked claim by claim against the code:
+
+| Claim | In the code | Verdict |
+|---|---|---|
+| pair bits are ≈ a\|b, not conjunctive | pair bits are a hash of the pair, so (a,b) and (a,c) give unrelated bits | does not apply: the summary's notation was wrong |
+| no go LTD on a dip | true under the swap rule (readtell's): a dip only grew the no-go mask | **valid: fixed** |
+| drift erases the context in silence; its size is not fixed | the slot form is kept (4 of 32 slots), and there is no drift on an empty assembly | does not apply (a formula in the summary) |
+| the plan feeds the association area and back, the area learns from predictions, own words count twice | the plan moves only the hippocampal context, without learning, on silent steps; own speech is not counted twice | mostly does not apply |
+| without context reinstatement, recall loses the episode | the recalled row's ordered context is reinstated at the start and replayed; it slips over time | partly: a **partial blend added** |
+| cortex sticky bits never clear | contradicted bursts unstick (`bitcells.rs`), and losing cells prune | does not apply; growth is not density-paired (true) |
+| the index grows forever, with no eviction | rows lose strength and are forgotten (about 78,000 of 90,000); sleep replay; the cortex recycles failing cells | mostly does not apply |
+| "a step" is undefined, so drift per step changes meaning | fair | valid, open |
+| curiosity is unread and global | it is a reward at the waiting steps, but global | partly valid, open |
+| per-pathway permutations; rarity weights as power-of-two tiers via LZCNT | one salt (pathway ids are disjoint); a reciprocal table | good suggestions, open |
+
+**Fixes made:**
+- **Go LTD.** Under the swap rule a dip now also moves the go mask away from the context, at
+  constant density: it clears picks of `M_go & C & ~sticky` and sets as many of `~M_go & ~C`.
+  - Bandit test: 92.3% → **98.8%**.
+  - Hold ladder, hold given: 69% → **76%** of words retold right.
+- **Partial context reinstatement on recall.** While retrieving, each slot takes the recalled
+  row's stored value with probability ¼, so the context stays in the episode as the replay
+  slips.
+
+**readtell after the fixes (1,500 trials, one seed per row; two test tables):**
+
+| | tell, book closed | recall right | read | silent |
+|---|---|---|---|---|
+| driver imagines the click | 45.7 / 59.8% | 31% | 0–48% | 19–23% (tell) |
+| **cells** | **38.8 / 35.2%** | 25% | 30–42% | 21–39% |
+| masks, seed 0 | 3.0 / 2.4% | 9% | 4–11% | 79–100% |
+| masks, seed 1 | 0.7 / 0.0% | 9% | 0–1% | 43–100% |
+
+**Findings:**
+- Go LTD fixes the bandit and the ladder, but **not the masks in readtell**: the network is
+  silent on most steps.
+- With cells, learned retelling stays at 35–39% with the book closed.
+- The masks' silence is a different fault, not yet found. Next: trace which gate (working memory
+  load, imagine, act) drives it.
+
 ## Next
-- **Why masks fall silent** when the prefrontal content is removed, while cells do not.
-- **Doing and imagining from the same proposals:** find why each striatum settles on one of the
-  two, and whether separate proposal sets (motor and imagined) fix it.
-- **Seeds 0–3** for the better striatum once both work.
+- **Trace the masks' silence in readtell:** which gate (working memory load, imagine, act)
+  drives it, with each gate swapped to the cell striatum in turn.
+- **From the audit, still open:**
+  - define "a step", and keep context at several timescales (log-spaced banks on a history
+    ring);
+  - curiosity per context, feeding exploration (τ);
+  - per-pathway permutations;
+  - power-of-two rarity tiers.

@@ -219,6 +219,59 @@ impl Mask {
     }
 }
 
+/// Bits in a mask-cell, how many must be in the context for it to fire, and a pool's size.
+const CELL_BITS: usize = 16;
+const CELL_THETA: u32 = 10;
+const POOL_CAP: usize = 2048;
+/// Grow mode: GPi's tonic noise per option when exploring.
+const JITTER: i32 = 3;
+
+/// A pool of mask-cells (`grow`): each a sparse mask over the context that fires when at least
+/// `CELL_THETA` of its `CELL_BITS` bits are in it (a striatal cell with a large receptive
+/// field), with when it last fired.
+#[derive(Clone, Default)]
+struct CellPool {
+    cells: Vec<(Mask, u64)>,
+}
+
+impl CellPool {
+    fn firing(&self, x: &[u64], keep: Option<&[u64]>) -> Vec<usize> {
+        (0..self.cells.len()).filter(|&i| self.cells[i].0.overlap(x, keep) as u32 >= CELL_THETA).collect()
+    }
+
+    fn count(&self, x: &[u64], keep: Option<&[u64]>) -> i32 {
+        self.cells.iter().filter(|c| c.0.overlap(x, keep) as u32 >= CELL_THETA).count() as i32
+    }
+
+    /// A new cell for context `x`: `CELL_BITS` of its bits. A full pool first drops, of a few
+    /// sampled, the cell unused longest.
+    fn recruit(&mut self, x: &[u64], now: u64, rng: &mut StdRng) {
+        let mut on: Vec<usize> = Vec::new();
+        for (w, &v) in x.iter().enumerate() {
+            let mut v = v;
+            while v != 0 {
+                on.push(w * 64 + v.trailing_zeros() as usize);
+                v &= v - 1;
+            }
+        }
+        if on.len() < CELL_BITS {
+            return;
+        }
+        if self.cells.len() >= POOL_CAP {
+            let i = (0..8).map(|_| rng.gen_range(0..self.cells.len())).min_by_key(|&i| self.cells[i].1).unwrap();
+            self.cells.swap_remove(i);
+        }
+        let words = x.len();
+        let mut m = Mask { bits: vec![0; words], sticky: vec![0; words], tag1: vec![0; words], tag2: vec![0; words] };
+        for i in 0..CELL_BITS {
+            let j = rng.gen_range(i..on.len());
+            on.swap(i, j);
+            m.bits[on[i] / 64] |= 1 << (on[i] % 64);
+        }
+        self.cells.push((m, now));
+    }
+}
+
 #[derive(Clone)]
 struct Step {
     c: Vec<u64>,
@@ -265,6 +318,11 @@ pub struct MaskStriatum {
     pub push_pull: bool,
     /// with the swap rule, a dip also moves the go mask away from the context (go LTD)
     pub go_ltd: bool,
+    /// grow: each pathway is a pool of mask-cells recruited as needed, not one mask
+    pub grow: bool,
+    pools: Vec<Vec<(CellPool, CellPool)>>,
+    vpool: (CellPool, CellPool),
+    clock: u64,
     pub gamma_div: i32,
     pub pause_min: i32,
     /// (dopamine events, sum of |δ|)
@@ -313,6 +371,10 @@ impl MaskStriatum {
             conj: false,
             push_pull: true,
             go_ltd: true,
+            grow: false,
+            pools: Vec::new(),
+            vpool: (CellPool::default(), CellPool::default()),
+            clock: 0,
             gamma_div: 8,
             pause_min: 2,
             stats: (0, 0),
@@ -415,6 +477,12 @@ impl MaskStriatum {
     }
 
     fn ensure(&mut self, channel: usize, n: usize) {
+        while self.pools.len() <= channel {
+            self.pools.push(Vec::new());
+        }
+        while self.pools[channel].len() < n {
+            self.pools[channel].push((CellPool::default(), CellPool::default()));
+        }
         let words = self.d / 64;
         while self.actors.len() <= channel {
             self.actors.push(Vec::new());
@@ -427,7 +495,61 @@ impl MaskStriatum {
     }
 
     fn v(&self, c: &[u64]) -> i32 {
+        if self.grow {
+            return (self.vpool.0.count(c, None) - self.vpool.1.count(c, None)) * UNIT;
+        }
         (self.critic.0.overlap(c, None) - self.critic.1.overlap(c, None)) * UNIT
+    }
+
+    /// An action's q on context `x`: go minus no-go (cells firing, or mask overlaps).
+    fn q(&self, channel: usize, a: usize, x: &[u64], keep: &Option<(Vec<u64>, Vec<u64>)>) -> i32 {
+        let (k0, k1) = (keep.as_ref().map(|k| k.0.as_slice()), keep.as_ref().map(|k| k.1.as_slice()));
+        if self.grow {
+            let (g, o) = &self.pools[channel][a];
+            return g.count(x, k0) - o.count(x, k1);
+        }
+        let (g, o) = &self.actors[channel][a];
+        g.overlap(x, k0) - o.overlap(x, k1)
+    }
+
+    /// Grow mode, exploring: GPi's tonic firing is noisy (±`JITTER` per option), so options
+    /// with no cells yet are tried (dropout only removes what cells there are).
+    fn jitter(&mut self, q: &mut [i32], explore: bool) {
+        if self.grow && explore {
+            for x in q.iter_mut() {
+                *x += self.rng.gen_range(-JITTER..=JITTER);
+            }
+        }
+    }
+
+    /// Grow mode: a burst (`up`) or dip in pools `(more, fewer)` for context `x`, `n` changes:
+    /// cells of `more` that fired tighten toward `x` (and with `stick` consolidate) and `n` new
+    /// ones are recruited (the error says the state is worth `n` cells more or less); up to `n`
+    /// cells of `fewer` that fired move away from `x` (with `loosen`, their habits first loosen).
+    #[allow(clippy::too_many_arguments)]
+    fn grow_learn(more: &mut CellPool, fewer: &mut CellPool, x: &[u64], n: usize, stick: bool, loosen: bool, now: u64, rng: &mut StdRng) -> u64 {
+        let mut changed = 0u64;
+        let fired = more.firing(x, None);
+        for &i in &fired {
+            more.cells[i].0.swap(x, 1, stick, rng);
+            more.cells[i].1 = now;
+            changed += 1;
+        }
+        for _ in 0..n {
+            more.recruit(x, now, rng);
+            changed += 1;
+        }
+        let mut against = fewer.firing(x, None);
+        for _ in 0..n.min(against.len()) {
+            let j = rng.gen_range(0..against.len());
+            let i = against.swap_remove(j);
+            if loosen {
+                fewer.cells[i].0.loosen(x, rng);
+            }
+            fewer.cells[i].0.away(x, 2, rng);
+            changed += 1;
+        }
+        changed
     }
 
     /// The dropout keep-masks R, one for each pathway (independent noise in D1 and D2; None
@@ -505,7 +627,10 @@ impl MaskStriatum {
                 continue;
             }
             let st = self.recent[k].clone();
-            if st.critic && k + 1 == n {
+            if st.critic && k + 1 == n && self.grow {
+                let (more, fewer) = if delta > 0 { (&mut self.vpool.0, &mut self.vpool.1) } else { (&mut self.vpool.1, &mut self.vpool.0) };
+                self.swaps += Self::grow_learn(more, fewer, &st.c, bits, false, false, self.clock, &mut self.rng);
+            } else if st.critic && k + 1 == n {
                 let (up, down) = if delta > 0 { (&mut self.critic.0, &mut self.critic.1) } else { (&mut self.critic.1, &mut self.critic.0) };
                 if self.push_pull {
                     let a = up.push(&st.c, bits, false, &mut self.rng);
@@ -521,6 +646,13 @@ impl MaskStriatum {
             }
             for (ch, a, x) in &st.choices {
                 let stick = self.sticky && delta > 0;
+                if self.grow {
+                    let pair = &mut self.pools[*ch][*a];
+                    let (more, fewer) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
+                    // a dip moves the go cells that fired away (go LTD) and loosens their habits
+                    self.swaps += Self::grow_learn(more, fewer, x, bits, stick, delta < 0 && self.sticky, self.clock, &mut self.rng);
+                    continue;
+                }
                 let pair = &mut self.actors[*ch][*a];
                 // a dip loosens the habit it contradicts: sticky go bits in this context go back
                 // to their second tag now and then
@@ -554,6 +686,7 @@ impl MaskStriatum {
     }
 
     pub fn begin_groups(&mut self, state: &[Vec<usize>], learn: bool) {
+        self.clock += 1;
         self.c = self.context(state);
         self.state = state.to_vec();
         let v = self.v(&self.c);
@@ -583,10 +716,9 @@ impl MaskStriatum {
     pub fn choose(&mut self, channel: usize, n: usize, explore: bool) -> usize {
         self.ensure(channel, n);
         let keep = self.keep(explore);
-        let q: Vec<i32> = (1..n).map(|a| {
-            let (g, o) = &self.actors[channel][a];
-            g.overlap(&self.c, keep.as_ref().map(|k| k.0.as_slice())) - o.overlap(&self.c, keep.as_ref().map(|k| k.1.as_slice()))
-        }).collect();
+        let c = self.c.clone();
+        let mut q: Vec<i32> = (1..n).map(|a| self.q(channel, a, &c, &keep)).collect();
+        self.jitter(&mut q, explore);
         match self.release(&q) {
             Some(i) => {
                 let c = self.c.clone();
@@ -609,10 +741,8 @@ impl MaskStriatum {
         self.ensure(channel, 2);
         let keep = self.keep(explore);
         let xs: Vec<Vec<u64>> = candidates.iter().map(|c| self.candidate_context(c)).collect();
-        let q: Vec<i32> = xs.iter().map(|x| {
-            let (g, o) = &self.actors[channel][1];
-            g.overlap(x, keep.as_ref().map(|k| k.0.as_slice())) - o.overlap(x, keep.as_ref().map(|k| k.1.as_slice()))
-        }).collect();
+        let mut q: Vec<i32> = xs.iter().map(|x| self.q(channel, 1, x, &keep)).collect();
+        self.jitter(&mut q, explore);
         let i = self.release(&q)?;
         if let Some(st) = self.recent.last_mut() {
             st.choices.push((channel, 1, xs[i].clone()));
@@ -705,6 +835,41 @@ mod tests {
             st.end(false);
         }
     }
-}
 
+    /// Grow mode: the same two tasks, learned by recruiting mask-cells.
+    #[test]
+    fn grows_cells_for_a_delayed_payoff_and_by_context() {
+        let mut st = MaskStriatum::new(2048, 64, 3);
+        st.grow = true;
+        let a: Vec<Vec<usize>> = vec![(0..64).collect()];
+        let mid = |k: usize| -> Vec<Vec<usize>> { vec![(1000 * (k + 1)..1000 * (k + 1) + 64).collect()] };
+        for _ in 0..600 {
+            st.begin_groups(&a, true);
+            let c = st.choose(0, 3, true);
+            for k in 0..3 {
+                st.begin_groups(&mid(k), true);
+            }
+            st.reward(if c == 2 { ONE as i32 } else { 0 });
+            st.end(true);
+        }
+        st.begin_groups(&a, false);
+        assert_eq!(st.choose(0, 3, false), 2);
+        st.end(false);
+        let mut st = MaskStriatum::new(2048, 64, 4);
+        st.grow = true;
+        let ctx = |k: usize| -> Vec<Vec<usize>> { vec![(1000 * k..1000 * k + 64).collect(), (5000..5064).collect()] };
+        for i in 0..800 {
+            let k = i % 2;
+            st.begin_groups(&ctx(k), true);
+            let c = st.choose(0, 3, true);
+            st.reward(if c == k + 1 { ONE as i32 } else { 0 });
+            st.end(true);
+        }
+        for k in 0..2 {
+            st.begin_groups(&ctx(k), false);
+            assert_eq!(st.choose(0, 3, false), k + 1, "context {k}");
+            st.end(false);
+        }
+    }
+}
 

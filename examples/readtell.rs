@@ -1093,6 +1093,10 @@ fn main() {
             m.push_pull = false;
             // RT_MASK_RELEASE: the masks' tonic brake (default 2)
             m.release = env("RT_MASK_RELEASE", 2);
+            // RT_MASK_GROW=1: pools of mask-cells recruited as needed; RT_MASK_STICKY=0: no
+            // habit bits
+            m.grow = std::env::var("RT_MASK_GROW").map_or(false, |v| v == "1");
+            m.sticky = std::env::var("RT_MASK_STICKY").map_or(true, |v| v != "0");
             // RT_CELLS_FOR (diagnosis): channels handled by cells, the rest by masks
             match std::env::var("RT_CELLS_FOR") {
                 Ok(v) => Bg::Mixed(Box::new(Striatum::new(1 << 18)), Box::new(m), v.split(',').filter_map(|x| x.parse().ok()).collect()),

@@ -426,6 +426,7 @@ fn make(spec: &str, seed: u64) -> Bg {
         m.sticky = opts.contains("sticky");
         m.push_pull = !opts.contains("swap");
         m.go_ltd = !opts.contains("noltd");
+        m.grow = opts.contains("grow");
         m.low_value = !opts.contains("calm");
         m.conj = opts.contains("conj");
         if opts.contains("p1") {

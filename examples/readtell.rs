@@ -48,9 +48,8 @@ use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::{
     BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
-    Repertoire, Striatum, ThalamicRelay, VocalTract, WorkingMemory,
+    Striatum, ThalamicRelay, VocalTract, WorkingMemory,
 };
-use neurocomp::program::repertoire::EFFORT;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
 use rand::{Rng, RngCore, SeedableRng};
@@ -440,49 +439,29 @@ fn state_groups(
 }
 
 /// The striatum's channels (one per gate).
-const CH_REACH: usize = 0;
 const CH_HOLD: usize = 1;
 const CH_REINSTATE: usize = 2;
 const CH_LOAD: usize = 3;
-const CH_PLACE: usize = 4;
-/// the motor repertoire's channel, its size, and how often the motor cortex babbles (1 in this
-/// many motor opportunities while learning)
-const CH_MOTOR: usize = 5;
-/// the bookmark channel (candidates: the hippocampus's recent boundaries), how many are kept,
-/// and where their features sit in the striatum's input ids
+/// what the mouse does (candidates: the cortex's layer 5 predictions of a mouse motion)
+const CH_ACT: usize = 5;
+/// which bookmark to go back to (candidates: the index rows a pause recalls)
 const CH_MARK: usize = 6;
-const MARKS: usize = 16;
+/// how many rows the hippocampus offers as bookmarks
+const BOOKMARKS: usize = 6;
 /// steps a request to retrieve lasts unless renewed
 const REQUEST_STEPS: usize = 32;
-const MARK_BASE: usize = 1 << 24;
-/// where motor commands' bits sit in the striatum's input ids
-const MOTOR_BASE: usize = 1 << 25;
-
-/// A bookmark: a boundary's context, strength, step, and the association cells before and at it.
-struct Mark {
-    ctx: Vec<usize>,
-    strength: i32,
-    at: usize,
-    before: Vec<usize>,
-    cells: Vec<usize>,
-}
-const MOTOR_CAP: usize = 32;
-const BABBLE: u32 = 8;
-
-/// The body (part of the world, not of the network): what a motor pattern does. Its bits in
-/// 0..128 point the arm (the quarter with the most bits, if it has at least two and no other
-/// quarter as many: one of four places, else nowhere); at least two bits in 128..192 close the
-/// hand.
-fn body(pattern: &[usize]) -> (Option<usize>, bool) {
-    let mut q = [0usize; 4];
-    for &b in pattern.iter().filter(|&&b| b < 128) {
-        q[b / 32] += 1;
-    }
-    let m = *q.iter().max().unwrap();
-    let dir = (m >= 2 && q.iter().filter(|&&x| x == m).count() == 1).then(|| q.iter().position(|&x| x == m).unwrap());
-    let grasp = pattern.iter().filter(|&&b| (128..192).contains(&b)).count() >= 2;
-    (dir, grasp)
-}
+/// where a candidate's own bits sit in the striatum's input ids (rows; the cortex's proposals)
+const ROW_BASE: usize = 1 << 24;
+const ACT_BASE: usize = 1 << 25;
+/// the mouse's motor primitives: move the cursor left, right, and click
+const MOUSE: usize = 3;
+const LEFT: usize = 0;
+const RIGHT: usize = 1;
+const CLICK: usize = 2;
+/// spontaneous mouse movements while learning: 1 in this many waiting steps (motor babbling)
+const BABBLE: u32 = 6;
+/// effort per mouse command (`Q16`)
+const EFFORT: i32 = (ONE / 16) as i32;
 
 /// The hippocampal context's cells are drawn from this many.
 const CTX_POOL: usize = 1 << 16;
@@ -554,29 +533,17 @@ struct IndexHc {
     followed: usize,
     /// diagnosis: the hold gate does nothing (the driver holds at the story's start)
     hold_off: bool,
-    /// automatic anchors (RT_ANCHOR, default on): at each event boundary the hippocampus keeps the
-    /// context with the boundary's strength (how far the boundary cell's expectation of surprise
-    /// rose above its threshold), in a few slots; strengths fade at each boundary and a new
-    /// anchor replaces the weakest only if it is stronger. What is "held" is the strongest.
-    anchors: Option<Vec<(Vec<usize>, i32)>>,
-    /// bookmarks to choose among when needed (RT_ANCHOR=choose, default): the last `MARKS`
-    /// boundaries, each with its context, strength, when it came, the association-area cells
-    /// before it and at it
-    marks: Option<Vec<Mark>>,
-    /// steps heard so far, and the association cells heard last
-    clock: usize,
-    /// steps the prefrontal request to retrieve lasts unless renewed (with anchors or
-    /// bookmarks, where no hold ends it); 0 = until a hold
+    /// bookmarks are index rows (RT_BOOKMARK=rows, default): pauses are stored like any sound,
+    /// and when one is needed the hippocampus, cued with a pause in the current context, offers
+    /// the rows that match; the striatum picks one (or none). RT_BOOKMARK=hold: the striatum's
+    /// hold and reinstate gates instead.
+    bookmarks: bool,
+    /// steps the prefrontal request to retrieve lasts unless renewed (with bookmarks, where no
+    /// hold ends it)
     request_left: usize,
-    last_cells: Vec<usize>,
     /// storing goes on while retrieving (encoding and retrieval alternate within each theta
     /// cycle), except for its own speech (corollary discharge)
     theta: bool,
-    /// the phase the driver is in (for the anchor report): 0 the story's first word, 1 the rest
-    /// of the story, 2 the instruction, 3 later
-    phase: usize,
-    /// per phase: (boundaries, sum of their strength, anchors taken)
-    anchor_stats: [(usize, i64, usize); 4],
     /// diagnosis: the gates do nothing (the driver holds and reinstates)
     gates_off: bool,
     /// diagnosis: (boundary fired, recalled row) per heard sound, while tracing
@@ -613,14 +580,9 @@ impl IndexHc {
             followed: 0,
             gates_off: false,
             hold_off: false,
-            anchors: None,
-            marks: None,
-            clock: 0,
+            bookmarks: false,
             request_left: 0,
-            last_cells: Vec::new(),
             theta: false,
-            phase: 3,
-            anchor_stats: [(0, 0, 0); 4],
             log: Vec::new(),
         }
     }
@@ -737,49 +699,16 @@ impl IndexHc {
         self.last_word = key;
         let fired = self.boundary.observe(&cells);
         self.log.push((fired, self.last_recalled));
-        self.clock += 1;
         // the request lapses unless renewed (prefrontal activity that is not maintained fades)
-        if self.request && self.hold_off && self.request_left > 0 {
+        if self.request && self.bookmarks && self.request_left > 0 {
             self.request_left -= 1;
             if self.request_left == 0 {
                 self.request = false;
             }
         }
-        let before = std::mem::replace(&mut self.last_cells, cells.clone());
         if fired {
             self.boundaries += 1;
             self.drift(&cells, self.ctx.len() / 2, 2);
-            let strength = self.boundary.excess();
-            if let Some(m) = self.marks.as_mut() {
-                if m.len() >= MARKS {
-                    m.remove(0);
-                }
-                m.push(Mark { ctx: self.ctx.clone(), strength, at: self.clock, before, cells: cells.clone() });
-                self.held = Some(self.ctx.clone());
-            }
-            let st = &mut self.anchor_stats[self.phase];
-            st.0 += 1;
-            st.1 += strength as i64;
-            if let Some(a) = self.anchors.as_mut() {
-                for x in a.iter_mut() {
-                    x.1 -= x.1.abs() / 8;
-                }
-                let weakest = a.iter().enumerate().min_by_key(|x| x.1 .1).map(|x| (x.0, x.1 .1));
-                let taken = if a.len() < 4 {
-                    a.push((self.ctx.clone(), strength));
-                    true
-                } else if let Some((i, w)) = weakest.filter(|&(_, w)| strength > w) {
-                    let _ = w;
-                    a[i] = (self.ctx.clone(), strength);
-                    true
-                } else {
-                    false
-                };
-                if taken {
-                    st.2 += 1;
-                    self.held = a.iter().max_by_key(|x| x.1).map(|x| x.0.clone());
-                }
-            }
         }
         fired
     }
@@ -834,34 +763,36 @@ impl IndexHc {
         self.holds += 1;
     }
 
-    /// The bookmarks as the cortex offers them to the striatum: each one's age (time cells, a
-    /// band of steps since it), its strength (a band), the sounds before it and at it.
-    fn candidates(&self) -> Vec<Vec<Vec<usize>>> {
-        let Some(m) = self.marks.as_ref() else { return Vec::new() };
-        let band = |d: usize| [0, 1, 2, 3, 4, 4, 5, 5, 6, 6, 6, 6, 7, 7, 7, 7].get(d).copied().unwrap_or(if d < 24 { 8 } else if d < 32 { 9 } else if d < 48 { 10 } else { 11 });
-        m.iter()
-            .map(|k| {
-                let age = band(self.clock - k.at);
-                let st = (k.strength / (ONE as i32 / 16)).clamp(-4, 8) + 4;
+    /// Bookmarks are rows: cued with a pause (`pause`: the association cells of silence) in
+    /// the current context, the hippocampus offers the rows that match best (at most `BOOKMARKS`),
+    /// each by its own keys: its context, its content, and the context it shares with now (how
+    /// far the context has drifted since: its age, in bits). Returns the rows and the offers.
+    fn bookmark_candidates(&self, pause: &[usize]) -> (Vec<u32>, Vec<Vec<Vec<usize>>>) {
+        let now: std::collections::HashSet<usize> = self.ctx.iter().copied().collect();
+        let rows: Vec<u32> = self.mem.matches(&self.ec(pause), BOOKMARKS).into_iter().map(|x| x.0).collect();
+        let offers = rows
+            .iter()
+            .map(|&r| {
+                let keys = self.mem.keys_of(r);
+                let ctx: Vec<usize> = keys.iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect();
                 vec![
-                    (0..16).map(|j| MARK_BASE + age * 16 + j).collect(),
-                    (0..16).map(|j| MARK_BASE + 256 + st as usize * 16 + j).collect(),
-                    k.before.iter().map(|&c| MARK_BASE + 1024 + c).collect(),
-                    k.cells.iter().map(|&c| MARK_BASE + 1024 + BITS + c).collect(),
+                    ctx.iter().map(|&k| ROW_BASE + k).collect(),
+                    keys.iter().map(|&k| k as usize).filter(|&k| k >= CONTENT_BASE).map(|k| ROW_BASE + k).collect(),
+                    ctx.iter().filter(|k| now.contains(k)).map(|&k| ROW_BASE + (1 << 22) + k).collect(),
                 ]
             })
-            .collect()
+            .collect();
+        (rows, offers)
     }
 
-    /// Bookmark `i` is reinstated: its context becomes the current one, and retrieval begins.
-    fn reinstate_mark(&mut self, i: usize) {
-        if let Some(k) = self.marks.as_ref().and_then(|m| m.get(i)) {
-            self.ctx = k.ctx.clone();
-            self.last_recalled = None;
-            self.request = true;
-            self.request_left = REQUEST_STEPS;
-            self.reinstated += 1;
-        }
+    /// Row `r` is gone back to: its context becomes the current one, recall carries on from it
+    /// along the links, and retrieval begins.
+    fn reinstate_row(&mut self, r: u32) {
+        self.ctx = self.mem.keys_of(r).iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect();
+        self.last_recalled = Some(r);
+        self.request = true;
+        self.request_left = REQUEST_STEPS;
+        self.reinstated += 1;
     }
 
     /// The held context is reinstated as the current one, and retrieval begins.
@@ -935,16 +866,23 @@ fn main() {
     // the striatum: one critic, and an actor channel per gate (reach, hold, reinstate, load into
     // working memory); dopamine is the TD error, the reward the words that come out right
     let mut striatum = Striatum::new(1 << 18);
-    // RT_MOTOR=on: a motor repertoire that grows by babbling, with curiosity (learning progress)
-    // and effort as inner rewards, instead of the hand-made reach and shelf-place channels (off
-    // by default until it learns to open the book: see wiki 107)
-    let mut repertoire = std::env::var("RT_MOTOR").map_or(false, |v| v == "on").then(|| Repertoire::new(256, 8, MOTOR_CAP));
-    // the arm's motor area: its forward model learns what each command makes the senses report
-    let mut arm = MotorArea::new(256);
-    let mut motor_uses = vec![0usize; MOTOR_CAP];
-    // the command just done, credited with the dopamine of the next step
-    let mut pending_cmd: Option<usize> = None;
-    let mut motor_released = 0usize;
+    // the screen and the mouse (the network's body): a row of places, the desk (where the
+    // story's book lies, unless it is closed) and then the shelf's places. The eye sees where the
+    // cursor is (a visual code per place); a mouse command is felt as its motion (a code per
+    // primitive: left, right, click), sensed like a sound. The mouse's motor area is learned by
+    // babbling before the trials, as speech is; a command that matches no primitive does nothing.
+    let npos = 1 + shelf_k;
+    let cursor_seen = Encoder::new(npos, BITS, ACTIVE, &mut rng).codes;
+    let motion = Encoder::new(MOUSE, BITS, ACTIVE, &mut rng).codes;
+    let mouse = VocalTract::new(MOUSE, BITS, ACTIVE, &mut rng);
+    let mut hand = MotorArea::new(BITS);
+    hand.babble(&mouse, &motion, 3, &mut rng);
+    let mut cursor = 0usize;
+    // curiosity: the cortex's misses at predicting what follows, one bit per waiting step (a
+    // shift register); its learning progress is the long-run miss rate minus the recent one
+    let mut misses: u64 = u64::MAX;
+    // (babbled, released, left, right, clicks, books opened)
+    let mut mouse_stats = [0usize; 6];
     let mut curiosity_sum = 0i64;
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
@@ -989,16 +927,11 @@ fn main() {
     if let Some(x) = ix.as_mut() {
         x.gates_off = ix_oracle;
         x.hold_off = hold_oracle;
-        // RT_ANCHOR=off: the striatum's hold gate instead of automatic anchors
-        // RT_ANCHOR: choose (default: bookmarks chosen when needed), strongest (the strongest
-        // anchor is held), off (the striatum's hold gate)
-        let anchor = std::env::var("RT_ANCHOR").unwrap_or_else(|_| "choose".into());
-        if anchor != "off" && !hold_oracle {
-            x.anchors = Some(Vec::new());
+        // RT_BOOKMARK=rows (default): bookmarks are index rows chosen when needed; =hold: the
+        // striatum's hold and reinstate gates
+        if std::env::var("RT_BOOKMARK").map_or(true, |v| v != "hold") && !hold_oracle {
+            x.bookmarks = true;
             x.hold_off = true;
-            if anchor == "choose" {
-                x.marks = Some(Vec::new());
-            }
         }
         // RT_THETA=on: storing goes on while retrieving (default off: it files the retelling
         // under the reinstated context, and those rows then win recall)
@@ -1050,21 +983,19 @@ fn main() {
             let eye4 = if eye_now.count_ones() == 0 { zero() } else { net.l4e.encode(&eye_now) };
             let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place);
             striatum.begin_groups(&state, $explore, &mut rng);
-            if let (Some(i), Some(rep)) = (pending_cmd.take(), repertoire.as_mut()) {
-                rep.credit(i, striatum.last_delta);
-            }
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
                     // reinstating is possible only when not already retrieving (it would only
                     // start the sequence over)
                     // the held content's tag is kept with it, and re-armed when it is used, so the
                     // dopamine that follows using it reaches the decision to hold it
-                    if x.marks.is_some() {
-                        // which bookmark, if any, to go back to
+                    if x.bookmarks {
+                        // which bookmark, if any, to go back to: the rows a pause recalls now
                         if !retr || restart {
-                            let cands = x.candidates();
+                            let pause = ones(&net.assoc_of(&zero(), &silence, false, &mut rng));
+                            let (rows, cands) = x.bookmark_candidates(&pause);
                             if let Some(i) = striatum.choose_among(CH_MARK, &cands, if $explore { Some(&mut rng) } else { None }) {
-                                x.reinstate_mark(i);
+                                x.reinstate_row(rows[i]);
                             }
                         }
                     } else if held && (!retr || restart) && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
@@ -1142,9 +1073,6 @@ fn main() {
             if ix.is_some() {
                 // RT_IX_HOLD=oracle (diagnosis only): hold the context in force at the story's
                 // first word, instead of the learned gate
-                if let Some(x) = ix.as_mut() {
-                    x.phase = (t > 0) as usize;
-                }
                 if t == 0 && hold_oracle {
                     let x = ix.as_mut().unwrap();
                     x.held = Some(x.ctx.clone());
@@ -1189,10 +1117,13 @@ fn main() {
             }
             println!("  probe right after hearing:{line}");
         }
-        // the teacher pauses: silence is heard (a sound, and a natural event boundary)
+        // the teacher pauses: silence is heard (a sound, and a natural event boundary), and
+        // stored like any sound (with bookmarks, a pause row is where an episode can be gone
+        // back to)
         if ix.is_some() {
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
+            let keep = ix.as_ref().unwrap().bookmarks;
+            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, keep, false);
             prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, learn);
         }
@@ -1229,9 +1160,6 @@ fn main() {
         for (it, w) in instr.into_iter().enumerate() {
             let wi = id(w);
             let cue = Net::hc_context(ip.as_ref(), ip2.as_ref(), &silence, story_ctx, time.then_some(it));
-            if let Some(x) = ix.as_mut() {
-                x.phase = 2;
-            }
             hc_hear!(wi, &cue, store_all, learn, false);
             ip2 = ip.replace(ear.codes[wi].clone());
             if fixed_gate && w == verb {
@@ -1248,9 +1176,6 @@ fn main() {
             if learn && reward_all && overlap(&st.plan, &next) >= 24 {
                 striatum.reward(ONE as i32);
             }
-        }
-        if let Some(x) = ix.as_mut() {
-            x.phase = 3;
         }
         if no_instr {
             net.wm.clear();
@@ -1339,11 +1264,13 @@ fn main() {
             let k = if read { 0 } else { 1 };
             wait_states[k].push(ones(&net.rec23));
         }
-        // the teacher waits (up to three pauses) before starting; the network may reach for the
-        // book meanwhile (in "find" trials: to one of the shelf's places). Once the teacher
+        // the teacher waits before starting (three pauses; in "find" trials long enough to reach
+        // any place on the shelf); the network may use the mouse meanwhile. Once the teacher
         // starts, it goes on whether a book is open or not.
+        let waits = if find { 3 + shelf_k } else { 3 };
+        let mut sensed = silence.clone();
         if !book_open {
-            for _ in 0..3 {
+            for _ in 0..waits {
                 if ix.is_some() {
                     let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
                     let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
@@ -1353,69 +1280,73 @@ fn main() {
                     prev_assoc = std::mem::replace(&mut last_assoc, net.assoc_of(&zero(), &silence, false, &mut rng));
                     td_step!(false, learn);
                 }
-                // what the network does: with the motor repertoire (default), a motor pattern
-                // the basal ganglia release (or the motor cortex babbles); else the old
-                // hand-made channels. `opened`: the shelf place whose book came into view.
-                let opened: Option<usize> = if let Some(rep) = repertoire.as_mut() {
-                    let done: Option<usize>;
-                    // the commands as the motor cortex offers them: each one's own bits
-                    // the commands as the motor cortex offers them: each one's own bits and what
-                    // the motor area predicts it will make the senses report (its efference copy:
-                    // an action is chosen by its expected effect)
-                    let offer = |rep: &Repertoire, arm: &MotorArea, i: usize| -> Vec<Vec<usize>> {
-                        let effect = arm.predict(rep.code(i)).map_or(Vec::new(), |p| ones(&p).into_iter().map(|b| MOTOR_BASE + 256 + b).collect());
-                        vec![ones(rep.code(i)).into_iter().map(|b| MOTOR_BASE + b).collect(), effect]
-                    };
-                    if learn && (rep.is_empty() || rng.gen_range(0..BABBLE) == 0) {
-                        // babbling: a new command, done now (its efference copy tags the
-                        // striatal cells that see it)
-                        let (i, replaced) = rep.propose(&mut rng);
-                        if replaced {
-                            motor_uses[i] = 0;
-                        }
-                        striatum.did_among(CH_MOTOR, &offer(rep, &arm, i));
-                        done = Some(i);
-                    } else {
-                        let cands: Vec<Vec<Vec<usize>>> = (0..rep.len()).map(|i| offer(rep, &arm, i)).collect();
-                        done = striatum.choose_among(CH_MOTOR, &cands, if learn { Some(&mut rng) } else { None });
-                        motor_released += done.is_some() as usize;
+                // the cortex: what it expects to sense next, seeing the cursor and sensing the
+                // last motion (or silence). Its proposals are its layer 5 cells' predictions that
+                // are a mouse motion; the basal ganglia release one or none, and the motor area
+                // turns it into a command. While learning, the mouse also moves on its own now
+                // and then (motor babbling), so the cortex learns what follows what.
+                let st = net.step(&cursor_seen[cursor], &sensed, &zero(), learn, 0, &mut rng);
+                let mut cands: Vec<(usize, BitVector)> = Vec::new();
+                for (pat, _) in net.l5.proposals(BITS) {
+                    let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
+                    if 2 * overlap(&pat, &motion[best]) >= ACTIVE as u32 && !cands.iter().any(|c| c.0 == best) {
+                        cands.push((best, pat));
                     }
-                    let mut opened = None;
-                    if let Some(i) = done {
-                        // the world: the body moves; a grasp toward a place with a book opens it
-                        let (dir, grasp) = body(&ones(rep.code(i)));
-                        let has_book = |d: usize| if find { d < shelf_k } else { d == 0 && !p.is_empty() };
-                        if grasp {
-                            opened = dir.filter(|&d| has_book(d));
-                        }
-                        let mut outcome: Vec<usize> = match dir {
-                            Some(d) => (0..16).map(|j| 16 * d + j).collect(),
-                            None => (64..80).collect(),
-                        };
-                        if grasp {
-                            outcome.extend(80..96);
-                        }
-                        if opened.is_some() {
-                            outcome.extend(96..112);
-                        }
-                        let code = rep.code(i).clone();
-                        let err = arm.observe(&code, &BitVector::from_bits(&outcome, 256), &mut rng);
-                        let cur = rep.observe(i, err);
-                        pending_cmd = Some(i);
-                        motor_uses[i] += 1;
-                        if learn {
-                            curiosity_sum += cur as i64;
-                            striatum.reward(cur - EFFORT);
-                        }
-                    }
-                    opened
-                } else if find {
-                    let a = striatum.choose(CH_PLACE, shelf_k + 1, if learn { Some(&mut rng) } else { None });
-                    (a > 0).then(|| a - 1)
+                }
+                let command: Option<BitVector> = if learn && rng.gen_range(0..BABBLE) == 0 {
+                    let m = rng.gen_range(0..MOUSE);
+                    striatum.did_among(CH_ACT, &[ones(&motion[m]).into_iter().map(|b| ACT_BASE + b).collect()]);
+                    mouse_stats[0] += 1;
+                    Some(mouse.command(m).clone())
                 } else {
-                    // with the book closed there is nothing to hand over
-                    (striatum.choose(CH_REACH, 2, if learn { Some(&mut rng) } else { None }) == 1 && !p.is_empty()).then_some(0)
+                    let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
+                    match striatum.choose_among(CH_ACT, &offer, if learn { Some(&mut rng) } else { None }) {
+                        Some(i) => {
+                            mouse_stats[1] += 1;
+                            hand.plan(&cands[i].1)
+                        }
+                        None => None,
+                    }
                 };
+                // the world: the mouse does what the command articulates
+                let done = command.as_ref().and_then(|c| mouse.articulate(c));
+                if let (Some(c), Some(m)) = (command.as_ref(), done) {
+                    hand.observe(c, &motion[m], &mut rng);
+                }
+                let next = done.map_or(silence.clone(), |m| motion[m].clone());
+                // the cortex learns what came; curiosity is the progress of its predictions here
+                misses = misses << 1 | (overlap(&st.plan, &next) < 24) as u64;
+                let progress = (misses.count_ones() / 8) as i32 - (misses & 0xFF).count_ones() as i32 - 1;
+                if learn {
+                    net.learn(&st, &next, &mut rng);
+                    if progress > 0 {
+                        striatum.reward(progress * ONE as i32 / 8);
+                        curiosity_sum += (progress * ONE as i32 / 8) as i64;
+                    }
+                    if done.is_some() {
+                        striatum.reward(-EFFORT);
+                    }
+                }
+                sensed = next;
+                let mut opened: Option<usize> = None;
+                match done {
+                    Some(LEFT) => {
+                        cursor = cursor.saturating_sub(1);
+                        mouse_stats[2] += 1;
+                    }
+                    Some(RIGHT) => {
+                        cursor = (cursor + 1).min(npos - 1);
+                        mouse_stats[3] += 1;
+                    }
+                    Some(CLICK) => {
+                        mouse_stats[4] += 1;
+                        // a click on a book opens it: the story's book on the desk, a shelf's
+                        // book at its place (in "find" trials)
+                        opened = if find { (cursor >= 1 && cursor <= shelf_k).then(|| cursor - 1) } else { (cursor == 0 && !p.is_empty()).then_some(0) };
+                        mouse_stats[5] += opened.is_some() as usize;
+                    }
+                    _ => {}
+                }
                 if let Some(d) = opened {
                     if find {
                         // the book at that place, from its first word; its place joins the
@@ -1452,7 +1383,7 @@ fn main() {
                 }
             }
         }
-        let (debug_v0, debug_p0) = striatum.debug_now(CH_REACH);
+        let (debug_v0, debug_p0) = striatum.debug_now(CH_LOAD);
         // the teacher reads the book asked for in "find" trials
         let find_target: Vec<&str> = if find { shelf[find_at].clone() } else { Vec::new() };
         let target: &Vec<&str> = if find { &find_target } else if make { &q } else if read { &p } else { &s };
@@ -1583,9 +1514,10 @@ fn main() {
             net.learn(&st, &silence, &mut rng);
         }
         if ix.is_some() {
-            // the pause after the task
+            // the pause after the task (stored with bookmarks: the next story follows it)
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, false, false);
+            let keep = ix.as_ref().unwrap().bookmarks;
+            let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, keep, false);
             prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, learn);
             let task_log: Vec<bool> = ix.as_mut().unwrap().log.drain(..).map(|l| l.0).collect();
@@ -1821,16 +1753,6 @@ fn main() {
             x.had_prev,
             x.followed
         );
-        if x.anchors.is_some() {
-            let names = ["story start", "story", "instruction", "later"];
-            let parts: Vec<String> = (0..4)
-                .map(|k| {
-                    let (n, sum, taken) = x.anchor_stats[k];
-                    format!("{}: {} boundaries, strength {:+.3}, {} anchored", names[k], n, sum as f64 / n.max(1) as f64 / ONE as f64, taken)
-                })
-                .collect();
-            println!("anchors: {}", parts.join("; "));
-        }
     }
     {
         // is the association area cross-modal? the assembly a word evokes seen and heard
@@ -1855,18 +1777,7 @@ fn main() {
                 }
             }
         }
-        // the striatum's preference for reaching over waiting, holding "read" or "tell" and
-        // having just heard "it"
-        let heard_it = net.assoc_of(&zero(), &ear.codes[id(IT)], false, &mut rng);
-        let mut pref = |v: &str| {
-            let before = net.assoc_of(&zero(), &ear.codes[id(v)], false, &mut rng);
-            let st = state_groups(&ear.codes[id(v)], &heard_it, &before, &zero(), &zero(), &zero(), &zero(), &[], None);
-            striatum.begin_groups(&st, false, &mut rng);
-            let d = striatum.drives(CH_REACH, 2);
-            striatum.end(false, &mut rng);
-            (d[1] - d[0]) as f64
-        };
-        println!("\nreaching for the book (test, instruction held):{line} preference for reaching over waiting after \"read it\" {:+.2}, \"tell it\" {:+.2}", pref("read"), pref("tell"));
+        println!("\nreaching for the book (test, instruction held):{line}");
     }
     if practice_p > 0.0 {
         println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });
@@ -1882,26 +1793,15 @@ fn main() {
         striatum.changes.0,
         striatum.changes.1
     );
-    if let Some(rep) = repertoire.as_ref() {
-        // the repertoire: what each action does (the body's reading of its pattern) and how
-        // often it was used
-        let mut kinds = std::collections::BTreeMap::new();
-        for i in 0..rep.len() {
-            let (dir, grasp) = body(&ones(rep.code(i)));
-            let k = format!("{}{}", dir.map_or("no direction".to_string(), |d| format!("place {d}")), if grasp { " + grasp" } else { "" });
-            let e = kinds.entry(k).or_insert((0usize, 0usize));
-            e.0 += 1;
-            e.1 += motor_uses[i];
-        }
-        let parts: Vec<String> = kinds.iter().map(|(k, (n, u))| format!("{k}: {n} ({u} uses)")).collect();
-        println!(
-            "motor repertoire: {} released by the basal ganglia; {} actions now, {} proposed, {} replaced; mean curiosity per training trial {:+.3}; {}",
-            motor_released,
-            rep.len(),
-            rep.stats.0,
-            rep.stats.1,
-            curiosity_sum as f64 / n_train.max(1) as f64 / ONE as f64,
-            parts.join("; ")
-        );
-    }
+    println!(
+        "mouse: {} babbled, {} released by the basal ganglia ({} left, {} right, {} clicks in all), {} books opened; curiosity per training trial {:+.3}; motor area {:?}",
+        mouse_stats[0],
+        mouse_stats[1],
+        mouse_stats[2],
+        mouse_stats[3],
+        mouse_stats[4],
+        mouse_stats[5],
+        curiosity_sum as f64 / n_train.max(1) as f64 / ONE as f64,
+        hand.stats()
+    );
 }

@@ -515,22 +515,6 @@ impl Striatum {
         }
     }
 
-    /// Action `a` of `n` on `channel` was done without the loop choosing it (the motor cortex
-    /// initiated it): its efference copy tags the striatal cells as a choice would.
-    pub fn did(&mut self, channel: usize, n: usize, a: usize) {
-        self.ensure(channel, n);
-        if let Some(st) = self.recent.last_mut() {
-            st.choices.push((channel, a, Vec::new()));
-        }
-    }
-
-    /// Action `a` on `channel` stands for something new now: its go and no-go cells are cleared.
-    pub fn reset_action(&mut self, channel: usize, a: usize) {
-        if let Some(p) = self.actors.get_mut(channel).and_then(|c| c.get_mut(a)) {
-            *p = (Pool::default(), Pool::default());
-        }
-    }
-
     /// The action just released on `channel` loaded something that is now held (in the
     /// prefrontal cortex): its tag is kept with the held activity, replacing the tag of what was
     /// held before. Call right after `choose` released it.

@@ -61,12 +61,6 @@ impl BoundaryCell {
         fire
     }
 
-    /// How strongly the latest input predicts surprise, above the firing threshold (`Q16`; above
-    /// zero when it fired on its own, not by capacity). A boundary's strength.
-    pub fn excess(&self) -> i32 {
-        self.level - self.mean - self.dev
-    }
-
     /// A segment closed from outside (the page ended).
     pub fn reset(&mut self) {
         self.since = 0;

@@ -1751,6 +1751,28 @@ play (`RT_SELFORG=0`, `RT_TEACHER_CURSOR=0`, `RT_TOUCH=0`, `RT_PLAY=0` turn them
 In a 300-trial check after both fixes it speaks again with the book shut, and the senses offer
 sounds (ear right 61%, eye 54%; the eye+ear association 56%). Measuring on 4 seeds.
 
+### How the self-organizing columns connect, and speech play
+**To the hippocampus.** It reads the association of eye and ear (a word, seen or heard) and, for
+acts, of hand and seen acts; not the full area or any column's layer 2/3. Its return now goes to
+every association column, which stopped the silence but blurs the self-organization (columns
+whose senses are idle offer sounds because recall gives them word input). Closer to the biology:
+the entorhinal cortex reads the top association areas and returns to them, so the index should
+read whichever top columns grow, and return to those.
+
+**To the cerebellum.** Its mossy fibres carry the raw sound heard (an old shortcut) and the pons,
+which now carries every column's layer 5 (as the pons relays all of the cortex's layer 5); its
+teaching signal is the step's target; its output is a source of the plan and lies on the tufts.
+Missing: the hand and touch, which reach the cerebellum directly from the spinal cord in the brain.
+
+**Speech play** (`RT_SPEECH_PLAY`, default 600 sounds): before any teaching, the network babbles
+(random commands to the vocal tract) and hears itself, as an infant's canonical babbling. The ear's
+area and column hear each sound while the voice's area holds the command (its efference copy), so
+an auditory–motor association area grows between them: the dorsal speech stream, self-organized.
+Half the time a caregiver answers with the same sound (contingent replies shape babbling; Goldstein
+et al. 2003). Then a word heard alone evokes, through the ear–voice association, the command that
+says it: the mirror for speech, a learned route from hearing to saying. After 600 sounds: **63 of 63
+words**. Not yet used in the tasks (the inverse model still says the plan).
+
 ## Next
 - **The new defaults on 4 seeds** (running): self-organizing columns, the senses' goals, recall
   reaching every column, touch, play.

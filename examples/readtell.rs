@@ -48,7 +48,7 @@ use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::{
     BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
-    Striatum, ThalamicRelay, VocalTract, WorkingMemory,
+    MaskStriatum, Striatum, ThalamicRelay, VocalTract, WorkingMemory,
 };
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -823,6 +823,98 @@ struct Tally {
     silent: usize,
 }
 
+/// The basal ganglia in use: spiny popcount cells (`Striatum`) or masks (`MaskStriatum`).
+enum Bg {
+    Cells(Striatum),
+    Masks(MaskStriatum),
+}
+
+impl Bg {
+    fn begin_groups(&mut self, s: &[Vec<usize>], learn: bool, rng: &mut StdRng) {
+        match self {
+            Bg::Cells(x) => x.begin_groups(s, learn, rng),
+            Bg::Masks(x) => x.begin_groups(s, learn),
+        }
+    }
+    fn choose(&mut self, ch: usize, n: usize, rng: Option<&mut StdRng>) -> usize {
+        match self {
+            Bg::Cells(x) => x.choose(ch, n, rng),
+            Bg::Masks(x) => x.choose(ch, n, rng.is_some()),
+        }
+    }
+    fn choose_among(&mut self, ch: usize, cands: &[Vec<Vec<usize>>], rng: Option<&mut StdRng>) -> Option<usize> {
+        match self {
+            Bg::Cells(x) => x.choose_among(ch, cands, rng),
+            Bg::Masks(x) => x.choose_among(ch, cands, rng.is_some()),
+        }
+    }
+    fn did_among(&mut self, ch: usize, cand: &[Vec<usize>]) {
+        match self {
+            Bg::Cells(x) => x.did_among(ch, cand),
+            Bg::Masks(x) => x.did_among(ch, cand),
+        }
+    }
+    fn maintain(&mut self, ch: usize) {
+        match self {
+            Bg::Cells(x) => x.maintain(ch),
+            Bg::Masks(x) => x.maintain(ch),
+        }
+    }
+    fn retag(&mut self, ch: usize) {
+        match self {
+            Bg::Cells(x) => x.retag(ch),
+            Bg::Masks(x) => x.retag(ch),
+        }
+    }
+    fn reward(&mut self, r: i32) {
+        match self {
+            Bg::Cells(x) => x.reward(r),
+            Bg::Masks(x) => x.reward(r),
+        }
+    }
+    fn end(&mut self, learn: bool, rng: &mut StdRng) {
+        match self {
+            Bg::Cells(x) => x.end(learn, rng),
+            Bg::Masks(x) => x.end(learn),
+        }
+    }
+    /// (the current state's value, 0), for reports
+    fn debug_now(&mut self, ch: usize) -> (i32, i32) {
+        match self {
+            Bg::Cells(x) => x.debug_now(ch),
+            Bg::Masks(x) => (x.value(), 0),
+        }
+    }
+    fn last_delta(&self) -> i32 {
+        match self {
+            Bg::Cells(x) => x.last_delta,
+            Bg::Masks(x) => x.last_delta,
+        }
+    }
+    fn report(&self) -> String {
+        match self {
+            Bg::Cells(x) => format!(
+                "cells: {} dopamine events, mean |dopamine| {:.3}, {} cholinergic pauses; striatal cells: {} striosome, {} go, {} no-go ({} recruited, {} removed)",
+                x.stats.0,
+                x.stats.1 as f64 / x.stats.0.max(1) as f64 / ONE as f64,
+                x.pauses,
+                x.sizes().0,
+                x.sizes().1,
+                x.sizes().2,
+                x.changes.0,
+                x.changes.1
+            ),
+            Bg::Masks(x) => format!(
+                "masks: {} dopamine events, mean |dopamine| {:.3}, {} cholinergic pauses, {} bits changed",
+                x.stats.0,
+                x.stats.1 as f64 / x.stats.0.max(1) as f64 / ONE as f64,
+                x.pauses,
+                x.swaps
+            ),
+        }
+    }
+}
+
 fn main() {
     let seed: u64 = env("SEED", 0);
     let mut rng = StdRng::seed_from_u64(seed);
@@ -865,7 +957,19 @@ fn main() {
     let reach_learned = std::env::var("RT_REACH").map_or(true, |v| v != "given");
     // the striatum: one critic, and an actor channel per gate (reach, hold, reinstate, load into
     // working memory); dopamine is the TD error, the reward the words that come out right
-    let mut striatum = Striatum::new(1 << 18);
+    // RT_STRIATUM=masks (default: go/no-go masks, no STN hold, sticky habit bits, pair features,
+    // the swap rule) or cells (spiny popcount cells)
+    let mut striatum = match std::env::var("RT_STRIATUM").unwrap_or_else(|_| "masks".into()).as_str() {
+        "cells" => Bg::Cells(Striatum::new(1 << 18)),
+        _ => {
+            let mut m = MaskStriatum::new(2048, 64, seed.wrapping_add(31));
+            m.hold = false;
+            m.sticky = true;
+            m.conj = true;
+            m.push_pull = false;
+            Bg::Masks(m)
+        }
+    };
     // the screen and the mouse (the network's body): a row of places, the desk (where the
     // story's book lies, unless it is closed) and then the shelf's places. The eye sees where the
     // cursor is (a visual code per place); a mouse command is felt as its motion (a code per
@@ -1366,7 +1470,7 @@ fn main() {
                     td_step!(true, learn);
                     if learn && !find {
                         let k = if read { 0 } else if make { 2 } else { 1 };
-                        reach_delta[k].0 += striatum.last_delta as i64;
+                        reach_delta[k].0 += striatum.last_delta() as i64;
                         reach_delta[k].1 += 1;
                     }
                     break;
@@ -1782,17 +1886,7 @@ fn main() {
     if practice_p > 0.0 {
         println!("practice: {corrections} corrections heard ({})", if heard_correction { "heard" } else { "oracle: counted, not heard" });
     }
-    println!(
-        "\nbasal ganglia: {} dopamine events, mean |dopamine| {:.3}, {} cholinergic pauses; striatal cells: {} striosome, {} go, {} no-go ({} recruited, {} removed)",
-        striatum.stats.0,
-        striatum.stats.1 as f64 / striatum.stats.0.max(1) as f64 / ONE as f64,
-        striatum.pauses,
-        striatum.sizes().0,
-        striatum.sizes().1,
-        striatum.sizes().2,
-        striatum.changes.0,
-        striatum.changes.1
-    );
+    println!("\nbasal ganglia: {}", striatum.report());
     println!(
         "mouse: {} babbled, {} released by the basal ganglia ({} left, {} right, {} clicks in all), {} books opened; curiosity per training trial {:+.3}; motor area {:?}",
         mouse_stats[0],

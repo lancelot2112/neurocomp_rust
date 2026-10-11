@@ -168,6 +168,8 @@ pub struct MaskStriatum {
     critic: (Mask, Mask),
     actors: Vec<Vec<(Mask, Mask)>>,
     c: Vec<u64>,
+    /// the current state's input groups (candidates are scored on them with their own)
+    state: Vec<Vec<usize>>,
     seen: Vec<u64>,
     recent: Vec<Step>,
     maintained: Vec<Option<Step>>,
@@ -200,6 +202,8 @@ pub struct MaskStriatum {
     pub stats: (u64, u64),
     pub last_delta: i32,
     pub swaps: u64,
+    /// cholinergic pauses (actor plasticity)
+    pub pauses: u64,
 }
 
 fn mix(x: u64) -> u64 {
@@ -222,6 +226,7 @@ impl MaskStriatum {
             critic,
             actors: Vec::new(),
             c: vec![0; words],
+            state: Vec::new(),
             seen: vec![0; words],
             recent: Vec::new(),
             maintained: Vec::new(),
@@ -242,6 +247,7 @@ impl MaskStriatum {
             stats: (0, 0),
             last_delta: 0,
             swaps: 0,
+            pauses: 0,
         }
     }
 
@@ -352,6 +358,7 @@ impl MaskStriatum {
             return;
         }
         let pause = delta.abs() >= self.pause_min * UNIT;
+        self.pauses += pause as u64;
         let n = self.recent.len();
         // (index into recent, credit weight in Q16)
         let elig: Vec<(usize, u64)> = if self.taps {
@@ -415,6 +422,7 @@ impl MaskStriatum {
 
     pub fn begin_groups(&mut self, state: &[Vec<usize>], learn: bool) {
         self.c = self.context(state);
+        self.state = state.to_vec();
         let v = self.v(&self.c);
         if self.started && learn {
             let disc = if self.gamma_div > 0 { v / self.gamma_div } else { 0 };
@@ -460,13 +468,13 @@ impl MaskStriatum {
 
     /// The cortex proposes candidates (each its own input groups), the loop picks one or none:
     /// each is scored by `channel`'s one mask pair on the context of the state with it.
-    pub fn choose_among(&mut self, channel: usize, candidates: &[Vec<Vec<usize>>], state: &[Vec<usize>], explore: bool) -> Option<usize> {
+    pub fn choose_among(&mut self, channel: usize, candidates: &[Vec<Vec<usize>>], explore: bool) -> Option<usize> {
         if candidates.is_empty() {
             return None;
         }
         self.ensure(channel, 2);
         let keep = self.keep(explore);
-        let xs: Vec<Vec<u64>> = candidates.iter().map(|c| self.context(&[state, c.as_slice()].concat())).collect();
+        let xs: Vec<Vec<u64>> = candidates.iter().map(|c| self.context(&[self.state.as_slice(), c.as_slice()].concat())).collect();
         let q: Vec<i32> = xs.iter().map(|x| {
             let (g, o) = &self.actors[channel][1];
             g.overlap(x, keep.as_ref().map(|k| k.0.as_slice())) - o.overlap(x, keep.as_ref().map(|k| k.1.as_slice()))
@@ -479,9 +487,9 @@ impl MaskStriatum {
     }
 
     /// A candidate done without the loop choosing it (the cortex initiated it).
-    pub fn did_among(&mut self, channel: usize, candidate: &[Vec<usize>], state: &[Vec<usize>]) {
+    pub fn did_among(&mut self, channel: usize, candidate: &[Vec<usize>]) {
         self.ensure(channel, 2);
-        let x = self.context(&[state, candidate].concat());
+        let x = self.context(&[self.state.as_slice(), candidate].concat());
         if let Some(st) = self.recent.last_mut() {
             st.choices.push((channel, 1, x));
         }

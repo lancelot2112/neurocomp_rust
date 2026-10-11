@@ -1252,6 +1252,17 @@ fn main() {
     let npos = 1 + shelf_k;
     let cursor_seen = Encoder::new(npos, BITS, ACTIVE, &mut rng).codes;
     let motion = Encoder::new(MOUSE, BITS, ACTIVE, &mut rng).codes;
+    // what a mouse act looks like on the screen (the cursor moving, a click's flash), whoever
+    // does it; drawn from its own generator so the other codes stay as they were
+    let motion_seen = Encoder::new(MOUSE, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0x5EE5)).codes;
+    // RT_TEACH_SEEN=1: the teacher's act is seen (on the screen), not felt as one's own motion
+    let teach_seen = std::env::var("RT_TEACH_SEEN").map_or(false, |v| v == "1");
+    // RT_CHECK=1: an act just credited by a reward is checked the next time it is done: if it
+    // has none of the effect the forward model expects, that is a dip; =always: every act
+    let check_mode = std::env::var("RT_CHECK").unwrap_or_default();
+    let mut check_due = [false; 3];
+    // (checks made, of which failed)
+    let mut checks = (0usize, 0usize);
     let mouse = VocalTract::new(MOUSE, BITS, ACTIVE, &mut rng);
     let mut hand = MotorArea::new(BITS);
     hand.babble(&mouse, &motion, 3, &mut rng);
@@ -1726,6 +1737,10 @@ fn main() {
         // where the book to open lies, if there is one to open (the teacher shows it)
         let target_pos: Option<usize> = if read { Some(0) } else if find { Some(1 + find_at) } else { None };
         let mut sensed = silence.clone();
+        // what the eye saw happen at the last step (an act on the screen), and the network's own
+        // acts in this wait
+        let mut seen_motion: Option<usize> = None;
+        let mut own_acts: Vec<usize> = Vec::new();
         if !book_open {
             for k in 0..waits {
                 // the eye sees the screen: where the cursor is (the striatum's visual input)
@@ -1744,7 +1759,17 @@ fn main() {
                 // are a mouse motion; the basal ganglia release one or none, and the motor area
                 // turns it into a command. While learning, the mouse also moves on its own now
                 // and then (motor babbling), so the cortex learns what follows what.
-                let st = net.step(&cursor_seen[cursor], &sensed, &zero(), learn, 0, &mut rng);
+                let eye_in = match seen_motion.filter(|_| teach_seen) {
+                    Some(m) => {
+                        let mut v = cursor_seen[cursor].clone();
+                        for (w, x) in v.as_words_mut().iter_mut().zip(motion_seen[m].as_words()) {
+                            *w |= x;
+                        }
+                        v
+                    }
+                    None => cursor_seen[cursor].clone(),
+                };
+                let st = net.step(&eye_in, &sensed, &zero(), learn, 0, &mut rng);
                 // curiosity as noise: the learning progress where the network is now (from the
                 // steps before) loosens the choice a little, up to ±2 more; no reward
                 let here = {
@@ -1864,7 +1889,23 @@ fn main() {
                 // (likewise a click on nothing: nothing opens)
                 let opens = if find { cursor >= 1 && cursor <= shelf_k } else { cursor == 0 && !p.is_empty() };
                 let blocked = blocked_senses && (matches!((done, cursor), (Some(LEFT), 0)) || done == Some(RIGHT) && cursor + 1 == npos || done == Some(CLICK) && !opens);
-                let next = if blocked { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
+                // (with RT_TEACH_SEEN=1 the teacher's act is not felt: it is seen, at the next step)
+                let next = if blocked || (teach_seen && shown.is_some()) { silence.clone() } else { done.map_or(silence.clone(), |m| motion[m].clone()) };
+                seen_motion = if blocked { None } else { done };
+                // the check: an own act, due for one (or every act, RT_CHECK=always), compared
+                // with what the forward model expected it to do; no effect at all is a dip
+                if let (Some(c), Some(m), true) = (command.as_ref(), done, learn && shown.is_none()) {
+                    own_acts.push(m);
+                    if check_mode == "always" || (check_mode == "1" && check_due[m]) {
+                        check_due[m] = false;
+                        let expected = hand.predict(c).unwrap_or_else(zero);
+                        checks.0 += 1;
+                        if expected.count_ones() > 0 && overlap(&expected, &next) * 2 < ACTIVE as u32 {
+                            checks.1 += 1;
+                            striatum.reward(-(ONE as i32) / 2);
+                        }
+                    }
+                }
                 // the cortex learns what came; curiosity is the progress of its predictions here
                 misses[here] = misses[here] << 1 | (overlap(&st.plan, &next) < 24) as u64;
                 // misses 9..16 steps back minus the last 8 (no divide), beyond one of noise
@@ -1904,6 +1945,10 @@ fn main() {
                         // the book at that place, from its first word; its place joins the
                         // hippocampus's context while it is in view
                         p = shelf[d].clone();
+                    }
+                    // a reward came: the network's own acts in this wait are due a check
+                    for &a in &own_acts {
+                        check_due[a] = true;
                     }
                     // the book, from its first word; the reach is an event boundary
                     book_open = true;
@@ -2379,6 +2424,7 @@ fn main() {
     if let Some(x) = ix.as_ref().filter(|x| x.auto) {
         println!("always completing: {} completions, {} reached the cortex (retrieval mode)", x.completions.0, x.completions.1);
     }
+    println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);
     println!("read trials at test, cursor off the book (place:proposed>released): {off_book:?}");
 }

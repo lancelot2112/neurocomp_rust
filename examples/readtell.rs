@@ -235,6 +235,8 @@ struct Net {
     topdown: Vec<(usize, BitVector)>,
     /// diagnosis: the latest step was driven top-down only (imagined or recalled, nothing sensed)
     imagined_now: bool,
+    /// the senses' columns learn from top-down input too (RT_TD_LEARN=1)
+    td_learn: bool,
     /// RT_TOP=1: the top association column replaces the shared layers 2/3 and 5. Its input is
     /// the scene (the association of every area) and the hippocampus's return; its tuft the
     /// prefrontal content and the cerebellum's output; its layer 2/3 predicts the next scene,
@@ -391,6 +393,7 @@ impl Net {
             multi: selforg && std::env::var("RT_HC_MULTI").map_or(true, |v| v != "0"),
             topdown: Vec::new(),
             imagined_now: false,
+            td_learn: std::env::var("RT_TD_LEARN").map_or(false, |v| v == "1"),
             top: (top && !streams).then(|| Column::agranular(BITS, 16384)),
             streams: streams.then(|| Streams { ventral: Column::agranular(BITS, 16384), audio_motor: Column::agranular(BITS, 16384), visuo_motor: Column::agranular(BITS, 8192) }),
             ff_l4: std::env::var("RT_FF").map_or(false, |v| v == "l4"),
@@ -577,7 +580,8 @@ impl Net {
             for (slot, &a) in SLOTS.iter().enumerate() {
                 let sensed = ff[slot].count_ones() > 0;
                 let input = or(&ff[slot], &td[slot]);
-                b.sense_step(a, &input, Some(&or(&fb, &td[slot])), learn && sensed);
+                // (RT_TD_LEARN=1: a column learns from top-down input too)
+                b.sense_step(a, &input, Some(&or(&fb, &td[slot])), learn && (sensed || self.td_learn));
                 both.push(input);
             }
             self.imagined_now = td.iter().any(|t| t.count_ones() > 0) && ff.iter().all(|f| f.count_ones() == 0);

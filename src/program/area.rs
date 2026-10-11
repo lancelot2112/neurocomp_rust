@@ -573,6 +573,36 @@ impl Brain {
             None => to_code,
         }
     }
+
+    /// Top-down: the cells `cells` of the association area of the pair (`a`, `b`) project back
+    /// to area `to` (one of the pair), and on to its input: what that area should sense if the
+    /// association area's pattern is right (an expectation sent down).
+    pub fn down(&self, a: usize, b: usize, cells: &BitVector, to: usize) -> BitVector {
+        let none = BitVector::new(self.bits, Some(0));
+        let Some(((x, _), col)) = self.pairs.iter().find(|p| p.0 == (a, b) || p.0 == (b, a)) else {
+            return none;
+        };
+        let side = if *x == to { 0 } else { 1 };
+        let to_code = col.l4.as_ref().unwrap().backproject(cells, side);
+        match self.areas[to].l4.as_ref() {
+            Some(l4) => l4.backproject(&to_code, 0),
+            None => to_code,
+        }
+    }
+
+    /// What area `a` sends up (feedforward, from layer 2/3): its layer 4 code `code`, with its
+    /// sensory column's layer 2/3 activity (the input in its context) when it has one.
+    pub fn feedforward(&self, a: usize, code: &BitVector) -> BitVector {
+        let mut v = code.clone();
+        if code.count_ones() > 0 {
+            if let Some(c) = self.areas[a].col.as_ref() {
+                for (w, x) in v.as_words_mut().iter_mut().zip(c.activity().as_words()) {
+                    *w |= x;
+                }
+            }
+        }
+        v
+    }
 }
 
 #[cfg(test)]
@@ -663,6 +693,12 @@ mod tests {
             kept += (ov(&brain.associate(false), pc) * 2 >= K as u32) as usize;
         }
         assert!(kept >= 9, "seen alone evoked the pair's code for {kept} of 10 after hearing alone");
+        // top-down: the pair's code for a word projects back to the sound it should be heard as
+        let mut down = 0;
+        for ((_, heard), pc) in words.iter().zip(&pair_code) {
+            down += (ov(&brain.down(eye, ear, pc, ear), heard) * 2 >= K as u32) as usize;
+        }
+        assert!(down >= 9, "the pair's code projected down to the right sound for {down} of 10");
         // now the hand moves while words are heard: a second pair, and the full area
         let motions: Vec<BitVector> = (0..3).map(|_| rand_code(&mut rng)).collect();
         for i in 0..30 {

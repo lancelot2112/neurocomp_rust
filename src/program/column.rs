@@ -80,6 +80,25 @@ impl Map {
         right
     }
 
+    /// As `predict`, with whether the winner burst (its tuft agreed).
+    pub fn predict_full(&mut self, input: &BitVector, ctx: Option<&BitVector>, extra: Option<&BitVector>) -> Option<(BitVector, bool)> {
+        if input.count_ones() == 0 {
+            return None;
+        }
+        let row = self.row(input, ctx, extra);
+        self.cells.predict(&row, self.bits).map(|x| (x.0, x.2))
+    }
+
+    /// Every cell that fired at the latest prediction: the layer's competing proposals.
+    pub fn proposals(&self) -> Vec<(BitVector, bool)> {
+        self.cells.proposals(self.bits)
+    }
+
+    /// The latest winner's learning progress (see `BitCells::progress`).
+    pub fn progress(&self) -> i32 {
+        self.cells.progress()
+    }
+
     /// The cells that fired at the latest prediction.
     pub fn last_fired(&self) -> Vec<usize> {
         self.cells.last_fired()
@@ -156,7 +175,13 @@ impl Column {
                     self.l23.learn(&inp, Some(&c), None, &code, rng);
                 }
             }
-            let c = ctx.cloned().unwrap_or_else(|| self.rec.clone());
+            // the tuft: context from above and the column's own previous activity
+            let mut c = self.rec.clone();
+            if let Some(x) = ctx {
+                for (w, y) in c.as_words_mut().iter_mut().zip(x.as_words()) {
+                    *w |= y;
+                }
+            }
             self.expected = self.l23.predict(&self.code, Some(&c), None);
             self.rec = self.project(&self.l23.last_fired());
             self.last = Some((self.code.clone(), c));
@@ -165,6 +190,11 @@ impl Column {
             self.last = None;
         }
         self.code.clone()
+    }
+
+    /// Layer 2/3's recent activity (projected), as feedback to the tufts of the areas below.
+    pub fn activity(&self) -> BitVector {
+        self.rec.clone()
     }
 
     /// Motor: the command for what is meant (layer 5, the inverse model).

@@ -47,6 +47,7 @@ use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::area::{Brain, Kind, Motor};
+use neurocomp::program::column::Column;
 use neurocomp::program::{
     BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
     MaskStriatum, Striatum, ThalamicRelay, VocalTract, WorkingMemory,
@@ -228,6 +229,11 @@ struct Net {
     brain: Option<Brain>,
     /// what the hand feels now (its own motion), for its area
     felt: BitVector,
+    /// RT_TOP=1: the top association column replaces the shared layers 2/3 and 5. Its input is
+    /// the scene (the association of every area) and the hippocampus's return; its tuft the
+    /// prefrontal content and the cerebellum's output; its layer 2/3 predicts the next scene,
+    /// its layer 5 sends the goal (the meant sound or act) to the motor columns.
+    top: Option<Column>,
 }
 
 const EYE: usize = 0;
@@ -239,6 +245,8 @@ const VOICE: usize = 3;
 const ACTS: usize = 4;
 
 struct Step {
+    /// with the top column: (scene, tuft, layer 2/3's expected scene), for layer 5 to learn from
+    top_in: Option<(BitVector, BitVector, BitVector)>,
     l23_row: BitVector,
     l5_row: BitVector,
     mossy: BitVector,
@@ -264,8 +272,11 @@ impl Net {
             l.set_settling(std::env::var("RT_L4_SETTLE").map_or(true, |v| v != "0"));
             l
         };
-        // RT_COLUMNS=1: areas (implied) whose motor sides and association areas are columns
-        let columns = std::env::var("RT_COLUMNS").map_or(false, |v| v == "1");
+        // RT_COLUMNS=1: areas (implied) whose motor sides and association areas are columns;
+        // RT_TOP=1 (implies columns): the senses are columns too, and the top association column
+        // replaces the shared layers
+        let top = std::env::var("RT_TOP").map_or(false, |v| v == "1");
+        let columns = top || std::env::var("RT_COLUMNS").map_or(false, |v| v == "1");
         let areas = columns || std::env::var("RT_AREAS").map_or(false, |v| v == "1");
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
         cb.set_rates(2, 0);
@@ -297,6 +308,7 @@ impl Net {
                 b
             }),
             felt: zero(),
+            top: top.then(|| Column::agranular(BITS, 16384)),
             cb,
             relay: ThalamicRelay::new(),
             rec23: zero(),
@@ -416,6 +428,43 @@ impl Net {
         if cb_out.count_ones() > 0 {
             props.push((2, Driver::Tonic(0), cb_out.clone()));
         }
+        if let (Some(top), Some(b)) = (self.top.as_mut(), self.brain.as_mut()) {
+            let h4 = h4.unwrap_or_else(zero);
+            // the senses' columns: each predicts its next code, with the top's activity as feedback
+            let fb = top.activity();
+            b.sense_step(EYE, &e4, Some(&fb), learn);
+            b.sense_step(EAR, &a4, Some(&fb), learn);
+            b.sense_step(HAND, &h4, Some(&fb), learn);
+            // the scene: the association of the areas (each sense alone where it has no partner
+            // yet), with the hippocampus's return
+            let mut scene = b.associate_codes(&[e4.clone(), a4.clone(), h4.clone()], false);
+            if scene.count_ones() == 0 {
+                for c in [&e4, &a4, &h4] {
+                    for (w, x) in scene.as_words_mut().iter_mut().zip(c.as_words()) {
+                        *w |= x;
+                    }
+                }
+            }
+            for (w, x) in scene.as_words_mut().iter_mut().zip(recall.as_words()) {
+                *w |= x;
+            }
+            let mut tuft = pfc.clone();
+            for (w, x) in tuft.as_words_mut().iter_mut().zip(cb_out.as_words()) {
+                *w |= x;
+            }
+            top.sense(&[(0, &scene)], Some(&tuft), learn, rng);
+            let expected = top.expected.clone().unwrap_or_else(zero);
+            self.rec23 = top.activity();
+            let p5 = top.l5.predict_full(&scene, Some(&tuft), Some(&expected));
+            self.pons = project(&top.l5.last_fired());
+            self.relay.step(matches!(p5, Some((_, false))));
+            if let Some((o, burst)) = p5 {
+                props.push((1, if burst { Driver::Burst } else { Driver::Spike }, o));
+            }
+            let ctx = frames(&[&pfc, ear]);
+            let plan = self.mix(&props, &ctx, &cb_out, temp, rng);
+            return Step { top_in: Some((scene, tuft, expected)), l23_row: zero(), l5_row: zero(), mossy, ctx, props, plan };
+        }
         let l23_row = match h4.as_ref() {
             Some(h) => frames(&[&e4, &pfc, &cb_out, &a4, recall, &self.rec23, h]),
             None => frames(&[&e4, &pfc, &cb_out, &a4, recall, &self.rec23]),
@@ -438,10 +487,17 @@ impl Net {
         }
         // the relay's context: what the prefrontal cortex holds and what was heard
         let ctx = frames(&[&pfc, ear]);
+        let plan = self.mix(&props, &ctx, &cb_out, temp, rng);
+        Step { top_in: None, l23_row, l5_row, mossy, ctx, props, plan }
+    }
+
+    /// The plan: the relay mixes the sources' proposals, each weighted by its learned
+    /// reliability in this context; the strongest 32 bits.
+    fn mix(&mut self, props: &[(u8, Driver, BitVector)], ctx: &BitVector, cb_out: &BitVector, temp: u32, rng: &mut StdRng) -> BitVector {
         let mut score = vec![0u32; BITS];
-        for (src, drv, pat) in &props {
-            let agrees = *src != 2 && overlap(pat, &cb_out) >= 16;
-            let mut w = self.relay.weight(*src, *drv, &ctx, agrees) as u64;
+        for (src, drv, pat) in props {
+            let agrees = *src != 2 && overlap(pat, cb_out) >= 16;
+            let mut w = self.relay.weight(*src, *drv, ctx, agrees) as u64;
             if temp > 0 {
                 w = w * (100 + rng.gen_range(0..=temp) as u64) / 100;
             }
@@ -455,12 +511,16 @@ impl Net {
         for &b in order.iter().take(ACTIVE) {
             plan.bit_set(b);
         }
-        Step { l23_row, l5_row, mossy, ctx, props, plan }
+        plan
     }
 
     fn learn(&mut self, st: &Step, target: &BitVector, rng: &mut StdRng) {
-        self.l23.learn(&st.l23_row, target, rng);
-        self.l5.learn(&st.l5_row, target, rng);
+        if let (Some(top), Some((scene, tuft, expected))) = (self.top.as_mut(), st.top_in.as_ref()) {
+            top.l5.learn(scene, Some(tuft), Some(expected), target, rng);
+        } else {
+            self.l23.learn(&st.l23_row, target, rng);
+            self.l5.learn(&st.l5_row, target, rng);
+        }
         self.cb.learn(&st.mossy, target, rng);
         for (src, drv, pat) in &st.props {
             self.relay.record(*src, *drv, &st.ctx, overlap(pat, target) >= 16, rng);
@@ -1934,14 +1994,14 @@ fn main() {
                 // getting better at predicting what comes, choices loosen a little; while reward is
                 // expected (the critic's value above zero), they do not (phasic mode, exploit)
                 if curiosity_cortex {
-                    let p = net.l5.progress().clamp(0, 2);
+                    let p = net.top.as_ref().map_or_else(|| net.l5.progress(), |t| t.l5.progress()).clamp(0, 2);
                     let n = if lc_damp && striatum.value() > 0 { 0 } else { p };
                     striatum.set_noise(n);
                     curiosity_stats.0 += n as usize;
                     curiosity_stats.1 += 1;
                 }
                 let mut cands: Vec<(usize, BitVector)> = Vec::new();
-                for (pat, _) in net.l5.proposals(BITS) {
+                for (pat, _) in net.top.as_ref().map_or_else(|| net.l5.proposals(BITS), |t| t.l5.proposals()) {
                     let best = (0..MOUSE).max_by_key(|&m| overlap(&pat, &motion[m])).unwrap();
                     if 2 * overlap(&pat, &motion[best]) >= ACTIVE as u32 && !cands.iter().any(|c| c.0 == best) {
                         cands.push((best, pat));
@@ -2618,6 +2678,11 @@ fn main() {
         if b.columns {
             let (n, right) = b.assoc_hits();
             println!("association columns: predicted the next scene {right} of {n} times");
+            let (n, right) = b.sense_hits();
+            println!("sensory columns: predicted the next input {right} of {n} times");
+        }
+        if let Some(t) = net.top.as_ref() {
+            println!("top association column: predicted the next scene {} of {} times; layer 5 {} cells", t.hits.1, t.hits.0, t.l5.committed());
         }
     }
     if net.brain.is_some() {

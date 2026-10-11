@@ -350,6 +350,9 @@ pub struct Area {
     pub motor: Option<Motor>,
     /// the latest sensory code (layer 4's winners)
     pub code: BitVector,
+    /// with columns, the rest of the sensory column over layer 4's code (layer 2/3 predicting
+    /// the next code, with feedback from above on its tuft)
+    pub col: Option<Column>,
     /// the efference copy of the latest command (what it should be sensed as)
     expect: Option<BitVector>,
     /// the latest act's effect error (`Q16`): the share of the expected and sensed bits that
@@ -437,7 +440,8 @@ impl Brain {
         let i = self.areas.len();
         let l4 = (kind != Kind::Motor).then(|| Pool::new(1, self.bits, self.bits, self.k, 1, self.seed.wrapping_add(17 * i as u64 + 1)));
         let motor = (kind != Kind::Sensor).then(|| if self.columns { Motor::Column(Box::new(Column::agranular(self.bits, CAP))) } else { Motor::Kernels(MotorArea::new(self.bits)) });
-        self.areas.push(Area { name: name.to_string(), kind, l4, motor, code: BitVector::new(self.bits, Some(0)), expect: None, effect_error: None });
+        let col = (self.columns && kind != Kind::Motor).then(|| Column::agranular(self.bits, CAP));
+        self.areas.push(Area { name: name.to_string(), kind, l4, motor, code: BitVector::new(self.bits, Some(0)), col, expect: None, effect_error: None });
         i
     }
 
@@ -476,6 +480,20 @@ impl Brain {
         } else {
             col.l4.as_ref().unwrap().encode(input)
         }
+    }
+
+    /// A sensory column's step (with columns): layer 2/3 learns that `code` (layer 4's, this
+    /// step) followed what it predicted, and predicts the next, with `feedback` (the activity of
+    /// the area above) on its tuft.
+    pub fn sense_step(&mut self, a: usize, code: &BitVector, feedback: Option<&BitVector>, learn: bool) {
+        if let Some(col) = self.areas[a].col.as_mut() {
+            col.sense(&[(0, code)], feedback, learn, &mut self.rng);
+        }
+    }
+
+    /// The sensory columns' predictions: (checked, right).
+    pub fn sense_hits(&self) -> (u64, u64) {
+        self.areas.iter().filter_map(|a| a.col.as_ref()).fold((0, 0), |a, c| (a.0 + c.hits.0, a.1 + c.hits.1))
     }
 
     /// The association columns' predictions: (checked, right), over pairs and the full area.

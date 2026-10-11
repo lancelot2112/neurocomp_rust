@@ -960,6 +960,8 @@ struct IndexHc {
     completions: (usize, usize),
     /// the width of what the index points to (BITS; with the multi-area index, every slot)
     out_bits: usize,
+    /// diagnosis: completions with (no row matched, no successor, encoding mode, output)
+    completion_why: [usize; 4],
 }
 
 impl IndexHc {
@@ -1010,6 +1012,7 @@ impl IndexHc {
             just_stored: None,
             completions: (0, 0),
             out_bits: BITS,
+            completion_why: [0; 4],
         }
     }
 
@@ -1170,12 +1173,16 @@ impl IndexHc {
     /// toward the completed row's own (each slot with probability 1/2).
     fn complete(&mut self) -> BitVector {
         self.recalls += 1;
+        // acetylcholine decays with time, heard or not (a quarter per step): in silence the
+        // hippocampus drifts toward retrieval
+        self.ach -= self.ach / 4;
         let cue = self.ec(&self.content);
         let c = self.mem.matches(&cue, 2).into_iter().map(|x| x.0).find(|&r| Some(r) != self.just_stored);
         let r = c.map_or_else(Default::default, |c| self.mem.successor(c));
         self.last_recalled = r.ca3.first().copied();
         self.to_reconsolidate = self.last_recalled;
         self.completions.0 += 1;
+        self.completion_why[if c.is_none() { 0 } else if r.ec.is_empty() { 1 } else if !self.retrieving() { 2 } else { 3 }] += 1;
         let mut v = BitVector::new(self.out_bits, Some(0));
         if !self.retrieving() {
             return v;
@@ -1233,9 +1240,15 @@ impl IndexHc {
             // a mismatch is novelty: it raises acetylcholine, which holds the hippocampus in
             // encoding until it decays; its own speech is not novel (corollary discharge damps
             // the response to self-made sounds)
-            if !matched && !own {
+            if !matched && !own && !self.auto {
                 self.ach += (ONE - self.ach.min(ONE)) / 2;
             }
+        }
+        // always completing: acetylcholine follows attention to what comes from outside (Hasselmo:
+        // high while taking in the world, encoding; low in quiet, internally driven states,
+        // retrieval): hearing someone raises it; its own speech, silence and imagining let it fall
+        if self.auto && !own && store {
+            self.ach += (ONE - self.ach.min(ONE)) / 2;
         }
         // retrieval mode (requested and acetylcholine low): nothing new is stored (encoding and
         // retrieval are separate modes, Hasselmo)
@@ -3290,7 +3303,7 @@ fn main() {
     );
     println!("read trials, cursor on the book (steps, CLICK proposed, LEFT proposed, CLICK released, LEFT released): training {:?}, test {:?}", on_book[0], on_book[1]);
     if let Some(x) = ix.as_ref().filter(|x| x.auto) {
-        println!("always completing: {} completions, {} reached the cortex (retrieval mode)", x.completions.0, x.completions.1);
+        println!("always completing: {} completions, {} reached the cortex (retrieval mode); no row matched {}, no successor {}, encoding (acetylcholine) {}, output {}", x.completions.0, x.completions.1, x.completion_why[0], x.completion_why[1], x.completion_why[2], x.completion_why[3]);
     }
     if let Some(b) = net.brain.as_ref() {
         println!("areas: {:?}; association areas (pair, cells): {:?}; full area: {:?} cells", b.areas.iter().map(|a| (a.name.as_str(), a.l4.as_ref().map_or(0, |p| p.cells()))).collect::<Vec<_>>(), b.pairs.iter().map(|p| (p.0, p.1.l4.as_ref().map_or(0, |x| x.cells()))).collect::<Vec<_>>(), b.full.as_ref().map(|f| f.l4.as_ref().map_or(0, |x| x.cells())));

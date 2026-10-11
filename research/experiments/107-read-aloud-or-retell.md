@@ -1154,8 +1154,53 @@ opening it is the cortex producing that same pattern without acting.
 - **Reading is lower than with the book given** (26–49% against 72–78%). Opening by mouse is
   still part of every reading trial.
 
+### The context moves with what the cortex represents
+**The question.** Why did the context stay static? It moved only when something was heard, so
+it followed the input stream rather than the cortex's state. When the network was silent, or
+recalled or planned a word without saying it, the context froze. The "retrieved context" fix
+(copying the recalled row's context) patched this from the hippocampal side.
+
+**Now the context moves every step with the association area's assembly of what the cortex
+represents:**
+- what is heard or seen;
+- when nothing is, its plan (a word recalled or meant, said or not);
+- while retrieving, the recalled assembly: the cells that were active when that row was stored.
+
+The network's own speech, heard back while retrieving, is predicted (corollary discharge) and
+does not move it again. The patch is gone.
+
+**Making the replay exact.** With the recalled assembly driving the context, retrieval replays
+the episode's own context trajectory, but only if the replay matches what happened at storing:
+- each row keeps its context slot by slot (the index keeps it only as a set, and each slot's new
+  value depends on the old one);
+- the context moves with the row just passed, as it did then;
+- each row also keeps whether an event boundary followed it, and the replay makes the same jump.
+
+Traced: after the opening, the context matches each next row exactly (32 of 32) for four steps,
+then 28 and 18 of 32. Reconsolidation re-points some rows, which may explain the drop; that has
+not been checked. The best match by context is the next row at every step, so the links and the
+context agree.
+
+**Results (1,500 trials, one seed per row; two test tables: with the instruction held, then
+with the prefrontal content removed):**
+
+| | tell, book closed | recall right | read | book opened for reading |
+|---|---|---|---|---|
+| driver imagines the click at the task's start | 41.6 / 51.2% | 28% | 0–6% | 0% |
+| **cells, all learned** | **45.2 / 35.8%** | 23% | 26–35% | 0% |
+| masks, seed 0, all learned | 12.3 / 0% (silent on the second table) | 13% | 0–15% | 8–25% |
+| masks, seed 1, all learned | 24.4 / 0% (silent on the second table) | 12% | 0–36% | 40–73% |
+
+**Findings:**
+- **With cells, learned retelling doubled:** 45% with the book closed (from 20%), close to the
+  driver-timed cue (42–51%).
+- **With masks it got worse,** and on the second test table (prefrontal content removed) the
+  network falls silent on every seed.
+- **Doing and imagining still trade off.** The cells retell well but stopped opening the book;
+  the masks open it more often but retell less.
+
 ## Next
-- **Seeds 0–3 for masks and cells** with this setup, and longer training (3,000 trials), to see
-  whether retelling and opening the book settle together.
-- **Why seed 1 fell silent,** and why the cells stopped opening the book: whether doing and
-  imagining the same proposals compete.
+- **Why masks fall silent** when the prefrontal content is removed, while cells do not.
+- **Doing and imagining from the same proposals:** find why each striatum settles on one of the
+  two, and whether separate proposal sets (motor and imagined) fix it.
+- **Seeds 0–3** for the better striatum once both work.

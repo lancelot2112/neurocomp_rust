@@ -508,6 +508,8 @@ struct IndexHc {
     place: Option<usize>,
     last_word: usize,
     last_recalled: Option<u32>,
+    /// the rows recalled in the last few steps (refractory)
+    refractory: Vec<u32>,
     /// the row recalled since the last sound heard, to relearn if the cortex completes it
     to_reconsolidate: Option<u32>,
     /// the prefrontal cortex's standing request to retrieve (through the nucleus reuniens):
@@ -563,6 +565,7 @@ impl IndexHc {
             place: None,
             last_word: 0,
             last_recalled: None,
+            refractory: Vec::new(),
             to_reconsolidate: None,
             request: false,
             ach: 0,
@@ -619,7 +622,10 @@ impl IndexHc {
         // links carry it on through boundaries that fall differently the second time
         let best = self.mem.recall(&self.ctx);
         let best_overlap = best.strength / 16;
-        let follow = self.last_recalled.and_then(|l| self.mem.successor_match(l, &self.ctx)).filter(|&(_, o)| best.ec.is_empty() || o + 12 > best_overlap);
+        // the rows recalled in the last few steps are refractory: if one is still the best match,
+        // recall moves on along the link instead of going back
+        let refractory = best.ca3.first().map_or(false, |b| self.refractory.contains(b));
+        let follow = self.last_recalled.and_then(|l| self.mem.successor_match(l, &self.ctx)).filter(|&(_, o)| refractory || best.ec.is_empty() || o + 12 > best_overlap);
         self.recalls += 1;
         if self.debug {
             let sm = self.last_recalled.and_then(|l| self.mem.successor_match(l, &self.ctx));
@@ -639,6 +645,20 @@ impl IndexHc {
             }
         }
         self.last_recalled = r.ca3.first().copied();
+        // retrieved context: while retrieving, the recalled row's context becomes the current
+        // one (the temporal context model), so the context walks forward with what is recalled
+        if let (Some(l), true) = (self.last_recalled, self.retrieving()) {
+            let c: Vec<usize> = self.mem.keys_of(l).iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect();
+            if !c.is_empty() {
+                self.ctx = c;
+            }
+        }
+        if let Some(l) = self.last_recalled {
+            self.refractory.push(l);
+            if self.refractory.len() > 4 {
+                self.refractory.remove(0);
+            }
+        }
         self.to_reconsolidate = self.last_recalled;
         let mut v = zero();
         // in encoding mode the hippocampus's output to the cortex is suppressed (Hasselmo): what
@@ -773,9 +793,13 @@ impl IndexHc {
     }
 
     /// The row the hippocampus recalls best for some content (the association cells of what
-    /// is imagined, heard or seen) in the current context: the entorhinal cue.
+    /// is imagined, heard or seen), cued by the content alone: every row with that content
+    /// matches as well, and the most recent wins. (With the current context in the cue as
+    /// well, the context's rare bits outweigh a content seen in every episode, and recall goes
+    /// to whatever was stored last.)
     fn best_row(&self, content: &[usize]) -> Option<u32> {
-        self.mem.matches(&self.ec(content), 1).first().map(|x| x.0)
+        let cue: Vec<usize> = content.iter().map(|&c| CONTENT_BASE + c).collect();
+        self.mem.matches(&cue, 1).first().map(|x| x.0)
     }
 
     /// Row `r` is gone back to: its context becomes the current one, recall carries on from it
@@ -783,6 +807,7 @@ impl IndexHc {
     fn reinstate_row(&mut self, r: u32) {
         self.ctx = self.mem.keys_of(r).iter().map(|&k| k as usize).filter(|&k| k < CTX_POOL).collect();
         self.last_recalled = Some(r);
+        self.refractory = vec![r];
         self.request = true;
         self.request_left = REQUEST_STEPS;
         self.reinstated += 1;

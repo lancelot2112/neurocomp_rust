@@ -444,6 +444,9 @@ const CH_REINSTATE: usize = 2;
 const CH_LOAD: usize = 3;
 /// what the mouse does (candidates: the cortex's layer 5 predictions of a mouse motion)
 const CH_ACT: usize = 5;
+/// what the cortex imagines instead of doing (the same candidates: a motion imagined cues the
+/// hippocampus with it)
+const CH_IMAGINE: usize = 7;
 /// steps a request to retrieve lasts unless renewed
 const REQUEST_STEPS: usize = 32;
 /// where the cortex's proposals sit in the striatum's input ids
@@ -533,6 +536,8 @@ struct IndexHc {
     /// context, goes back to the row it recalls best (the pause before this story) and recall
     /// carries on along the links. RT_RETRIEVE=hold: the striatum's hold and reinstate gates.
     bookmarks: bool,
+    /// the striatum's retrieve gate goes back to the recalled pause (RT_RETRIEVE=pause)
+    pause_gate: bool,
     /// steps the prefrontal request to retrieve lasts unless renewed (with bookmarks, where no
     /// hold ends it)
     request_left: usize,
@@ -576,6 +581,7 @@ impl IndexHc {
             gates_off: false,
             hold_off: false,
             bookmarks: false,
+            pause_gate: false,
             request_left: 0,
             theta: false,
             log: Vec::new(),
@@ -763,7 +769,13 @@ impl IndexHc {
     /// matches best, since the drifting context still overlaps it most; its link leads to the
     /// story's first word.
     fn pause_row(&self, pause: &[usize]) -> Option<u32> {
-        self.mem.matches(&self.ec(pause), 1).first().map(|x| x.0)
+        self.best_row(pause)
+    }
+
+    /// The row the hippocampus recalls best for some content (the association cells of what
+    /// is imagined, heard or seen) in the current context: the entorhinal cue.
+    fn best_row(&self, content: &[usize]) -> Option<u32> {
+        self.mem.matches(&self.ec(content), 1).first().map(|x| x.0)
     }
 
     /// Row `r` is gone back to: its context becomes the current one, recall carries on from it
@@ -970,6 +982,12 @@ fn main() {
     let mut mouse_stats = [0usize; 7];
     // RT_TEACH=none: the teacher never shows how to use the mouse
     let teach_mouse = std::env::var("RT_TEACH").map_or(true, |v| v != "none");
+    // RT_STORY=book (default): the teacher reads the story from a book, opened with a click the
+    // network sees, and the network sees each word as it is read; RT_STORY=heard: told, no book
+    let story_book = std::env::var("RT_STORY").map_or(true, |v| v != "heard");
+    let imagine_on = std::env::var("RT_RETRIEVE").map_or(true, |v| v == "imagine");
+    // (imagined, of which while retelling)
+    let mut imagined = (0usize, 0usize);
     let mut curiosity_sum = 0i64;
     // a trial is a finite episode: no discounting within it (an extra step, such as the event a
     // reach makes, costs nothing); the eligibility traces still decay by lambda
@@ -1012,17 +1030,24 @@ fn main() {
     // RT_IX_HOLD=pause (diagnosis only): the driver triggers retrieval as the task begins, the
     // hippocampus going back to the pause it recalls best (the learned gate is off)
     let pause_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause");
+    // RT_IX_HOLD=imagine (diagnosis only): the driver imagines the click that opened the book as
+    // the task begins (the learned gates are off)
+    let imagine_oracle = std::env::var("RT_IX_HOLD").map_or(false, |v| v == "imagine");
     let sleep_every: usize = env("RT_SLEEP_EVERY", 10);
     let replays: usize = env("RT_REPLAY", 3);
     let mut ix: Option<IndexHc> = std::env::var("RT_HC").map_or(true, |v| v != "circuit").then(|| IndexHc::new(seed));
     if let Some(x) = ix.as_mut() {
-        x.gates_off = ix_oracle || std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause");
+        x.gates_off = ix_oracle || std::env::var("RT_IX_HOLD").map_or(false, |v| v == "pause" || v == "imagine");
         x.hold_off = hold_oracle;
-        // RT_RETRIEVE=pause (default): one retrieve gate, the hippocampus going back to the
-        // recent pause it recalls best; =hold: the striatum's hold and reinstate gates
-        if std::env::var("RT_RETRIEVE").map_or(true, |v| v != "hold") && !hold_oracle {
+        // RT_RETRIEVE=imagine (default): the cortex's predictions of a mouse motion can be
+        // imagined instead of done, and what is imagined cues the hippocampus; =pause: one
+        // retrieve gate, the hippocampus going back to the recent pause it recalls best; =hold:
+        // the striatum's hold and reinstate gates
+        let mode = std::env::var("RT_RETRIEVE").unwrap_or_else(|_| "imagine".into());
+        if mode != "hold" && !hold_oracle {
             x.bookmarks = true;
             x.hold_off = true;
+            x.pause_gate = mode == "pause";
         }
         // RT_THETA=on: storing goes on while retrieving (default off: it files the retelling
         // under the reinstated context, and those rows then win recall)
@@ -1080,7 +1105,7 @@ fn main() {
                     // start the sequence over)
                     // the held content's tag is kept with it, and re-armed when it is used, so the
                     // dopamine that follows using it reaches the decision to hold it
-                    if x.bookmarks {
+                    if x.pause_gate {
                         // whether to go back now (the striatum); where to (the hippocampus: the
                         // recent pause it recalls best)
                         if (!retr || restart) && striatum.choose(CH_REINSTATE, 2, if $explore { Some(&mut rng) } else { None }) == 1 {
@@ -1154,11 +1179,28 @@ fn main() {
         // the story's context (a lateral-EC-like pattern as large as the two-word cue), new for
         // each story told
         let story_ctx: u64 = rng.next_u64();
-        // 1. the teacher tells the story; the network predicts each next word and stores it
+        // 1. the teacher tells the story (with RT_STORY=book, reads it from a book opened with a
+        // click the network sees, an event the hippocampus stores); the network predicts each
+        // next word and stores it
+        if story_book {
+            let cells = net.assoc_of(&zero(), &motion[CLICK], false, &mut rng);
+            if ix.is_some() {
+                let fired = ix.as_mut().unwrap().hear(quiet, &motion[CLICK], &cells, &cells, true, false);
+                prev_assoc = std::mem::replace(&mut last_assoc, cells);
+                td_step!(fired, learn);
+            }
+            // the cortex: after the book opens, the first word
+            let st = net.step(&zero(), &motion[CLICK], &zero(), learn, 0, &mut rng);
+            if learn {
+                net.learn(&st, &ear.codes[id(s[0])], &mut rng);
+            }
+        }
         let mut prev: Option<BitVector> = None;
         let mut prev2: Option<BitVector> = None;
         for t in 0..s.len() {
             let w = id(s[t]);
+            // the network sees the word the teacher reads (a book open), or nothing (told)
+            eye_now = if story_book { eye.codes[w].clone() } else { zero() };
             let heard = &ear.codes[w];
             let cue = Net::hc_context(prev.as_ref(), prev2.as_ref(), &silence, story_ctx, time.then_some(t));
             if ix.is_some() {
@@ -1172,7 +1214,7 @@ fn main() {
                 hc_hear!(w, &cue, true, learn, false);
             }
             let rec = hc_recall!(&cue);
-            let st = net.step(&zero(), heard, &rec, learn, 0, &mut rng);
+            let st = net.step(&eye_now.clone(), heard, &rec, learn, 0, &mut rng);
             hc_plan!(st);
             // with RT_REWARD=all, a heard word the cortex predicted is a reward too (the default
             // rewards only outcomes; the cortex learns its predictions locally)
@@ -1208,12 +1250,14 @@ fn main() {
             }
             println!("  probe right after hearing:{line}");
         }
+        // the book is closed again
+        eye_now = zero();
         // the teacher pauses: silence is heard (a sound, and a natural event boundary), and
         // stored like any sound (with bookmarks, a pause row is where an episode can be gone
         // back to)
         if ix.is_some() {
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            let keep = ix.as_ref().unwrap().bookmarks;
+            let keep = ix.as_ref().unwrap().pause_gate;
             let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, keep, false);
             prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, learn);
@@ -1405,6 +1449,22 @@ fn main() {
                     }
                 });
                 mouse_stats[6] += shown.is_some() as usize;
+                // imagine instead of do: one of the same proposals, not sent to the mouse but to
+                // the hippocampus as a cue (what is imagined, as if sensed); recall goes back to
+                // the row it matches best and carries on along the links
+                if imagine_on && !cands.is_empty() && !ix.as_ref().map_or(true, |x| x.request) {
+                    let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
+                    if let Some(i) = striatum.choose_among(CH_IMAGINE, &offer, if learn { Some(&mut rng) } else { None }) {
+                        let cue = ones(&net.assoc_of(&zero(), &cands[i].1, false, &mut rng));
+                        if let Some(x) = ix.as_mut() {
+                            if let Some(r) = x.best_row(&cue) {
+                                x.reinstate_row(r);
+                            }
+                        }
+                        imagined.0 += 1;
+                        imagined.1 += (!read && !make && !find) as usize;
+                    }
+                }
                 let command: Option<BitVector> = if shown.is_some() {
                     None
                 } else if learn && rng.gen_range(0..BABBLE) == 0 {
@@ -1484,6 +1544,14 @@ fn main() {
                         reach_delta[k].1 += 1;
                     }
                     break;
+                }
+            }
+        }
+        if imagine_oracle && !read && !make {
+            let cue = ones(&net.assoc_of(&zero(), &motion[CLICK], false, &mut rng));
+            if let Some(x) = ix.as_mut() {
+                if let Some(r) = x.best_row(&cue) {
+                    x.reinstate_row(r);
                 }
             }
         }
@@ -1638,7 +1706,7 @@ fn main() {
         if ix.is_some() {
             // the pause after the task (stored with bookmarks: the next story follows it)
             let cells = net.assoc_of(&zero(), &silence, false, &mut rng);
-            let keep = ix.as_ref().unwrap().bookmarks;
+            let keep = ix.as_ref().unwrap().pause_gate;
             let fired = ix.as_mut().unwrap().hear(quiet, &silence, &cells, &cells, keep, false);
             prev_assoc = std::mem::replace(&mut last_assoc, cells);
             td_step!(fired, learn);
@@ -1906,7 +1974,9 @@ fn main() {
     }
     println!("\nbasal ganglia: {}", striatum.report());
     println!(
-        "mouse: {} babbled, {} released by the basal ganglia, {} shown by the teacher ({} left, {} right, {} clicks in all), {} books opened; curiosity per training trial {:+.3}; motor area {:?}",
+        "imagined (cues to the hippocampus): {} ({} in telling trials)\nmouse: {} babbled, {} released by the basal ganglia, {} shown by the teacher ({} left, {} right, {} clicks in all), {} books opened; curiosity per training trial {:+.3}; motor area {:?}",
+        imagined.0,
+        imagined.1,
         mouse_stats[0],
         mouse_stats[1],
         mouse_stats[6],

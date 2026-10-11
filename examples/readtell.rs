@@ -46,6 +46,7 @@ mod common;
 use common::Encoder;
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
+use neurocomp::program::area::{Brain, Kind};
 use neurocomp::program::{
     BitCells, BoundaryCell, CerebellarCircuit, Driver, EpisodicCircuit, Hippocampus, HippocampusConfig, IndexConfig, IndexMemory, Layer4, MotorArea,
     MaskStriatum, Striatum, ThalamicRelay, VocalTract, WorkingMemory,
@@ -222,7 +223,16 @@ struct Net {
     pons: BitVector,
     wm: WorkingMemory,
     hc: Hippocampus,
+    /// RT_AREAS=1: each device has its own area (eye, ear, hand), and association areas grow
+    /// by conjunction; the hand's felt motion is its own input frame, not the ear's
+    brain: Option<Brain>,
+    /// what the hand feels now (its own motion), for its area
+    felt: BitVector,
 }
+
+const EYE: usize = 0;
+const EAR: usize = 1;
+const HAND: usize = 2;
 
 struct Step {
     l23_row: BitVector,
@@ -250,6 +260,7 @@ impl Net {
             l.set_settling(std::env::var("RT_L4_SETTLE").map_or(true, |v| v != "0"));
             l
         };
+        let areas = std::env::var("RT_AREAS").map_or(false, |v| v == "1");
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
         cb.set_rates(2, 0);
         cb.set_cross_frames(true);
@@ -264,9 +275,18 @@ impl Net {
                 l
             },
             // [eye L4 | PFC (tuft) | cerebellum (tuft) | ear L4 | recall | own previous activity]
-            l23: mk(16384, 3),
-            // [eye L4 | PFC (tuft) | cerebellum (tuft) | ear L4 | layer 2/3's prediction]
-            l5: mk(8192, 2),
+            // (with areas, a last basal frame: the hand's area)
+            l23: mk(16384, if areas { 4 } else { 3 }),
+            // [eye L4 | PFC (tuft) | cerebellum (tuft) | ear L4 | layer 2/3's prediction (| hand)]
+            l5: mk(8192, if areas { 3 } else { 2 }),
+            brain: areas.then(|| {
+                let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
+                b.attach("eye", Kind::Sensor);
+                b.attach("ear", Kind::Sensor);
+                b.attach("hand", Kind::SensorMotor);
+                b
+            }),
+            felt: zero(),
             cb,
             relay: ThalamicRelay::new(),
             rec23: zero(),
@@ -296,6 +316,17 @@ impl Net {
     /// a word's cells grow synapses on both, so either sense alone comes to evoke the same
     /// assembly.
     fn assoc_of(&mut self, eye: &BitVector, ear: &BitVector, learn: bool, rng: &mut StdRng) -> BitVector {
+        if let Some(b) = self.brain.as_mut() {
+            // the association areas (grown by conjunction); a sense with no partner yet is
+            // represented by its own area's code
+            let e4 = b.encode(EYE, eye, false);
+            let a4 = b.encode(EAR, ear, false);
+            let c = b.associate_codes(&[e4.clone(), a4.clone(), zero()], learn);
+            if c.count_ones() > 0 {
+                return c;
+            }
+            return if a4.count_ones() > 0 { a4 } else { e4 };
+        }
         let e4 = if eye.count_ones() == 0 { zero() } else { self.l4e.encode(eye) };
         let a4 = if ear.count_ones() == 0 { zero() } else { self.l4a.encode(ear) };
         let row = frames(&[&e4, &a4]);
@@ -360,8 +391,14 @@ impl Net {
     /// form the plan for the word to say.
     /// `temp`: noise on the relay's weights (0–100), for free speech.
     fn step(&mut self, eye: &BitVector, ear: &BitVector, recall: &BitVector, learn: bool, temp: u32, rng: &mut StdRng) -> Step {
-        let e4 = if eye.count_ones() == 0 { zero() } else if learn { self.l4e.encode_learn(eye, rng) } else { self.l4e.encode(eye) };
-        let a4 = if ear.count_ones() == 0 { zero() } else if learn { self.l4a.encode_learn(ear, rng) } else { self.l4a.encode(ear) };
+        let (e4, a4, h4) = match self.brain.as_mut() {
+            Some(b) => (b.encode(EYE, eye, learn), b.encode(EAR, ear, learn), Some(b.encode(HAND, &self.felt, learn))),
+            None => (
+                if eye.count_ones() == 0 { zero() } else if learn { self.l4e.encode_learn(eye, rng) } else { self.l4e.encode(eye) },
+                if ear.count_ones() == 0 { zero() } else if learn { self.l4a.encode_learn(ear, rng) } else { self.l4a.encode(ear) },
+                None,
+            ),
+        };
         let pfc = self.wm.content();
         let mossy = frames(&[ear, &self.pons]);
         let cb_out = self.cb.predict(&mossy).clone();
@@ -369,14 +406,20 @@ impl Net {
         if cb_out.count_ones() > 0 {
             props.push((2, Driver::Tonic(0), cb_out.clone()));
         }
-        let l23_row = frames(&[&e4, &pfc, &cb_out, &a4, recall, &self.rec23]);
+        let l23_row = match h4.as_ref() {
+            Some(h) => frames(&[&e4, &pfc, &cb_out, &a4, recall, &self.rec23, h]),
+            None => frames(&[&e4, &pfc, &cb_out, &a4, recall, &self.rec23]),
+        };
         let p23 = self.l23.predict(&l23_row, BITS);
         self.rec23 = project(&self.l23.last_fired());
         let o23 = p23.as_ref().map(|x| x.0.clone()).unwrap_or_else(zero);
         if let Some((o, _, burst)) = p23 {
             props.push((0, if burst { Driver::Burst } else { Driver::Tonic(1) }, o));
         }
-        let l5_row = frames(&[&e4, &pfc, &cb_out, &a4, &o23]);
+        let l5_row = match h4.as_ref() {
+            Some(h) => frames(&[&e4, &pfc, &cb_out, &a4, &o23, h]),
+            None => frames(&[&e4, &pfc, &cb_out, &a4, &o23]),
+        };
         let p5 = self.l5.predict(&l5_row, BITS);
         self.pons = project(&self.l5.last_fired());
         self.relay.step(matches!(p5, Some((_, _, false))));
@@ -1422,7 +1465,10 @@ fn main() {
         ($fired:expr, $explore:expr) => {{
             let (retr, held) = ix.as_ref().map_or((false, false), |x| (x.request, x.held.is_some()));
             let held_ctx = ix.as_ref().and_then(|x| x.held.clone()).unwrap_or_default();
-            let eye4 = if eye_now.count_ones() == 0 { zero() } else { net.l4e.encode(&eye_now) };
+            let eye4 = match net.brain.as_mut() {
+                Some(b) => b.encode(EYE, &eye_now, false),
+                None => if eye_now.count_ones() == 0 { zero() } else { net.l4e.encode(&eye_now) },
+            };
             let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place);
             striatum.begin_groups(&state, $explore, &mut rng);
             if let Some(x) = ix.as_mut() {
@@ -1769,7 +1815,13 @@ fn main() {
                     }
                     None => cursor_seen[cursor].clone(),
                 };
-                let st = net.step(&eye_in, &sensed, &zero(), learn, 0, &mut rng);
+                // with areas, the hand feels its motion in its own area; the ear hears nothing
+                let st = if net.brain.is_some() {
+                    net.felt = sensed.clone();
+                    net.step(&eye_in, &silence, &zero(), learn, 0, &mut rng)
+                } else {
+                    net.step(&eye_in, &sensed, &zero(), learn, 0, &mut rng)
+                };
                 // curiosity as noise: the learning progress where the network is now (from the
                 // steps before) loosens the choice a little, up to ±2 more; no reward
                 let here = {
@@ -1970,6 +2022,8 @@ fn main() {
                 }
             }
         }
+        // the hand is still once the wait is over
+        net.felt = zero();
         if imagine_oracle && !read && !make {
             let cue = ones(&net.assoc_of(&zero(), &motion[CLICK], false, &mut rng));
             if let Some(x) = ix.as_mut() {

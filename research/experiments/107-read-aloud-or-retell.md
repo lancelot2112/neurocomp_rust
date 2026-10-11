@@ -1241,6 +1241,44 @@ checked claim by claim against the code:
 - The masks' silence is a different fault, not yet found. Next: trace which gate (working memory
   load, imagine, act) drives it.
 
+### Tracing the masks' silence
+Each of the three channels in use was handed to the cell striatum in turn (`RT_CELLS_FOR`), the
+rest staying on masks (1,500 trials, seed 0; two test tables):
+
+| channels on cells | tell, book closed | read | silent, second table |
+|---|---|---|---|
+| none (masks everywhere) | 3 / 2% | 4–11% | 83–100% |
+| working-memory load | 20 / 0% | 0–51% | 100% |
+| imagine | 10 / 0% | 7–27% | 64–100% |
+| act (the mouse) | 21 / 4% | 31–39% | 18–92% |
+| **act and imagine** | **31 / 49%** | **31–47%** | **17–29%** |
+| act and imagine, masks' brake at 1 | 35 / 40% | 16–32% | 17–28% |
+
+**The masks' mouse channel causes the silence:**
+1. The masks release the mouse far less often (about 865–1,400 times in training, against about
+   3,100–3,500 for cells).
+2. So the teacher opens the book far more often. A demonstration does not credit the network's
+   own striatum, so it never learns to open the book itself.
+3. At test there is no teacher, the book stays shut, and with nothing to read the network says
+   nothing.
+
+**Why the masks release less.** They start at q = 0 exactly, and dropout noise rarely reaches the
+brake. Lowering the brake to 1 or 0 did not help: releases stayed around 1,400 and the second
+table stayed silent.
+
+**Why it fails more deeply: the masks do not grow.**
+- The cell striatum recruits a new go or no-go cell whenever a burst or dip finds none that
+  covers the situation, up to 4,096 per pool.
+- The mask striatum has one fixed go mask and one fixed no-go mask per action (2,048 bits at
+  density ⅛), over a 64-bit context shared by nine pathways (about 7 bits each, so the cursor's
+  place gets about 7).
+
+Everything the mouse channel must learn (cursor place × instruction × waiting step ×
+candidate) goes into one mask pair, and new learning overwrites old. That fits a 16-context
+bandit, not readtell. A mask that grows is several masks per action, each voting when
+`|C & M_i| ≥ θ`, which is a striatal cell with a large receptive field. The two designs meet:
+the cell striatum's growth with the mask striatum's learning rules.
+
 ## Next
 - **Trace the masks' silence in readtell:** which gate (working memory load, imagine, act)
   drives it, with each gate swapped to the cell striatum in turn.

@@ -258,6 +258,56 @@ Three changes, from the probes above.
 3. **Avoid the click die-out:** a floor on spontaneous primitives, or effort that scales with
    fatigue rather than a flat cost per act. Then repeat with more seeds.
 
+### No cost to act; value cells to the motor loops, then to the critic
+Two steps, run one after the other (seed 0, every valuation on):
+- **v8.** Acting costs nothing: the flat effort cost per act is gone, since it was killing exploration
+  before anything could be learned. The motor loops' view also includes the amygdala's value cells
+  firing on the cues now: "a valued cue is here" becomes a context the hand's loop can learn.
+- **v9.** The critic's view also includes those value cells, as the basolateral amygdala drives
+  the ventral striatum and, through it, the dopamine neurons at the cue (`MIND_AMY_CRITIC=0` turns
+  it off).
+
+| probe | measure | v8: 0–100 | 100–200 | 200–300 | 300–400 | v9: 0–100 | 100–200 | 200–300 | 300–400 |
+|---|---|---|---|---|---|---|---|---|---|
+| Pavlovian | critic's value at the tone, CS+ / CS− | +0.19 / +0.20 | +0.54 / +0.30 | **+0.83 / +0.30** | | +0.30 / +0.09 | +0.02 / +0.04 | +0.38 / +0.23 | |
+| Pavlovian | dopamine at the tone, CS+ / CS− | −0.01 / +0.01 | +0.10 / +0.10 | **+0.49 / +0.01** | | +0.16 / −0.01 | +0.05 / +0.00 | +0.00 / +0.12 | |
+| Pavlovian | dopamine at the smile | +0.89 | +0.86 | **+0.50** | | +0.56 | +0.81 | +0.60 | |
+| Pavlovian | amygdala's prediction at the smile, CS+ / CS− | +0.14 / +0.00 | +0.32 / +0.02 | +0.95 / +0.00 | | +0.71 / +0.01 | +0.29 / +0.02 | +0.66 / +0.01 | |
+| instrumental | clicks per trial in the window, light / none | 0.12 / 0.14 | 0.86 / 0.68 | 1.11 / 1.05 | 0.30 / 0.27 | 0.10 / 0.08 | 0.14 / 0.14 | 0.56 / 0.91 | 0.07 / 0.11 |
+| instrumental | smiles per light trial | 0.08 | 0.62 | 0.79 | 0.20 | 0.10 | 0.14 | 0.49 | 0.05 |
+| delayed | clicks per trial in the window, light / none | 0.02 / 0.18 | 0.08 / 0.16 | 0.42 / 0.26 | 0.68 / 0.84 | 0.16 / 0.18 | 1.04 / 0.80 | 0.49 / 0.58 | 0.45 / 0.66 |
+
+- **v8 gives the first clean Pavlovian transfer with the mind fully active.**
+  - Dopamine at the tone rose to +0.49 for CS+ against +0.01 for CS−.
+  - Dopamine at the smile fell from +0.89 to +0.50.
+  - The critic's value at the tone separated the right way, +0.83 against +0.30.
+  - The amygdala's prediction was +0.95 against +0.00.
+- **Without the cost, clicking no longer dies out early.** It rises to about one click per trial in
+  the window, and smiles reach 0.79 per light trial in v8. But it is not tied to the light:
+  clicks with and without the light stay about equal. The last block falls again (0.30 / 0.27).
+- **v9 (value cells to the critic) did not help on this seed.** The Pavlovian transfer was weaker
+  and less stable than in v8: dopamine at the CS+ tone ended at +0.00, the critic's value at
+  +0.38 against +0.23. The amygdala's own prediction also wavered (+0.71, +0.29, +0.66), with more
+  cells (239 appetitive against 68) and more onsets per step (28 against 20, as the mind acted on
+  0.61 of steps). Clicking still did not follow the light: in the third block more without it
+  (0.91) than with it (0.56).
+- **This is one seed per version,** and a change in how much the mind acts changes everything
+  downstream (onsets, attention, value cells). Differences of this size between v8 and v9 need
+  more seeds before they mean anything.
+
+**Where the instrumental failure sits.** The parts that learn a cue's value now work. What fails
+is turning "the light is worth something" into "click when the light is on". These still hold:
+- The smile pays only clicks during the light. Clicks without it get nothing, but cost nothing
+  either, so the loop has little reason to hold back.
+- The agency signal pays the first clicks whatever the light: their effect is new.
+- The hand's choice is one go/no-go gate over a context in which the light is a few bits.
+
+**Next.**
+- More seeds for v8 and v9 (with `MIND_AMY_CRITIC=0`), to tell noise from effect.
+- Then the instrumental contingency itself: a dip when a smile expected after a click does not
+  come would teach "not without the light". That dip needs the critic to predict the smile after
+  a click in light trials only, which is the conjunction it has not yet learned.
+
 **Next (from the first probes).**
 1. **Separate agency from value.** The own-effect signal trains the motor loops (which acts have
    effects) and habituates per act and outcome; the critic learns from outcomes.

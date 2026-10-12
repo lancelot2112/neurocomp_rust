@@ -1099,11 +1099,14 @@ episodes, 1000 lessons, 200 test lessons):
 - **The child talks in the first half of the lessons, then goes quiet.**
   - Aloud on 3337 of 16,813 story steps in the first half, and on 737 of 14,681 in the second.
   - At test it acts on 358 of 13,313 steps.
-- **What it said was not right often enough to pay.**
-  - About 1.7% of what it said in the first half was right, near chance for 59 words.
-  - The teacher's responses and touches were small next to the cost of acting.
-  - So per-act credit, now working, did what it should with an act that does not pay: it
-    stopped it.
+- **Why it goes quiet is not settled.**
+  - Speaking paid, summed over training: dopamine from its own effect +4261, from responses
+    +6275, from touches +314, against −1409 for effort.
+  - But about 1.7% of what it said in the first half was right, near chance for 59 words.
+  - So speaking was worth something on average, and was not tied to the moments it paid.
+  - Per-act credit against the loops' own expectation, now working, may have taken the voice's
+    go cells down wherever speaking brought less than the loop expected, which is most moments.
+    That is to be checked.
 - **The lessons need what the reversal and delayed probes need.** A state that says "asked to
   speak", and which word, held across the story. Without it, speaking is an act whose worth is
   the average over every moment, and that average is below its cost.

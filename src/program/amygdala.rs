@@ -158,6 +158,8 @@ pub struct Amygdala {
     rng: StdRng,
     /// (updates, sum of |error|)
     pub stats: (u64, u64),
+    /// diagnosis: appetitive cells (recruited, removed by a negative error, replaced at the cap)
+    pub churn: (u64, u64, u64),
 }
 
 impl Amygdala {
@@ -179,6 +181,7 @@ impl Amygdala {
             now: 0,
             rng: StdRng::seed_from_u64(seed ^ 0xA316),
             stats: (0, 0),
+            churn: (0, 0, 0),
         }
     }
 
@@ -328,6 +331,7 @@ impl Amygdala {
             self.aversive.remove(&avr, gone, &mut self.rng);
             for _ in gone..k {
                 let c = if cues.is_empty() { &ctx } else { &cues[self.rng.gen_range(0..cues.len())] };
+                self.churn.0 += 1;
                 self.appetitive.recruit(c, self.now, &mut self.rng);
             }
         } else if err <= -UNIT {
@@ -337,6 +341,7 @@ impl Amygdala {
                 }
             }
             let gone = app.len().min(k);
+            self.churn.1 += gone as u64;
             self.appetitive.remove(&app, gone, &mut self.rng);
             if r < 0 {
                 for _ in gone..k {
@@ -412,6 +417,16 @@ impl Amygdala {
     /// (this step's onsets, attended features in the trace), for diagnosis.
     pub fn trace_sizes(&self) -> (usize, usize) {
         (self.trace.first().map_or(0, |t| t.len()), self.attended().len())
+    }
+
+    /// Diagnosis: the trace's items at an age.
+    pub fn trace_at(&self, age: usize) -> &[u32] {
+        self.trace.get(age).map_or(&[], |t| t.as_slice())
+    }
+
+    /// Diagnosis: the trace's items per age (newest first).
+    pub fn ages(&self) -> Vec<usize> {
+        self.trace.iter().map(|t| t.len()).collect()
     }
 
     /// (appetitive, aversive, pause, baseline) cells.

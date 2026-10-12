@@ -644,9 +644,10 @@ impl World {
         }
         self.felt = moved;
         self.events.push(ev);
+        // sounds at once mix (the tone is heard over a voice, as the light is seen over a glyph)
         let mut ear = self.sound(heard);
-        if let (Some(t), None) = (self.extra_sound.take(), heard) {
-            ear = t;
+        if let Some(t) = self.extra_sound.take() {
+            or_into(&mut ear, &t);
         }
         Senses { eye, ear, touch, presence, affect }
     }

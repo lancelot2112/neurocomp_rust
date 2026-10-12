@@ -52,6 +52,14 @@ fn main() {
     // (overlap of the step-2 code with the step-1 code, on light trials), summed per block
     let mut light_seen = [(0u64, 0u64, 0u64, 0u64); 64];
     let mut prev_eye: Option<neurocomp::bitvec::BitVector> = None;
+    // diagnosis: per block, per trial step: appetitive cells removed (negative error), recruited
+    let mut churn = [[(0u64, 0u64); 10]; 64];
+    let mut last_churn = (0u64, 0u64, 0u64);
+    // the trace's items at age 2 at the touch's step (CS+), summed, and steps
+    let mut age2 = [(0u64, 0u64); 64];
+    // the ear's onsets at the CS+ tone: how many, and how many shared with the last CS+ tone's
+    let mut tone = [(0u64, 0u64, 0u64); 64];
+    let mut last_tone: Vec<u32> = Vec::new();
     while !world.done() {
         let senses = world.step(&acts);
         {
@@ -88,6 +96,23 @@ fn main() {
             }
         }
         let b = (trial / block).min(63);
+        {
+            let c = mind.amy.churn;
+            churn[b][t].0 += c.1 - last_churn.1;
+            churn[b][t].1 += c.0 - last_churn.0;
+            last_churn = c;
+            if t == 2 && cue {
+                let ear: Vec<u32> = mind.amy.trace_at(0).iter().copied().filter(|&f| (2048..4096).contains(&f)).collect();
+                tone[b].0 += ear.len() as u64;
+                tone[b].1 += ear.iter().filter(|f| last_tone.contains(f)).count() as u64;
+                tone[b].2 += 1;
+                last_tone = ear;
+            }
+            if t == 4 && cue {
+                age2[b].0 += mind.amy.ages().get(2).copied().unwrap_or(0) as u64;
+                age2[b].1 += 1;
+            }
+        }
         let x = &mut stats[b][cue as usize];
         let r = &mind.report;
         pauses += r.paused as usize;
@@ -185,6 +210,9 @@ fn main() {
     }
     for (b, x) in light_seen.iter().enumerate().filter(|x| x.1 .2 > 0) {
         println!("  block {b}: the light comes on: the eye's code has {:.1} cells, {:.1} of them from the step before; the seen-acts area codes {:.1} cells", x.3 as f64 / x.2 as f64, x.0 as f64 / x.2 as f64, x.1 as f64 / x.2 as f64);
+    }
+    for (b, c) in churn.iter().enumerate().filter(|x| x.1.iter().any(|y| y.0 + y.1 > 0)) {
+        println!("  block {b}: appetitive cells removed / recruited by trial step: {}; the trace's items two steps back at the touch {:.1}; the tone's ear onsets {:.1}, {:.1} of them as last time", c.iter().map(|(r, a)| format!("{r}/{a}")).collect::<Vec<_>>().join(" "), age2[b].0 as f64 / age2[b].1.max(1) as f64, tone[b].0 as f64 / tone[b].2.max(1) as f64, tone[b].1 as f64 / tone[b].2.max(1) as f64);
     }
     println!("amygdala cells (appetitive, aversive, pause, baseline): {:?}; orbitofrontal {:?}; what an act usually brings {:+.3}", mind.amy.cells(), mind.ofc.cells(), mind.report.rate_act as f64 / 65536.0);
     println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}, tonic noise {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64, tonic_sum as f64 / sizes.0 as f64);

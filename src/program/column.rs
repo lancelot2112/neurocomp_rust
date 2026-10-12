@@ -17,15 +17,16 @@
 //!   activity; a loop through the basal ganglia and thalamus can refresh it (`refresh`), so what
 //!   is kept is chosen.
 //!
-//! - **Recurrent self-excitation** (`set_recurrence`): an autoassociative map learns each input
-//!   code as predicting itself, so a learned state, even partly present, completes to the whole.
-//!   Each step the column's previous state, less a random sixteenth of it (noise) and completed, drives
-//!   its code alongside layer 4's input: a bit needs a score of 2, input counting 2 and
-//!   recurrence the area's gain, and the strongest `k` win (inhibition). With a gain of 2 or more
-//!   a learned state sustains itself when the input falls silent, and holds against new input,
-//!   until the column's loop opens its gate (`refresh`): for that step recurrence is off, and the
-//!   input becomes the state (updating, as the basal ganglia gate prefrontal cortex). Senses
-//!   have no recurrence; association and prefrontal areas more (Wang 2001; Compte et al. 2000).
+//! - **A held population** (`set_recurrence`; prefrontal and association areas, none in the
+//!   senses). Driving input (layer 4) alone decides what the area codes now; beside it, cells
+//!   that sustain themselves hold a state, as prefrontal cells keep firing for a cue while
+//!   others answer what is there now. The column's code is the two together (in silence, the
+//!   held state alone). What its layer 2/3 did not expect of the input (graded surprise:
+//!   acetylcholine's switch from recurrent completion to feedforward encoding, Hasselmo) joins
+//!   what is held, newest first; when its loop opens the gate (`refresh`: the basal ganglia and
+//!   thalamus) the whole driven code is held. Otherwise the held state maintains itself: an
+//!   autoassociative map, which learns every driven code, completes it each step after a random
+//!   sixteenth drops out (noise), and what it cannot complete fades.
 //!
 //! Both layers learn the same way: a confirmed prediction strengthens the cells that made it;
 //! where nothing predicted the target, a cell is grown for the moment (its tuft on the
@@ -170,6 +171,10 @@ pub struct Column {
     auto: Map,
     gain: u32,
     gate: bool,
+    /// the held population's state
+    held: BitVector,
+    /// (loads on surprise, loads by the gate) for diagnosis
+    pub loads: (u64, u64),
 }
 
 impl Column {
@@ -185,7 +190,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, held: BitVector::new(bits, Some(0)), loads: (0, 0) }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -193,53 +198,64 @@ impl Column {
         self.tau = tau;
     }
 
-    /// Recurrent self-excitation with this gain (0: none; 2 or more: a learned state sustains
-    /// itself).
+    /// A held population (`gain` 2 or more; 0: none).
     pub fn set_recurrence(&mut self, gain: u32) {
         self.gain = gain;
     }
 
-    /// The code from layer 4's input and the column's own previous state (see the module notes):
-    /// the autoassociative map learns the input code, completes the previous state, and the
-    /// strongest bits of 2 × input + gain × completed state win.
+    /// What the held population holds.
+    pub fn held(&self) -> &BitVector {
+        &self.held
+    }
+
+    /// The code from layer 4's input (`input`, the driven code) and the held population (see the
+    /// module notes): the autoassociative map learns the driven code; the held state is loaded
+    /// from it on surprise or by the gate, else maintained by completion; the code is both.
     fn recur<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, learn: bool, rng: &mut R) -> BitVector {
-        let k = 32usize;
-        let n_in = input.count_ones() as usize;
-        let w = if std::mem::take(&mut self.gate) { 0 } else { self.gain };
-        let prev = self.code.clone();
-        let mut drive = BitVector::new(self.bits, Some(0));
-        if w > 0 && prev.count_ones() > 0 {
-            // noise: a sixteenth of the previous state drops out; the autoassociative map completes
-            // what is left to a learned state (which then holds whole), and an unlearned state is
-            // not restored (it fades)
-            let mut noisy = prev;
-            for x in noisy.as_words_mut() {
-                *x &= !(rng.next_u64() & rng.next_u64() & rng.next_u64() & rng.next_u64());
-            }
-            drive = self.auto.predict(&noisy, None, None).unwrap_or(noisy);
+        if self.gain < 2 {
+            return input.clone();
         }
+        let n_in = input.count_ones() as u32;
+        let gate = std::mem::take(&mut self.gate);
         if learn && n_in > 0 {
             self.auto.learn(input, None, None, input, rng);
         }
-        let mut scored: Vec<(u32, usize)> = Vec::new();
-        for (wi, (a, b)) in input.as_words().iter().zip(drive.as_words()).enumerate() {
-            let mut m = a | b;
-            while m != 0 {
-                let t = m.trailing_zeros() as usize;
-                m &= m - 1;
-                let bit = 1u64 << t;
-                let sc = 2 * ((a & bit) != 0) as u32 + w * ((b & bit) != 0) as u32;
-                if sc >= 2 {
-                    scored.push((sc, wi * 64 + t));
+        // maintained: noise, then completion to a learned state (an unlearned one fades)
+        if self.held.count_ones() > 0 {
+            let mut noisy = self.held.clone();
+            for x in noisy.as_words_mut() {
+                *x &= !(rng.next_u64() & rng.next_u64() & rng.next_u64() & rng.next_u64());
+            }
+            self.held = self.auto.predict(&noisy, None, None).unwrap_or(noisy);
+        }
+        if gate && n_in > 0 {
+            // the gate: what drives the area now is held
+            self.held = input.clone();
+            self.loads.1 += 1;
+        } else if n_in > 0 {
+            // surprise, graded: the part of the input layer 2/3 did not expect joins what is held
+            // (the newest first, `K` bits in all)
+            let novel: Vec<u64> = match self.expected.as_ref() {
+                Some(e) => input.as_words().iter().zip(e.as_words()).map(|(a, b)| a & !b).collect(),
+                None => input.as_words().to_vec(),
+            };
+            let n_novel: u32 = novel.iter().map(|w| w.count_ones()).sum();
+            if n_novel >= 4 {
+                let mut room = (32u32).saturating_sub(n_novel) as usize;
+                let mut held = BitVector::from_words(novel);
+                let old: Vec<usize> = (0..self.bits).filter(|&b| self.held.bit_get(b) && !held.bit_get(b)).collect();
+                for b in old {
+                    if room == 0 {
+                        break;
+                    }
+                    held.bit_set(b);
+                    room -= 1;
                 }
+                self.held = held;
+                self.loads.0 += 1;
             }
         }
-        scored.sort_unstable_by(|x, y| y.0.cmp(&x.0).then(x.1.cmp(&y.1)));
-        let mut out = BitVector::new(self.bits, Some(0));
-        for &(_, b) in scored.iter().take(k.max(n_in)) {
-            out.bit_set(b);
-        }
-        out
+        BitVector::from_words(input.as_words().iter().zip(self.held.as_words()).map(|(a, b)| a | b).collect())
     }
 
     /// The trace decays one step.
@@ -259,8 +275,8 @@ impl Column {
         }
     }
 
-    /// The column's loop chose: with recurrence, its gate opens (this step's input becomes the
-    /// state); with a trace, its activity joins the trace (or, with `replace`, becomes it).
+    /// The column's loop chose: with a held population, its gate opens (this step's driven code
+    /// is loaded); with a trace, its activity joins the trace (or, with `replace`, becomes it).
     pub fn refresh(&mut self, replace: bool) {
         if self.gain > 0 {
             self.gate = true;
@@ -454,29 +470,33 @@ mod tests {
     }
 
     #[test]
-    fn recurrence_holds_a_learned_state_until_the_gate_opens() {
+    fn the_held_population_keeps_a_surprising_input_until_the_next_surprise() {
         let mut rng = StdRng::seed_from_u64(3);
-        let (a, b) = (rand_code(&mut rng), rand_code(&mut rng));
+        let (a, b, scene) = (rand_code(&mut rng), rand_code(&mut rng), rand_code(&mut rng));
         let silent = BitVector::new(BITS, Some(0));
         let mut col = Column::agranular(BITS, 4096);
         col.set_recurrence(3);
-        for _ in 0..30 {
-            col.sense_code(&a, None, true, &mut rng);
+        // a familiar scene, now and then A or B for a step (as the delayed probe's light)
+        for i in 0..40 {
+            for _ in 0..4 {
+                col.sense_code(&scene, None, true, &mut rng);
+            }
+            col.sense_code(if i % 2 == 0 { &a } else { &b }, None, true, &mut rng);
         }
-        // the input falls silent: the learned state holds itself
-        for step in 0..8 {
-            let c = col.sense_code(&silent, None, true, &mut rng);
-            assert!(overlap(&c, &a) >= 28, "step {step}: {} of A held", overlap(&c, &a));
+        for _ in 0..4 {
+            col.sense_code(&scene, None, true, &mut rng);
         }
-        // a new input with the gate closed: the held state wins
-        let c = col.sense_code(&b, None, true, &mut rng);
-        assert!(overlap(&c, &a) > overlap(&c, &b), "A {} B {}", overlap(&c, &a), overlap(&c, &b));
-        // the gate opens: the input becomes the state, and then holds
+        // A, unexpected, is held while the expected scene drives the area, and in silence
+        col.sense_code(&a, None, true, &mut rng);
+        for step in 0..6 {
+            let x = if step % 2 == 0 { &scene } else { &silent };
+            let c = col.sense_code(x, None, true, &mut rng);
+            assert!(overlap(col.held(), &a) >= 28, "step {step}: {} of A held", overlap(col.held(), &a));
+            assert!(overlap(&c, &a) >= 28, "step {step}: A in the code");
+        }
+        // the gate loads what drives the area now
         col.refresh(false);
-        let c = col.sense_code(&b, None, true, &mut rng);
-        assert!(overlap(&c, &b) >= 28, "B {} after the gate", overlap(&c, &b));
-        let c = col.sense_code(&silent, None, true, &mut rng);
-        assert!(overlap(&c, &b) >= 24, "B {} held", overlap(&c, &b));
+        col.sense_code(&b, None, true, &mut rng);
+        assert!(overlap(col.held(), &b) >= 28, "B {} after the gate", overlap(col.held(), &b));
     }
-
 }

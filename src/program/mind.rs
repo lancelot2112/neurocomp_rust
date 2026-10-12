@@ -297,11 +297,12 @@ pub struct Config {
     /// This replaces the separate working-memory store and the orbitofrontal held copy
     /// (MIND_PERSIST=1 on; off by default, recurrence instead)
     pub persist: bool,
-    /// recurrent self-excitation in every column (`Column::set_recurrence`): none in the senses,
-    /// gain 1 in the pairwise association columns (it only tips ties), 3 in the full one and the
-    /// orbitofrontal area (a learned state sustains itself and holds against new input until the
-    /// column's loop opens its gate). Working memory is the full association column's state, the
-    /// orbitofrontal hold its own; the separate store and copy are not used (MIND_RECUR=0 off)
+    /// a held population beside the driven code (`Column::set_recurrence`) in the full association
+    /// column and the orbitofrontal area (none in the senses or the pairs): loaded from the driven
+    /// code when the column is surprised by its input or its loop opens the gate, otherwise
+    /// maintained by autoassociative completion. Working memory is the full association column's
+    /// held population, the orbitofrontal hold its own; the separate store and copy are not used
+    /// (MIND_RECUR=0 off)
     pub recur: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
@@ -488,7 +489,7 @@ impl Mind {
         b.columns = true;
         b.selforg = true;
         if cfg.recur {
-            b.pair_gain = 1;
+            b.pair_gain = 0;
             b.full_gain = 3;
         } else if cfg.persist {
             b.pair_tau = 1;
@@ -1036,16 +1037,9 @@ impl Mind {
     /// the pairs' traces merged); else the separate store.
     fn wm_content(&self) -> BitVector {
         if self.cfg.recur {
-            // the full association column's state (else the pairs' merged)
+            // the full association column's held population
             let n = self.brain.pairs.len();
-            if self.brain.full.is_some() {
-                return self.brain.code_of_column(ColumnId::Assoc(n));
-            }
-            let mut v = zero();
-            for i in 0..n {
-                v = or(&v, &self.brain.code_of_column(ColumnId::Assoc(i)));
-            }
-            return v;
+            return if self.brain.full.is_some() { self.brain.held_of(ColumnId::Assoc(n)) } else { zero() };
         }
         if !self.cfg.persist {
             return self.wm.content();

@@ -623,6 +623,11 @@ impl Brain {
         }
     }
 
+    /// A column's held population (empty if it has none).
+    pub fn held_of(&self, id: ColumnId) -> BitVector {
+        self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.held().clone())
+    }
+
     /// A column's persistent trace (empty if it has none).
     pub fn trace_of(&self, id: ColumnId) -> BitVector {
         self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.trace().clone())

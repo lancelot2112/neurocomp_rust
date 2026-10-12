@@ -120,7 +120,7 @@ impl Ofc {
     /// What is held: with recurrence the column's own state, else its trace, or the separate copy.
     pub fn held_state(&self) -> BitVector {
         if self.recur {
-            return self.col.code.clone();
+            return self.col.held().clone();
         }
         if self.persist {
             self.col.trace().clone()

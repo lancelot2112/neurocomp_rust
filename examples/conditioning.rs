@@ -43,8 +43,23 @@ fn main() {
     let mut pauses = 0usize;
     let mut sizes = (0usize, 0usize, 0usize, 0usize);
     let mut tonic_sum = 0usize;
+    // diagnosis: how much the eye's and the seen-acts area's codes change when the light comes on
+    // (overlap of the step-2 code with the step-1 code, on light trials), summed per block
+    let mut light_seen = [(0u64, 0u64, 0u64); 64];
+    let mut prev_eye: Option<neurocomp::bitvec::BitVector> = None;
     while !world.done() {
         let senses = world.step(&acts);
+        {
+            use neurocomp::program::mind::{overlap, ACTS, EYE};
+            let code = mind.brain.encode_only(EYE, &senses.eye);
+            if let (Some(p), Some((2, true))) = (prev_eye.as_ref(), world.events.last().and_then(|e| e.cond)) {
+                let b = (trial / block).min(63);
+                light_seen[b].0 += overlap(&code, p) as u64;
+                light_seen[b].1 += mind.brain.encode_only(ACTS, &senses.eye).count_ones() as u64;
+                light_seen[b].2 += 1;
+            }
+            prev_eye = Some(code);
+        }
         acts = mind.step(&senses);
         let ev = world.events.last().unwrap().clone();
         let Some((t, cue)) = ev.cond else { continue };
@@ -117,6 +132,9 @@ fn main() {
                 f(no.0, no.2)
             ),
         }
+    }
+    for (b, x) in light_seen.iter().enumerate().filter(|x| x.1 .2 > 0) {
+        println!("  block {b}: the light comes on: the eye's code keeps {:.1} of 32 cells from the step before; the seen-acts area codes {:.1} cells", x.0 as f64 / x.2 as f64, x.1 as f64 / x.2 as f64);
     }
     println!("amygdala cells (appetitive, aversive, pause): {:?}; orbitofrontal {:?}", mind.amy.cells(), mind.ofc.cells());
     println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}, tonic noise {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64, tonic_sum as f64 / sizes.0 as f64);

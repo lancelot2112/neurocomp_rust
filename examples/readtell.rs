@@ -2274,7 +2274,7 @@ fn main() {
         // it is said and heard: the ear's surprise at its own sound is rewarding (contingent
         // change, fading as its own sounds become predictable), and if a caregiver is there
         // (seen: a face) they answer most of the time, which is rewarding too. Withheld, it runs
-        // inwardly and nobody answers. Episodes of 8 babbles; a caregiver in half of them.)
+        // inwardly and nobody answers. A caregiver comes and goes every 8 babbles, half the time.)
         let mut released = [(0usize, 0usize); 2];
         // (with a caregiver, without) × (first half, second half): (said aloud, babbles)
         let mut by_face = [[(0usize, 0usize); 2]; 2];
@@ -2334,9 +2334,11 @@ fn main() {
                     }
                 }
             }
-            if two_gates && k % 8 == 7 {
-                striatum.end(true, &mut rng);
-            }
+        }
+        // one continuous stream (an end every few babbles would be taken as "nothing more will
+        // come", a dip as large as what is expected, punishing babbling most where it pays most)
+        if two_gates {
+            striatum.end(true, &mut rng);
         }
         face_now = zero();
         if two_gates {

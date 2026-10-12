@@ -43,6 +43,7 @@ h1 { font: 700 1.6rem/1.1 var(--display); margin: 0; letter-spacing: -0.01em; }
 .sub { color: var(--muted); font-size: 0.92rem; min-width: 0; }
 .bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 8px; display: grid; gap: 8px; }
 .transport { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+select { font: 0.85rem var(--body); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; max-width: 100%; }
 button, .file { font: 500 0.85rem var(--body); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
 button:hover, .file:hover { border-color: var(--muted); }
 button:focus-visible, input:focus-visible, .file:focus-within { outline: 2px solid var(--go); outline-offset: 2px; }
@@ -87,6 +88,10 @@ canvas.grid { width: 100%; height: auto; display: block; image-rendering: pixela
       <button id="fwd" type="button" aria-label="Step forward">Step ▶</button>
       <label class="ctl" for="speed">Speed <input id="speed" type="range" min="0" max="100" value="38"> <span id="speedv" class="readout">2.0 steps/s</span></label>
       <label class="ctl" for="fade">Fade <input id="fade" type="range" min="1" max="100" value="45"> <span id="fadev" class="readout">0.9 s</span></label>
+      <label class="ctl" for="pick">Run <select id="pick">
+        <option value="trace.json">Light probe · trials 301–330</option>
+        <option value="reversal.json">Reversal · trials 481–530 (B pays from 501)</option>
+      </select></label>
       <label class="file" for="load">Load a trace…<input id="load" type="file" accept=".json,application/json"></label>
       <span id="err" class="err" hidden></span>
     </div>
@@ -239,10 +244,13 @@ canvas.grid { width: 100%; height: auto; display: block; image-rendering: pixela
     }
     $("scrub").value = step;
     const f = (x) => (x >= 0 ? "+" : "") + x.toFixed(3);
+    const rev = trace.meta && trace.meta.kind === "Reversal";
     $("readout").innerHTML =
       `<span>step <b>${step + 1}</b>/${trace.steps.length}</span>` +
       `<span>trial <b>${s.trial + 1}</b> · t <b>${s.t}</b></span>` +
-      `<span class="chip ${s.lit ? "on" : ""}">light ${s.lit ? "on" : "off"}</span>` +
+      (rev
+        ? `<span class="chip ${s.lit ? "on" : ""}">light ${s.lit ? (s.cue ? "A" : "B") : "off"}</span><span>${(Math.floor(((trace.meta.warm || 0) + s.trial) / 500) % 2 === 0) ? "A" : "B"} pays</span>`
+        : `<span class="chip ${s.lit ? "on" : ""}">light ${s.lit ? "on" : "off"}</span>`) +
       (s.click ? `<span class="chip click">click</span>` : "") +
       (s.stroke ? `<span class="chip stroke">stroke</span>` : "") +
       (s.spoke ? `<span class="chip">spoke</span>` : "") +
@@ -336,9 +344,15 @@ canvas.grid { width: 100%; height: auto; display: block; image-rendering: pixela
   addEventListener("resize", drawTimeline);
 
   readColors(); showCtl(); build();
-  fetch("trace.json").then(r => { if (!r.ok) throw new Error("no sample trace beside the page"); return r.json(); })
-    .then(d => load(d, "trace.json"))
-    .catch(err => { $("sub").textContent = "Load a trace recorded with the trace example."; $("err").textContent = err.message; $("err").hidden = false; });
+  const fetchRun = (name) => {
+    setPlaying(false);
+    $("sub").textContent = "Loading " + name + "…";
+    fetch(name).then(r => { if (!r.ok) throw new Error("The recorded run " + name + " is not beside the page."); return r.json(); })
+      .then(d => load(d, name))
+      .catch(err => { $("sub").textContent = "Load a trace recorded with the trace example."; $("err").textContent = err.message; $("err").hidden = false; });
+  };
+  $("pick").onchange = (e) => fetchRun(e.target.value);
+  fetchRun("trace.json");
   requestAnimationFrame(frame);
 })();
 </script>

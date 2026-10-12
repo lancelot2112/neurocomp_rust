@@ -494,6 +494,8 @@ pub struct Brain {
     /// columns
     pub pair_gain: u32,
     pub full_gain: u32,
+    /// coverage (`Pool::coverage`) in the association columns' layer 4 too
+    pub assoc_coverage: bool,
     rng: StdRng,
 }
 
@@ -506,7 +508,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -621,6 +623,11 @@ impl Brain {
         if let Some(c) = self.column_mut(id) {
             c.refresh(replace);
         }
+    }
+
+    /// A column's held population's loads so far (on surprise, by the gate).
+    pub fn loads_of(&self, id: ColumnId) -> (u64, u64) {
+        self.column_ref(id).map_or((0, 0), |c| c.loads)
     }
 
     /// A column's held population (empty if it has none).
@@ -886,6 +893,7 @@ impl Brain {
                         self.together.remove(&key);
                         let seed = self.seed.wrapping_add(1000 + 31 * self.pairs.len() as u64);
                         let mut col = Column::granular(self.bits, Pool::new(2, self.bits, self.bits, self.k, 2, seed), CAP);
+                        col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
                         col.set_persistence(self.pair_tau);
                         col.set_recurrence(self.pair_gain);
                         self.pairs.push((key, col));
@@ -904,6 +912,7 @@ impl Brain {
         }
         if self.full.is_none() && self.pairs.len() >= 2 {
             let mut col = Column::granular(self.bits, Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)), CAP);
+            col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
             col.set_persistence(self.full_tau);
             col.set_recurrence(self.full_gain);
             self.full = Some(col);

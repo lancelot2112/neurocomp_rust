@@ -110,6 +110,13 @@ impl Ofc {
         self.persist = tau > 0;
     }
 
+    /// Coverage in the area's layer 4 (every part of its input gets cells).
+    pub fn set_coverage(&mut self, on: bool) {
+        if let Some(p) = self.col.l4.as_mut() {
+            p.coverage = on;
+        }
+    }
+
     /// Recurrence: the column holds its own state by self-excitation (`Column::set_recurrence`);
     /// holding or splitting opens its gate (the input becomes the state).
     pub fn set_recurrence(&mut self, gain: u32) {

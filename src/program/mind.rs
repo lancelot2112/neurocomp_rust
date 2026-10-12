@@ -456,6 +456,11 @@ pub struct Mind {
     rate_fast: i32,
     /// frustration (`Q16`): expected outcomes of acts that did not come
     frustration: i32,
+    /// the held populations' salience: the cues' associability when each was last loaded (the
+    /// full association column's, the orbitofrontal area's), fading by 1/16 a step, and the
+    /// loads seen so far
+    held_tag: [u32; 2],
+    held_loads: [u64; 2],
     rate_slow: i32,
     /// what an act usually brings (`Q16`), and the acts whose outcome window is still open
     /// (steps left, outcome so far)
@@ -488,6 +493,9 @@ impl Mind {
         let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
         b.columns = true;
         b.selforg = true;
+        // coverage in the association areas too (a cue joining a familiar scene changes their
+        // code as it changes the senses')
+        b.assoc_coverage = cfg.coverage;
         if cfg.recur {
             b.pair_gain = 0;
             b.full_gain = 3;
@@ -533,6 +541,7 @@ impl Mind {
         let value_z = cfg.ofc_column && cfg.ofc_value_z;
         let persist = cfg.persist;
         let recur = cfg.recur;
+        let coverage = cfg.coverage;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -566,6 +575,7 @@ impl Mind {
             },
             ofc_area: {
                 let mut o = Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA);
+                o.set_coverage(coverage);
                 if recur {
                     o.set_recurrence(3);
                 } else if persist {
@@ -588,6 +598,8 @@ impl Mind {
             since_said: usize::MAX,
             rate_fast: 0,
             frustration: 0,
+            held_tag: [0; 2],
+            held_loads: [0; 2],
             rate_slow: 0,
             rate_act: 0,
             act_windows: Vec::new(),
@@ -732,6 +744,21 @@ impl Mind {
                     feats.extend(self.ofc_act(f));
                 }
                 self.ofc.onsets(feats);
+            }
+        }
+        // the held populations' salience: a held state loaded now is tagged with the cues'
+        // associability (what made it worth holding), and the tag fades
+        if self.cfg.recur {
+            let n = self.brain.pairs.len();
+            let loads = [self.brain.loads_of(ColumnId::Assoc(n)), self.ofc_area.col.loads];
+            for k in 0..2 {
+                let l = loads[k].0 + loads[k].1;
+                if l != self.held_loads[k] {
+                    self.held_loads[k] = l;
+                    self.held_tag[k] = self.amy.alpha_now();
+                } else {
+                    self.held_tag[k] -= self.held_tag[k] / 16;
+                }
             }
         }
         // 4. valuing what came
@@ -1132,7 +1159,20 @@ impl Mind {
                     }
                 })
                 .collect();
-            let a = if feats.is_empty() { 32 } else { feats.iter().map(|&f| self.amy.alpha_of(f) as u32).sum::<u32>() / feats.len() as u32 };
+            // a held population's region: the salience it was loaded with
+            let first = g.first().copied().unwrap_or(0);
+            let held = if (WM_OFFSET..WM_OFFSET + BITS).contains(&first) {
+                Some(self.held_tag[0])
+            } else if (OFC_HELD_OFFSET..OFC_HELD_OFFSET + BITS).contains(&first) {
+                Some(self.held_tag[1])
+            } else {
+                None
+            };
+            let a = match held {
+                Some(t) if self.cfg.recur => t,
+                _ if feats.is_empty() => 32,
+                _ => feats.iter().map(|&f| self.amy.alpha_of(f) as u32).sum::<u32>() / feats.len() as u32,
+            };
             let r = gi % regions;
             w[r] = w[r].max(8 + a as u16);
         }

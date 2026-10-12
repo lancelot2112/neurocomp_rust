@@ -676,7 +676,7 @@ impl Mind {
         // the orbitofrontal area: the cues (the association areas' code), the act just made, the
         // outcome as sensed (affective touch) and the hippocampus's context
         if self.cfg.ofc_column {
-            let mut z = self.ofc_step(&codes, &acts_now, &recall);
+            let mut z = self.ofc_step(&codes, &acts_now, &recall, raw[Self::slot(AFFECT)].count_ones() as u32);
             // the gate: the cues' associability (with it on), else open
             let gate = !self.cfg.alpha || self.amy.alpha_now() >= 64;
             if self.cfg.ofc_split && self.ofc_area.split(gate) {
@@ -973,7 +973,7 @@ impl Mind {
 
     /// The orbitofrontal area's step: its four inputs from this step's codes (by area), the acts
     /// sensed now and the hippocampus's recall. Returns the state Z.
-    fn ofc_step(&mut self, codes: &[BitVector], acts_now: &[(usize, Vec<u32>)], recall: &BitVector) -> BitVector {
+    fn ofc_step(&mut self, codes: &[BitVector], acts_now: &[(usize, Vec<u32>)], recall: &BitVector, raw_affect: u32) -> BitVector {
         let assoc = self.brain.assoc_inputs(codes);
         // the cues: the full association area's code, else the pairs' merged
         let mut cues = zero();
@@ -1001,7 +1001,9 @@ impl Mind {
         inputs[ofc_area::ACT] = act;
         inputs[ofc_area::OUTCOME] = outcome;
         inputs[ofc_area::CONTEXT] = context;
-        self.ofc_area.step(&inputs, true)
+        // the outcome's level on the labelled line (affective touch: as wide as the stroke)
+        let level = (raw_affect * 3 / ACTIVE as u32).min(3) as usize;
+        self.ofc_area.step(&inputs, level, true)
     }
 
     /// The orbitofrontal area's state and what it holds, as input groups for the striatum.

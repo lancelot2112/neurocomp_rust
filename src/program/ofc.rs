@@ -7,8 +7,11 @@
 //! - **Layer 2/3** predicts the next input from this one, its own previous activity and, on its
 //!   tuft, the state it holds. Its active cells are the area's state **Z**: the same cue after a
 //!   different act or outcome history is coded by different cells, as the basal context differs.
-//! - **The outcome layer** predicts the next outcome code (**Ô**, which touch will come) from
-//!   the same row: the orbitofrontal cortex's outcome expectation, learned as any column learns.
+//! - **The outcome layer** predicts the next outcome (**Ô**) from the same row: the
+//!   orbitofrontal cortex's outcome expectation, learned as any column learns. Its target is the
+//!   outcome's level on the labelled line (none, weak, middling, strong: a code per level), not
+//!   where on the skin a stroke lands, which no prediction could know; so "nothing comes" is
+//!   predicted too.
 //! - **Holding.** What the area holds (on its tuft, until replaced) is chosen by a loop through
 //!   the basal ganglia and the mediodorsal thalamus, as prefrontal working memory is gated
 //!   (O'Reilly & Frank's PBWM); the loop is the striatum's, learned from dopamine.
@@ -56,6 +59,8 @@ pub struct Ofc {
     pub familiar: u32,
     /// `familiar` at the step before (when the outcome now checked was predicted)
     prev_familiar: u32,
+    /// a code per outcome level (0: nothing)
+    levels: Vec<BitVector>,
     rng: StdRng,
     /// (outcomes checked, right; holds; splits)
     pub stats: (u64, u64, u64, u64),
@@ -74,6 +79,18 @@ impl Ofc {
             surprise: 0,
             familiar: 0,
             prev_familiar: 0,
+            levels: {
+                let mut r = StdRng::seed_from_u64(seed ^ 0x0FC2);
+                (0..4)
+                    .map(|_| {
+                        let mut v = BitVector::new(bits, Some(0));
+                        while v.count_ones() < k {
+                            v.bit_set(rand::Rng::gen_range(&mut r, 0..bits));
+                        }
+                        v
+                    })
+                    .collect()
+            },
             rng: StdRng::seed_from_u64(seed ^ 0x0FC1),
             stats: (0, 0, 0, 0),
         }
@@ -84,27 +101,27 @@ impl Ofc {
         self.held.clone()
     }
 
-    /// One step: `inputs` by source (cues, act, outcome, context; an empty one is silent). The
-    /// outcome layer first learns what outcome followed its last prediction (and how surprising
-    /// it was); layer 4 codes the input, layer 2/3 learns and predicts; the outcome layer
-    /// predicts the next outcome. Returns the state Z.
-    pub fn step(&mut self, inputs: &[BitVector; 4], learn: bool) -> BitVector {
-        let got = &inputs[OUTCOME];
-        // what came against what was expected
+    /// One step: `inputs` by source (cues, act, outcome as sensed, context; an empty one is
+    /// silent) and the outcome's level now (0–3, 0: nothing). The outcome layer first learns what
+    /// level followed its last prediction (and how surprising it was); layer 4 codes the input,
+    /// layer 2/3 learns and predicts; the outcome layer predicts the next level. Returns the
+    /// state Z.
+    pub fn step(&mut self, inputs: &[BitVector; 4], level: usize, learn: bool) -> BitVector {
+        let got = self.levels[level.min(3)].clone();
+        // what came against what was expected (no expectation: surprising if anything came)
         if let Some((inp, ctx, pred)) = self.last.take() {
             let n = got.count_ones() as u32;
             let one = crate::fixed::ONE;
-            self.surprise = match (&pred, n) {
-                (None, 0) => 0,
-                (Some(_), 0) | (None, _) => one,
-                (Some(p), n) => one - overlap(p, got).min(n) * one / n,
+            self.surprise = match &pred {
+                None => if level > 0 { one } else { 0 },
+                Some(p) => one - overlap(p, &got).min(n) * one / n,
             };
-            if n > 0 || pred.is_some() {
+            if level > 0 || pred.is_some() {
                 self.stats.0 += 1;
                 self.stats.1 += (self.surprise < one / 2) as u64;
             }
-            if learn && n > 0 {
-                self.outcome.learn(&inp, Some(&ctx), None, got, &mut self.rng);
+            if learn {
+                self.outcome.learn(&inp, Some(&ctx), None, &got, &mut self.rng);
             }
         }
         let srcs: Vec<(usize, &BitVector)> = inputs.iter().enumerate().filter(|(_, x)| x.count_ones() > 0).collect();

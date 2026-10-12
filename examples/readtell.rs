@@ -316,9 +316,8 @@ const VOICE: usize = 3;
 /// seen actions (the superior temporal sulcus's biological-motion stream): what an act looks
 /// like, wherever it happens
 const ACTS: usize = 4;
-/// faces: someone present and attending (a caregiver, the teacher), as the face-selective stream
-/// sees them
-const FACES: usize = 5;
+/// presence: someone there and attending (a caregiver, the teacher), however it is sensed
+const PRESENCE: usize = 5;
 
 struct Step {
     /// with the top column: (scene, tuft, layer 2/3's expected scene), for layer 5 to learn from
@@ -390,7 +389,7 @@ impl Net {
                 // the voice: a motor area (it is heard through the ear)
                 b.attach("voice", Kind::Motor);
                 b.attach("seen acts", Kind::Sensor);
-                b.attach("faces", Kind::Sensor);
+                b.attach("presence", Kind::Sensor);
                 b
             }),
             felt: zero(),
@@ -877,12 +876,12 @@ fn state_groups(
     recall: &BitVector,
     held: &[usize],
     place: Option<usize>,
-    face: &BitVector,
+    presence: &BitVector,
 ) -> Vec<Vec<usize>> {
     let off = |v: &BitVector, k: usize| ones(v).into_iter().map(|b| b + k * BITS).collect::<Vec<usize>>();
     let held_ids = held.iter().map(|&c| 8 * BITS + c).collect();
     let where_ = place.map_or(Vec::new(), |k| (0..16).map(|j| 8 * BITS + CTX_POOL + k * 16 + j).collect());
-    vec![off(pfc, 0), off(heard, 1), off(before, 2), off(l23, 3), off(l5, 4), off(eye4, 5), off(recall, 6), held_ids, where_, off(face, 7)]
+    vec![off(pfc, 0), off(heard, 1), off(before, 2), off(l23, 3), off(l5, 4), off(eye4, 5), off(recall, 6), held_ids, where_, off(presence, 7)]
 }
 
 /// The striatum's channels (one per gate).
@@ -2073,10 +2072,10 @@ fn main() {
     // what the eye fixates now (the book's word in the task, else nothing): with the heard
     // word, the association area's input
     let mut eye_now = zero();
-    // someone present and attending, as seen (the face area's input): a caregiver in speech play
-    // when one is there, the teacher in every task
-    let face_seen = Encoder::new(1, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0xFACE)).codes[0].clone();
-    let mut face_now = zero();
+    // someone there and attending (the presence area's input): a caregiver in speech play when
+    // one is there, the teacher in every task
+    let presence_code = Encoder::new(1, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0xFACE)).codes[0].clone();
+    let mut presence_now = zero();
     // the association area's assembly for the last sound heard, and whether the book is open:
     // part of what the striatum sees
     let mut last_assoc: BitVector = zero();
@@ -2129,12 +2128,12 @@ fn main() {
                 Some(b) => b.encode(EYE, &eye_now, false),
                 None => if eye_now.count_ones() == 0 { zero() } else { net.l4e.encode(&eye_now) },
             };
-            // a face, if someone is present and attending
-            let face4 = match net.brain.as_mut() {
-                Some(b) if b.areas.len() > FACES => b.encode(FACES, &face_now, false),
-                _ => face_now.clone(),
+            // someone's presence, if someone is there and attending
+            let presence4 = match net.brain.as_mut() {
+                Some(b) if b.areas.len() > PRESENCE => b.encode(PRESENCE, &presence_now, false),
+                _ => presence_now.clone(),
             };
-            let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place, &face4);
+            let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place, &presence4);
             striatum.begin_groups(&state, $explore, &mut rng);
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
@@ -2273,19 +2272,19 @@ fn main() {
         // the basal ganglia take one into the loop (or none) and release it or hold it. Released,
         // it is said and heard: the ear's surprise at its own sound is rewarding (contingent
         // change, fading as its own sounds become predictable), and if a caregiver is there
-        // (seen: a face) they answer most of the time, which is rewarding too. Withheld, it runs
+        // (sensed: a presence) they answer most of the time, which is rewarding too. Withheld, it runs
         // inwardly and nobody answers. A caregiver comes and goes every 8 babbles, half the time.)
         let mut released = [(0usize, 0usize); 2];
         // (with a caregiver, without) × (first half, second half): (said aloud, babbles)
-        let mut by_face = [[(0usize, 0usize); 2]; 2];
+        let mut by_presence = [[(0usize, 0usize); 2]; 2];
         let mut caregiver = false;
         for k in 0..n_speech {
             if two_gates && k % 8 == 0 {
                 caregiver = rng.gen_bool(0.5);
-                face_now = if caregiver { face_seen.clone() } else { zero() };
+                presence_now = if caregiver { presence_code.clone() } else { zero() };
                 if caregiver {
                     if let Some(b) = net.brain.as_mut() {
-                        b.encode(FACES, &face_seen, true);
+                        b.encode(PRESENCE, &presence_code, true);
                     }
                 }
             }
@@ -2304,7 +2303,7 @@ fn main() {
                     }
                     released[(k * 2 >= n_speech) as usize].0 += out as usize;
                     released[(k * 2 >= n_speech) as usize].1 += 1;
-                    let f = &mut by_face[!caregiver as usize][(k * 2 >= n_speech) as usize];
+                    let f = &mut by_presence[!caregiver as usize][(k * 2 >= n_speech) as usize];
                     f.0 += out as usize;
                     f.1 += 1;
                     (w, out)
@@ -2340,12 +2339,12 @@ fn main() {
         if two_gates {
             striatum.end(true, &mut rng);
         }
-        face_now = zero();
+        presence_now = zero();
         if two_gates {
             println!("speech play: babbles said aloud {} of {} in the first half, {} of {} in the second", released[0].0, released[0].1, released[1].0, released[1].1);
             println!(
                 "  with a caregiver: {} of {} then {} of {}; alone: {} of {} then {} of {}",
-                by_face[0][0].0, by_face[0][0].1, by_face[0][1].0, by_face[0][1].1, by_face[1][0].0, by_face[1][0].1, by_face[1][1].0, by_face[1][1].1
+                by_presence[0][0].0, by_presence[0][0].1, by_presence[0][1].0, by_presence[0][1].1, by_presence[1][0].0, by_presence[1][0].1, by_presence[1][1].0, by_presence[1][1].1
             );
         }
         // imitation: each word heard alone, through the ear–voice association, to a command
@@ -2526,9 +2525,9 @@ fn main() {
     }
     for trial in 0..n_train + 2 * n_test {
         // the teacher is there, attending
-        face_now = face_seen.clone();
-        if let Some(b) = net.brain.as_mut().filter(|b| b.areas.len() > FACES) {
-            b.encode(FACES, &face_seen, true);
+        presence_now = presence_code.clone();
+        if let Some(b) = net.brain.as_mut().filter(|b| b.areas.len() > PRESENCE) {
+            b.encode(PRESENCE, &presence_code, true);
         }
         let testing = trial >= n_train;
         let no_instr = trial >= n_train + n_test;

@@ -174,6 +174,10 @@ pub struct Column {
     auto: Map,
     gain: u32,
     gate: bool,
+    /// superposed expectation: layer 2/3 expects every next input its context supports (the
+    /// union of the cells that burst, or of all that fired when none did, up to four), not only
+    /// its winner's, so an alternative it has seen follow is not a surprise
+    pub superpose: bool,
     /// the held population's state, and each held bit's age (steps since it was loaded)
     held: BitVector,
     age: Vec<u16>,
@@ -197,7 +201,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, loads: (0, 0) }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, loads: (0, 0) }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -415,6 +419,17 @@ impl Column {
                 }
             }
             self.expected = self.l23.predict(&self.code, Some(&c), None);
+            if self.superpose {
+                if let Some(e) = self.expected.as_mut() {
+                    let props = self.l23.proposals();
+                    let burst = props.iter().any(|p| p.1);
+                    for (p, _) in props.iter().filter(|p| p.1 || !burst).take(4) {
+                        for (w, y) in e.as_words_mut().iter_mut().zip(p.as_words()) {
+                            *w |= y;
+                        }
+                    }
+                }
+            }
             self.rec = self.project(&self.l23.last_fired());
             self.last = Some((self.code.clone(), c));
             // the trace: what fired stays on, fading

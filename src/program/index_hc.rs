@@ -79,6 +79,12 @@ pub struct IndexHc {
     pub stats: (usize, usize, usize, usize, usize),
     /// replay marks rows the cortex now completes as consolidated (they fade faster)
     pub consolidate: bool,
+    /// superposed recall: where the cue fits two episodes about as well (a jump to a new row),
+    /// the runner-up's continuation is reinstated too, in the same vector (sparse codes barely
+    /// overlap), so the cortex gets both alternatives
+    pub superpose: bool,
+    /// recalls with the runner-up superposed
+    pub superposed: usize,
     /// rows marked consolidated so far
     pub consolidated: usize,
 }
@@ -111,6 +117,8 @@ impl IndexHc {
             out_bits,
             stats: (0, 0, 0, 0, 0),
             consolidate: false,
+            superpose: false,
+            superposed: 0,
             consolidated: 0,
         }
     }
@@ -166,6 +174,7 @@ impl IndexHc {
             content_keys.iter().filter(|&&c| k.binary_search(&(c as u32)).is_ok()).count()
         };
         let expected = self.last_recalled;
+        let mut second: Option<u32> = None;
         let (now, jumped): (Option<u32>, bool) = if content_keys.is_empty() {
             (None, false)
         } else if let Some(e) = expected.filter(|&e| has(&self.mem, e) >= need) {
@@ -179,6 +188,9 @@ impl IndexHc {
                 .filter(|&&(_, sc)| sc * 4 >= top * 3)
                 .max_by_key(|&&(r, _)| (self.mem.keys_of(r).iter().filter(|k| ctx.contains(k)).count(), r))
                 .map(|x| x.0);
+            if self.superpose {
+                second = cands.iter().filter(|&&(r, sc)| sc * 4 >= top * 3 && Some(r) != best).max_by_key(|&&(_, sc)| sc).map(|x| x.0);
+            }
             (best, best.is_some())
         };
         let out_row = match now {
@@ -206,6 +218,13 @@ impl IndexHc {
             for &b in self.mem.out_of(o).iter().filter(|&&b| b < self.out_bits) {
                 v.bit_set(b);
             }
+        }
+        // the runner-up's continuation, superposed
+        if let Some(o2) = second.and_then(|n| self.mem.successor(n).ca3.first().copied()).filter(|&o2| Some(o2) != out_row) {
+            for &b in self.mem.out_of(o2).iter().filter(|&&b| b < self.out_bits) {
+                v.bit_set(b);
+            }
+            self.superposed += 1;
         }
         v
     }

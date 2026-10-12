@@ -496,6 +496,8 @@ pub struct Brain {
     pub full_gain: u32,
     /// coverage (`Pool::coverage`) in the association columns' layer 4 too
     pub assoc_coverage: bool,
+    /// superposed expectation (`Column::superpose`) in every column
+    pub superpose: bool,
     rng: StdRng,
 }
 
@@ -508,7 +510,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -517,7 +519,11 @@ impl Brain {
         let i = self.areas.len();
         let l4 = (kind != Kind::Motor).then(|| Pool::new(1, self.bits, self.bits, self.k, 1, self.seed.wrapping_add(17 * i as u64 + 1)));
         let motor = (kind != Kind::Sensor).then(|| if self.columns { Motor::Column(Box::new(Column::agranular(self.bits, CAP))) } else { Motor::Kernels(MotorArea::new(self.bits)) });
-        let col = (self.columns && kind != Kind::Motor).then(|| Column::agranular(self.bits, CAP));
+        let col = (self.columns && kind != Kind::Motor).then(|| {
+            let mut c = Column::agranular(self.bits, CAP);
+            c.superpose = self.superpose;
+            c
+        });
         self.areas.push(Area { name: name.to_string(), kind, l4, motor, code: BitVector::new(self.bits, Some(0)), col, expect: None, effect_error: None });
         i
     }
@@ -894,6 +900,7 @@ impl Brain {
                         let seed = self.seed.wrapping_add(1000 + 31 * self.pairs.len() as u64);
                         let mut col = Column::granular(self.bits, Pool::new(2, self.bits, self.bits, self.k, 2, seed), CAP);
                         col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
+                        col.superpose = self.superpose;
                         col.set_persistence(self.pair_tau);
                         col.set_recurrence(self.pair_gain);
                         self.pairs.push((key, col));

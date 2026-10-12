@@ -125,7 +125,7 @@ canvas.grid { width: 100%; height: auto; display: block; image-rendering: pixela
   </section>
   <section class="group">
     <h2>Striatum · the hand loop's choice</h2>
-    <p class="note">The context the hand loop's latest choice saw: 32 regions of 64 bits, one region per input group (the candidate act in the last row). Outlines are the masks of the go and no-go cells that fired on it; a cell fires when every region it samples has 5 of its 8 bits present.</p>
+    <p class="note">The context the hand loop's latest choice saw: one region of 64 bits per input group (the candidate act in the last row; older traces use the top half). Outlines are the masks of the go and no-go cells that fired on it; a cell fires when every region it samples has 5 of its 8 bits present.</p>
     <div class="panels wide" id="g-str"></div>
   </section>
 </div>
@@ -144,7 +144,7 @@ canvas.grid { width: 100%; height: auto; display: block; image-rendering: pixela
     ["ofc_held", "Orbitofrontal held", 2048, 64, "g-pfc", "on its tuft"],
     ["amy_onsets", "Onsets (cues), by area", 12288, 192, "g-amy", "eye · ear · hand · acts · presence · affect"],
     ["amy_value", "Value cells firing", 8192, 128, "g-amy", "appetitive · aversive · baseline"],
-    ["ctx", "Hand loop context", 2048, 64, "g-str", "32 regions × 64"],
+    ["ctx", "Hand loop context", 4096, 64, "g-str", "63 regions × 64, the candidate act last"],
   ];
   const $ = (id) => document.getElementById(id);
   const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();

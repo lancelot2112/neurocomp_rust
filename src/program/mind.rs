@@ -304,6 +304,10 @@ pub struct Config {
     /// held population, the orbitofrontal hold its own; the separate store and copy are not used
     /// (MIND_RECUR=0 off)
     pub recur: bool,
+    /// superposed expectation in every column (`Column::superpose`): layer 2/3 expects every next
+    /// input its context supports, so a surprise is something not expected at all
+    /// (MIND_SUPERPOSE=0 off)
+    pub superpose: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -317,7 +321,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -362,6 +366,7 @@ impl Config {
             frustration: on("MIND_FRUSTRATION"),
             persist: std::env::var("MIND_PERSIST").map_or(false, |v| v == "1"),
             recur: on("MIND_RECUR"),
+            superpose: on("MIND_SUPERPOSE"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -496,6 +501,7 @@ impl Mind {
         // coverage in the association areas too (a cue joining a familiar scene changes their
         // code as it changes the senses')
         b.assoc_coverage = cfg.coverage;
+        b.superpose = cfg.superpose;
         if cfg.recur {
             b.pair_gain = 0;
             b.full_gain = 3;
@@ -519,7 +525,8 @@ impl Mind {
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
         cb.set_rates(2, 0);
         cb.set_cross_frames(true);
-        let mut bg = MaskStriatum::new(2048, 64, seed.wrapping_add(31));
+        // with focused cells each input group has a region (a 64-bit word) of its own: 63 of them
+        let mut bg = MaskStriatum::new(if cfg.focused { 4096 } else { 2048 }, 64, seed.wrapping_add(31));
         bg.hold = false;
         bg.sticky = true;
         bg.conj = true;
@@ -548,6 +555,7 @@ impl Mind {
         let persist = cfg.persist;
         let recur = cfg.recur;
         let coverage = cfg.coverage;
+        let superpose = cfg.superpose;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -557,7 +565,11 @@ impl Mind {
             relay: ThalamicRelay::new(),
             wm: WorkingMemory::new(BITS, 1),
             bg,
-            hc: IndexHc::new(hc_bits, seed),
+            hc: {
+                let mut h = IndexHc::new(hc_bits, seed);
+                h.superpose = superpose;
+                h
+            },
             amy: {
                 let mut a = Amygdala::new(SLOTS.len() * BITS, seed);
                 a.gated = attend_gate;
@@ -582,6 +594,7 @@ impl Mind {
             ofc_area: {
                 let mut o = Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA);
                 o.set_coverage(coverage);
+                o.col.superpose = superpose;
                 if recur {
                     o.set_recurrence(3);
                 } else if persist {
@@ -1150,7 +1163,7 @@ impl Mind {
     /// codes, the amygdala's attended trace), else a middling weight.
     fn choice_alpha(&self, groups: &[Vec<usize>]) -> (u32, Vec<u16>) {
         let gain = 64 + 2 * self.amy.alpha_now();
-        let regions = 2048 / 64 - 1;
+        let regions = if self.cfg.focused { 4096 / 64 - 1 } else { 2048 / 64 - 1 };
         let mut w = vec![0u16; regions];
         for (gi, g) in groups.iter().filter(|g| !g.is_empty()).enumerate() {
             let feats: Vec<usize> = g

@@ -258,6 +258,12 @@ pub struct Config {
     /// its new cells take two groups (the candidate act and one other); the orbitofrontal
     /// learner's new cells pair one act with one cue (MIND_FOCUSED=0 off)
     pub focused: bool,
+    /// per-act credit against what the loops expected of the act there (their q), not the act's
+    /// average worth (MIND_CREDIT_OWN=0 off)
+    pub credit_own: bool,
+    /// steps back the dopamine error reaches the striatum's choices (its eligibility trace;
+    /// MIND_WINDOW, default 2)
+    pub window: usize,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -271,7 +277,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -308,6 +314,8 @@ impl Config {
             attend_gate: std::env::var("MIND_ATTEND_GATE").map_or(false, |v| v == "1"),
             elemental: on("MIND_ELEMENTAL"),
             focused: on("MIND_FOCUSED"),
+            credit_own: on("MIND_CREDIT_OWN"),
+            window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
             predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),
@@ -400,7 +408,10 @@ pub struct Mind {
     /// (steps left, outcome so far)
     rate_act: i32,
     /// (steps left, outcome so far, motor area, the act's usual worth when done)
-    act_windows: Vec<(u8, i32, usize, i32)>,
+    act_windows: Vec<(u8, i32, usize, i32, Option<(i32, i32)>)>,
+    /// per motor area, the loop's and gate's q (cells) for the act released last: what the
+    /// loops expected of it there
+    chosen_q: Vec<(usize, i32, i32)>,
     /// the contingency detector (`Q16`): how often a sound from outside comes within two steps
     /// after its own sound, and otherwise
     p_after: i32,
@@ -451,6 +462,7 @@ impl Mind {
         bg.nogo_symmetric = cfg.nogo_symmetric;
         bg.balance = cfg.balance;
         bg.focused = cfg.focused;
+        bg.window = cfg.window;
         if cfg.nogo_symmetric {
             bg.nogo_channels = [VOICE, HAND].iter().map(|&m| motor_channels(m).1).collect();
         }
@@ -502,6 +514,7 @@ impl Mind {
             rate_slow: 0,
             rate_act: 0,
             act_windows: Vec::new(),
+            chosen_q: Vec::new(),
             p_after: 0,
             p_else: 0,
             spontaneous: 1,
@@ -675,17 +688,27 @@ impl Mind {
         }
         for (a, f) in &acts_now {
             let worth = self.ofc.act_worth(f);
-            self.act_windows.push((1, outcome, *a, worth));
+            let q = self.chosen_q.iter().find(|x| x.0 == *a).map(|x| (x.1, x.2));
+            self.act_windows.push((1, outcome, *a, worth, q));
         }
-        let done: Vec<(i32, usize, i32)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3)).collect();
+        let done: Vec<(i32, usize, i32, Option<(i32, i32)>)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3, w.4)).collect();
         self.act_windows.retain(|w| w.0 > 0);
-        for (got, motor, worth) in done {
+        for (got, motor, worth, q) in done {
             self.rate_act += (got - self.rate_act) / 32;
-            // separate credit per act: what it brought against what it is usually worth (its
-            // advantage), straight to its own loop's and gate's choices of two steps back
+            // separate credit per act, straight to its own loop's and gate's choices of two steps
+            // back: what it brought against what each expected of it there (its q, a cell an
+            // eighth: Rescorla–Wagner's error for the act in its context), or against what the act
+            // is usually worth
             if self.cfg.act_credit {
                 let (l, g) = motor_channels(motor);
-                self.bg.reinforce_at(&[l, g], got - worth, 1);
+                match q {
+                    Some((ql, qg)) if self.cfg.credit_own => {
+                        let expect = |q: i32| (q * ONE as i32 / 8).clamp(0, ONE as i32);
+                        self.bg.reinforce_at(&[l], got - expect(ql), 1);
+                        self.bg.reinforce_at(&[g], got - expect(qg), 1);
+                    }
+                    _ => self.bg.reinforce_at(&[l, g], got - worth, 1),
+                }
             }
         }
         // outcomes go to the critic; its own effect, with agency, trains the motor
@@ -954,6 +977,7 @@ impl Mind {
                 self.bg.release = brake;
                 continue;
             };
+            let q_loop = self.bg.last_q;
             let (cmd, _, from) = cands[i].clone();
             if let Some(f) = from {
                 followed_now.push(f);
@@ -975,6 +999,9 @@ impl Mind {
             let released = self.bg.choose_among(gate, &[gate_offer], true).is_some();
             self.bg.release = brake;
             if released {
+                let q_gate = self.bg.last_q;
+                self.chosen_q.retain(|x| x.0 != motor);
+                self.chosen_q.push((motor, q_loop, q_gate));
                 self.brain.areas[motor].issue(&cmd);
                 self.issued.push((motor, cmd.clone()));
                 self.report.from_goal |= from.is_some();

@@ -442,6 +442,11 @@ pub struct MaskStriatum {
     /// and one other), moving only within them: so a cell can stand for "this act with that cue"
     /// however many groups the view has
     pub focused: bool,
+    /// steps back a dopamine error reaches (the synaptic eligibility trace), credit fading ⅘ a
+    /// step
+    pub window: usize,
+    /// the q (go minus no-go cells) of the candidate released last, without the noise
+    pub last_q: i32,
 }
 
 fn mix(x: u64) -> u64 {
@@ -500,6 +505,8 @@ impl MaskStriatum {
             balance: false,
             view: None,
             focused: false,
+            window: WINDOW,
+            last_q: 0,
         }
     }
 
@@ -792,7 +799,7 @@ impl MaskStriatum {
             TAPS.iter().zip([ONE as u64, ONE as u64 * 3 / 4, ONE as u64 / 2, ONE as u64 * 3 / 8, ONE as u64 / 4]).filter(|(d, _)| **d <= n).map(|(d, w)| (n - d, w)).collect()
         } else {
             let mut w = ONE as u64;
-            (0..n.min(WINDOW))
+            (0..n.min(self.window))
                 .map(|i| {
                     let x = (n - 1 - i, w);
                     w = w * 4 / 5;
@@ -946,7 +953,7 @@ impl MaskStriatum {
             }
         }
         self.recent.push(Step { c: self.c.clone(), choices: Vec::new(), withheld: Vec::new(), critic: true });
-        let cap = if self.taps { HISTORY } else { WINDOW };
+        let cap = if self.taps { HISTORY } else { WINDOW.max(self.window) };
         if self.recent.len() > cap {
             self.recent.remove(0);
         }
@@ -976,7 +983,7 @@ impl MaskStriatum {
             return;
         }
         let Some(st) = self.recent.len().checked_sub(1 + back).map(|i| self.recent[i].clone()) else { return };
-        let amount = delta.unsigned_abs() as u64 / UNIT as u64 / RATE_DIV;
+        let amount = delta.unsigned_abs() as u64 * ONE as u64 / UNIT as u64 / RATE_DIV;
         let mut bits = (amount >> 16) as usize;
         if self.rng.gen_range(0..ONE as u64) < (amount & 0xFFFF) {
             bits += 1;
@@ -1042,6 +1049,7 @@ impl MaskStriatum {
         if let Some(st) = self.recent.last_mut() {
             st.choices.push((channel, 1, xs[i].clone()));
         }
+        self.last_q = self.q(channel, 1, &xs[i], &None);
         Some(i)
     }
 
@@ -1171,6 +1179,106 @@ mod tests {
             st.end(false);
         }
     }
+
+    /// A discriminated operant on the striatum alone (as the mind's light probe): trials of 10
+    /// steps, a light in view on steps 2–4 of half the trials, among constant and noisy inputs;
+    /// a click on steps 3–5 with the light pays 1 once a trial (next step), any click costs 1/8
+    /// and gets its own credit (what came minus 1/8). Prints clicks per trial in the window,
+    /// light against none. `cargo test --release light_probe -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn light_probe() {
+        use rand::Rng;
+        for (focused, own, window) in [(true, true, 0), (true, true, 2), (true, true, 4), (true, true, 8)] {
+            let sees = true;
+            let mut st = MaskStriatum::new(2048, 64, 7);
+            st.window = window;
+            let mut last_click = false;
+            st.hold = false;
+            st.sticky = true;
+            st.conj = true;
+            st.push_pull = false;
+            st.release = 2;
+            st.grow = true;
+            st.learn_nogo = true;
+            st.nogo_symmetric = true;
+            st.balance = true;
+            st.focused = focused;
+            let mut rng = <StdRng as rand::SeedableRng>::seed_from_u64(9);
+            let scene: Vec<usize> = (10_000..10_030).collect();
+            let light: Vec<usize> = (20_000..20_033).collect();
+            let click: Vec<Vec<usize>> = vec![(30_000..30_032).collect()];
+            let worth = ONE as i32 / 8;
+            let mut out = Vec::new();
+            let (mut pending, mut owed): (i32, Option<i32>) = (0, None);
+            let mut predicted = worth;
+            for block in 0..10 {
+                let (mut on, mut off, mut n_on, mut n_off) = (0, 0, 0, 0);
+                for _ in 0..100 {
+                    let cue = rng.gen_bool(0.5);
+                    let mut paid = false;
+                    for t in 0..10 {
+                        st.reward(pending);
+                        pending = 0;
+                        let lit = cue && (2..=4).contains(&t);
+                        // the critic: a constant input; with `sees`, the light and the click
+                        // just made too
+                        let mut critic: Vec<Vec<usize>> = vec![(40_000..40_032).collect()];
+                        if sees {
+                            critic.push(if lit { light.clone() } else { Vec::new() });
+                            critic.push(if last_click { click[0].clone() } else { Vec::new() });
+                        }
+                        st.begin_groups(&critic, true);
+                        last_click = false;
+                        // what the last click brought, against its worth
+                        if let Some(got) = owed.take() {
+                            st.reinforce_at(&[0], got - predicted, 1);
+                        }
+                        let mut eye = scene.clone();
+                        if lit {
+                            eye.extend(&light);
+                        }
+                        let mut view = vec![eye, (50_000..50_032).collect(), (60_000..60_032).collect()];
+                        for k in 0..8 {
+                            view.push((0..32).map(|_| 70_000 + k * 1000 + rng.gen_range(0..200)).collect());
+                        }
+                        st.set_view(Some(view));
+                        if st.choose_among(0, &[click.clone()], true).is_some() {
+                            last_click = true;
+                            pending -= worth;
+                            // with `own`: the click's credit is against what the loop expected of
+                            // it here (its q, a cell an eighth), else against its average worth
+                            predicted = if own { (st.last_q * UNIT).clamp(0, ONE as i32) } else { worth };
+                            let pays = cue && (3..=5).contains(&t) && !paid;
+                            if pays {
+                                paid = true;
+                            }
+                            owed = Some(if pays { ONE as i32 } else { 0 });
+                            if pays {
+                                pending += ONE as i32;
+                            }
+                            if (3..=5).contains(&t) {
+                                if cue {
+                                    on += 1;
+                                } else {
+                                    off += 1;
+                                }
+                            }
+                        }
+                    }
+                    if cue {
+                        n_on += 1;
+                    } else {
+                        n_off += 1;
+                    }
+                }
+                out.push(format!("{:.2}/{:.2}", on as f64 / n_on as f64, off as f64 / n_off as f64));
+                let _ = block;
+            }
+            println!("focused {focused}, credit against its own prediction {own}, window {window}: {}; go/no-go {:?}", out.join(" "), st.pool_sizes(0));
+        }
+    }
+
 }
 
 

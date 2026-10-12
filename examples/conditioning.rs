@@ -43,6 +43,9 @@ fn main() {
     let mut pauses = 0usize;
     let mut sizes = (0usize, 0usize, 0usize, 0usize);
     let mut tonic_sum = 0usize;
+    // per block: (dips while paused, bursts while paused, sum of dips, sum of bursts, steps)
+    let mut da = [(0u64, 0u64, 0i64, 0i64, 0u64); 64];
+    let mut cells_at: Vec<[(usize, usize); 2]> = Vec::new();
     // diagnosis: how much the eye's and the seen-acts area's codes change when the light comes on
     // (overlap of the step-2 code with the step-1 code, on light trials), summed per block
     let mut light_seen = [(0u64, 0u64, 0u64, 0u64); 64];
@@ -77,6 +80,21 @@ fn main() {
         sizes.2 += att;
         sizes.3 += (r.spoke || r.moved) as usize;
         tonic_sum += r.tonic as usize;
+        {
+            let b = (trial / block).min(63);
+            let d = &mut da[b];
+            d.4 += 1;
+            if r.delta < 0 {
+                d.2 += r.delta as i64;
+                d.0 += r.paused as u64;
+            } else {
+                d.3 += r.delta as i64;
+                d.1 += r.paused as u64;
+            }
+            if t == 9 && trial % block == block - 1 {
+                cells_at.push(mind.motor_cells(neurocomp::program::mind::HAND));
+            }
+        }
         // the cue is sensed at step 2
         if t == 2 {
             x.0 += r.value as i64;
@@ -133,6 +151,20 @@ fn main() {
                 f(no.0, no.2)
             ),
         }
+    }
+    for (b, d) in da.iter().enumerate().filter(|x| x.1 .4 > 0) {
+        let c = cells_at.get(b).copied().unwrap_or_default();
+        println!(
+            "  block {b}: dopamine per step: dips {:+.4}, bursts {:+.4}; at a pause: {} dips, {} bursts; the hand's loop go/no-go cells {}/{}, its gate {}/{}",
+            d.2 as f64 / d.4 as f64 / 65536.0,
+            d.3 as f64 / d.4 as f64 / 65536.0,
+            d.0,
+            d.1,
+            c[0].0,
+            c[0].1,
+            c[1].0,
+            c[1].1
+        );
     }
     for (b, x) in light_seen.iter().enumerate().filter(|x| x.1 .2 > 0) {
         println!("  block {b}: the light comes on: the eye's code has {:.1} cells, {:.1} of them from the step before; the seen-acts area codes {:.1} cells", x.3 as f64 / x.2 as f64, x.0 as f64 / x.2 as f64, x.1 as f64 / x.2 as f64);

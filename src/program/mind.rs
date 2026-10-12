@@ -1056,6 +1056,12 @@ impl Mind {
         self.last = None;
     }
 
+    /// A motor area's loop and gate: (go cells, no-go cells) each, for diagnosis.
+    pub fn motor_cells(&self, motor: usize) -> [(usize, usize); 2] {
+        let (l, g) = motor_channels(motor);
+        [self.bg.pool_sizes(l), self.bg.pool_sizes(g)]
+    }
+
     /// The critic's value now (`Q16`).
     pub fn value(&self) -> i32 {
         self.bg.value()

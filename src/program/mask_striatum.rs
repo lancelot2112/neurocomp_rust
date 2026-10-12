@@ -866,6 +866,11 @@ impl MaskStriatum {
         self.reward = 0;
     }
 
+    /// A channel's (go cells, no-go cells), for diagnosis.
+    pub fn pool_sizes(&self, channel: usize) -> (usize, usize) {
+        self.pools.get(channel).and_then(|p| p.get(1)).map_or((0, 0), |(g, n)| (g.cells.len(), n.cells.len()))
+    }
+
     /// The current state's value (`Q16`).
     pub fn value(&self) -> i32 {
         self.value

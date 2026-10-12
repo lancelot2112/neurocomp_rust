@@ -25,7 +25,9 @@ use crate::fixed::ONE;
 /// Steps an onset stays in the trace.
 pub const TRACE: usize = 4;
 /// Features attended at most (reach the striatum).
-const ATTEND: usize = 32;
+const ATTEND: usize = 64;
+/// Features in one sensory code (a cue's worth): predictions are summed per this many.
+const CODE: i64 = 32;
 
 #[derive(Clone, Copy, Default)]
 struct Feature {
@@ -62,6 +64,11 @@ impl Amygdala {
     }
 
     /// This step's onsets (features newly active). Shifts the trace.
+    /// (steps, onsets, attended) summed, for diagnosis
+    pub fn trace_sizes(&self) -> (usize, usize) {
+        (self.trace.first().map_or(0, |t| t.len()), self.attended().len())
+    }
+
     pub fn onsets(&mut self, onsets: Vec<u32>) {
         for &f in &onsets {
             self.entry(f).seen = true;
@@ -70,49 +77,38 @@ impl Amygdala {
         self.trace.truncate(TRACE);
     }
 
-    /// What the trace predicts for this step (`Q16`): the mean over the features traced from
-    /// earlier steps of their value at their age.
+    /// What the trace predicts for this step (`Q16`): the sum over the features traced from
+    /// earlier steps of their value at their age, per code's worth of features (`CODE`): as in
+    /// Rescorla–Wagner, the cues present add up, so a cue that predicts nothing does not dilute
+    /// one that does (it learns toward zero on the shared error).
     pub fn predicted(&self) -> i32 {
         let mut sum = 0i64;
-        let mut n = 0i64;
         for (age, fs) in self.trace.iter().enumerate().skip(1) {
             for f in fs {
                 if let Some(x) = self.features.get(f) {
                     sum += x.value[age - 1] as i64;
-                    n += 1;
                 }
             }
         }
-        if n == 0 {
-            0
-        } else {
-            (sum / n) as i32
-        }
+        (sum / CODE) as i32
     }
 
-    /// The innate valuations `r` (`Q16`) came this step: each traced feature's value at its age
-    /// moves toward them (a quarter of the error, times its associability), and its associability
-    /// toward the size of the error.
+    /// The innate valuations of outcomes `r` (`Q16`) came this step: every traced feature's value
+    /// at its age moves by its share of the shared error (times its associability), and its
+    /// associability toward the size of the error.
     pub fn learn(&mut self, r: i32) {
-        // the features traced at ages 1.. predicted this step (age 0 is this step's own onsets)
-        let mut groups: Vec<(usize, Vec<u32>)> = Vec::new();
-        for (age, fs) in self.trace.iter().enumerate().skip(1) {
-            groups.push((age, fs.clone()));
+        let err = r - self.predicted();
+        let traced: Vec<(usize, u32)> = self.trace.iter().enumerate().skip(1).flat_map(|(age, fs)| fs.iter().map(move |&f| (age, f))).collect();
+        if traced.is_empty() {
+            return;
         }
-        for (age, fs) in groups {
-            if fs.is_empty() {
-                continue;
-            }
-            let v: i64 = fs.iter().map(|f| self.features.get(f).map_or(0, |x| x.value[age - 1]) as i64).sum::<i64>() / fs.len() as i64;
-            let err = r - v as i32;
-            self.stats.0 += 1;
-            self.stats.1 += err.unsigned_abs() as u64;
-            for f in fs {
-                let x = self.entry(f);
-                let a = x.alpha.max(ONE as i32 / 16) as i64;
-                x.value[age - 1] += ((err as i64 * a) >> 18) as i32;
-                x.alpha += (err.abs().min(ONE as i32) - x.alpha) / 8;
-            }
+        self.stats.0 += 1;
+        self.stats.1 += err.unsigned_abs() as u64;
+        for (age, f) in traced {
+            let x = self.entry(f);
+            let a = x.alpha.max(ONE as i32 / 16) as i64;
+            x.value[age - 1] += ((err as i64 * a) >> 18) as i32;
+            x.alpha += (err.abs().min(ONE as i32) - x.alpha) / 8;
         }
     }
 
@@ -144,12 +140,8 @@ impl Amygdala {
     /// The value of some features if they came now (an outcome imagined: its features at age 0),
     /// `Q16`: the mean of what they have been worth one step on.
     pub fn value_of(&self, features: &[u32]) -> i32 {
-        let vals: Vec<i64> = features.iter().filter_map(|f| self.features.get(f)).map(|x| x.value[0] as i64).collect();
-        if vals.is_empty() {
-            0
-        } else {
-            (vals.iter().sum::<i64>() / vals.len() as i64) as i32
-        }
+        let sum: i64 = features.iter().filter_map(|f| self.features.get(f)).map(|x| x.value[0] as i64).sum();
+        (sum / CODE) as i32
     }
 
     /// The dopamine error `delta` came (`Q16`): features in the last steps' trace learn whether

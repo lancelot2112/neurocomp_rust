@@ -248,7 +248,7 @@ pub struct Config {
     /// gate's choices (MIND_ACT_CREDIT=0 off)
     pub act_credit: bool,
     /// the amygdala's and orbitofrontal learner's value cells form and fire only on attended
-    /// cues (and one's own acts) (MIND_ATTEND_GATE=0 off)
+    /// cues (and one's own acts) (MIND_ATTEND_GATE=1 on; off by default: it broke tone learning)
     pub attend_gate: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
@@ -263,7 +263,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -297,7 +297,7 @@ impl Config {
             act_baseline: on("MIND_ACT_BASELINE"),
             per_act: on("MIND_PER_ACT"),
             act_credit: on("MIND_ACT_CREDIT"),
-            attend_gate: on("MIND_ATTEND_GATE"),
+            attend_gate: std::env::var("MIND_ATTEND_GATE").map_or(false, |v| v == "1"),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
             predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),

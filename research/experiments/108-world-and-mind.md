@@ -642,3 +642,108 @@ is keep it.
 3. **Keep cues attended** while their value is learned (the Mackintosh term), and check the delayed
    probe once the immediate one works.
 4. **Then the lessons again,** comparing with the first version above.
+
+### Per-act cost and credit, an attention gate, compression; what broke the tone
+- **v23: per-act cost** (`MIND_PER_ACT=0` off). An act costs what the orbitofrontal baseline says
+  *that* act usually brings, read from its own baseline cells, or the effort if more. The set of
+  acts is not fixed: a new act recruits its own baseline cells the first time it is made, so the
+  costs grow with the repertoire.
+- **v24: plus per-act credit** (`MIND_ACT_CREDIT=0` off). When an act's two-step window closes,
+  the loop and motor gate that chose it are reinforced at that choice by what came minus what
+  the act was worth (`reinforce_at`). Each act gets its own credit, delayed to when its outcome is
+  known, rather than sharing one dopamine error with whatever else happened that step.
+- **v25: an attention gate** (`MIND_ATTEND_GATE`). The amygdala's and the orbitofrontal learner's
+  value cells form and fire only on attended features (and one's own acts). A feature is attended
+  when a surprise or a value follows it (Pearce–Hall and Mackintosh), and the attention fades by
+  1/32 a step. A bug skipped the attention update when the gated context was empty, so nothing
+  could ever win attention back. It was fixed by updating attention first, over the whole trace.
+- **v26–27: compression**, three ways, each a switch:
+  1. **Sleep compaction** (`MIND_COMPACT=0` off). At sleep, the cortical layers merge cells with
+     the same output and basal masks, and prune cells idle for 20,000 steps or wrong at least 12
+     times of their last 16. The amygdala's, orbitofrontal and striatal value cells are left
+     alone: there the count of cells is the value.
+  2. **Consolidation** (`MIND_CONSOLIDATE=0` off). During replay, the next row's recalled ear is
+     the target for the previous step's goals, so the cortex learns the sequence. A row that the
+     cortex completes from its first three quarters is marked consolidated and fades four times
+     faster.
+  3. **Predictive transmission** (`MIND_PREDICTIVE=1` on, off by default). A sense passes up only
+     what the area did not predict.
+
+**Instrumental, per-act cost and credit, 1500 trials** (clicks with light / none, every third
+block, then the last block)
+
+| version | seed | 200–300 | 500–600 | 800–900 | 1100–1200 | 1400–1500 |
+|---|---|---|---|---|---|---|
+| v23 | 0 | 0.47/0.24 | 0.73/0.61 | 0.87/1.07 | 0.84/0.89 | 1.09/1.00 |
+| v23 | 4 | 0.84/0.74 | 0.92/1.02 | 1.02/0.97 | **1.08/0.02** | 0.00/0.00 |
+| v24 | 0 | 0.80/0.57 | 0.98/1.14 | 0.90/0.93 | 0.90/1.07 | **0.68/0.10** |
+| v24 | 1 | 0.69/0.38 | 0.95/1.07 | 0.80/0.82 | 0.80/0.74 | **0.65/0.06** |
+| v24 | 3 | 0.84/0.61 | 0.63/0.93 | 0.86/0.93 | 0.87/0.94 | 0.83/0.91 |
+
+- **The acting is high and stays high.** Most runs click about once per trial for hundreds of
+  trials, with and without the light. Each act's own cost is near zero (what a click usually
+  brings settles at +0.00 to +0.06), so a click without the light costs almost nothing.
+- **Discrimination came late, if at all.** It appeared after more than 1,000 trials on three of ten
+  runs: v24 seeds 0 and 1 in the last block (0.68/0.10, 0.65/0.06), and v23 seed 4. That run then
+  stopped acting altogether, light or not: its no-go won, the die-out seen before the balance
+  rule.
+- **The Pavlovian probe broke at the same time.** From v24 on, the amygdala predicted almost
+  nothing for either tone (+0.00 to +0.02 at the touch's step on eight of nine runs; v25 seed 2
+  reached +0.51), and the dopamine at the touch stayed near its
+  naive +0.85, where v22 had +0.80 to +0.94 for CS+ against +0.00 to +0.04 for CS−.
+
+**Compression, instrumental seed 0, at trial 500**
+
+| | cortical cells | sensory predictions right | hippocampal rows | merged / pruned | rows consolidated |
+|---|---|---|---|---|---|
+| everything on | 31,277 | 75.5% | 236 | 114 / 34 | 855 |
+| compaction and consolidation off | 31,128 | 69.9% | 781 | 0 / 0 | – |
+| plus predictive transmission | 22,042 | 72.0% | 568 | 405 / 44 | – |
+
+- **Consolidation does what it should for the hippocampus.** The store holds a third as many
+  rows (236 against 781), because what the cortex has learned fades from it. The cortex predicts
+  the senses better (75.5% against 69.9%), because it learned the replayed sequences.
+- **Compaction barely changes the cortex's size.** It merged 114 cells and pruned 34 of about
+  31,000. Duplicates are rare when cells are recruited only on uncovered input. The cortex grows
+  about as fast as it would anyway.
+- **Predictive transmission shrinks the cortex by 30%** (22,042 cells), but it hurts acting.
+  Clicks stayed at 0.1–0.5 per trial, because what the cortex predicts, including the light it
+  comes to expect, no longer reaches the loops as a fresh input. It stays off.
+
+**What broke the tone: a bisect.** 200 Pavlovian trials, seed 0, one group of switches off at a
+time. The amygdala's prediction at the touch's step, CS+ / CS−, in trials 100–200:
+
+| switched off | CS+ / CS− | dopamine at the touch |
+|---|---|---|
+| nothing (v27) | +0.002 / +0.004 | +0.877 |
+| per-act credit | +0.000 / +0.005 | +0.847 |
+| opportunity cost, per-act cost and credit | +0.003 / +0.000 | +0.873 |
+| own effect and response (a quiet mind) | +0.022 / +0.004 | +0.863 |
+| per-act cost and credit | +0.295 / +0.001 | +0.819 |
+| act baseline, per-act cost and credit | +0.259 / +0.011 | +0.859 |
+| compaction, consolidation, per-act, credit, gate | +0.534 / +0.008 | +0.618 |
+| **the attention gate alone** | **+0.995 / +0.007** | **+0.375** |
+
+**The attention gate is the cause.** Without it, the tone is learned in 100 trials as well as it
+ever was: CS+ predicted at +0.995 against +0.007, and the dopamine at the touch is cut to less than
+half as the tone comes to predict it.
+
+Why the gate hurts:
+- A value cell is a 16-bit mask on the hashed context, and it fires when 12 of the bits are there.
+  With the gate on, the context is only the attended features.
+- Attention flickers. It is set for the whole trace on any large error, then fades bit by bit. So
+  the attended set at the touch's step differs from trial to trial, even when the tone and the
+  touch are the same.
+- A cell recruited on one trial's context then misses most others. Recruiting and removing go on,
+  but no cell keeps firing long enough to stand for the tone.
+- The ungated context is the whole trace. It carries the same tone bits every time, so cells
+  recruited on it keep firing.
+
+In the brain, associability changes how fast a cue's value is learned, not whether its value can
+be read out. The gate here did both. An attention signal that only scales learning (more cells
+recruited for an attended cue, the same context to read) would match that, and is the way to
+bring it back.
+
+**Defaults now (v28):** the attention gate is off (`MIND_ATTEND_GATE=1` turns it on).
+Per-act cost and credit, compaction and consolidation stay on. Predictive transmission stays off.
+

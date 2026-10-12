@@ -1960,6 +1960,8 @@ fn main() {
         }};
     }
     let mut explore_count = 0usize;
+    // words held back from the voice, (in practice, at test): (held, the right word)
+    let mut inner_score = [(0usize, 0usize); 2];
     // the voice's corollary discharge (with areas): (words said, of which not heard as expected)
     let mut voice_check = (0usize, 0usize);
     let imitate = std::env::var("RT_IMITATE").map_or(true, |v| v != "0");
@@ -2252,20 +2254,49 @@ fn main() {
     // mirror for speech, a learned route from hearing to saying (imitation).
     let n_speech: usize = env("RT_SPEECH_PLAY", 600);
     if let (true, Some(_)) = (n_speech > 0, net.brain.as_ref()) {
-        for _ in 0..n_speech {
+        // (with two gates, every babble goes through the voice's gate: released, it is said,
+        // heard, and half the time answered by a caregiver, which is rewarding (contingent
+        // replies shape babbling); withheld, it runs inwardly and nobody answers)
+        let mut released = [(0usize, 0usize); 2];
+        for k in 0..n_speech {
             let w = rng.gen_range(0..tract.len());
             let cmd = tract.command(w).clone();
-            let heard = tract.articulate(&cmd).map_or_else(|| silence.clone(), |x| sounds[x].clone());
-            let answer = rng.gen_bool(0.5);
-            let b = net.brain.as_mut().unwrap();
-            b.areas[VOICE].motor.as_mut().unwrap().observe(&cmd, &heard, &mut rng);
-            let a4 = b.encode(EAR, &heard, true);
-            b.sense_step(EAR, &a4, None, true);
-            b.associate_codes(&[zero(), a4, zero(), cmd], true);
-            if answer {
+            let release = if two_gates {
+                eye_now = zero();
+                td_step!(false, true);
+                let aim = sounds[w.min(sounds.len() - 1)].clone();
+                let out = !speak_withheld!(&aim, Some(&mut rng));
+                if !out {
+                    explore!(&aim);
+                }
+                released[(k * 2 >= n_speech) as usize].0 += out as usize;
+                released[(k * 2 >= n_speech) as usize].1 += 1;
+                out
+            } else {
+                true
+            };
+            if release {
+                let heard = tract.articulate(&cmd).map_or_else(|| silence.clone(), |x| sounds[x].clone());
+                let answer = rng.gen_bool(0.5);
+                let b = net.brain.as_mut().unwrap();
+                b.areas[VOICE].motor.as_mut().unwrap().observe(&cmd, &heard, &mut rng);
                 let a4 = b.encode(EAR, &heard, true);
                 b.sense_step(EAR, &a4, None, true);
+                b.associate_codes(&[zero(), a4, zero(), cmd], true);
+                if answer {
+                    let a4 = b.encode(EAR, &heard, true);
+                    b.sense_step(EAR, &a4, None, true);
+                    if two_gates {
+                        striatum.reward(ONE as i32 / 2);
+                    }
+                }
             }
+            if two_gates && k % 8 == 7 {
+                striatum.end(true, &mut rng);
+            }
+        }
+        if two_gates {
+            println!("speech play: babbles said aloud {} of {} in the first half, {} of {} in the second", released[0].0, released[0].1, released[1].0, released[1].1);
         }
         // imitation: each word heard alone, through the ear–voice association, to a command
         let b = net.brain.as_ref().unwrap();
@@ -3110,6 +3141,8 @@ fn main() {
                     // the network says it and hears itself
                     let said = if speak_withheld!(&st.plan, Some(&mut rng)) {
                         explore!(&st.plan);
+                        inner_score[0].0 += 1;
+                        inner_score[0].1 += (ear.decode(&st.plan) == Some(want)) as usize;
                         None
                     } else {
                         say!(&st.plan).filter(|&w| w != quiet)
@@ -3165,6 +3198,8 @@ fn main() {
             } else {
                 let said = if speak_withheld!(&st.plan, None) {
                     explore!(&st.plan);
+                    inner_score[1].0 += 1;
+                    inner_score[1].1 += (ear.decode(&st.plan) == Some(want)) as usize;
                     None
                 } else {
                     say!(&st.plan).filter(|&w| w != quiet)
@@ -3548,8 +3583,11 @@ fn main() {
     }
     println!("mirror: {} of the teacher's acts seen, {} evoked the right felt motion", mirror_stats.0, mirror_stats.1);
     println!("imagining the click while telling: {} times, recall went to this story's opening {} times", open_recall.0, open_recall.1);
-    if explore_on {
-        println!("inner exploration: {explore_count} planned words tried inwardly instead of said");
+    if explore_on || two_gates {
+        println!(
+            "words held back from the voice (run inwardly): {explore_count}; the right word: in practice {} of {}, at test {} of {}",
+            inner_score[0].1, inner_score[0].0, inner_score[1].1, inner_score[1].0
+        );
     }
     println!("checks of newly credited acts: {} made, {} found no effect", checks.0, checks.1);
     println!("cortical curiosity: extra noise {:.3} on average over {} choices", curiosity_stats.0 as f64 / curiosity_stats.1.max(1) as f64, curiosity_stats.1);

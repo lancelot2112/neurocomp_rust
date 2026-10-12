@@ -413,6 +413,11 @@ impl MaskStriatum {
             out
         };
         let (a, b) = (picks(&self.state, 16), picks(candidate, 8));
+        // nothing in the state: the candidate's own input (the cortex's proposal reaches the
+        // striatum directly) is the context, so a choice made with no situation can still be learned
+        if a.is_empty() && !b.is_empty() {
+            return self.context_k(candidate, self.k);
+        }
         if a.is_empty() || b.is_empty() {
             return c;
         }

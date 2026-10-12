@@ -235,11 +235,17 @@ pub struct Config {
     pub nogo_symmetric: bool,
     /// homeostasis: a loop's go and no-go pools kept within twice each other (MIND_BALANCE=0 off)
     pub balance: bool,
+    /// opportunity cost: an act costs what acting usually brings, if more than the effort
+    /// (MIND_OPPORTUNITY=0 off)
+    pub opportunity: bool,
+    /// the orbitofrontal learner keeps a baseline value per act, never extinguished, its other
+    /// cells learning what the cues add (MIND_ACT_BASELINE=0 off)
+    pub act_baseline: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true }
     }
 }
 
@@ -269,6 +275,8 @@ impl Config {
             critic_all: std::env::var("MIND_CRITIC_ALL").map_or(false, |v| v == "1"),
             nogo_symmetric: on("MIND_NOGO_SYM"),
             balance: on("MIND_BALANCE"),
+            opportunity: on("MIND_OPPORTUNITY"),
+            act_baseline: on("MIND_ACT_BASELINE"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -313,6 +321,8 @@ pub struct Report {
     pub amy_predicted: i32,
     /// the tonic exploration noise added this step
     pub tonic: i32,
+    /// what an act usually brings (`Q16`)
+    pub rate_act: i32,
 }
 
 pub struct Mind {
@@ -352,6 +362,10 @@ pub struct Mind {
     /// fast and slow averages of the outcomes (`Q16`): the tonic level
     rate_fast: i32,
     rate_slow: i32,
+    /// what an act usually brings (`Q16`), and the acts whose outcome window is still open
+    /// (steps left, outcome so far)
+    rate_act: i32,
+    act_windows: Vec<(u8, i32)>,
     /// the contingency detector (`Q16`): how often a sound from outside comes within two steps
     /// after its own sound, and otherwise
     p_after: i32,
@@ -399,6 +413,7 @@ impl Mind {
         if cfg.nogo_symmetric {
             bg.nogo_channels = [VOICE, HAND].iter().map(|&m| motor_channels(m).1).collect();
         }
+        let act_baseline = cfg.act_baseline;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -410,7 +425,14 @@ impl Mind {
             bg,
             hc: IndexHc::new(hc_bits, seed),
             amy: Amygdala::new(SLOTS.len() * BITS, seed),
-            ofc: Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC),
+            ofc: {
+                let o = Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC);
+                if act_baseline {
+                    o.with_act_baseline((SLOTS.len() * BITS) as u32)
+                } else {
+                    o
+                }
+            },
             efference_now: Vec::new(),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             pons: zero(),
@@ -426,6 +448,8 @@ impl Mind {
             since_said: usize::MAX,
             rate_fast: 0,
             rate_slow: 0,
+            rate_act: 0,
+            act_windows: Vec::new(),
             p_after: 0,
             p_else: 0,
             spontaneous: 1,
@@ -552,9 +576,11 @@ impl Mind {
             if self.cfg.own_effect {
                 r[0] += effect as i32 / 4;
             }
-            // with a tonic level to keep exploring, acting costs a little effort again
+            // with a tonic level to keep exploring, acting costs a little effort again; with
+            // opportunity cost, what acting usually brings, if that is more (Niv et al. 2007)
             if self.cfg.tonic {
-                r[3] -= self.cfg.effort * self.acted as i32;
+                let cost = if self.cfg.opportunity { self.cfg.effort.max(self.rate_act) } else { self.cfg.effort };
+                r[3] -= cost * self.acted as i32;
             }
         }
         if own {
@@ -578,6 +604,21 @@ impl Mind {
         // affective touch: the receptor line's own activity is its value (a labelled line), as
         // strong as the stroke is wide on the skin
         r[2] += ((raw[Self::slot(AFFECT)].count_ones() as i32 * ONE as i32) / ACTIVE as i32).min(ONE as i32);
+        // what acting usually brings: the outcomes in the two steps after each act (the act's
+        // result is sensed now; an outcome it earns comes now or next step), slowly averaged
+        let outcome = r[1] + r[2];
+        for w in self.act_windows.iter_mut() {
+            w.1 += outcome;
+            w.0 -= 1;
+        }
+        for _ in 0..self.acted {
+            self.act_windows.push((1, outcome));
+        }
+        let done: Vec<i32> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| w.1).collect();
+        self.act_windows.retain(|w| w.0 > 0);
+        for got in done {
+            self.rate_act += (got - self.rate_act) / 32;
+        }
         // outcomes go to the critic; its own effect, with agency, trains the motor
         // loops' last choices directly
         for (k, &x) in r.iter().enumerate() {
@@ -653,6 +694,7 @@ impl Mind {
             0
         };
         self.report.tonic = tonic;
+        self.report.rate_act = self.rate_act;
         // curiosity: where the cortex's goals are getting better, choices loosen a little
         self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2) + tonic;
         let acts = self.choose(&ids);

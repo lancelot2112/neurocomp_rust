@@ -135,6 +135,13 @@ pub struct Amygdala {
     appetitive: Pool,
     aversive: Pool,
     pause: Pool,
+    /// with `act_from`: baseline cells on the act's features alone (what the act is worth on
+    /// average, whatever the cues), recruited and removed one at a time toward the outcomes, so
+    /// they track the average and are never extinguished; the other cells learn what the cues
+    /// add to it
+    baseline: Pool,
+    /// features from this index on are acts (efference copies); None: no baseline
+    act_from: Option<u32>,
     /// attended features, and features seen before (bit vectors over the features)
     attended: BitVector,
     seen: BitVector,
@@ -153,12 +160,47 @@ impl Amygdala {
             appetitive: Pool::default(),
             aversive: Pool::default(),
             pause: Pool::default(),
+            baseline: Pool::default(),
+            act_from: None,
             attended: BitVector::new(feat, Some(0)),
             seen: BitVector::new(feat, Some(0)),
             now: 0,
             rng: StdRng::seed_from_u64(seed ^ 0xA316),
             stats: (0, 0),
         }
+    }
+
+    /// Features from `from` on are acts: keep a baseline value per act (see `baseline`).
+    pub fn with_act_baseline(mut self, from: u32) -> Self {
+        self.act_from = Some(from);
+        self
+    }
+
+    /// The context of the act features among some items (empty without a baseline).
+    fn act_context(&self, items: &[(usize, u32)]) -> Vec<u64> {
+        match self.act_from {
+            Some(t) => Self::context(items.iter().filter(|x| x.1 >= t).map(|(a, f)| (*a, f)), true),
+            None => vec![0u64; D / 64],
+        }
+    }
+
+    /// The value of some items: appetitive minus aversive cells firing on their context, plus the
+    /// baseline cells firing on their acts' (`Q16`, a unit per cell).
+    fn value_items(&self, items: &[(usize, u32)]) -> i32 {
+        let ctx = Self::context(items.iter().map(|(a, f)| (*a, f)), true);
+        let base = self.baseline.firing(&self.act_context(items)).len() as i32;
+        let n = self.appetitive.firing(&ctx).len() as i32 - self.aversive.firing(&ctx).len() as i32 + base;
+        (n * UNIT).clamp(-2 * ONE as i32, 2 * ONE as i32)
+    }
+
+    /// The trace's items from earlier steps (ages 1..), as owned (age, feature).
+    fn past_items(&self) -> Vec<(usize, u32)> {
+        self.items(1, TRACE).map(|(a, &f)| (a, f)).collect()
+    }
+
+    /// The trace's items now, each a step older (what they predict for the next step).
+    fn now_items(&self) -> Vec<(usize, u32)> {
+        self.items(0, TRACE - 1).map(|(a, &f)| (a + 1, f)).collect()
     }
 
     /// The context of some traced (age, feature) items: each hashed to one of `D` bits
@@ -204,14 +246,9 @@ impl Amygdala {
         }
     }
 
-    fn value_of_ctx(&self, ctx: &[u64]) -> i32 {
-        let n = self.appetitive.firing(ctx).len() as i32 - self.aversive.firing(ctx).len() as i32;
-        (n * UNIT).clamp(-2 * ONE as i32, 2 * ONE as i32)
-    }
-
     /// What the trace predicts for this step (`Q16`).
     pub fn predicted(&self) -> i32 {
-        self.value_of_ctx(&self.past())
+        self.value_items(&self.past_items())
     }
 
     /// The innate valuations of outcomes `r` (`Q16`) came this step: the value cells learn the
@@ -222,8 +259,20 @@ impl Amygdala {
         if ctx.iter().all(|&w| w == 0) {
             return 0;
         }
-        let v = self.value_of_ctx(&ctx);
+        let past = self.past_items();
+        let v = self.value_items(&past);
         let err = r - v;
+        // the baseline: one cell at a time toward the outcome on its own (an average per act)
+        let actx = self.act_context(&past);
+        if actx.iter().any(|&w| w != 0) {
+            let firing = self.baseline.firing(&actx);
+            let eb = r - firing.len() as i32 * UNIT;
+            if eb >= UNIT {
+                self.baseline.recruit(&actx, self.now, &mut self.rng);
+            } else if eb <= -UNIT {
+                self.baseline.remove(&firing, 1, &mut self.rng);
+            }
+        }
         self.stats.0 += 1;
         self.stats.1 += err.unsigned_abs() as u64;
         let k = (err.abs() / UNIT).min(4) as usize;
@@ -268,22 +317,24 @@ impl Amygdala {
     /// The value now of the cues in the trace (`Q16`): what the newest cues (one step old next
     /// step) and the older ones predict.
     pub fn cue_value(&self) -> i32 {
-        self.value_of_ctx(&Self::context(self.items(0, TRACE - 1).map(|(a, f)| (a + 1, f)), true))
+        self.value_items(&self.now_items())
     }
 
     /// The value cells firing on the cues now (as `cue_value` reads them): appetitive cells' ids
-    /// below 4096, aversive ones' above, each modulo 4096 (an input group for the striatum).
+    /// below 4096, aversive ones' from 4096, baseline ones' from 8192, each modulo 4096 (an input group for the striatum).
     pub fn value_cells(&self) -> Vec<usize> {
         let ctx = Self::context(self.items(0, TRACE - 1).map(|(a, f)| (a + 1, f)), true);
         let app = self.appetitive.firing(&ctx).into_iter().map(|i| self.appetitive.cells[i].2 as usize % 4096);
         let avr = self.aversive.firing(&ctx).into_iter().map(|i| 4096 + self.aversive.cells[i].2 as usize % 4096);
-        app.chain(avr).collect()
+        let actx = self.act_context(&self.now_items());
+        let base = self.baseline.firing(&actx).into_iter().map(|i| 8192 + self.baseline.cells[i].2 as usize % 4096);
+        app.chain(avr).chain(base).collect()
     }
 
     /// What some features would be worth if they came now (an imagined outcome: they predict
     /// the next step as one step old), `Q16`.
     pub fn value_of(&self, features: &[u32]) -> i32 {
-        self.value_of_ctx(&Self::context(features.iter().map(|f| (1usize, f)), true))
+        self.value_items(&features.iter().map(|&f| (1usize, f)).collect::<Vec<_>>())
     }
 
     /// The dopamine error `delta` came (`Q16`): if it is large, a pause cell is recruited on the
@@ -315,8 +366,8 @@ impl Amygdala {
         (self.trace.first().map_or(0, |t| t.len()), self.attended().len())
     }
 
-    /// (appetitive, aversive, pause) cells.
-    pub fn cells(&self) -> (usize, usize, usize) {
-        (self.appetitive.cells.len(), self.aversive.cells.len(), self.pause.cells.len())
+    /// (appetitive, aversive, pause, baseline) cells.
+    pub fn cells(&self) -> (usize, usize, usize, usize) {
+        (self.appetitive.cells.len(), self.aversive.cells.len(), self.pause.cells.len(), self.baseline.cells.len())
     }
 }

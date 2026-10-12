@@ -316,6 +316,9 @@ const VOICE: usize = 3;
 /// seen actions (the superior temporal sulcus's biological-motion stream): what an act looks
 /// like, wherever it happens
 const ACTS: usize = 4;
+/// faces: someone present and attending (a caregiver, the teacher), as the face-selective stream
+/// sees them
+const FACES: usize = 5;
 
 struct Step {
     /// with the top column: (scene, tuft, layer 2/3's expected scene), for layer 5 to learn from
@@ -387,6 +390,7 @@ impl Net {
                 // the voice: a motor area (it is heard through the ear)
                 b.attach("voice", Kind::Motor);
                 b.attach("seen acts", Kind::Sensor);
+                b.attach("faces", Kind::Sensor);
                 b
             }),
             felt: zero(),
@@ -873,11 +877,12 @@ fn state_groups(
     recall: &BitVector,
     held: &[usize],
     place: Option<usize>,
+    face: &BitVector,
 ) -> Vec<Vec<usize>> {
     let off = |v: &BitVector, k: usize| ones(v).into_iter().map(|b| b + k * BITS).collect::<Vec<usize>>();
     let held_ids = held.iter().map(|&c| 8 * BITS + c).collect();
     let where_ = place.map_or(Vec::new(), |k| (0..16).map(|j| 8 * BITS + CTX_POOL + k * 16 + j).collect());
-    vec![off(pfc, 0), off(heard, 1), off(before, 2), off(l23, 3), off(l5, 4), off(eye4, 5), off(recall, 6), held_ids, where_]
+    vec![off(pfc, 0), off(heard, 1), off(before, 2), off(l23, 3), off(l5, 4), off(eye4, 5), off(recall, 6), held_ids, where_, off(face, 7)]
 }
 
 /// The striatum's channels (one per gate).
@@ -2068,6 +2073,10 @@ fn main() {
     // what the eye fixates now (the book's word in the task, else nothing): with the heard
     // word, the association area's input
     let mut eye_now = zero();
+    // someone present and attending, as seen (the face area's input): a caregiver in speech play
+    // when one is there, the teacher in every task
+    let face_seen = Encoder::new(1, BITS, ACTIVE, &mut StdRng::seed_from_u64(seed ^ 0xFACE)).codes[0].clone();
+    let mut face_now = zero();
     // the association area's assembly for the last sound heard, and whether the book is open:
     // part of what the striatum sees
     let mut last_assoc: BitVector = zero();
@@ -2120,7 +2129,12 @@ fn main() {
                 Some(b) => b.encode(EYE, &eye_now, false),
                 None => if eye_now.count_ones() == 0 { zero() } else { net.l4e.encode(&eye_now) },
             };
-            let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place);
+            // a face, if someone is present and attending
+            let face4 = match net.brain.as_mut() {
+                Some(b) if b.areas.len() > FACES => b.encode(FACES, &face_now, false),
+                _ => face_now.clone(),
+            };
+            let state = state_groups(&net.wm.content(), &last_assoc, &prev_assoc, &net.rec23, &net.pons, &eye4, &last_recall, &held_ctx, recalled_place, &face4);
             striatum.begin_groups(&state, $explore, &mut rng);
             if let Some(x) = ix.as_mut() {
                 if !x.gates_off {
@@ -2254,35 +2268,64 @@ fn main() {
     // mirror for speech, a learned route from hearing to saying (imitation).
     let n_speech: usize = env("RT_SPEECH_PLAY", 600);
     if let (true, Some(_)) = (n_speech > 0, net.brain.as_ref()) {
-        // (with two gates, every babble goes through the voice's gate: released, it is said,
-        // heard, and half the time answered by a caregiver, which is rewarding (contingent
-        // replies shape babbling); withheld, it runs inwardly and nobody answers)
+        // (with two gates: the vocal tract's motor primitives (its syllable patterns, as brainstem
+        // pattern generators give an infant's babbling) are spontaneously active, a few each step;
+        // the basal ganglia take one into the loop (or none) and release it or hold it. Released,
+        // it is said and heard: the ear's surprise at its own sound is rewarding (contingent
+        // change, fading as its own sounds become predictable), and if a caregiver is there
+        // (seen: a face) they answer most of the time, which is rewarding too. Withheld, it runs
+        // inwardly and nobody answers. Episodes of 8 babbles; a caregiver in half of them.)
         let mut released = [(0usize, 0usize); 2];
+        // (with a caregiver, without) × (first half, second half): (said aloud, babbles)
+        let mut by_face = [[(0usize, 0usize); 2]; 2];
+        let mut caregiver = false;
         for k in 0..n_speech {
-            let w = rng.gen_range(0..tract.len());
-            let cmd = tract.command(w).clone();
-            let release = if two_gates {
+            if two_gates && k % 8 == 0 {
+                caregiver = rng.gen_bool(0.5);
+                face_now = if caregiver { face_seen.clone() } else { zero() };
+                if caregiver {
+                    if let Some(b) = net.brain.as_mut() {
+                        b.encode(FACES, &face_seen, true);
+                    }
+                }
+            }
+            let chosen: Option<(usize, bool)> = if two_gates {
                 eye_now = zero();
                 td_step!(false, true);
-                let aim = sounds[w.min(sounds.len() - 1)].clone();
-                let out = !speak_withheld!(&aim, Some(&mut rng));
-                if !out {
-                    explore!(&aim);
-                }
-                released[(k * 2 >= n_speech) as usize].0 += out as usize;
-                released[(k * 2 >= n_speech) as usize].1 += 1;
-                out
+                let mut active: Vec<usize> = (0..tract.len().min(sounds.len())).collect();
+                active.shuffle(&mut rng);
+                active.truncate(3);
+                let offer: Vec<Vec<Vec<usize>>> = active.iter().map(|&w| vec![ones(&sounds[w]).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
+                striatum.choose_among(CH_IMAGINE, &offer, Some(&mut rng)).map(|i| {
+                    let w = active[i];
+                    let out = !speak_withheld!(&sounds[w], Some(&mut rng));
+                    if !out {
+                        explore!(&sounds[w]);
+                    }
+                    released[(k * 2 >= n_speech) as usize].0 += out as usize;
+                    released[(k * 2 >= n_speech) as usize].1 += 1;
+                    let f = &mut by_face[!caregiver as usize][(k * 2 >= n_speech) as usize];
+                    f.0 += out as usize;
+                    f.1 += 1;
+                    (w, out)
+                })
             } else {
-                true
+                Some((rng.gen_range(0..tract.len()), true))
             };
-            if release {
+            if let Some((w, true)) = chosen {
+                let cmd = tract.command(w).clone();
                 let heard = tract.articulate(&cmd).map_or_else(|| silence.clone(), |x| sounds[x].clone());
-                let answer = rng.gen_bool(0.5);
                 let b = net.brain.as_mut().unwrap();
                 b.areas[VOICE].motor.as_mut().unwrap().observe(&cmd, &heard, &mut rng);
                 let a4 = b.encode(EAR, &heard, true);
                 b.sense_step(EAR, &a4, None, true);
                 b.associate_codes(&[zero(), a4, zero(), cmd], true);
+                if two_gates {
+                    // its own sound, heard: as surprising as the ear's column finds it
+                    let r = b.surprise(EAR) as i32 / 4;
+                    striatum.reward(r);
+                }
+                let answer = if two_gates { caregiver && rng.gen_bool(0.7) } else { rng.gen_bool(0.5) };
                 if answer {
                     let a4 = b.encode(EAR, &heard, true);
                     b.sense_step(EAR, &a4, None, true);
@@ -2295,8 +2338,13 @@ fn main() {
                 striatum.end(true, &mut rng);
             }
         }
+        face_now = zero();
         if two_gates {
             println!("speech play: babbles said aloud {} of {} in the first half, {} of {} in the second", released[0].0, released[0].1, released[1].0, released[1].1);
+            println!(
+                "  with a caregiver: {} of {} then {} of {}; alone: {} of {} then {} of {}",
+                by_face[0][0].0, by_face[0][0].1, by_face[0][1].0, by_face[0][1].1, by_face[1][0].0, by_face[1][0].1, by_face[1][1].0, by_face[1][1].1
+            );
         }
         // imitation: each word heard alone, through the ear–voice association, to a command
         let b = net.brain.as_ref().unwrap();
@@ -2367,8 +2415,17 @@ fn main() {
                     cands.push((label, pat));
                 }
             }
-            // babbling, often: half the steps
-            let babbled = cands.is_empty() || rng.gen_bool(0.5);
+            // with two gates: the hand's motor primitives are spontaneously active (each half the
+            // steps), offered with the cortex's proposals; the basal ganglia choose. Without: the
+            // driver babbles half the steps
+            if two_gates {
+                for m in 0..MOUSE {
+                    if rng.gen_bool(0.5) && !cands.iter().any(|c| overlap(&c.1, &motion[m]) * 2 >= ACTIVE as u32) {
+                        cands.push((m, motion[m].clone()));
+                    }
+                }
+            }
+            let babbled = !two_gates && (cands.is_empty() || rng.gen_bool(0.5));
             let command: Option<BitVector> = if babbled {
                 let m = rng.gen_range(0..MOUSE);
                 striatum.did_among(CH_ACT, &[ones(&motion[m]).into_iter().map(|b| ACT_BASE + b).collect()]);
@@ -2376,7 +2433,7 @@ fn main() {
             } else {
                 let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![ones(&c.1).into_iter().map(|b| ACT_BASE + b).collect()]).collect();
                 // the two gates: into the loop, then released or withheld (run inwardly)
-                let pick = if net.multi && std::env::var("RT_TWO_GATES").map_or(true, |v| v != "0") {
+                let pick = if two_gates {
                     striatum.choose_among(CH_IMAGINE, &offer, Some(&mut rng)).and_then(|i| {
                         if striatum.choose_among(CH_ACT, &[offer[i].clone()], Some(&mut rng)).is_some() {
                             Some(i)
@@ -2466,6 +2523,11 @@ fn main() {
         }
     }
     for trial in 0..n_train + 2 * n_test {
+        // the teacher is there, attending
+        face_now = face_seen.clone();
+        if let Some(b) = net.brain.as_mut().filter(|b| b.areas.len() > FACES) {
+            b.encode(FACES, &face_seen, true);
+        }
         let testing = trial >= n_train;
         let no_instr = trial >= n_train + n_test;
         let learn = !testing;
@@ -2810,6 +2872,15 @@ fn main() {
                         cands.push((label, pat));
                     }
                 }
+                // with two gates: now and then (while learning) one of the hand's motor primitives is
+                // spontaneously active, offered with the cortex's proposals (the basal ganglia
+                // choose; the driver no longer babbles)
+                if two_gates && learn && rng.gen_range(0..BABBLE) == 0 {
+                    let m = rng.gen_range(0..MOUSE);
+                    if !cands.iter().any(|c| overlap(&c.1, &motion[m]) * 2 >= ACTIVE as u32) {
+                        cands.push((m, motion[m].clone()));
+                    }
+                }
                 // the teacher shows how (training, RT_TEACH=mouse, default): if the network has not
                 // opened the book by the time the teacher needs the remaining steps, the teacher
                 // moves the cursor to it and clicks, a step at a time. The network sees the cursor
@@ -2867,7 +2938,7 @@ fn main() {
                         striatum.did_among(CH_ACT, &[ones(&motion[m]).into_iter().map(|b| ACT_BASE + b).collect()]);
                     }
                     None
-                } else if learn && rng.gen_range(0..BABBLE) == 0 {
+                } else if !two_gates && learn && rng.gen_range(0..BABBLE) == 0 {
                     let m = rng.gen_range(0..MOUSE);
                     striatum.did_among(CH_ACT, &[ones(&motion[m]).into_iter().map(|b| ACT_BASE + b).collect()]);
                     mouse_stats[0] += 1;

@@ -109,6 +109,11 @@ pub struct Pool {
     rng: u64,
     /// cells recruited so far (including those that replaced old ones)
     pub recruited: u64,
+    /// coverage: every part of the input gets cells. Input left uncovered by the synapses of the
+    /// cells that fired (a quarter of it or more) recruits cells on that part alone, and the
+    /// winners grow with the input (k up to 4k, as divisive normalization lets more input drive
+    /// more cells), so adding a thing to what is sensed adds cells rather than displacing them
+    pub coverage: bool,
 }
 
 impl Pool {
@@ -132,6 +137,7 @@ impl Pool {
             tick: 0,
             rng: seed | 1,
             recruited: 0,
+            coverage: false,
         }
     }
 
@@ -183,8 +189,53 @@ impl Pool {
         }
         let mut f: Vec<(u32, usize)> = count.into_iter().filter(|&(_, n)| n >= self.theta).collect();
         f.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        f.truncate(self.k);
+        f.truncate(self.winners(on.len()));
         f
+    }
+
+    /// How many cells may win: `k`, or with coverage as many as the input has bits (up to 4k).
+    fn winners(&self, active: usize) -> usize {
+        if self.coverage {
+            active.clamp(self.k, 4 * self.k)
+        } else {
+            self.k
+        }
+    }
+
+    /// Coverage: recruit cells on the input bits that no fired cell has a synapse on, when they
+    /// are a quarter of the input or more (and enough for a cell to fire on). Returns the new
+    /// cells.
+    fn cover(&mut self, on: &[u32], fired: &[(u32, usize)]) -> Vec<usize> {
+        let mut covered: Vec<u32> = fired.iter().flat_map(|&(c, _)| self.syn[c as usize].iter().copied()).filter(|b| on.binary_search(b).is_ok()).collect();
+        covered.sort_unstable();
+        covered.dedup();
+        let open: Vec<u32> = on.iter().copied().filter(|b| covered.binary_search(b).is_err()).collect();
+        if open.len() * 4 < on.len() || open.len() < self.theta.max(8) {
+            return Vec::new();
+        }
+        let n = open.len().min(self.k);
+        let mut new = Vec::new();
+        for _ in 0..n {
+            let mut s: Vec<u32> = Vec::with_capacity(self.sample);
+            let mut tries = 0;
+            while s.len() < self.sample.min(open.len()) && tries < self.sample * 8 {
+                tries += 1;
+                let b = open[(self.next() as usize) % open.len()];
+                if !s.contains(&b) {
+                    s.push(b);
+                }
+            }
+            s.sort_unstable();
+            let c = self.place();
+            for &b in &s {
+                self.index[b as usize].push(c as u32);
+            }
+            self.syn[c] = s;
+            self.last[c] = self.tick;
+            self.recruited += 1;
+            new.push(c);
+        }
+        new
     }
 
     fn code(&self, fired: &[(u32, usize)]) -> BitVector {
@@ -233,6 +284,11 @@ impl Pool {
             self.rewire(c as usize, i, nb);
         }
         let mut code = self.code(&fired);
+        if self.coverage && fired.len() * 2 >= self.k {
+            for c in self.cover(&on, &fired) {
+                code.bit_set(c);
+            }
+        }
         let srcs: Vec<usize> = {
             let mut v: Vec<usize> = on.iter().map(|&b| b as usize / self.src_bits).collect();
             v.dedup();

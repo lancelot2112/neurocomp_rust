@@ -19,7 +19,8 @@
 //!      (contingent change, fading as it comes to be expected; Redgrave & Gurney);
 //!    - *a response:* someone there (presence) and a sound from outside soon after its own
 //!      sound made aloud (contingent replies, Goldstein et al. 2003);
-//!    - *a smile:* an innately recognised pattern in the presence sense;
+//!    - *affective touch:* a stroke on the skin, a sense of its own whose receptor line carries its
+//!      value (as sweet taste's or pain's does), going through its own cortical area like any sense;
 //! 5. **Loops that grow with the cortex** (Alexander, DeLong & Strick 1986): every column with
 //!    a layer 5, sensory or association, has its own loop through the basal ganglia, created
 //!    when the column is. A column's layer 5 offers its goal (of the cells that fired, the one
@@ -51,8 +52,11 @@ pub const VOICE: usize = 3;
 /// seen acts: what changed in view (the motion stream)
 pub const ACTS: usize = 4;
 pub const PRESENCE: usize = 5;
+/// affective touch: a gentle stroke on the skin (C-tactile afferents), its valence a property of
+/// the receptor line itself, as sweet taste's or pain's
+pub const AFFECT: usize = 6;
 /// the sensing areas, each a slot of BITS cells in the hippocampus's pointers
-pub const SLOTS: [usize; 5] = [EYE, EAR, HAND, ACTS, PRESENCE];
+pub const SLOTS: [usize; 6] = [EYE, EAR, HAND, ACTS, PRESENCE, AFFECT];
 
 /// where goal candidates sit in the striatum's input ids (each effector's primitives after them)
 const ACT_BASE: usize = 1 << 25;
@@ -221,11 +225,13 @@ pub struct Config {
     /// the motor loops see the senses' sustained state, and valued groups take a larger share of
     /// the striatum's context (MIND_SALIENCE=0 off)
     pub salience: bool,
+    /// the senses' layer 4 cover every part of their input (MIND_COVERAGE=0 off)
+    pub coverage: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true }
     }
 }
 
@@ -251,6 +257,7 @@ impl Config {
             tonic: on("MIND_TONIC"),
             nogo: on("MIND_NOGO"),
             salience: on("MIND_SALIENCE"),
+            coverage: on("MIND_COVERAGE"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -280,7 +287,7 @@ pub struct Report {
     pub goals_taken: usize,
     /// an act released came from a column's goal (not a primitive)
     pub from_goal: bool,
-    /// the dopamine-producing valuations this step, `Q16`: (own effect, response, smile, unused: acting costs nothing)
+    /// the dopamine-producing valuations this step, `Q16`: (own effect, response, affective touch, effort)
     pub valued: [i32; 4],
     /// the hippocampus's offer reached the cortex
     pub recalled: bool,
@@ -315,7 +322,6 @@ pub struct Mind {
     /// each motor area, its primitives (the genome's pattern generators), and the sensing area
     /// its acts are sensed by (its result)
     motors: Vec<(usize, Vec<BitVector>, usize)>,
-    smile: BitVector,
     pons: BitVector,
     /// top-down input for the next step, per area: what is imagined
     topdown: Vec<(usize, BitVector)>,
@@ -359,6 +365,13 @@ impl Mind {
         b.attach("voice", Kind::Motor);
         b.attach("seen acts", Kind::Sensor);
         b.attach("presence", Kind::Sensor);
+        b.attach("affect", Kind::Sensor);
+        // coverage: every part of what each sense receives gets cells of its own
+        for a in SLOTS {
+            if let Some(l4) = b.areas[a].l4.as_mut() {
+                l4.coverage = cfg.coverage;
+            }
+        }
         let mut cb = CerebellarCircuit::new(131_072, BITS, ONE / 256, seed.wrapping_add(77));
         cb.set_rates(2, 0);
         cb.set_cross_frames(true);
@@ -384,7 +397,6 @@ impl Mind {
             ofc: Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC),
             efference_now: Vec::new(),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
-            smile: body.smile,
             pons: zero(),
             topdown: Vec::new(),
             prev_in: vec![zero(); SLOTS.len()],
@@ -411,7 +423,7 @@ impl Mind {
         for (w, x) in onset.as_words_mut().iter_mut().zip(self.prev_in[0].as_words()) {
             *w &= !x;
         }
-        vec![s.eye.clone(), s.ear.clone(), s.touch.clone(), onset, s.presence.clone()]
+        vec![s.eye.clone(), s.ear.clone(), s.touch.clone(), onset, s.presence.clone(), s.affect.clone()]
     }
 
     fn slot(a: usize) -> usize {
@@ -547,9 +559,9 @@ impl Mind {
         if self.cfg.response && s.presence.count_ones() > 0 && ear_onset && after {
             r[1] += if self.cfg.contingency { (self.p_after - self.p_else).max(0) / 2 } else { ONE as i32 / 2 };
         }
-        if overlap(&s.presence, &self.smile) * 2 >= self.smile.count_ones() as u32 {
-            r[2] += ONE as i32;
-        }
+        // affective touch: the receptor line's own activity is its value (a labelled line), as
+        // strong as the stroke is wide on the skin
+        r[2] += ((raw[Self::slot(AFFECT)].count_ones() as i32 * ONE as i32) / ACTIVE as i32).min(ONE as i32);
         // outcomes go to the critic; its own effect, with agency, trains the motor
         // loops' last choices directly
         for (k, &x) in r.iter().enumerate() {
@@ -564,7 +576,7 @@ impl Mind {
         }
         self.report.valued = r;
         if self.cfg.amygdala || self.cfg.imagine_value || self.cfg.learned_pause {
-            // the amygdala learns what outcomes are worth (a response, a smile), not the surprise of
+            // the amygdala learns what outcomes are worth (a response, a touch), not the surprise of
             // its own acts' effects (agency, not value)
             self.report.amy_predicted = self.amy.predicted();
             self.amy.learn(r[1] + r[2]);
@@ -579,7 +591,7 @@ impl Mind {
         // the critic (ventral striatum) sees its own territory with topography: the limbic
         // inputs (the amygdala's attended cues, the hippocampus's recall, working memory, and
         // someone's presence); without, everything
-        let mut all = if self.cfg.topographic { self.state_groups(&[ColumnId::Sense(PRESENCE)], &[], true, true) } else { self.state_groups(&ids, &ids, true, true) };
+        let mut all = if self.cfg.topographic { self.state_groups(&[ColumnId::Sense(PRESENCE), ColumnId::Sense(AFFECT)], &[], true, true) } else { self.state_groups(&ids, &ids, true, true) };
         // and the amygdala's value cells firing on the cues now: the basolateral amygdala drives
         // the ventral striatum (and through it the dopamine neurons) at the cue
         if self.cfg.amygdala && self.cfg.amy_critic {

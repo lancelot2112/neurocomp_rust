@@ -5,11 +5,16 @@
 //!   The body carries them out: a command that matches no motor pattern does nothing.
 //! - **The world answers with senses** (`Senses`): what the eye sees (the screen: the cursors,
 //!   an open book's words, what moved), what the ear hears (one's own voice, someone else's,
-//!   silence), what the hand feels (its motion, the texture and edges under the cursor), and
-//!   whether someone is there and attending, and smiling.
-//! - **The world gives no rewards.** Nothing in `Senses` says good or bad. A smile is a sight
-//!   like any other; that it is valued is the mind's (innate) business, as is valuing its own
-//!   effect on what it senses.
+//!   silence), what the hand feels (its motion, the texture and edges under the cursor),
+//!   whether someone is there and attending, and affective touch on the skin.
+//! - **Affective touch** is a sense like the others, with its own physics: a slow, gentle stroke
+//!   on the skin (the stimulus C-tactile afferents respond to) activates a run of neighbouring
+//!   receptors on the skin's map. Only another person can give it: this body's one effector
+//!   moves a mouse and cannot reach its own skin (and in the brain, touch one makes oneself is
+//!   attenuated by the efference copy: one cannot tickle oneself).
+//! - **The world gives no rewards.** Nothing in `Senses` says good or bad. That a stroke is
+//!   pleasant is a property of the mind's receptors for it (a labelled line, as sweet taste or
+//!   pain is), not of the world, as is valuing its own effect on what it senses.
 //! - **Other people respond only to what they can observe:** a word said aloud (never a word
 //!   meant or said inwardly), an act on the screen.
 //!   - *The caregiver* (speech play) is there now and then; when there, they mostly answer a
@@ -17,15 +22,15 @@
 //!   - *The teacher* (lessons) reads a story from a book, opening it on screen with their own
 //!     cursor; pauses; asks "now read it" or "now tell it"; waits (showing how to open the book,
 //!     on their own copy, if asked to); then either does the task or listens while the child does.
-//!     Listening, they smile at a right word said aloud, and (if correcting) say the right word
-//!     after a wrong one. If the child chimes in while the teacher is talking, a right next word
-//!     gets a smile and the teacher goes on from there; a wrong one, the teacher says the word.
+//!     Listening, they give a stroke (a pat) for a right word said aloud, and (if correcting) say
+//!     the right word after a wrong one. If the child chimes in while the teacher is talking, a
+//!     right next word gets a stroke and the teacher goes on from there; a wrong one, the teacher
+//!     says the word.
 //! - **Scoring is not the world's job either:** each step leaves an `Event` record (what was said
 //!   and by whom, what was wanted) for an observer outside both.
 //!
 //! The body's motor primitives (the syllables its brainstem can produce, the hand's basic
-//! moves) and the receptors' innate tuning (a smile) are given to the mind at birth (`Body`):
-//! that is the genome's part, not the world's.
+//! moves) are given to the mind at birth (`Body`): that is the genome's part, not the world's.
 
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -110,6 +115,9 @@ pub struct Senses {
     pub ear: BitVector,
     pub touch: BitVector,
     pub presence: BitVector,
+    /// affective touch: a gentle, slow stroke on the skin (C-tactile afferents), as a run of
+    /// neighbouring receptors on the skin's map; nothing when no one strokes
+    pub affect: BitVector,
 }
 
 /// What the mind does this step: a command to each effector, or none.
@@ -120,12 +128,10 @@ pub struct Acts {
 }
 
 /// What the genome gives the mind: the body's motor primitives (commands its pattern
-/// generators can produce spontaneously) and innately tuned receptors.
+/// generators can produce spontaneously).
 pub struct Body {
     pub voice: Vec<BitVector>,
     pub hand: Vec<BitVector>,
-    /// a smile, as the presence sense reports it (an innately recognised face pattern)
-    pub smile: BitVector,
 }
 
 /// The hand's moves.
@@ -156,16 +162,16 @@ pub enum Phase {
     Conditioning,
 }
 
-/// A conditioning scene's kind (a caregiver is there throughout; a smile is the outcome).
+/// A conditioning scene's kind (a caregiver is there throughout; a stroke on the skin is the outcome).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Conditioning {
-    /// a tone (CS+, half the trials) is followed two steps later by a smile; another tone (CS−)
+    /// a tone (CS+, half the trials) is followed two steps later by a stroke; another tone (CS−)
     /// by nothing; nothing to do
     Pavlov,
     /// a light is on for three steps (half the trials); a click while it is on, or the step
-    /// after, gets a smile; clicks at other times get nothing
+    /// after, gets a stroke; clicks at other times get nothing
     Instrumental,
-    /// a light is on for one step; a click three to five steps later gets a smile
+    /// a light is on for one step; a click three to five steps later gets a stroke
     Delayed,
 }
 
@@ -181,8 +187,8 @@ pub struct Event {
     pub moved: Option<usize>,
     /// a book opened by the child
     pub opened: bool,
-    /// the teacher smiled
-    pub smiled: bool,
+    /// the teacher stroked
+    pub stroked: bool,
     /// in conditioning: (the trial's step, a cue trial: the CS+ or the light)
     pub cond: Option<(usize, bool)>,
 }
@@ -225,7 +231,7 @@ enum Scene {
     /// books on some places; steps left
     MousePlay { left: usize },
     Lesson(LessonState),
-    /// (kind, trials left, step in the trial, a cue trial, smiled this trial)
+    /// (kind, trials left, step in the trial, a cue trial, stroked this trial)
     Conditioning(Conditioning, usize, usize, bool, bool),
 }
 
@@ -243,7 +249,7 @@ struct LessonState {
     t: usize,
     /// the teacher owes a word next step (a correction or a word the child talked over)
     owed: Option<usize>,
-    smile_next: bool,
+    stroke_next: bool,
     started_task: bool,
     steps: usize,
 }
@@ -262,7 +268,6 @@ pub struct World {
     modes: Vec<BitVector>,
     edges: Vec<BitVector>,
     attending: BitVector,
-    smile: BitVector,
     /// conditioning cues: two tones (heard) and a light (seen)
     tones: Vec<BitVector>,
     light: BitVector,
@@ -279,11 +284,11 @@ pub struct World {
     present: bool,
     /// a word of the teacher's book in view this step
     glyph_now: Option<usize>,
-    /// a conditioning cue sounding or in view this step, and a smile owed next step
+    /// a conditioning cue sounding or in view this step, and a stroke owed next step
     extra_sound: Option<BitVector>,
     extra_sight: Option<BitVector>,
-    smile_next: bool,
-    smile_pending: bool,
+    stroke_next: bool,
+    stroke_pending: bool,
     scene: Scene,
     pub events: Vec<Event>,
 }
@@ -319,7 +324,6 @@ impl World {
             modes,
             edges,
             attending: face[0].clone(),
-            smile: face[1].clone(),
             tones: codes(2, ACTIVE, &mut r(0x7070)),
             light: codes(1, ACTIVE, &mut r(0x1167)).remove(0),
             tract,
@@ -333,8 +337,8 @@ impl World {
             glyph_now: None,
             extra_sound: None,
             extra_sight: None,
-            smile_next: false,
-            smile_pending: false,
+            stroke_next: false,
+            stroke_pending: false,
             scene: Scene::Idle,
             events: Vec::new(),
         }
@@ -345,7 +349,6 @@ impl World {
         Body {
             voice: (0..self.tract.len()).map(|w| self.tract.command(w).clone()).collect(),
             hand: (0..MOVES).map(|m| self.mouse.command(m).clone()).collect(),
-            smile: self.smile.clone(),
         }
     }
 
@@ -432,7 +435,7 @@ impl World {
         // the wait: long enough, with a book to open, for the teacher to show how from anywhere
         let wait_left = if lesson.task == Task::Read { 3 + self.places.len() - 1 } else { 3 };
         self.present = true;
-        self.scene = Scene::Lesson(LessonState { lesson, queue, target, wait_left, tcur: None, tdone: false, t: 0, owed: None, smile_next: false, started_task: false, steps: 0 });
+        self.scene = Scene::Lesson(LessonState { lesson, queue, target, wait_left, tcur: None, tdone: false, t: 0, owed: None, stroke_next: false, started_task: false, steps: 0 });
     }
 
     /// A story's words, as indices.
@@ -460,7 +463,7 @@ impl World {
 
     /// One step: the mind's acts are carried out, the people respond, and the senses report.
     pub fn step(&mut self, acts: &Acts) -> Senses {
-        let mut ev = Event { phase: Phase::Pause, want: None, said: Vec::new(), moved: None, opened: false, smiled: false, cond: None };
+        let mut ev = Event { phase: Phase::Pause, want: None, said: Vec::new(), moved: None, opened: false, stroked: false, cond: None };
         // the body: the voice says a word (or silence, or nothing for a garbled command)
         let said = acts.voice.as_ref().and_then(|c| self.tract.articulate(c));
         let child_word = said.filter(|&w| w < self.vocab.len());
@@ -489,7 +492,7 @@ impl World {
         let mut heard: Option<usize> = said;
         let mut eye = zero();
         let mut teacher_motion: Option<usize> = None;
-        let mut smile = false;
+        let mut stroke = false;
         // the people
         let scene = std::mem::replace(&mut self.scene, Scene::Idle);
         self.scene = match scene {
@@ -526,7 +529,7 @@ impl World {
                     Scene::Idle
                 }
             }
-            Scene::Conditioning(kind, left, t, cue, mut smiled) => {
+            Scene::Conditioning(kind, left, t, cue, mut stroked) => {
                 ev.phase = Phase::Conditioning;
                 ev.cond = Some((t, cue));
                 let click = moved == Some(CLICK);
@@ -536,30 +539,30 @@ impl World {
                             self.extra_sound = Some(self.tones[if cue { 0 } else { 1 }].clone());
                         }
                         if t == 4 && cue {
-                            smile = true;
+                            stroke = true;
                         }
                     }
                     Conditioning::Instrumental => {
                         if cue && (2..=4).contains(&t) {
                             self.extra_sight = Some(self.light.clone());
                         }
-                        if cue && click && (3..=5).contains(&t) && !smiled {
-                            self.smile_next = true;
-                            smiled = true;
+                        if cue && click && (3..=5).contains(&t) && !stroked {
+                            self.stroke_next = true;
+                            stroked = true;
                         }
                     }
                     Conditioning::Delayed => {
                         if cue && t == 2 {
                             self.extra_sight = Some(self.light.clone());
                         }
-                        if cue && click && (5..=7).contains(&t) && !smiled {
-                            self.smile_next = true;
-                            smiled = true;
+                        if cue && click && (5..=7).contains(&t) && !stroked {
+                            self.stroke_next = true;
+                            stroked = true;
                         }
                     }
                 }
                 if t + 1 < 10 {
-                    Scene::Conditioning(kind, left, t + 1, cue, smiled)
+                    Scene::Conditioning(kind, left, t + 1, cue, stroked)
                 } else if left > 1 {
                     let cue = self.rng.gen_bool(0.5);
                     Scene::Conditioning(kind, left - 1, 0, cue, false)
@@ -569,7 +572,7 @@ impl World {
                 }
             }
             Scene::Lesson(mut l) => {
-                let done = self.lesson_step(&mut l, child_word, &mut heard, &mut ev, &mut teacher_motion, &mut smile);
+                let done = self.lesson_step(&mut l, child_word, &mut heard, &mut ev, &mut teacher_motion, &mut stroke);
                 if done {
                     self.present = false;
                     self.page = None;
@@ -579,13 +582,13 @@ impl World {
                 }
             }
         };
-        if std::mem::take(&mut self.smile_pending) {
-            smile = true;
+        if std::mem::take(&mut self.stroke_pending) {
+            stroke = true;
         }
-        if std::mem::take(&mut self.smile_next) {
-            self.smile_pending = true;
+        if std::mem::take(&mut self.stroke_next) {
+            self.stroke_pending = true;
         }
-        ev.smiled = smile;
+        ev.stroked = stroke;
         // the eye: the screen (the cursors, what moved, an open page's next word)
         or_into(&mut eye, &self.cursor_seen[self.cursor]);
         if let Scene::Lesson(l) = &self.scene {
@@ -630,8 +633,14 @@ impl World {
         if self.present {
             or_into(&mut presence, &self.attending);
         }
-        if smile {
-            or_into(&mut presence, &self.smile);
+        // affective touch: a slow stroke on the skin, a run of neighbouring receptors on the skin's
+        // map (C-tactile afferents), wherever the hand lands
+        let mut affect = BitVector::new(BITS, Some(0));
+        if stroke {
+            let at = self.rng.gen_range(0..BITS - ACTIVE);
+            for b in at..at + ACTIVE {
+                affect.bit_set(b);
+            }
         }
         self.felt = moved;
         self.events.push(ev);
@@ -639,13 +648,13 @@ impl World {
         if let (Some(t), None) = (self.extra_sound.take(), heard) {
             ear = t;
         }
-        Senses { eye, ear, touch, presence }
+        Senses { eye, ear, touch, presence, affect }
     }
 
     /// The teacher's part of a lesson step. Returns whether the lesson is over.
-    fn lesson_step(&mut self, l: &mut LessonState, child_word: Option<usize>, heard: &mut Option<usize>, ev: &mut Event, teacher_motion: &mut Option<usize>, smile: &mut bool) -> bool {
-        if std::mem::take(&mut l.smile_next) {
-            *smile = true;
+    fn lesson_step(&mut self, l: &mut LessonState, child_word: Option<usize>, heard: &mut Option<usize>, ev: &mut Event, teacher_motion: &mut Option<usize>, stroke: &mut bool) -> bool {
+        if std::mem::take(&mut l.stroke_next) {
+            *stroke = true;
         }
         // a word the teacher owes (said after the child's turn), if the child is quiet now
         // (if the child talks over it, the teacher lets it go)
@@ -666,12 +675,12 @@ impl World {
         if let Some((phase, w)) = l.queue.front().copied() {
             ev.phase = phase;
             match (child_word, w) {
-                // the child chimes in: a right next word is smiled at and the teacher goes on; a
+                // the child chimes in: a right next word is stroked at and the teacher goes on; a
                 // wrong one, the teacher says the word after it
                 (Some(c), Some(w)) => {
                     l.queue.pop_front();
                     if c == w {
-                        l.smile_next = true;
+                        l.stroke_next = true;
                     } else {
                         l.owed = Some(w);
                     }
@@ -738,13 +747,13 @@ impl World {
         ev.want = Some(want);
         if l.lesson.child_does {
             match child_word {
-                Some(c) if c == want => l.smile_next = true,
+                Some(c) if c == want => l.stroke_next = true,
                 Some(_) if l.lesson.correct => l.owed = Some(want),
                 _ => {}
             }
         } else {
             match child_word {
-                Some(c) if c == want => l.smile_next = true,
+                Some(c) if c == want => l.stroke_next = true,
                 Some(_) => l.owed = Some(want),
                 None => {
                     *heard = Some(want);

@@ -132,7 +132,7 @@ fn main() {
             by_phase[k][0] += 1;
             by_phase[k][1] += e.said.iter().any(|s| s.0 == Who::Child) as usize;
             by_phase[k][2] += e.moved.is_some() as usize;
-            by_phase[k][3] += e.smiled as usize;
+            by_phase[k][3] += e.stroked as usize;
             if let (Phase::Task(true), Some(w)) = (e.phase, e.want) {
                 t.words += 1;
                 match e.said.iter().find(|s| s.0 == Who::Child) {
@@ -161,7 +161,7 @@ fn main() {
         if !testing && (lesson + 1) % 500 == 0 {
             let names = ["story", "instr", "wait", "task-T", "task-C", "pause"];
             let line: Vec<String> = (0..6).map(|k| format!("{} {}/{}/{}/{}", names[k], by_phase[k][0], by_phase[k][1], by_phase[k][2], by_phase[k][3])).collect();
-            println!("  phases (steps/aloud/moves/smiles): {}; {:.0} steps per lesson", line.join(", "), steps as f64 / 500.0);
+            println!("  phases (steps/aloud/moves/touches): {}; {:.0} steps per lesson", line.join(", "), steps as f64 / 500.0);
             by_phase = [[0usize; 4]; 6];
             steps = 0;
             println!(
@@ -187,7 +187,7 @@ fn main() {
     }
     let names = ["speech play", "mouse play", "training", "test"];
     for (k, v) in valued.iter().enumerate() {
-        println!("  dopamine from {:<11}: own effect {:.1}, response {:.1}, smile {:.1}, effort {:.1}", names[k], v[0] as f64 / 65536.0, v[1] as f64 / 65536.0, v[2] as f64 / 65536.0, v[3] as f64 / 65536.0);
+        println!("  dopamine from {:<11}: own effect {:.1}, response {:.1}, touch {:.1}, effort {:.1}", names[k], v[0] as f64 / 65536.0, v[1] as f64 / 65536.0, v[2] as f64 / 65536.0, v[3] as f64 / 65536.0);
     }
     for (k, x) in inner.iter().enumerate() {
         println!("  {:<11}: {} steps; goals taken per step {:.2}; acts {} ({} from a goal); imagined {}; recall reached the cortex on {:.0}% of steps", names[k], x[0], x[1] as f64 / x[0].max(1) as f64, x[3], x[2], x[4], 100.0 * x[5] as f64 / x[0].max(1) as f64);

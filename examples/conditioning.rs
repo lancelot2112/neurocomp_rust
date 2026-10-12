@@ -35,7 +35,7 @@ fn main() {
     let mut acts = Acts::default();
     let block = 100;
     // per block, per cue (false, true): (value at the cue step, dopamine at the cue step, cue
-    // steps, dopamine at the smile step, smile steps, clicks in the window, trials, smiles)
+    // steps, dopamine at the touch step, touch steps, clicks in the window, trials, smiles)
     let mut stats = [[(0i64, 0i64, 0usize, 0i64, 0usize, 0usize, 0usize, 0usize); 2]; 64];
     // the amygdala's prediction at the smile's step (step 4), per block and cue
     let mut amy = [[0i64; 2]; 64];
@@ -45,7 +45,7 @@ fn main() {
     let mut tonic_sum = 0usize;
     // diagnosis: how much the eye's and the seen-acts area's codes change when the light comes on
     // (overlap of the step-2 code with the step-1 code, on light trials), summed per block
-    let mut light_seen = [(0u64, 0u64, 0u64); 64];
+    let mut light_seen = [(0u64, 0u64, 0u64, 0u64); 64];
     let mut prev_eye: Option<neurocomp::bitvec::BitVector> = None;
     while !world.done() {
         let senses = world.step(&acts);
@@ -57,6 +57,7 @@ fn main() {
                 light_seen[b].0 += overlap(&code, p) as u64;
                 light_seen[b].1 += mind.brain.encode_only(ACTS, &senses.eye).count_ones() as u64;
                 light_seen[b].2 += 1;
+                light_seen[b].3 += code.count_ones() as u64;
             }
             prev_eye = Some(code);
         }
@@ -85,7 +86,7 @@ fn main() {
         if t == 4 {
             amy[b][cue as usize] += r.amy_predicted as i64;
         }
-        if ev.smiled {
+        if ev.stroked {
             x.3 += r.delta as i64;
             x.4 += 1;
             x.7 += 1;
@@ -110,7 +111,7 @@ fn main() {
         let (no, yes) = (s[0], s[1]);
         match kind {
             Conditioning::Pavlov => println!(
-                "  trials {:4}-{:4}: at the tone, value CS+ {:+.3} CS- {:+.3}, dopamine CS+ {:+.3} CS- {:+.3}; dopamine at the smile {:+.3}; amygdala's prediction there CS+ {:+.3} CS- {:+.3}",
+                "  trials {:4}-{:4}: at the tone, value CS+ {:+.3} CS- {:+.3}, dopamine CS+ {:+.3} CS- {:+.3}; dopamine at the touch {:+.3}; amygdala's prediction there CS+ {:+.3} CS- {:+.3}",
                 b * block,
                 (b + 1) * block,
                 f(yes.0, yes.2),
@@ -122,7 +123,7 @@ fn main() {
                 f(amy[b][0], no.6)
             ),
             _ => println!(
-                "  trials {:4}-{:4}: clicks in the window per trial, cue {:.2} no cue {:.2}; smiles per cue trial {:.2}; value at the cue {:+.3} (no cue {:+.3})",
+                "  trials {:4}-{:4}: clicks in the window per trial, cue {:.2} no cue {:.2}; touches per cue trial {:.2}; value at the cue {:+.3} (no cue {:+.3})",
                 b * block,
                 (b + 1) * block,
                 yes.5 as f64 / yes.6.max(1) as f64,
@@ -134,7 +135,7 @@ fn main() {
         }
     }
     for (b, x) in light_seen.iter().enumerate().filter(|x| x.1 .2 > 0) {
-        println!("  block {b}: the light comes on: the eye's code keeps {:.1} of 32 cells from the step before; the seen-acts area codes {:.1} cells", x.0 as f64 / x.2 as f64, x.1 as f64 / x.2 as f64);
+        println!("  block {b}: the light comes on: the eye's code has {:.1} cells, {:.1} of them from the step before; the seen-acts area codes {:.1} cells", x.3 as f64 / x.2 as f64, x.0 as f64 / x.2 as f64, x.1 as f64 / x.2 as f64);
     }
     println!("amygdala cells (appetitive, aversive, pause): {:?}; orbitofrontal {:?}", mind.amy.cells(), mind.ofc.cells());
     println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}, tonic noise {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64, tonic_sum as f64 / sizes.0 as f64);

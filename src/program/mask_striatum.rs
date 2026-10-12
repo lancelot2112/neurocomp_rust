@@ -341,7 +341,7 @@ pub struct MaskStriatum {
     /// plasticity for the dopamine that closes this step whatever its size
     pub pause_open: bool,
     /// holding back is a choice too: a candidate the loop withheld is recorded, and the dopamine
-    /// that follows trains its no-go side (the indirect pathway learning from outcomes)
+    /// that follows trains its no-go cells only (a dip potentiates them, a burst depresses them)
     pub learn_nogo: bool,
     /// the input groups the next choices see instead of the whole state (a loop's own cortical
     /// territory: corticostriatal topography), with their context
@@ -675,13 +675,29 @@ impl MaskStriatum {
             if !pause {
                 continue;
             }
-            // a candidate held back: the dopamine that follows trains the no-go side (a burst:
-            // holding back was right here; a dip: it was wrong)
+            // a candidate held back: its no-go cells (the indirect pathway's, D2) were the active
+            // ones, and only they change (Shen et al. 2008; Frank 2005). A dip potentiates them
+            // (holding back here is reinforced: the cells that fired move toward the context and
+            // new ones are recruited); a burst depresses them (those that fired move away, so the
+            // act is likelier next time). The go cells were silent and do not change.
             if self.grow {
                 for (ch, x) in &st.withheld {
-                    let pair = &mut self.pools[*ch][1];
-                    let (more, fewer) = if delta > 0 { (&mut pair.1, &mut pair.0) } else { (&mut pair.0, &mut pair.1) };
-                    self.swaps += Self::grow_learn(more, fewer, x, bits, false, false, self.clock, &mut self.rng);
+                    let nogo = &mut self.pools[*ch][1].1;
+                    let fired = nogo.firing(x, None);
+                    if delta < 0 {
+                        for &i in &fired {
+                            nogo.cells[i].0.swap(x, 1, false, &mut self.rng);
+                            nogo.cells[i].1 = self.clock;
+                        }
+                        for _ in 0..bits {
+                            nogo.recruit(x, self.clock, &mut self.rng);
+                        }
+                    } else {
+                        for &i in fired.iter().take(bits) {
+                            nogo.cells[i].0.away(x, 2, &mut self.rng);
+                        }
+                    }
+                    self.swaps += (fired.len() + bits) as u64;
                 }
             }
             for (ch, a, x) in &st.choices {

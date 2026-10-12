@@ -980,6 +980,27 @@ impl Mind {
         groups
     }
 
+    /// For a viewer: what is active now, by name, as bit indices (each a 2048-bit area unless
+    /// noted): the senses' layer 4 codes, working memory, the orbitofrontal state and what it
+    /// holds, the amygdala's onsets now (features, 6 × 2048) and its value cells firing.
+    pub fn snapshot(&self) -> Vec<(&'static str, Vec<usize>)> {
+        let names = ["eye", "ear", "hand", "acts", "presence", "affect"];
+        let mut v: Vec<(&'static str, Vec<usize>)> = names.iter().enumerate().map(|(k, n)| (*n, ones(&self.prev_codes[k]))).collect();
+        v.push(("wm", ones(&self.wm.content())));
+        v.push(("ofc_z", ones(&self.ofc_area.z())));
+        v.push(("ofc_held", ones(&self.ofc_area.held)));
+        v.push(("amy_onsets", self.amy.trace_at(0).iter().map(|&f| f as usize).collect()));
+        v.push(("amy_value", self.amy.value_cells().into_iter().map(|c| c % 8192).collect()));
+        v
+    }
+
+    /// For a viewer: the hand loop's latest choice (its context, and the masks of the go and
+    /// no-go cells that fired there), and its pools' sizes.
+    pub fn hand_view(&self) -> (Option<(Vec<usize>, Vec<Vec<usize>>, Vec<Vec<usize>>)>, (usize, usize)) {
+        let (l, _) = motor_channels(HAND);
+        (self.bg.choice_view(l), self.bg.pool_sizes(l))
+    }
+
     /// Whether the orbitofrontal value cells read the area's state.
     fn value_z(&self) -> bool {
         self.cfg.ofc_column && self.cfg.ofc_value_z

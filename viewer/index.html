@@ -1,0 +1,344 @@
+<title>Bitfield Scope</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+/* Layout: a bench instrument. Transport and timeline on top, then the mind's areas as bit grids,
+   grouped the way signal flows: senses → association/prefrontal/orbitofrontal → amygdala → striatum. */
+:root {
+  --bg: #eceff3;
+  --panel: #f7f8fa;
+  --fg: #18202b;
+  --muted: #5c6878;
+  --line: #cfd6df;
+  --cell: #dde2e9;
+  --glow: #e58a00;      /* a bit firing */
+  --glow-hot: #ffcf5c;  /* a bit just set */
+  --burst: #0d8f86;     /* dopamine above 0 */
+  --dip: #c2375a;       /* dopamine below 0 */
+  --go: #2b67d1;        /* go (D1) cell masks */
+  --nogo: #c2375a;      /* no-go (D2) cell masks */
+  --light: #f2c94c;     /* the cue light */
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f131a; --panel: #151b24; --fg: #dfe5ee; --muted: #8c99aa; --line: #263040;
+    --cell: #1d2531; --glow: #ffa31a; --glow-hot: #ffe08a; --burst: #29c2b6; --dip: #ff5c86;
+    --go: #5b93ff; --nogo: #ff5c86; --light: #f2c94c; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f131a; --panel: #151b24; --fg: #dfe5ee; --muted: #8c99aa; --line: #263040;
+  --cell: #1d2531; --glow: #ffa31a; --glow-hot: #ffe08a; --burst: #29c2b6; --dip: #ff5c86;
+  --go: #5b93ff; --nogo: #ff5c86; --light: #f2c94c; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 14px/1.45 var(--body); }
+.wrap { padding-inline: 16px; padding-block: 16px 32px; max-width: 1480px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+h1 { font: 700 1.6rem/1.1 var(--display); margin: 0; letter-spacing: -0.01em; }
+.sub { color: var(--muted); font-size: 0.92rem; min-width: 0; }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); padding-block: 8px; display: grid; gap: 8px; }
+.transport { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+button, .file { font: 500 0.85rem var(--body); color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button:hover, .file:hover { border-color: var(--muted); }
+button:focus-visible, input:focus-visible, .file:focus-within { outline: 2px solid var(--go); outline-offset: 2px; }
+button.primary { background: var(--fg); color: var(--bg); border-color: var(--fg); min-width: 5.5em; }
+.file input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+label.ctl { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--muted); }
+label.ctl input[type=range] { width: 120px; accent-color: var(--glow); }
+.readout { font: 0.8rem/1.3 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.readout b { color: var(--fg); font-weight: 500; }
+.chip { display: inline-block; padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); }
+.chip.on { background: var(--light); color: #2a2100; border-color: var(--light); }
+.chip.click { background: var(--go); color: #fff; border-color: var(--go); }
+.chip.stroke { background: var(--burst); color: #fff; border-color: var(--burst); }
+#scrub { width: 100%; accent-color: var(--glow); }
+.timeline { width: 100%; height: 92px; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.group { display: grid; gap: 8px; }
+.group h2 { font: 700 0.78rem var(--body); text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 0; }
+.panels { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.panels.wide { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+figure { margin: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 8px; display: grid; gap: 6px; min-width: 0; }
+figcaption { display: flex; justify-content: space-between; gap: 8px; font-size: 0.8rem; }
+figcaption span:first-child { font-weight: 500; }
+figcaption .n { font: 0.75rem var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+canvas.grid { width: 100%; height: auto; display: block; image-rendering: pixelated; }
+.note { font-size: 0.78rem; color: var(--muted); max-width: 70ch; margin: 0; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 0.78rem; color: var(--muted); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+.err { color: var(--dip); font-size: 0.85rem; }
+@media (prefers-reduced-motion: reduce) { .timeline { transition: none; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Bitfield Scope</h1>
+    <p class="sub" id="sub">Loading the recorded run…</p>
+  </header>
+
+  <div class="bar">
+    <div class="transport">
+      <button id="play" class="primary" type="button">Play</button>
+      <button id="back" type="button" aria-label="Step back">◀ Step</button>
+      <button id="fwd" type="button" aria-label="Step forward">Step ▶</button>
+      <label class="ctl" for="speed">Speed <input id="speed" type="range" min="0" max="100" value="38"> <span id="speedv" class="readout">2.0 steps/s</span></label>
+      <label class="ctl" for="fade">Fade <input id="fade" type="range" min="1" max="100" value="45"> <span id="fadev" class="readout">0.9 s</span></label>
+      <label class="file" for="load">Load a trace…<input id="load" type="file" accept=".json,application/json"></label>
+      <span id="err" class="err" hidden></span>
+    </div>
+    <input id="scrub" type="range" min="0" max="0" value="0" aria-label="Step">
+    <canvas id="timeline" class="timeline" aria-label="Timeline: dopamine, value, frustration and events"></canvas>
+    <div class="readout" id="readout"></div>
+  </div>
+
+  <div class="legend">
+    <span><i class="sw" style="background:var(--glow-hot)"></i>bit just set</span>
+    <span><i class="sw" style="background:var(--glow)"></i>bit on</span>
+    <span><i class="sw" style="background:var(--cell)"></i>bit off (fading)</span>
+    <span><i class="sw" style="background:var(--go)"></i>go cell masks</span>
+    <span><i class="sw" style="background:var(--nogo)"></i>no-go cell masks</span>
+    <span><i class="sw" style="background:var(--burst)"></i>dopamine burst</span>
+    <span><i class="sw" style="background:var(--dip)"></i>dopamine dip</span>
+  </div>
+
+  <section class="group">
+    <h2>Senses · layer 4 codes</h2>
+    <div class="panels" id="g-senses"></div>
+  </section>
+  <section class="group">
+    <h2>Prefrontal and orbitofrontal</h2>
+    <div class="panels" id="g-pfc"></div>
+  </section>
+  <section class="group">
+    <h2>Amygdala</h2>
+    <div class="panels wide" id="g-amy"></div>
+  </section>
+  <section class="group">
+    <h2>Striatum · the hand loop's choice</h2>
+    <p class="note">The context the hand loop's latest choice saw: 32 regions of 64 bits, one region per input group (the candidate act in the last row). Outlines are the masks of the go and no-go cells that fired on it; a cell fires when every region it samples has 5 of its 8 bits present.</p>
+    <div class="panels wide" id="g-str"></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  // panels: key in the trace, title, bits, columns, group, what it is
+  const PANELS = [
+    ["eye", "Eye", 2048, 64, "g-senses", "what is seen"],
+    ["ear", "Ear", 2048, 64, "g-senses", "what is heard"],
+    ["acts", "Seen acts", 2048, 64, "g-senses", "the cursor's moves"],
+    ["presence", "Presence", 2048, 64, "g-senses", "someone there"],
+    ["affect", "Affective touch", 2048, 64, "g-senses", "the stroke"],
+    ["wm", "Working memory", 2048, 64, "g-pfc", "what a loop loaded"],
+    ["ofc_z", "Orbitofrontal state Z", 2048, 64, "g-pfc", "layer 2/3 activity"],
+    ["ofc_held", "Orbitofrontal held", 2048, 64, "g-pfc", "on its tuft"],
+    ["amy_onsets", "Onsets (cues), by area", 12288, 192, "g-amy", "eye · ear · hand · acts · presence · affect"],
+    ["amy_value", "Value cells firing", 8192, 128, "g-amy", "appetitive · aversive · baseline"],
+    ["ctx", "Hand loop context", 2048, 64, "g-str", "32 regions × 64"],
+  ];
+  const $ = (id) => document.getElementById(id);
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  let colors = {};
+  const readColors = () => {
+    for (const k of ["cell", "glow", "glow-hot", "go", "nogo", "burst", "dip", "light", "fg", "muted", "line", "panel"]) colors[k] = css("--" + k);
+  };
+  const rgb = (hex) => { const h = hex.replace("#", ""); const n = parseInt(h.length === 3 ? h.split("").map(c => c + c).join("") : h, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; };
+  const mixc = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+  // one grid: intensity per bit (1 = just set, settles to `hold` while on, fades to 0 when off)
+  class Grid {
+    constructor(key, title, bits, cols, group, about) {
+      this.key = key; this.bits = bits; this.cols = cols; this.rows = Math.ceil(bits / cols);
+      this.level = new Float32Array(bits); this.on = new Uint8Array(bits); this.fresh = new Float32Array(bits);
+      this.go = new Uint16Array(bits); this.nogo = new Uint16Array(bits);
+      const fig = document.createElement("figure");
+      fig.innerHTML = `<figcaption><span>${title}</span><span class="n" data-n>0 on</span></figcaption>`;
+      this.canvas = document.createElement("canvas"); this.canvas.className = "grid";
+      this.canvas.setAttribute("aria-label", `${title}: ${about}`);
+      fig.appendChild(this.canvas);
+      const cap = document.createElement("div"); cap.className = "note"; cap.textContent = about; fig.appendChild(cap);
+      $(group).appendChild(fig);
+      this.count = fig.querySelector("[data-n]");
+      this.ctx = this.canvas.getContext("2d");
+      this.cell = key === "amy_onsets" ? 3 : key === "amy_value" ? 3 : key === "ctx" ? 7 : 4;
+      this.canvas.width = this.cols * this.cell; this.canvas.height = this.rows * this.cell;
+    }
+    set(bitsOn, go, nogo) {
+      const next = new Uint8Array(this.bits);
+      for (const b of bitsOn) if (b < this.bits) next[b] = 1;
+      for (let i = 0; i < this.bits; i++) {
+        if (next[i] && !this.on[i]) { this.level[i] = 1; this.fresh[i] = 1; }
+        this.on[i] = next[i];
+      }
+      this.go.fill(0); this.nogo.fill(0);
+      if (go) for (const m of go) for (const b of m) if (b < this.bits) this.go[b]++;
+      if (nogo) for (const m of nogo) for (const b of m) if (b < this.bits) this.nogo[b]++;
+      let n = 0; for (let i = 0; i < this.bits; i++) n += this.on[i];
+      let label = `${n} on`;
+      if (go) label += ` · ${go.length} go / ${nogo ? nogo.length : 0} no-go firing`;
+      this.count.textContent = label;
+    }
+    tick(dt, fade) {
+      const k = Math.exp(-dt / fade);
+      for (let i = 0; i < this.bits; i++) {
+        const target = this.on[i] ? 0.55 : 0;
+        this.level[i] = target + (this.level[i] - target) * k;
+        this.fresh[i] *= k;
+      }
+    }
+    draw() {
+      const c = this.ctx, s = this.cell, off = rgb(colors.cell), on = rgb(colors.glow), hot = rgb(colors["glow-hot"]);
+      const img = c.createImageData(this.canvas.width, this.canvas.height); const d = img.data;
+      const gap = s >= 4 ? 1 : 0;
+      const bg = rgb(colors.panel);
+      for (let i = 0; i < this.bits; i++) {
+        const x0 = (i % this.cols) * s, y0 = Math.floor(i / this.cols) * s;
+        const lv = Math.min(1, this.level[i] / 0.55);
+        let col = mixc(off, on, lv);
+        col = mixc(col, hot, Math.min(1, this.fresh[i]));
+        for (let y = 0; y < s; y++) for (let x = 0; x < s; x++) {
+          const p = ((y0 + y) * this.canvas.width + x0 + x) * 4;
+          const edge = gap && (x === s - 1 || y === s - 1);
+          const cc = edge ? bg : col;
+          d[p] = cc[0]; d[p + 1] = cc[1]; d[p + 2] = cc[2]; d[p + 3] = 255;
+        }
+      }
+      c.putImageData(img, 0, 0);
+      // cell masks as outlines (thicker where more cells share the bit)
+      if (this.key === "ctx") {
+        for (let i = 0; i < this.bits; i++) {
+          const x0 = (i % this.cols) * s, y0 = Math.floor(i / this.cols) * s;
+          if (this.go[i]) { c.strokeStyle = colors.go; c.lineWidth = Math.min(2.5, 1 + this.go[i] / 8); c.strokeRect(x0 + 0.75, y0 + 0.75, s - 2.5, s - 2.5); }
+          if (this.nogo[i]) { c.strokeStyle = colors.nogo; c.lineWidth = 1; c.beginPath(); c.moveTo(x0 + 1, y0 + s - 2); c.lineTo(x0 + s - 2, y0 + 1); c.stroke(); }
+        }
+      }
+    }
+  }
+
+  let grids = [], trace = null, step = 0, playing = false, acc = 0;
+  const speedOf = () => { const v = +$("speed").value; return Math.pow(10, -1 + v / 40); }; // 0.1 … ~31 steps/s
+  const fadeOf = () => 0.05 + Math.pow(+$("fade").value / 100, 1.6) * 3; // seconds
+  const showCtl = () => { $("speedv").textContent = speedOf().toFixed(speedOf() < 1 ? 2 : 1) + " steps/s"; $("fadev").textContent = fadeOf().toFixed(1) + " s"; };
+
+  function build() {
+    for (const id of ["g-senses", "g-pfc", "g-amy", "g-str"]) $(id).innerHTML = "";
+    grids = PANELS.map(p => new Grid(...p));
+  }
+
+  function apply(i) {
+    if (!trace) return;
+    step = Math.max(0, Math.min(trace.steps.length - 1, i));
+    const s = trace.steps[step];
+    for (const g of grids) {
+      if (g.key === "ctx") g.set(s.ctx || [], s.gm || [], s.nm || []);
+      else g.set((s.p && s.p[g.key]) || []);
+    }
+    $("scrub").value = step;
+    const f = (x) => (x >= 0 ? "+" : "") + x.toFixed(3);
+    $("readout").innerHTML =
+      `<span>step <b>${step + 1}</b>/${trace.steps.length}</span>` +
+      `<span>trial <b>${s.trial + 1}</b> · t <b>${s.t}</b></span>` +
+      `<span class="chip ${s.lit ? "on" : ""}">light ${s.lit ? "on" : "off"}</span>` +
+      (s.click ? `<span class="chip click">click</span>` : "") +
+      (s.stroke ? `<span class="chip stroke">stroke</span>` : "") +
+      (s.spoke ? `<span class="chip">spoke</span>` : "") +
+      `<span>dopamine <b style="color:${s.delta >= 0 ? "var(--burst)" : "var(--dip)"}">${f(s.delta)}</b></span>` +
+      `<span>value <b>${f(s.value)}</b></span>` +
+      `<span>frustration <b>${s.frus.toFixed(3)}</b></span>` +
+      `<span>amygdala expects <b>${f(s.amy)}</b></span>` +
+      `<span>hand pools <b>${s.go}</b> go / <b>${s.nogo}</b> no-go</span>`;
+    drawTimeline();
+  }
+
+  function drawTimeline() {
+    const cv = $("timeline"), dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    if (!w) return;
+    cv.width = w * dpr; cv.height = h * dpr; const c = cv.getContext("2d"); c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    c.clearRect(0, 0, w, h);
+    if (!trace) return;
+    const n = trace.steps.length, x = (i) => 6 + (i + 0.5) * (w - 12) / n, bw = Math.max(1, (w - 12) / n - 1);
+    const mid = h * 0.5, sc = h * 0.38;
+    const clamp = (v) => Math.max(-1, Math.min(1, v));
+    // light on, as a band
+    c.fillStyle = colors.light; c.globalAlpha = 0.28;
+    trace.steps.forEach((s, i) => { if (s.lit) c.fillRect(x(i) - bw / 2 - 0.5, 4, bw + 1, h - 8); });
+    c.globalAlpha = 1;
+    // zero line
+    c.strokeStyle = colors.line; c.lineWidth = 1; c.beginPath(); c.moveTo(6, mid); c.lineTo(w - 6, mid); c.stroke();
+    // dopamine bars
+    trace.steps.forEach((s, i) => { const v = clamp(s.delta); if (!v) return; c.fillStyle = v > 0 ? colors.burst : colors.dip; c.fillRect(x(i) - bw / 2, v > 0 ? mid - v * sc : mid, bw, Math.abs(v) * sc); });
+    // value and frustration lines
+    const line = (key, color, dash) => { c.strokeStyle = color; c.setLineDash(dash); c.lineWidth = 1.4; c.beginPath(); trace.steps.forEach((s, i) => { const y = mid - clamp(s[key]) * sc; i ? c.lineTo(x(i), y) : c.moveTo(x(i), y); }); c.stroke(); c.setLineDash([]); };
+    line("value", colors.fg, []); line("frus", colors.muted, [3, 3]);
+    // clicks and strokes
+    trace.steps.forEach((s, i) => {
+      if (s.click) { c.fillStyle = colors.go; c.fillRect(x(i) - 1.5, h - 10, 3, 6); }
+      if (s.stroke) { c.fillStyle = colors.burst; c.beginPath(); c.arc(x(i), 8, 3, 0, 7); c.fill(); }
+    });
+    // labels
+    c.font = `11px ${css("--mono").split(",")[0]}`; c.fillStyle = colors.muted;
+    c.fillText("+1", 8, mid - sc + 4); c.fillText("−1", 8, mid + sc + 4);
+    c.fillText("bars: dopamine · line: value · dashed: frustration · ● stroke · ▮ click · band: light", 30, h - 14 > 20 ? 14 : 12);
+    // playhead
+    c.strokeStyle = colors.glow; c.lineWidth = 2; c.beginPath(); c.moveTo(x(step), 2); c.lineTo(x(step), h - 2); c.stroke();
+  }
+
+  let last = performance.now();
+  function frame(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (playing && trace) {
+      acc += dt * speedOf();
+      while (acc >= 1) { acc -= 1; if (step < trace.steps.length - 1) apply(step + 1); else { setPlaying(false); break; } }
+    }
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const fade = reduce ? 0.02 : fadeOf();
+    for (const g of grids) { g.tick(dt, fade); g.draw(); }
+    requestAnimationFrame(frame);
+  }
+
+  function setPlaying(p) { playing = p; $("play").textContent = p ? "Pause" : "Play"; }
+
+  function load(data, name) {
+    if (!data || !Array.isArray(data.steps) || !data.steps.length) throw new Error("This file has no recorded steps. Record one with `cargo run --release --example trace`.");
+    trace = data; build();
+    $("scrub").max = data.steps.length - 1;
+    const m = data.meta || {};
+    $("sub").textContent = `${name}: ${m.kind || "run"}, seed ${m.seed ?? "?"}, ${data.steps.length} steps (trials ${(m.warm ?? 0) + 1}–${(m.warm ?? 0) + (m.trials ?? 0)} of a conditioning probe)`;
+    $("err").hidden = true;
+    for (const g of grids) { g.level.fill(0); g.on.fill(0); g.fresh.fill(0); }
+    apply(0);
+  }
+
+  $("play").onclick = () => setPlaying(!playing);
+  $("back").onclick = () => { setPlaying(false); apply(step - 1); };
+  $("fwd").onclick = () => { setPlaying(false); apply(step + 1); };
+  $("scrub").oninput = (e) => apply(+e.target.value);
+  $("speed").oninput = showCtl; $("fade").oninput = showCtl;
+  $("timeline").onclick = (e) => { if (!trace) return; const r = e.target.getBoundingClientRect(); apply(Math.floor((e.clientX - r.left - 6) / (r.width - 12) * trace.steps.length)); };
+  document.addEventListener("keydown", (e) => {
+    if (e.target.tagName === "INPUT" && e.target.type !== "range") return;
+    if (e.key === " ") { e.preventDefault(); setPlaying(!playing); }
+    if (e.key === "ArrowRight") { setPlaying(false); apply(step + 1); }
+    if (e.key === "ArrowLeft") { setPlaying(false); apply(step - 1); }
+  });
+  $("load").onchange = (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { try { setPlaying(false); load(JSON.parse(r.result), f.name); } catch (err) { $("err").textContent = "Could not read that trace: " + err.message; $("err").hidden = false; } };
+    r.readAsText(f);
+  };
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { readColors(); drawTimeline(); });
+  new MutationObserver(() => { readColors(); drawTimeline(); }).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  addEventListener("resize", drawTimeline);
+
+  readColors(); showCtl(); build();
+  fetch("trace.json").then(r => { if (!r.ok) throw new Error("no sample trace beside the page"); return r.json(); })
+    .then(d => load(d, "trace.json"))
+    .catch(err => { $("sub").textContent = "Load a trace recorded with the trace example."; $("err").textContent = err.message; $("err").hidden = false; });
+  requestAnimationFrame(frame);
+})();
+</script>

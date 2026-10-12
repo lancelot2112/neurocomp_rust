@@ -1115,6 +1115,18 @@ impl MaskStriatum {
         self.reward = 0;
     }
 
+    /// For a viewer: the context the latest choice on `channel` saw (if one was made at the
+    /// latest step), as bit indices, and the masks of its go and no-go cells that fired there.
+    pub fn choice_view(&self, channel: usize) -> Option<(Vec<usize>, Vec<Vec<usize>>, Vec<Vec<usize>>)> {
+        let st = self.recent.last()?;
+        let (_, a, x, _) = st.choices.iter().rev().find(|c| c.0 == channel)?;
+        let bits = |v: &[u64]| -> Vec<usize> { (0..v.len() * 64).filter(|&b| v[b / 64] >> (b % 64) & 1 == 1).collect() };
+        let (go, nogo) = self.pools.get(channel).and_then(|p| p.get(*a))?;
+        let go_m = go.firing(x, None).into_iter().map(|i| bits(&go.cells[i].0.bits)).collect();
+        let no_m = nogo.firing(x, None).into_iter().map(|i| bits(&nogo.cells[i].0.bits)).collect();
+        Some((bits(x), go_m, no_m))
+    }
+
     /// A channel's (go cells, no-go cells), for diagnosis.
     pub fn pool_sizes(&self, channel: usize) -> (usize, usize) {
         self.pools.get(channel).and_then(|p| p.get(1)).map_or((0, 0), |(g, n)| (g.cells.len(), n.cells.len()))

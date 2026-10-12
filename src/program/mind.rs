@@ -259,6 +259,8 @@ pub struct Report {
     /// the critic's value of this step's state, and the dopamine error closing the last step
     pub value: i32,
     pub delta: i32,
+    /// what the amygdala predicted for this step before it came (`Q16`)
+    pub amy_predicted: i32,
 }
 
 pub struct Mind {
@@ -484,6 +486,7 @@ impl Mind {
         }
         self.report.valued = r;
         if self.cfg.amygdala || self.cfg.imagine_value || self.cfg.learned_pause {
+            self.report.amy_predicted = self.amy.predicted();
             self.amy.learn(r[0] + r[1] + r[2]);
         }
         // 5. the striatum: the critic sees everything; the dopamine error closing the last step

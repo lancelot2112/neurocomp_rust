@@ -37,6 +37,8 @@ fn main() {
     // per block, per cue (false, true): (value at the cue step, dopamine at the cue step, cue
     // steps, dopamine at the smile step, smile steps, clicks in the window, trials, smiles)
     let mut stats = [[(0i64, 0i64, 0usize, 0i64, 0usize, 0usize, 0usize, 0usize); 2]; 64];
+    // the amygdala's prediction at the smile's step (step 4), per block and cue
+    let mut amy = [[0i64; 2]; 64];
     let mut trial = 0usize;
     let mut pauses = 0usize;
     while !world.done() {
@@ -56,6 +58,9 @@ fn main() {
             x.0 += r.value as i64;
             x.1 += r.delta as i64;
             x.2 += 1;
+        }
+        if t == 4 {
+            amy[b][cue as usize] += r.amy_predicted as i64;
         }
         if ev.smiled {
             x.3 += r.delta as i64;
@@ -82,14 +87,16 @@ fn main() {
         let (no, yes) = (s[0], s[1]);
         match kind {
             Conditioning::Pavlov => println!(
-                "  trials {:4}-{:4}: at the tone, value CS+ {:+.3} CS- {:+.3}, dopamine CS+ {:+.3} CS- {:+.3}; dopamine at the smile {:+.3}",
+                "  trials {:4}-{:4}: at the tone, value CS+ {:+.3} CS- {:+.3}, dopamine CS+ {:+.3} CS- {:+.3}; dopamine at the smile {:+.3}; amygdala's prediction there CS+ {:+.3} CS- {:+.3}",
                 b * block,
                 (b + 1) * block,
                 f(yes.0, yes.2),
                 f(no.0, no.2),
                 f(yes.1, yes.2),
                 f(no.1, no.2),
-                f(yes.3, yes.4)
+                f(yes.3, yes.4),
+                f(amy[b][1], yes.6),
+                f(amy[b][0], no.6)
             ),
             _ => println!(
                 "  trials {:4}-{:4}: clicks in the window per trial, cue {:.2} no cue {:.2}; smiles per cue trial {:.2}; value at the cue {:+.3} (no cue {:+.3})",

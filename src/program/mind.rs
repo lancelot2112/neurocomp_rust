@@ -215,11 +215,13 @@ pub struct Config {
     /// falling, and acting costs `effort` (MIND_TONIC=0 off; MIND_EFFORT, `Q16`, default 1/32)
     pub tonic: bool,
     pub effort: i32,
+    /// withholding is recorded as a choice, so the no-go side learns (MIND_NOGO=0 off)
+    pub nogo: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32 }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true }
     }
 }
 
@@ -243,6 +245,7 @@ impl Config {
             amy_critic: on("MIND_AMY_CRITIC"),
             efference: on("MIND_EFFERENCE"),
             tonic: on("MIND_TONIC"),
+            nogo: on("MIND_NOGO"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -361,6 +364,7 @@ impl Mind {
         bg.push_pull = false;
         bg.release = 2;
         bg.grow = true;
+        bg.learn_nogo = cfg.nogo;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),

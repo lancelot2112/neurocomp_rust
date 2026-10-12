@@ -278,6 +278,8 @@ struct Step {
     c: Vec<u64>,
     /// (channel, action, the context the choice saw: C, or C with the candidate)
     choices: Vec<(usize, usize, Vec<u64>)>,
+    /// (channel, the context of the candidate held back) for choices that released nothing
+    withheld: Vec<(usize, Vec<u64>)>,
     critic: bool,
 }
 
@@ -338,6 +340,9 @@ pub struct MaskStriatum {
     /// the cholinergic interneurons pause now (a learned response to a cue), opening actor
     /// plasticity for the dopamine that closes this step whatever its size
     pub pause_open: bool,
+    /// holding back is a choice too: a candidate the loop withheld is recorded, and the dopamine
+    /// that follows trains its no-go side (the indirect pathway learning from outcomes)
+    pub learn_nogo: bool,
     /// the input groups the next choices see instead of the whole state (a loop's own cortical
     /// territory: corticostriatal topography), with their context
     view: Option<(Vec<Vec<usize>>, Vec<u64>)>,
@@ -393,6 +398,7 @@ impl MaskStriatum {
             swaps: 0,
             pauses: 0,
             pause_open: false,
+            learn_nogo: false,
             view: None,
         }
     }
@@ -669,6 +675,15 @@ impl MaskStriatum {
             if !pause {
                 continue;
             }
+            // a candidate held back: the dopamine that follows trains the no-go side (a burst:
+            // holding back was right here; a dip: it was wrong)
+            if self.grow {
+                for (ch, x) in &st.withheld {
+                    let pair = &mut self.pools[*ch][1];
+                    let (more, fewer) = if delta > 0 { (&mut pair.1, &mut pair.0) } else { (&mut pair.0, &mut pair.1) };
+                    self.swaps += Self::grow_learn(more, fewer, x, bits, false, false, self.clock, &mut self.rng);
+                }
+            }
             for (ch, a, x) in &st.choices {
                 let stick = self.sticky && delta > 0;
                 if self.grow {
@@ -720,7 +735,7 @@ impl MaskStriatum {
             let delta = self.dopamine(self.reward + v - disc - self.value);
             self.learn(delta);
         }
-        self.recent.push(Step { c: self.c.clone(), choices: Vec::new(), critic: true });
+        self.recent.push(Step { c: self.c.clone(), choices: Vec::new(), withheld: Vec::new(), critic: true });
         let cap = if self.taps { HISTORY } else { WINDOW };
         if self.recent.len() > cap {
             self.recent.remove(0);
@@ -800,7 +815,15 @@ impl MaskStriatum {
         let xs: Vec<Vec<u64>> = candidates.iter().map(|c| self.candidate_context(c)).collect();
         let mut q: Vec<i32> = xs.iter().map(|x| self.q(channel, 1, x, &keep)).collect();
         self.jitter(&mut q, explore);
-        let i = self.release(&q)?;
+        let Some(i) = self.release(&q) else {
+            // nothing released: with `learn_nogo`, the best candidate held back is recorded
+            if self.learn_nogo {
+                if let (Some((b, _)), Some(st)) = (q.iter().enumerate().max_by_key(|x| *x.1), self.recent.last_mut()) {
+                    st.withheld.push((channel, xs[b].clone()));
+                }
+            }
+            return None;
+        };
         if let Some(st) = self.recent.last_mut() {
             st.choices.push((channel, 1, xs[i].clone()));
         }
@@ -822,7 +845,7 @@ impl MaskStriatum {
         }
         self.maintained[channel] = self.recent.last().and_then(|st| {
             let c = st.choices.iter().rev().find(|c| c.0 == channel)?.clone();
-            Some(Step { c: st.c.clone(), choices: vec![c], critic: false })
+            Some(Step { c: st.c.clone(), choices: vec![c], withheld: Vec::new(), critic: false })
         });
     }
 

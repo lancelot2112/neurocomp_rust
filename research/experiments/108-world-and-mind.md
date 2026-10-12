@@ -806,6 +806,23 @@ mostly how often the child talked over the tone, not the per-act machinery itsel
 gate's effect was separate and real: on seed 0, with the same acting, it alone made the
 difference between +0.002 and +0.995.
 
+**v30 instrumental, 1000 trials** (clicks with light / none, per 100 trials):
+
+| seed | 0–100 | 200–300 | 400–500 | 600–700 | 800–900 | 900–1000 | what an act usually brings |
+|---|---|---|---|---|---|---|---|
+| 0 | 0.00/0.04 | 0.32/0.63 | 0.23/0.29 | 0.89/0.69 | 1.04/0.71 | 0.76/1.28 | +0.17 |
+| 1 | 0.04/0.16 | **0.31/0.12** | 0.49/0.76 | 0.80/0.80 | 0.88/1.05 | 1.02/0.82 | +0.08 |
+| 2 | 0.11/0.09 | 0.34/0.27 | 0.41/0.80 | 0.69/1.11 | 0.88/1.13 | 1.14/1.02 | +0.12 |
+
+The tone fix does not touch this probe, and the light is not discriminated. Clicking rises to
+about one per trial whether the light is on or not. The light makes clicks pay, and the
+loops learn that clicking pays, but not that it pays only with the light.
+
+The open problem is now the operant, not the cue:
+- the light's value reaches the striatum (amygdala and orbitofrontal value cells, salience);
+- a click off the light still costs only what a click usually brings (+0.08 to +0.17, against
+  the 1.0 of a touch), so the dip it earns is small next to the bursts.
+
 **Defaults now (v30):**
 - The attention gate is off (`MIND_ATTEND_GATE=1` turns it on).
 - Elemental amygdala cells are on.

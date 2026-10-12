@@ -968,3 +968,93 @@ the tone, CS+ / CS−; dopamine at the touch):
 - **What is missing is a cue held across the delay.** Prefrontal persistent activity, or the
   hippocampus's time cells, keep a cue that has gone. The trace here is short, by design. The
   next step would be to let a loop load a valued cue into working memory, as it now loads goals.
+
+### Reversal, associability, the orbitofrontal cortex as an area, frustration
+**Not checked here.** A design note proposed dividing the work: the amygdala sets how much to
+learn from an outcome (Pearce–Hall associability, a salience tag for replay), and the
+orbitofrontal cortex sets where the learning goes (a hidden task state Z, new states on outcome
+surprise, contingent credit). Its figure of about 860 trials per reversal is not from this
+repository; there was no reversal probe here.
+
+**The serial reversal probe** (`COND=reversal`, `COND_PERIOD`, default 500).
+- Every trial one of two lights is on for three steps (A on half the trials, B on the others).
+- A click while the light is on, or the step after, gets a stroke if that light pays now: A for
+  the first 500 trials, then B, then A, then B.
+- Read: clicks per trial in the window, the paying light against the other, per block of 100.
+
+**v34: associability** (`MIND_ALPHA=0` off).
+- **In the amygdala:** each cue feature has α (0–255). It moves a quarter of the way toward how
+  far the error after it exceeds the usual |error| (a running mean). A cue never seen before
+  starts high.
+- **In the striatum:**
+  - A motor choice's learning gain follows the trace's α: ¼× when nothing has been surprising, up
+    to about 2¼×. It applies to the per-act credit and to the dopamine error alike.
+  - Where its new cells take their second input: a region is drawn in proportion to its cues' α.
+
+**v35: the orbitofrontal cortex as a cortical area** (`MIND_OFC_COLUMN`, `src/program/ofc.rs`).
+- **A column like the others.** Layer 4 takes four sources: the association areas' code (cues),
+  the efference copy (the act just made), affective touch (the outcome as sensed), and the
+  hippocampus's recall at the top of the hierarchy (context).
+- **Layer 2/3** predicts the next input from this one, its own previous activity and, on its
+  tuft, the state it holds. Its activity is the state Z.
+- **An outcome layer** predicts the next outcome (Ô).
+- **Holding:** a loop through the striatum (channel 300) chooses each step whether to hold Z on
+  the tuft, as prefrontal working memory is gated (PBWM). It is learned from dopamine.
+- **Z and the held state** reach the critic and every motor loop as two more regions.
+- **Value on Z** (`MIND_OFC_VALUE_Z`): the orbitofrontal value cells read Z and the act, not the
+  raw cue trace. A new cell pairs an act with a Z group. The per-act baseline is kept.
+- **Splitting on outcome surprise** (`MIND_OFC_SPLIT`). An outcome mispredicted by at least ¾
+  after an input expected at least half, with the cues' α at least a quarter, makes the area hold
+  its state now: the one that carries the surprising outcome. The same cues then meet a new
+  context, so they are learned afresh and the old cells are not retrained. This is
+  noradrenaline's network reset (Bouret & Sara 2005).
+- **The first outcome layer was wrong.** Its target was the stroke's layer 4 code, which changes
+  with where on the skin each stroke lands, and it learned only when a touch came. It expected
+  the outcome right 1 time in 15,857, and split 15,306 times in 2000 trials.
+- **The fix:** its target is now the outcome's level on the labelled line (none, weak, middling,
+  strong), so "nothing comes" is predicted too. It then expects the outcome right 97–99% of the
+  time, and splits 8–171 times in 2000 trials.
+
+**v36: frustration** (`MIND_FRUSTRATION=0` off; Amsel's frustration).
+- **How it builds:** an act that brings less than expected adds the shortfall; more than expected
+  takes it away. It fades by 1/16 a step.
+- **Vigor:** it lowers the motor loops' brake by up to 2 (the extinction burst).
+- **Variability:** it widens the motor noise by up to 6 (extinction-induced variability).
+- **Its first expectation was the striatum's q, which was wrong.** A loop releases an act only at
+  q of at least 2, so every act released expected at least ¼. Frustration sat at 1.1–1.6 the
+  whole run, the noise and brake stayed at their limits, and the light probe lost its
+  discrimination (0.25/0.27).
+- **v36b measures it against the orbitofrontal value of the act in its context.** That should be
+  about 0 for a click without the light once that is learned, and high for the old light just
+  after a reversal.
+
+**Reversal, 2000 trials** (paying light / the other, per block of 100; A pays in blocks 1–5 and
+11–15):
+
+| version | seed | 300–400 (A) | 500–600 (B) | 900–1000 (B) | 1400–1500 (A) | 1900–2000 (B) |
+|---|---|---|---|---|---|---|
+| v33 | 0 | 0.09/0.19 | 0.07/0.11 | 0.02/0.00 | 0.08/0.00 | 0.00/0.07 |
+| v33 | 2 | 0.81/0.35 | 0.09/0.20 | 0.00/0.00 | 0.00/0.00 | 0.00/0.00 |
+| + α | 0 | 0.80/0.55 | 0.35/0.60 | 0.02/0.20 | 0.12/0.06 | 0.02/0.00 |
+| + α | 1 | 0.33/0.48 | 0.67/0.79 | 0.09/0.04 | 0.00/0.00 | 0.00/0.00 |
+| + OFC area (no α) | 0 | 0.40/0.19 | 0.00/0.04 | 0.00/0.02 | 0.00/0.00 | 0.00/0.02 |
+| + OFC area (no α) | 1 | 0.53/0.29 | 0.02/0.21 | 0.00/0.02 | 0.21/0.00 | 0.06/0.40 |
+| + OFC area and α | 0 | 0.28/0.13 | 0.37/0.65 | 0.24/0.38 | 0.21/0.19 | 0.09/0.02 |
+| + OFC area and α | 1 | 0.70/0.30 | 0.25/0.31 | 0.49/0.23 | 0.02/0.04 | **0.89/0.55** |
+| + frustration (v36) | 0 | 0.32/0.48 | 0.17/0.22 | 0.45/0.47 | 0.77/0.50 | 0.69/0.36 |
+| + frustration (v36) | 1 | 0.60/0.42 | 0.28/0.50 | 0.67/0.54 | 0.63/0.53 | 0.69/0.65 |
+
+- **Without help, the first reversal kills the operant.**
+  - The light that paid now earns dips, and the dips grow no-go cells on the click.
+  - Nothing brings the click back for the other light, so clicking stops on most seeds and
+    never returns.
+- **α keeps the mind acting longer.** The OFC area with α is the only combination with a clear
+  late reversal: seed 1, last phase, 0.77–0.96 for B against 0.37–0.55 for A.
+- **The first frustration keeps the mind acting, but at random.** No run dies out, and acts rise
+  to 0.65–0.72 a step. But the paying light and the other are close (0.69/0.65 at the end), and
+  the light probe breaks.
+
+**The light probe with the new parts** (seed 0, 600 trials, last block, light / none):
+- OFC area without α: 0.70/0.16 (best block 1.12/0.38).
+- With α: 0.09/0.07, clicking fading.
+- With the first frustration: 0.25/0.27.

@@ -1037,7 +1037,7 @@ repository; there was no reversal probe here.
 | v33 | 2 | 0.81/0.35 | 0.09/0.20 | 0.00/0.00 | 0.00/0.00 | 0.00/0.00 |
 | + α | 0 | 0.80/0.55 | 0.35/0.60 | 0.02/0.20 | 0.12/0.06 | 0.02/0.00 |
 | + α | 1 | 0.33/0.48 | 0.67/0.79 | 0.09/0.04 | 0.00/0.00 | 0.00/0.00 |
-| + OFC area (no α) | 0 | 0.40/0.19 | 0.00/0.04 | 0.00/0.02 | 0.00/0.00 | 0.00/0.02 |
+| + OFC area (no α) | 0 | 0.40/0.19 | 0.00/0.04 | 0.00/0.02 | 0.00/0.00 | 0.00/0.00 |
 | + OFC area (no α) | 1 | 0.53/0.29 | 0.02/0.21 | 0.00/0.02 | 0.21/0.00 | 0.06/0.40 |
 | + OFC area and α | 0 | 0.28/0.13 | 0.37/0.65 | 0.24/0.38 | 0.21/0.19 | 0.09/0.02 |
 | + OFC area and α | 1 | 0.70/0.30 | 0.25/0.31 | 0.49/0.23 | 0.02/0.04 | **0.89/0.55** |
@@ -1056,5 +1056,5 @@ repository; there was no reversal probe here.
 
 **The light probe with the new parts** (seed 0, 600 trials, last block, light / none):
 - OFC area without α: 0.70/0.16 (best block 1.12/0.38).
-- With α: 0.09/0.07, clicking fading.
+- α alone (v34, no OFC area): 0.09/0.07, clicking fading.
 - With the first frustration: 0.25/0.27.

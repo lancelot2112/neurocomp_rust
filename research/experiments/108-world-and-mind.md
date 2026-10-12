@@ -570,6 +570,70 @@ per step
    extinguished entirely: a dip after a click without the light.
 3. **Then the 5 seeds again,** and the Pavlovian probe to check it is unchanged.
 
+### Opportunity cost and a per-act baseline
+- **v21: opportunity cost** (`MIND_OPPORTUNITY=0` off). The outcomes in the two steps after each
+  act are slowly averaged ("what an act usually brings"), and an act costs that, or the effort if
+  more (Niv et al. 2007). An act that brings nothing is then a dip, in proportion to how much
+  acting usually pays.
+- **v22: plus a per-act baseline** (`MIND_ACT_BASELINE=0` off).
+  - The orbitofrontal learner keeps baseline cells on the act's features alone, recruited and
+    removed one at a time toward the outcomes. They track the act's average worth and are never
+    extinguished.
+  - Its conjunctive cells learn what the cues add.
+  - A click without the light now has an expectation to fall short of.
+
+**Instrumental, 600 trials: clicks per trial in the window, light / none**
+
+| version | seed | 0–100 | 100–200 | 200–300 | 300–400 | 400–500 | 500–600 | what an act usually brings |
+|---|---|---|---|---|---|---|---|---|
+| v21 | 0 | 0.12/0.15 | 0.20/0.22 | **0.53/0.17** | 0.46/0.30 | 0.14/0.40 | 0.16/0.35 | +0.14 |
+| v21 | 1 | 0.07/0.15 | 0.16/0.10 | 0.16/0.07 | 0.33/0.24 | 0.64/0.62 | 0.89/0.86 | +0.05 |
+| v21 | 2 | 0.02/0.12 | 0.12/0.14 | 0.26/0.46 | 0.60/0.37 | 0.63/0.63 | 0.21/0.72 | +0.02 |
+| v21 | 3 | 0.12/0.12 | 0.18/0.27 | 0.28/0.12 | **0.64/0.16** | 0.61/0.53 | 0.53/0.25 | +0.09 |
+| v21 | 4 | 0.04/0.22 | 0.28/0.16 | 0.47/0.21 | 0.35/0.38 | 0.55/0.36 | 0.89/0.68 | +0.03 |
+| v22 | 0 | 0.13/0.08 | 0.12/0.04 | **0.50/0.14** | 0.38/0.48 | 0.29/0.69 | 0.71/0.80 | +0.13 |
+| v22 | 1 | 0.13/0.23 | 0.19/0.29 | 0.57/0.23 | **0.67/0.00** | **0.66/0.00** | **0.61/0.02** | +0.01 |
+| v22 | 2 | 0.23/0.11 | **0.52/0.16** | 0.64/0.60 | 0.40/0.58 | 0.57/0.66 | 0.79/0.59 | +0.08 |
+| v22 | 3 | 0.12/0.17 | **0.59/0.12** | 0.29/0.31 | 0.60/0.83 | 0.41/0.39 | 0.32/0.34 | +0.08 |
+| v22 | 4 | 0.12/0.17 | **0.44/0.12** | 0.35/0.13 | 0.71/0.41 | 0.41/0.45 | 0.58/0.58 | +0.08 |
+
+- **No run dies out:** 10 of 10 act to the end, at 0.42–0.80 acts per step. The hand loop's go and
+  no-go pools stay balanced (go about 1.1–2 times no-go).
+- **Discrimination now appears on most seeds, but mostly does not last.** One run held it from
+  block 4 to the end: v22 seed 1, 0.67, 0.66, 0.61 clicks with the light against 0.00, 0.00, 0.02
+  without. Six others show it for a block or two (0.44–0.64 against 0.12–0.17), then lose it.
+- **The opportunity cost is small.** What an act usually brings settles at +0.01 to +0.14. Most
+  acts bring nothing (the hand's acts include moves and clicks off the light), so the average is
+  low, and so is the dip a useless click gets. The bursts of light trials (a touch is worth 1.0)
+  still outweigh it.
+- **Pavlovian, unchanged** (v22, seeds 0–2, last 100 trials):
+  - The amygdala's prediction is +0.80 to +0.94 for CS+ against +0.00 to +0.04 for CS−.
+  - Dopamine at the tone is higher for CS+ on all three: +0.10/+0.01, +0.22/+0.01, +0.00/−0.06.
+  - Dopamine at the touch is +0.22 to +0.40.
+
+**What this says.** Every part of the instrumental conjunction is now there:
+- the light coded (coverage);
+- the cue's value (amygdala) and the act's value with and without it (orbitofrontal: conjunction
+  and baseline);
+- the efference copy;
+- dips for a useless act (opportunity cost, and the baseline's expectation);
+- a quiet critic;
+- balanced, symmetric no-go.
+
+It learns the conjunction on most seeds for a while, and holds it on one. What it does not yet do
+is keep it.
+- **The average per act is diluted by every act of the hand,** including moves that are
+  irrelevant here. It is one average for every act, where an animal's cost of an action is
+  specific to the action (and to its context).
+- **Discrimination is lost when clicking without the light drifts up again.** Nothing marks the
+  light-off clicks as a mistake strongly enough to hold the line.
+
+**Next, if this line continues.**
+- Make the opportunity cost per act (each motor primitive's own average, from the orbitofrontal
+  baseline itself rather than one average).
+- Train longer (an animal's discriminated operant takes hundreds of rewarded trials more).
+- Then return to the lessons with everything on, and compare with the first version's silence.
+
 **Next (from the first probes).**
 1. **Separate agency from value.** The own-effect signal trains the motor loops (which acts have
    effects) and habituates per act and outcome; the critic learns from outcomes.

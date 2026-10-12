@@ -917,3 +917,54 @@ Clicks per trial in the window, light / none, first and last of ten blocks of 10
 - an eligibility window of 2;
 - compaction and consolidation on;
 - predictive transmission off.
+
+**v33, the full conditioning set, three seeds.**
+
+*Pavlovian, 600 trials* (the amygdala's prediction at the touch's step, CS+ / CS−; dopamine at
+the tone, CS+ / CS−; dopamine at the touch):
+
+| seed | 0–100 | 500–600 | dopamine at the tone, 500–600 | at the touch, 0–100 → 500–600 |
+|---|---|---|---|---|
+| 0 | +0.88 / +0.00 | +1.00 / +0.05 | +0.23 / +0.05 | +0.30 → +0.37 |
+| 1 | +0.89 / +0.00 | +1.00 / +0.01 | +0.43 / −0.01 | +0.22 → +0.09 |
+| 2 | +0.90 / +0.01 | +1.00 / +0.01 | +0.23 / −0.06 | +0.39 → +0.16 |
+
+- The tone is learned within 100 trials and held to the end on every seed.
+- The dopamine at the CS+ tone is higher than at the CS− in every block of every seed
+  (+0.09 to +0.43 against −0.12 to +0.05): the burst has moved to the cue.
+
+*Instrumental, 1000 trials* (clicks per trial in the window, light / none):
+
+| seed | 0–100 | 200–300 | 400–500 | 500–600 | 600–700 | 700–800 | 800–900 | 900–1000 |
+|---|---|---|---|---|---|---|---|---|
+| 0 | 0.26/0.23 | 0.59/0.28 | 0.91/0.14 | **1.04/0.00** | **0.82/0.00** | **0.88/0.00** | **0.80/0.02** | **0.49/0.00** |
+| 1 | 0.37/0.17 | 0.85/0.21 | 0.56/0.22 | 0.89/0.29 | 0.91/0.39 | **0.92/0.08** | **1.04/0.09** | 0.82/0.15 |
+| 2 | 0.71/0.27 | 0.32/0.16 | 0.88/0.04 | **0.67/0.00** | **0.87/0.00** | **0.84/0.05** | **1.02/0.02** | **0.80/0.00** |
+
+- **The discrimination holds over 1000 trials.**
+  - Seeds 0 and 2 click almost never without the light from about trial 400 on.
+  - Seed 1 gets there by trial 700, at 0.08–0.15 without the light.
+- What a click usually brings is now +0.35 to +0.47.
+- The child acts on 0.21–0.33 of steps.
+
+*Delayed, 600 trials* (a light for one step, at step 2; a click 3–5 steps later pays):
+
+| seed | 0–100 | 100–200 | 200–300 | 300–400 | 400–500 | 500–600 |
+|---|---|---|---|---|---|---|
+| 0 | 0.11/0.22 | 0.24/0.47 | 0.20/0.22 | 0.13/0.11 | 0.02/0.02 | 0.06/0.04 |
+| 1 | 0.22/0.30 | 0.45/0.26 | 0.02/0.07 | 0.00/0.00 | 0.00/0.00 | 0.00/0.02 |
+| 2 | 0.30/0.31 | 0.60/0.42 | 0.31/0.13 | 0.62/0.25 | 0.44/0.17 | 0.12/0.05 |
+
+- **The delayed probe is not learned.** Clicking fades on every seed. Seed 2 discriminates for a
+  while (0.62/0.25, 0.44/0.17) before fading too.
+- **Why, as far as the parts go:**
+  - When the click that pays is made, the light has been off for three to five steps.
+  - The hand loop's view holds the eye's code now (no light) and the amygdala's attended trace.
+    The trace keeps an onset four steps (ages 0–3), so a click five steps on has nothing of the
+    light left in its view.
+  - The working memory a loop can load holds goals, not cues.
+  - So the striatum sees the light's after-effect only on some of the steps where a click pays,
+    and the clicks it does credit look, in the view, like the clicks that do not pay.
+- **What is missing is a cue held across the delay.** Prefrontal persistent activity, or the
+  hippocampus's time cells, keep a cue that has gone. The trace here is short, by design. The
+  next step would be to let a loop load a valued cue into working memory, as it now loads goals.

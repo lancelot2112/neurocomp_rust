@@ -190,7 +190,75 @@ a caregiver present throughout and a smile as the only outcome. Seed 0.
   amygdala's cue value invigorates and biases action directly (Pavlovian–instrumental transfer,
   through the central amygdala and the ventral striatum).
 
+### The amygdala in bit cells, agency apart from value, cue value driving action
+Three changes, from the probes above.
+- **The amygdala in bit cells,** as the striatum is: populations of 16-bit mask cells that fire on
+  12 (AND and popcount).
+  - The age-tagged cue trace is hashed into a 4,096-bit context.
+  - Appetitive and aversive value cells; the value is appetitive firing minus aversive, at 1/16
+    each.
+  - Learning follows the shared Rescorla–Wagner error: recruit cells on the trace for a positive
+    error, and remove firing appetitive cells for a negative one (extinction).
+  - Attention is a bit vector over features: set by surprise, by value or by novelty; a random
+    1/32 clears each step.
+  - Pause cells are masks over the cues one or two steps before a large dopamine error.
+- **Agency apart from value.** Its own effect is now the forward model's error on its act. That
+  fades per act and outcome as the model learns them, where before it was the senses' surprise
+  after any act. It trains only the motor loops' last choices (`MaskStriatum::reinforce_last`); it
+  no longer goes to the critic or the amygdala.
+- **Pavlovian–instrumental transfer.** The amygdala's value of the cues now lowers the motor loops'
+  release brake, up to two steps, or raises it for cues worth less than nothing.
+
+**Results.** Seed 0, every valuation on.
+
+| probe | 0–100 | 100–200 | 200–300 | 300–400 |
+|---|---|---|---|---|
+| Pavlovian: amygdala's prediction at the smile, CS+ / CS− | +0.20 / +0.00 | +0.64 / +0.01 | **+0.91 / +0.01** | |
+| Pavlovian: dopamine at the smile | +0.92 | +0.86 | **+0.24** | |
+| Pavlovian: critic's value at the tone, CS+ / CS− | −0.05 / +0.02 | +0.25 / +0.23 | +0.64 / +1.79 | |
+| instrumental: clicks per trial in the window, light / none | 0.02 / 0.08 | 0.44 / 0.24 | 0.02 / 0.00 | 0.00 / 0.00 |
+| delayed: clicks per trial in the window, light / none | 0.35 / 0.29 | 0.70 / 0.78 | 1.05 / 1.14 | 1.16 / 1.05 |
+| delayed: smiles per light trial | 0.31 | 0.56 | 0.74 | 0.71 |
+
+- **The amygdala now learns the tone with the mind fully active.** Before, its prediction fell to
+  0. It discriminates sharply: +0.91 for CS+, +0.01 for CS−, with 55 appetitive cells and none
+  aversive.
+- **The smile becomes predicted.** Dopamine at the smile fell from +0.92 to +0.24.
+- **The critic's value at the tone itself is not right yet.** CS− reads higher than CS+ in the last
+  block. The critic sees the amygdala's attended features but learns over the whole limbic context,
+  and at the tone step the tone is age 0, which predicts nothing on its own until a step later.
+  Dopamine at the CS+ tone was +0.11 against −0.20 at CS− in the middle block, but −0.51 in the
+  last. So the transfer of dopamine to the tone is not clean.
+- **Instrumental: still no.** Clicking rises in the second block (0.44 with the light against 0.24
+  without) and then stops altogether. The mind acted on only 0.11 of steps in this probe. Effort
+  costs every click; the smile pays only light trials; the agency signal fades as the forward model
+  learns that a click on nothing does nothing.
+- **Delayed: clicking is learned, but not for the light.** Smiles rose from 0.31 to 0.71 per light
+  trial, and clicks stayed equally frequent without the light (1.05–1.16 per trial). In this probe
+  clicking at a steady rate pays; the light adds nothing the mind uses.
+- **Pauses:** 167–1,127 steps of 3,000–4,000, learned from cues before large errors.
+
+**What this says.**
+- **Knowing what a cue is worth now works with the mind fully active,** in the amygdala's bit cells,
+  once the agency signal is kept out of value.
+- **Acting on a cue still does not.** Transfer lowers the brake whenever the light is worth
+  something. But the light becomes worth something only through smiles that follow clicks, and
+  clicking dies out in the instrumental probe before that happens. In the delayed probe, steady
+  clicking is the simpler policy that pays.
+- **The motor loop's view has the light only through the amygdala's attended trace.** That is a
+  few features among the hand's own column and the association columns over it, so the loop's
+  choice barely depends on the light.
+
 **Next.**
+1. **The critic should read the amygdala's prediction** (its value, as cells), not only its
+   attended features. In the biology the basolateral amygdala drives the ventral striatum and the
+   dopamine neurons at the cue.
+2. **The motor loops' view should include the cue's value cells firing,** so "release when a valued
+   cue is here" is a context the loop can learn, beyond the brake's general lowering.
+3. **Avoid the click die-out:** a floor on spontaneous primitives, or effort that scales with
+   fatigue rather than a flat cost per act. Then repeat with more seeds.
+
+**Next (from the first probes).**
 1. **Separate agency from value.** The own-effect signal trains the motor loops (which acts have
    effects) and habituates per act and outcome; the critic learns from outcomes.
 2. **Pavlovian–instrumental transfer:** a cue's amygdala value raises the motor loops' readiness to

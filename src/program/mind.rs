@@ -171,6 +171,7 @@ const WM_OFFSET: usize = 40 * BITS;
 const RECALL_OFFSET: usize = 41 * BITS;
 const AMY_OFFSET: usize = 80 * BITS;
 const AMY_VALUE_OFFSET: usize = 120 * BITS;
+const EFFERENCE_OFFSET: usize = 130 * BITS;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
 const VALUE_BASE: usize = ACT_BASE + 8 * BITS;
 
@@ -205,11 +206,14 @@ pub struct Config {
     pub response: bool,
     /// the critic sees the amygdala's value cells firing (MIND_AMY_CRITIC=0 off)
     pub amy_critic: bool,
+    /// the amygdala and the critic see the efference copy of the act just done, so value can be
+    /// learned for "this act, with these cues" (MIND_EFFERENCE=0 off)
+    pub efference: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true }
     }
 }
 
@@ -231,6 +235,7 @@ impl Config {
             pit: on("MIND_PIT"),
             response: on("MIND_RESPONSE"),
             amy_critic: on("MIND_AMY_CRITIC"),
+            efference: on("MIND_EFFERENCE"),
         }
     }
 }
@@ -348,7 +353,7 @@ impl Mind {
             wm: WorkingMemory::new(BITS, 1),
             bg,
             hc: IndexHc::new(hc_bits, seed),
-            amy: Amygdala::new(SLOTS.len() * BITS, seed),
+            amy: Amygdala::new((SLOTS.len() + 2) * BITS, seed),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             smile: body.smile,
             pons: zero(),
@@ -412,7 +417,15 @@ impl Mind {
         // its own effect: how far each act's result was from what the forward model expected
         let mut effect = 0u32;
         let mut effect_on: Vec<usize> = Vec::new();
+        // the efference copy of what was just done (the motor area's command), as features after
+        // the senses' (each motor area a slot of BITS): the amygdala and the critic see the act
+        let mut efference: Vec<u32> = Vec::new();
         for (a, c) in std::mem::take(&mut self.issued) {
+            if self.cfg.efference {
+                if let Some(k) = self.motors.iter().position(|m| m.0 == a) {
+                    efference.extend(ones(&c).into_iter().map(|b| ((SLOTS.len() + k) * BITS + b) as u32));
+                }
+            }
             let sense = self.motors.iter().find(|m| m.0 == a).map_or(EAR, |m| m.2);
             let result = raw[Self::slot(sense)].clone();
             let area = &mut self.brain.areas[a];
@@ -454,6 +467,7 @@ impl Mind {
             codes[a] = with;
         }
         if self.cfg.amygdala || self.cfg.learned_pause || self.cfg.imagine_value {
+            onsets.extend(efference.iter().copied());
             self.amy.onsets(onsets);
         }
         // the hippocampus: one step over the cortical state at its level (the association
@@ -525,6 +539,10 @@ impl Mind {
         // the ventral striatum (and through it the dopamine neurons) at the cue
         if self.cfg.amygdala && self.cfg.amy_critic {
             all.push(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect());
+        }
+        // and what was just done (the efference copy): a value for "having done this here"
+        if self.cfg.efference {
+            all.push(efference.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());
         }
         if self.cfg.learned_pause {
             self.bg.pause_open = self.amy.pausing();

@@ -65,15 +65,16 @@ fn bits_of(v: &[u64]) -> Vec<usize> {
     out
 }
 
-/// A pool of mask cells: (mask, the step it last fired or was made).
+/// A pool of mask cells: (mask, the step it last fired or was made, a stable id).
 #[derive(Default)]
 struct Pool {
-    cells: Vec<(Vec<u64>, u64)>,
+    cells: Vec<(Vec<u64>, u64, u32)>,
+    next_id: u32,
 }
 
 impl Pool {
     fn firing(&self, ctx: &[u64]) -> Vec<usize> {
-        self.cells.iter().enumerate().filter(|(_, (m, _))| m.iter().zip(ctx).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= THETA).map(|(i, _)| i).collect()
+        self.cells.iter().enumerate().filter(|(_, (m, _, _))| m.iter().zip(ctx).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= THETA).map(|(i, _)| i).collect()
     }
 
     /// A new cell on `CELL_BITS` of the context's bits (none if it has too few).
@@ -92,13 +93,14 @@ impl Pool {
             on.swap(i, j);
             m[on[i] / 64] |= 1 << (on[i] % 64);
         }
-        self.cells.push((m, now));
+        self.cells.push((m, now, self.next_id));
+        self.next_id = self.next_id.wrapping_add(1);
     }
 
     /// Cell `i` moves one bit toward the context: a bit it has that is absent goes, a present one
     /// it lacks comes (constant density).
     fn toward(&mut self, i: usize, ctx: &[u64], now: u64, rng: &mut StdRng) {
-        let (m, t) = &mut self.cells[i];
+        let (m, t, _) = &mut self.cells[i];
         *t = now;
         let off = bits_of(&m.iter().zip(ctx).map(|(a, c)| a & !c).collect::<Vec<u64>>());
         let add = bits_of(&m.iter().zip(ctx).map(|(a, c)| c & !a).collect::<Vec<u64>>());
@@ -267,6 +269,15 @@ impl Amygdala {
     /// step) and the older ones predict.
     pub fn cue_value(&self) -> i32 {
         self.value_of_ctx(&Self::context(self.items(0, TRACE - 1).map(|(a, f)| (a + 1, f)), true))
+    }
+
+    /// The value cells firing on the cues now (as `cue_value` reads them): appetitive cells' ids
+    /// below 4096, aversive ones' above, each modulo 4096 (an input group for the striatum).
+    pub fn value_cells(&self) -> Vec<usize> {
+        let ctx = Self::context(self.items(0, TRACE - 1).map(|(a, f)| (a + 1, f)), true);
+        let app = self.appetitive.firing(&ctx).into_iter().map(|i| self.appetitive.cells[i].2 as usize % 4096);
+        let avr = self.aversive.firing(&ctx).into_iter().map(|i| 4096 + self.aversive.cells[i].2 as usize % 4096);
+        app.chain(avr).collect()
     }
 
     /// What some features would be worth if they came now (an imagined outcome: they predict

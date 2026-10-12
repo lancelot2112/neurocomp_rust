@@ -20,7 +20,6 @@
 //!    - *a response:* someone there (presence) and a sound from outside soon after its own
 //!      sound made aloud (contingent replies, Goldstein et al. 2003);
 //!    - *a smile:* an innately recognised pattern in the presence sense;
-//!    - *effort:* every act costs a little.
 //! 5. **Loops that grow with the cortex** (Alexander, DeLong & Strick 1986): every column with
 //!    a layer 5, sensory or association, has its own loop through the basal ganglia, created
 //!    when the column is. A column's layer 5 offers its goal (of the cells that fired, the one
@@ -57,7 +56,6 @@ pub const SLOTS: [usize; 5] = [EYE, EAR, HAND, ACTS, PRESENCE];
 
 /// where goal candidates sit in the striatum's input ids (each effector's primitives after them)
 const ACT_BASE: usize = 1 << 25;
-const EFFORT: i32 = (ONE / 16) as i32;
 /// steps back a followed goal's cell still takes dopamine
 const GOAL_TRACE: usize = 4;
 
@@ -172,6 +170,7 @@ fn column_offset(id: ColumnId) -> usize {
 const WM_OFFSET: usize = 40 * BITS;
 const RECALL_OFFSET: usize = 41 * BITS;
 const AMY_OFFSET: usize = 80 * BITS;
+const AMY_VALUE_OFFSET: usize = 120 * BITS;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
 const VALUE_BASE: usize = ACT_BASE + 8 * BITS;
 
@@ -257,7 +256,7 @@ pub struct Report {
     pub goals_taken: usize,
     /// an act released came from a column's goal (not a primitive)
     pub from_goal: bool,
-    /// the dopamine-producing valuations this step, `Q16`: (own effect, response, smile, effort)
+    /// the dopamine-producing valuations this step, `Q16`: (own effect, response, smile, unused: acting costs nothing)
     pub valued: [i32; 4],
     /// the hippocampus's offer reached the cortex
     pub recalled: bool,
@@ -470,7 +469,6 @@ impl Mind {
             if self.cfg.own_effect {
                 r[0] += effect as i32 / 4;
             }
-            r[3] -= EFFORT * self.acted as i32;
         }
         if own {
             self.since_said = 0;
@@ -493,7 +491,7 @@ impl Mind {
         if overlap(&s.presence, &self.smile) * 2 >= self.smile.count_ones() as u32 {
             r[2] += ONE as i32;
         }
-        // outcomes and effort go to the critic; its own effect, with agency, trains the motor
+        // outcomes go to the critic; its own effect, with agency, trains the motor
         // loops' last choices directly
         for (k, &x) in r.iter().enumerate() {
             if x == 0 {
@@ -606,7 +604,13 @@ impl Mind {
                 cols.push(c);
             }
         }
-        self.state_groups(&cols, &[], true, false)
+        let mut groups = self.state_groups(&cols, &[], true, false);
+        // the amygdala's value cells firing on the cues now (the basolateral amygdala reaches the
+        // striatum's motor territory too): "a valued cue is here" is a context the loop can learn
+        if self.cfg.amygdala {
+            groups.push(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect());
+        }
+        groups
     }
 
     /// The loops: each column's takes its goal in or not (and an association column's may load

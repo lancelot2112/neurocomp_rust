@@ -1886,6 +1886,41 @@ basal ganglia choosing; the motor area's forward model predicts what it would pr
 reaches the matching sensory column on its tuft; recall arrives on the tufts too, as feedback
 (not as if sensed); feedforward through layer 4 means real, tuft-only means imagined.
 
+### Top-down imagery, inner exploration, two gates, and speech: results
+4 seeds unless noted, 1,500 training trials, first test table.
+
+| version | tell closed | silent | recall right |
+|---|---|---|---|
+| integrated hippocampus (before top-down) | 4.5–28.7% | 11–65% | 13–15% |
+| top-down: recall and imagery as feedback; mouse imagery by the forward model | 0–11.2% | 1–96% | 14–17% |
+| + inner exploration, the teacher answering only words said aloud | 0.8–7.2% | 45–97% | 8–11% |
+| + the senses' columns learning from top-down input (`RT_TD_LEARN=1`; seeds 2, 3) | 2.0–9.7% | 52–87% | 10–11% |
+| two gates, the voice's gate shut unless released (seeds 0, 2) | 0% | 96–100% | 7–9% |
+| two gates, the voice released unless held (`RT_SPEAK_GATE=brake`; seeds 0, 2) | 5.9–6.8% | 52–89% | 10% |
+
+- **Top-down** (recall and imagery arrive as feedback, on the tufts and as weak input, never
+  through layer 4; a column learns only from layer 4) kept recall (14–17%) but cost speech on
+  three seeds of four.
+- **Every way of gating speech so far ends mostly silent at test.** With inner exploration the
+  network tried 3,600–4,600 planned words inwardly in training, and kept doing so at test; with two
+  gates and the voice shut unless released it was nearly silent. Learning from top-down input
+  helps a little.
+- **Why the gate stayed shut:** with nothing in the striatum's state (speech play, before any
+  task), its code of a choice was empty (it is the state alone plus state×candidate pairs), so a
+  choice made with no situation could not be learned. Now the candidate's own input is the
+  context then; in speech play, babbles said aloud rose from 41% to 62% (they had stayed at the
+  noise level, about 30%). It does not yet carry over to the tasks (still 93–96% silent at test
+  after 300 trials): the gate learned in play's empty context, the tasks' context is full.
+
+**Inner speech, developmentally.** Children's speech starts overt and social (babbling, then
+talk with others), passes through private speech (talking to oneself aloud, ages 3–7), and is
+internalized as inner speech (Vygotsky; later work on private speech). Here: the gate's machinery
+and the inner path's wiring (a corollary discharge to auditory cortex) are built in, reasonably;
+the gate's initial bias was a configuration choice. Speech play now goes through the same gate,
+with a caregiver answering only what is said aloud, so overt babbling is what pays first and inner
+speech can grow later where it pays. Words held back are now scored (were they the right word?), to
+tell "knows it but keeps it in" from "does not know".
+
 ## Next
 - **Imagining as one operation for every modality** (do or imagine, forward models onto the
   tufts, recall as feedback).

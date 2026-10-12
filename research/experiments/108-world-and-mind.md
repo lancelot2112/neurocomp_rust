@@ -1058,3 +1058,53 @@ repository; there was no reversal probe here.
 - OFC area without α: 0.70/0.16 (best block 1.12/0.38).
 - α alone (v34, no OFC area): 0.09/0.07, clicking fading.
 - With the first frustration: 0.25/0.27.
+
+**v36b: frustration against the orbitofrontal value.** Frustration now stays small (0.03–0.23 on
+average per block, where it was 1.1–1.6). The light probe, with every default on (the OFC area,
+α, frustration), 600 trials, light / none:
+
+| seed | frustration | 200–300 | 300–400 | 400–500 | 500–600 |
+|---|---|---|---|---|---|
+| 0 | on | 0.77/0.40 | 0.68/0.26 | 0.30/0.33 | 0.07/0.09 |
+| 0 | off | 0.82/0.42 | 0.61/0.26 | 0.27/0.14 | 0.54/0.17 |
+| 1 | on | 0.82/0.39 | 0.84/0.41 | 0.52/0.24 | 0.98/0.53 |
+
+The light is discriminated, but less sharply than at v33 (1.04/0.00 on seed 0). On seed 0
+clicking fades by the end with frustration on. The new parts cost some of what v33 had on this
+probe.
+
+*Reversal with the first frustration, α off* (v36, seed 1):
+- It learns A (0.85/0.38).
+- After the first reversal it keeps clicking on A, the light that no longer pays (0.30, 0.21
+  against 0.02, 0.04 for B).
+- It comes back to A when A pays again (0.51/0.29, 0.37/0.02).
+- In the last phase it again clicks only on A (0.29, 0.20) and never on B.
+
+That is perseveration: the old choice kept, the new one never tried, which is what
+orbitofrontal lesions produce in animals. The variability frustration adds is not aimed at the
+alternative.
+
+**Lessons with everything as at v33** (seed 0; 600 steps of speech play, 300 mouse-play
+episodes, 1000 lessons, 200 test lessons):
+
+| | first version | v33 |
+|---|---|---|
+| speech play, said aloud (first, second half) | 123, 185 | 33, 37 |
+| mouse play, clicks on a book | 11 of 35, then 0 of 1 | 33 of 91, then 39 of 70 |
+| practice, silent (first, second half) | 99.9%, 100% | 80.1%, 94.5% |
+| practice, words right | 0.0%, 0.0% | 0.3%, 0.1% |
+| test, silent | 100% | 99.4–99.7% |
+| test, words right | 0.0% | 0.0–0.1% |
+
+- **The child talks in the first half of the lessons, then goes quiet.**
+  - Aloud on 3337 of 16,813 story steps in the first half, and on 737 of 14,681 in the second.
+  - At test it acts on 358 of 13,313 steps.
+- **What it said was not right often enough to pay.**
+  - About 1.7% of what it said in the first half was right, near chance for 59 words.
+  - The teacher's responses and touches were small next to the cost of acting.
+  - So per-act credit, now working, did what it should with an act that does not pay: it
+    stopped it.
+- **The lessons need what the reversal and delayed probes need.** A state that says "asked to
+  speak", and which word, held across the story. Without it, speaking is an act whose worth is
+  the average over every moment, and that average is below its cost.
+- The other seed (2) is still running.

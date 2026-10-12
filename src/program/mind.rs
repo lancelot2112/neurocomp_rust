@@ -172,6 +172,7 @@ const RECALL_OFFSET: usize = 41 * BITS;
 const AMY_OFFSET: usize = 80 * BITS;
 const AMY_VALUE_OFFSET: usize = 120 * BITS;
 const EFFERENCE_OFFSET: usize = 130 * BITS;
+const OFC_VALUE_OFFSET: usize = 140 * BITS;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
 const VALUE_BASE: usize = ACT_BASE + 8 * BITS;
 
@@ -206,8 +207,9 @@ pub struct Config {
     pub response: bool,
     /// the critic sees the amygdala's value cells firing (MIND_AMY_CRITIC=0 off)
     pub amy_critic: bool,
-    /// the amygdala and the critic see the efference copy of the act just done, so value can be
-    /// learned for "this act, with these cues" (MIND_EFFERENCE=0 off)
+    /// an orbitofrontal / prelimbic learner of what an act leads to (cues and the efference copy
+    /// of the act just done); its values reach the critic and the motor loops, and the efference
+    /// copy itself the motor loops (MIND_EFFERENCE=0 off)
     pub efference: bool,
 }
 
@@ -289,6 +291,11 @@ pub struct Mind {
     pub bg: MaskStriatum,
     pub hc: IndexHc,
     pub amy: Amygdala,
+    /// the orbitofrontal / prelimbic outcome learner: the same bit-cell value learner, over the
+    /// cues and the efference copy of the act just done ("this act, here, leads to that")
+    pub ofc: Amygdala,
+    /// the efference copy of the act sensed this step (features), for the motor loops' view
+    efference_now: Vec<u32>,
     /// each motor area, its primitives (the genome's pattern generators), and the sensing area
     /// its acts are sensed by (its result)
     motors: Vec<(usize, Vec<BitVector>, usize)>,
@@ -353,7 +360,9 @@ impl Mind {
             wm: WorkingMemory::new(BITS, 1),
             bg,
             hc: IndexHc::new(hc_bits, seed),
-            amy: Amygdala::new((SLOTS.len() + 2) * BITS, seed),
+            amy: Amygdala::new(SLOTS.len() * BITS, seed),
+            ofc: Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC),
+            efference_now: Vec::new(),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             smile: body.smile,
             pons: zero(),
@@ -466,10 +475,17 @@ impl Mind {
             }
             codes[a] = with;
         }
+        // the amygdala: cues alone (what a stimulus leads to); the orbitofrontal learner: cues and
+        // the act just done (what an act leads to, here)
+        if self.cfg.efference {
+            let mut with_act = onsets.clone();
+            with_act.extend(efference.iter().copied());
+            self.ofc.onsets(with_act);
+        }
         if self.cfg.amygdala || self.cfg.learned_pause || self.cfg.imagine_value {
-            onsets.extend(efference.iter().copied());
             self.amy.onsets(onsets);
         }
+        self.efference_now = efference.clone();
         // the hippocampus: one step over the cortical state at its level (the association
         // columns', or every sensing area's)
         let state = if self.cfg.hc_assoc { self.assoc_state(&codes) } else { multi(&SLOTS.iter().map(|&a| (a, &codes[a])).collect::<Vec<_>>()) };
@@ -527,6 +543,9 @@ impl Mind {
             self.report.amy_predicted = self.amy.predicted();
             self.amy.learn(r[1] + r[2]);
         }
+        if self.cfg.efference {
+            self.ofc.learn(r[1] + r[2]);
+        }
         // 5. the striatum: the critic sees everything; the dopamine error closing the last step
         // reaches the goal cells followed recently; the interneurons pause to learned cues
         let ids = self.brain.column_ids();
@@ -540,9 +559,10 @@ impl Mind {
         if self.cfg.amygdala && self.cfg.amy_critic {
             all.push(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect());
         }
-        // and what was just done (the efference copy): a value for "having done this here"
+        // and the orbitofrontal learner's value cells: what the act just done, here, is worth
+        // (the critic gets act values only through it; motor efference itself goes dorsally)
         if self.cfg.efference {
-            all.push(efference.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());
+            all.push(self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect());
         }
         if self.cfg.learned_pause {
             self.bg.pause_open = self.amy.pausing();
@@ -635,6 +655,12 @@ impl Mind {
         // striatum's motor territory too): "a valued cue is here" is a context the loop can learn
         if self.cfg.amygdala {
             groups.push(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect());
+        }
+        // the act just done (motor cortex's collaterals to the dorsal striatum: the efference
+        // copy) and what the orbitofrontal learner says it is worth here
+        if self.cfg.efference {
+            groups.push(self.efference_now.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());
+            groups.push(self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect());
         }
         groups
     }

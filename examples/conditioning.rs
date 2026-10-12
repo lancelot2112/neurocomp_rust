@@ -116,6 +116,6 @@ fn main() {
             ),
         }
     }
-    println!("amygdala cells (appetitive, aversive, pause): {:?}", mind.amy.cells());
+    println!("amygdala cells (appetitive, aversive, pause): {:?}; orbitofrontal {:?}", mind.amy.cells(), mind.ofc.cells());
     println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64);
 }

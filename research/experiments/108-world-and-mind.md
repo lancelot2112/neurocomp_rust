@@ -828,3 +828,92 @@ The open problem is now the operant, not the cue:
 - Elemental amygdala cells are on.
 - Per-act cost and credit, compaction and consolidation are on.
 - Predictive transmission is off.
+
+### The light: focused cells, a credit bug, and credit against the act's own expectation
+**What was missing for the light** (diagnosis after v30):
+- **The orbitofrontal learner could not stand for "click after the light".** Its cells sampled 16
+  bits from a trace of about 100 items, of which the light and the click were a few.
+- **The hand loop was blind to the light.** The striatum's context has 64 bits split equally among
+  about a dozen input groups, so the light got 2–3. A cell of 16 bits that fires at 10 carried
+  less than one.
+
+**v31–32: focused cells** (`MIND_FOCUSED=0` off).
+- **The striatum's context:** each input group gets a region of its own (a 64-bit word) with
+  16 bits, and the candidate act gets the last region.
+- **New striatal cells:** a new cell takes two regions, the candidate's and one other (two at
+  random for the critic), and learns only within them. With v32, each region is a dendritic
+  branch that must reach 5 of its 8 bits, so every input the cell takes must be there.
+- **The orbitofrontal learner:** a new cell takes half its bits from one act's efference copy and
+  half from one cue.
+- **Neither version discriminated.** All three seeds clicked about once a trial with or without
+  the light, or stopped acting.
+
+**A striatum-only light probe** (`cargo test --release light_probe -- --ignored --nocapture`):
+- one act, a light in view on half the trials, among constant and noisy inputs;
+- a click with the light pays 1, and every click costs 1/8;
+- each click is credited one step on with what came minus what it was expected to bring.
+
+It showed that the learner itself could not do it, and it found the bug.
+- **The bug.** `reinforce_at` dropped the Q16 scale: its update was |δ|/UNIT/4 where it should be
+  |δ|·ONE/UNIT/4. A cell changed with odds of about 1 in 65,536. The per-act credit from v24 on
+  never changed a cell. Nor did agency (`reinforce_last`, the own-effect signal to the motor
+  loops) since it was added. Earlier results credited to either were the critic's broad dopamine
+  alone.
+- **The error.** Credited against the act's average worth (a fixed 1/8 here), cells blind to the
+  light gain on every paid click and lose a little on every unpaid one, so clicking everywhere
+  wins. Rescorla–Wagner's error is against the prediction for this act in this context. Then the
+  light-blind cells settle at the average, and the cells that see the light take up the
+  difference.
+
+Clicks per trial in the window, light / none, first and last of ten blocks of 100 trials:
+
+| cells | credit against | eligibility window | first | last |
+|---|---|---|---|---|
+| whole view | average worth | 0 | 0.80/0.69 | 0.70/0.72 |
+| focused | average worth | 0 | 0.35/0.33 | 0.00/0.00 (stops) |
+| whole view | its own q | 0 | 0.91/0.67 | 0.72/0.45 |
+| **focused** | **its own q** | **0** | 1.13/0.46 | **0.66/0.00** |
+| **focused** | **its own q** | **2** | 1.17/0.52 | **0.83/0.02** |
+| focused | its own q | 4 | 1.54/1.06 | 1.36/0.11 |
+| focused | its own q | 8 | 1.83/0.69 | 1.47/0.30 |
+
+- **Discrimination needs both changes:** focused cells, so some cells can stand for the light with
+  the click; and credit against the act's own expectation there.
+- **A long eligibility window hurts.** Each burst also credits the clicks made before the light
+  came on.
+
+**v33 in the mind:**
+- Fixes `reinforce_at`.
+- Credits each act against its loop's and its gate's own q at the choice, a cell an eighth,
+  clamped to 0–1 (`MIND_CREDIT_OWN=0`: against the act's average worth).
+- Sets the striatum's eligibility window to 2 steps (`MIND_WINDOW`). In the brain the
+  corticostriatal eligibility trace lasts about a second.
+
+**Instrumental, 600 trials** (clicks per trial in the window, light / none):
+
+| seed | 0–100 | 100–200 | 200–300 | 300–400 | 400–500 | 500–600 |
+|---|---|---|---|---|---|---|
+| 0 | 0.26/0.23 | 0.77/0.31 | 0.59/0.28 | 0.62/0.11 | 0.91/0.14 | **1.04/0.00** |
+| 1 | 0.37/0.17 | 0.88/0.34 | 0.85/0.21 | 0.42/0.26 | 0.56/0.22 | 0.89/0.29 |
+| 2 | 0.71/0.27 | 0.67/0.13 | 0.32/0.16 | **0.63/0.00** | **0.88/0.04** | **0.67/0.00** |
+| 0, window 8 | 0.22/0.38 | 0.29/0.31 | 0.51/0.34 | 0.31/0.13 | 0.20/0.25 | 0.17/0.12 |
+
+- **The light controls clicking on every seed for the first time.**
+  - Clicks with the light are 2–4 times those without from the second block on.
+  - Two seeds end with no clicks at all without the light.
+  - None dies out.
+- **What a click usually brings rises to +0.29 to +0.42** (+0.08 to +0.17 before), because the
+  clicks now come when they pay.
+- **The child acts less overall:** 0.27–0.37 acts per step, against 0.7–0.9 before.
+- **With a window of 8, the discrimination is lost.**
+- **The tone still holds** (seed 1, 300 trials): CS+ +0.89 → +0.99 against CS− +0.00 to +0.02, and
+  the dopamine at the touch falls to +0.19.
+
+**Defaults now (v33):**
+- the attention gate off;
+- elemental amygdala cells;
+- focused striatal and orbitofrontal cells;
+- per-act credit against the loops' own q;
+- an eligibility window of 2;
+- compaction and consolidation on;
+- predictive transmission off.

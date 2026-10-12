@@ -71,6 +71,8 @@ pub struct IndexHc {
     pub ach: u32,
     /// what the cortex represents now (the content half of the input)
     content: Vec<usize>,
+    /// the state at the last step (an unchanged state is nothing new)
+    last_state: Vec<usize>,
     /// the width of what the index points to
     out_bits: usize,
     /// (completions, of which reached the cortex), boundaries, rows relearned, relearned asleep
@@ -101,6 +103,7 @@ impl IndexHc {
             to_reconsolidate: None,
             ach: 0,
             content: Vec::new(),
+            last_state: Vec::new(),
             out_bits,
             stats: (0, 0, 0, 0, 0),
         }
@@ -149,8 +152,7 @@ impl IndexHc {
     }
 
     /// One completion: what the index offers the cortex now (empty while encoding).
-    pub fn complete(&mut self) -> BitVector {
-        self.ach -= self.ach / 4;
+    fn complete(&mut self) -> BitVector {
         let content_keys: Vec<usize> = self.content.iter().map(|&c| CONTENT_BASE + c).collect();
         let need = (content_keys.len() / 2).max(1);
         let has = |mem: &IndexMemory, r: u32| -> usize {
@@ -202,22 +204,27 @@ impl IndexHc {
         v
     }
 
-    /// The cortex represents something not sensed (meant, imagined): it becomes the content,
-    /// the context moves with it, and attention turned inward lets acetylcholine fall.
-    pub fn represent(&mut self, cells: &[usize]) {
-        self.content = cells.to_vec();
-        self.drift(cells, 4, 1);
-        self.ach /= 2;
-    }
-
-    /// Something is sensed (`cells`: what the cortex represents of it, every area's cells).
-    /// `external`: it came from outside (attention to the world raises acetylcholine, and it is
-    /// stored); `own`: one's own speech (represented, never stored); `surprise` (`Q16`): how
-    /// unexpected it was to the cortex, which the boundary cell learns from. Returns whether an
-    /// event boundary fired.
-    pub fn sense(&mut self, cells: &BitVector, external: bool, own: bool, surprise: u32) -> bool {
+    /// One step, the only way in: the entorhinal input is what the cortex holds now, every area's
+    /// cells (`state`: sensed, or imagined and fed back top-down). It is never told what was
+    /// heard. The rest is neuromodulation and the cortex's own signals:
+    /// - `outward` (some area's input changed from outside: attention to the world): acetylcholine
+    ///   rises, and the state is stored as an event;
+    /// - `own` (the voice's efference copy marks the sound as one's own: corollary discharge):
+    ///   represented, never stored, and it does not raise acetylcholine;
+    /// - neither, with a new state (imagined, meant): attention is inward, acetylcholine falls;
+    /// - `surprise` (`Q16`, the cortex's): the boundary cell learns from it.
+    /// An unchanged state is nothing new: the offer holds. Returns what the index offers the
+    /// cortex (empty while encoding).
+    pub fn step(&mut self, state: &BitVector, outward: bool, own: bool, surprise: u32) -> BitVector {
         self.ach -= self.ach / 4;
-        let cells_v = ones(cells);
+        let cells_v = ones(state);
+        let new = cells_v != self.last_state;
+        self.last_state = cells_v.clone();
+        self.just_stored = None;
+        if !new || cells_v.is_empty() {
+            self.content = Vec::new();
+            return self.complete();
+        }
         self.boundary.learn(surprise);
         if let Some(r) = self.to_reconsolidate.take() {
             let old = self.mem.out_of(r).to_vec();
@@ -227,12 +234,14 @@ impl IndexHc {
                 self.stats.3 += 1;
             }
         }
-        if external && !own {
+        let external = outward && !own;
+        if external {
             self.ach += (ONE - self.ach.min(ONE)) / 2;
+        } else if !own {
+            self.ach /= 2;
         }
-        self.content = if external || own { cells_v.clone() } else { Vec::new() };
-        self.just_stored = None;
-        if external && !own && !cells_v.is_empty() {
+        self.content = cells_v.clone();
+        if external {
             let mut keys = self.ctx.clone();
             keys.extend(cells_v.iter().map(|c| CONTENT_BASE + c));
             let id = self.mem.rows() as u32;
@@ -244,8 +253,7 @@ impl IndexHc {
             }
         }
         self.drift(&cells_v, 4, 1);
-        let fired = self.boundary.observe(&cells_v);
-        if fired {
+        if self.boundary.observe(&cells_v) {
             self.stats.2 += 1;
             self.drift(&cells_v, SLOTS / 2, 2);
             if let Some(e) = self.stored_now.and_then(|id| self.ordered.get_mut(&id)) {
@@ -253,7 +261,7 @@ impl IndexHc {
             }
         }
         self.stored_now = None;
-        fired
+        self.complete()
     }
 
     /// Sleep: chains of rows replayed by strength (`chains` of up to 30). `complete` is the

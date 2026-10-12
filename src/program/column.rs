@@ -94,6 +94,18 @@ impl Map {
         self.cells.proposals(self.bits)
     }
 
+    /// The column's goal now: of the cells that fired, the one whose output has been worth most
+    /// when followed (its learned worth; ties to a burst, then the layer's own winner order).
+    /// Returns (cell, output, burst).
+    pub fn goal(&self) -> Option<(usize, BitVector, bool)> {
+        self.cells.fired_cells(self.bits).into_iter().enumerate().max_by_key(|(i, (_, _, b, w))| (*w, *b, std::cmp::Reverse(*i))).map(|(_, (c, o, b, _))| (c, o, b))
+    }
+
+    /// Dopamine for cell `c`, whose output was followed as a goal.
+    pub fn reinforce(&mut self, c: usize, delta: i32) {
+        self.cells.add_worth(c, delta);
+    }
+
     /// The latest winner's learning progress (see `BitCells::progress`).
     pub fn progress(&self) -> i32 {
         self.cells.progress()

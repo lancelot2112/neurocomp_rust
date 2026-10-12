@@ -46,6 +46,8 @@ fn main() {
     let mut acts = Acts::default();
     // the valuations summed (own effect, response, smile, effort), per stage
     let mut valued = [[0i64; 4]; 4];
+    // per stage: (steps, goals taken, acts released from a goal, acts, imagined, recall reached the cortex)
+    let mut inner = [[0usize; 6]; 4];
     macro_rules! run {
         ($stage:expr) => {{
             let start = world.events.len();
@@ -55,6 +57,14 @@ fn main() {
                 for k in 0..4 {
                     valued[$stage][k] += mind.report.valued[k] as i64;
                 }
+                let r = &mind.report;
+                let x = &mut inner[$stage];
+                x[0] += 1;
+                x[1] += r.goals_taken;
+                x[2] += r.from_goal as usize;
+                x[3] += (r.spoke as usize) + (r.moved as usize);
+                x[4] += r.inward as usize;
+                x[5] += r.recalled as usize;
             }
             start
         }};
@@ -179,6 +189,10 @@ fn main() {
     for (k, v) in valued.iter().enumerate() {
         println!("  dopamine from {:<11}: own effect {:.1}, response {:.1}, smile {:.1}, effort {:.1}", names[k], v[0] as f64 / 65536.0, v[1] as f64 / 65536.0, v[2] as f64 / 65536.0, v[3] as f64 / 65536.0);
     }
+    for (k, x) in inner.iter().enumerate() {
+        println!("  {:<11}: {} steps; goals taken per step {:.2}; acts {} ({} from a goal); imagined {}; recall reached the cortex on {:.0}% of steps", names[k], x[0], x[1] as f64 / x[0].max(1) as f64, x[3], x[2], x[4], 100.0 * x[5] as f64 / x[0].max(1) as f64);
+    }
+    println!("loops: {} columns with a loop", mind.report.loops);
     let (c, o, b, r, a) = mind.hc.stats;
     println!("hippocampus: {} rows, {c} completions ({o} reached the cortex), {b} boundaries, {r} relearned awake, {a} asleep; {:.0} s", mind.hc.mem.rows(), t0.elapsed().as_secs_f64());
 }

@@ -340,6 +340,14 @@ pub enum Kind {
     SensorMotor,
 }
 
+/// A column with a layer 5: a sensory area's, or association column `i` (pairs first, then the
+/// full area).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ColumnId {
+    Sense(usize),
+    Assoc(usize),
+}
+
 /// A device's own cortical area.
 pub struct Area {
     pub name: String,
@@ -493,6 +501,59 @@ impl Brain {
     /// The association columns, pairs then the full one.
     fn assoc_columns(&mut self) -> Vec<&mut Column> {
         self.pairs.iter_mut().map(|p| &mut p.1).chain(self.full.iter_mut()).collect()
+    }
+
+    /// Every column with a layer 5, sensory and association: each has a loop of its own through
+    /// the basal ganglia, so loops grow as association columns grow.
+    pub fn column_ids(&self) -> Vec<ColumnId> {
+        let mut v: Vec<ColumnId> = (0..self.areas.len()).filter(|&a| self.areas[a].col.is_some()).map(ColumnId::Sense).collect();
+        v.extend((0..self.pairs.len() + self.full.is_some() as usize).map(ColumnId::Assoc));
+        v
+    }
+
+    fn column_ref(&self, id: ColumnId) -> Option<&Column> {
+        match id {
+            ColumnId::Sense(a) => self.areas.get(a).and_then(|x| x.col.as_ref()),
+            ColumnId::Assoc(i) => self.pairs.get(i).map(|p| &p.1).or_else(|| if i == self.pairs.len() { self.full.as_ref() } else { None }),
+        }
+    }
+
+    fn column_mut(&mut self, id: ColumnId) -> Option<&mut Column> {
+        match id {
+            ColumnId::Sense(a) => self.areas.get_mut(a).and_then(|x| x.col.as_mut()),
+            ColumnId::Assoc(i) => {
+                let n = self.pairs.len();
+                if i < n {
+                    self.pairs.get_mut(i).map(|p| &mut p.1)
+                } else if i == n {
+                    self.full.as_mut()
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// A column's goal now (after its layer 5 predicted this step): (cell, output, burst).
+    pub fn goal_of(&self, id: ColumnId) -> Option<(usize, BitVector, bool)> {
+        self.column_ref(id).and_then(|c| c.l5.goal())
+    }
+
+    /// Dopamine for a column's layer 5 cell whose output was followed as a goal.
+    pub fn reinforce(&mut self, id: ColumnId, cell: usize, delta: i32) {
+        if let Some(c) = self.column_mut(id) {
+            c.l5.reinforce(cell, delta);
+        }
+    }
+
+    /// A column's layer 2/3 activity (what its projection to the striatum carries).
+    pub fn activity_of(&self, id: ColumnId) -> BitVector {
+        self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.activity())
+    }
+
+    /// A column's current input code (what holding it in working memory would hold).
+    pub fn code_of_column(&self, id: ColumnId) -> BitVector {
+        self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.code.clone())
     }
 
     /// Self-organizing: every association column steps. Its input is its layer 4's code for the

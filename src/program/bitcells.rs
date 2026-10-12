@@ -81,6 +81,8 @@ struct Cell {
     prime: Q16,
     prime_tick: u64,
     wired_tick: u64,
+    /// what following this cell's output as a goal has been worth (`Q16`, learned from dopamine)
+    worth: i32,
 }
 
 #[derive(Clone)]
@@ -411,6 +413,19 @@ impl BitCells {
         self.cached.as_ref().map_or(Vec::new(), |(_, e)| e.fired.iter().map(|&(c, _, b)| (self.output(c, out_bits), b)).collect())
     }
 
+    /// Every cell that fired at the latest prediction, as (cell, output, burst, worth).
+    pub fn fired_cells(&self, out_bits: usize) -> Vec<(usize, BitVector, bool, i32)> {
+        self.cached.as_ref().map_or(Vec::new(), |(_, e)| e.fired.iter().map(|&(c, _, b)| (c, self.output(c, out_bits), b, self.cells[c].worth)).collect())
+    }
+
+    /// Dopamine reaches a cell whose output was taken up as a goal: its worth moves toward
+    /// what followed (an eighth of the way).
+    pub fn add_worth(&mut self, c: usize, delta: i32) {
+        if let Some(cell) = self.cells.get_mut(c) {
+            cell.worth += (delta - cell.worth / 8) / 8;
+        }
+    }
+
     /// The winner's output, its priming and whether it burst; None: nothing fired.
     pub fn predict(&mut self, row: &BitVector, out_bits: usize) -> Option<(BitVector, Q16, bool)> {
         self.tick += 1;
@@ -540,6 +555,7 @@ impl BitCells {
         cell.hist = 0;
         cell.prime = 0;
         cell.bursty = 0;
+        cell.worth = 0;
         self.stats[4] += 1;
     }
 

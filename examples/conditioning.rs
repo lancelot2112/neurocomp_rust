@@ -27,13 +27,19 @@ fn main() {
     let kind = match std::env::var("COND").unwrap_or_default().as_str() {
         "instr" => Conditioning::Instrumental,
         "delayed" => Conditioning::Delayed,
+        "reversal" => Conditioning::Reversal,
         _ => Conditioning::Pavlov,
     };
     let cfg = Config::from_env();
     println!("{kind:?}, {trials} trials, seed {seed}; {cfg:?}");
     let mut world = World::new(seed);
     let mut mind = Mind::with_config(world.body(), seed, cfg);
+    world.reversal_period = env("COND_PERIOD", 500);
     world.conditioning(kind, trials);
+    // reversal: per block, (clicks in the window with the paying light, trials with it, clicks
+    // with the other light, trials with it)
+    let mut rev = [(0usize, 0usize, 0usize, 0usize); 64];
+    let mut a_pays = true;
     let mut acts = Acts::default();
     let block = 100;
     // per block, per cue (false, true): (value at the cue step, dopamine at the cue step, cue
@@ -77,8 +83,12 @@ fn main() {
         acts = mind.step(&senses);
         let ev = world.events.last().unwrap().clone();
         let Some((t, cue)) = ev.cond else { continue };
+        if t == 0 {
+            a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
+        }
         if t == 0 && world.events.len() > 1 {
             trial += 1;
+            a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
             if sleep_every > 0 && trial % sleep_every == 0 {
                 mind.sleep(3);
                 if trial % block == 0 {
@@ -153,7 +163,7 @@ fn main() {
         }
         let window = match kind {
             Conditioning::Pavlov => 3..=5,
-            Conditioning::Instrumental => 3..=5,
+            Conditioning::Instrumental | Conditioning::Reversal => 3..=5,
             Conditioning::Delayed => 5..=7,
         };
         if window.contains(&t) && ev.moved == Some(CLICK) {
@@ -161,6 +171,24 @@ fn main() {
         }
         if t == 9 {
             x.6 += 1;
+        }
+        if kind == Conditioning::Reversal {
+            let pays = cue == a_pays;
+            let r = &mut rev[b];
+            if window.contains(&t) && ev.moved == Some(CLICK) {
+                if pays {
+                    r.0 += 1;
+                } else {
+                    r.2 += 1;
+                }
+            }
+            if t == 9 {
+                if pays {
+                    r.1 += 1;
+                } else {
+                    r.3 += 1;
+                }
+            }
         }
     }
     let f = |v: i64, n: usize| v as f64 / n.max(1) as f64 / 65536.0;
@@ -181,6 +209,14 @@ fn main() {
                 f(yes.3, yes.4),
                 f(amy[b][1], yes.6),
                 f(amy[b][0], no.6)
+            ),
+            Conditioning::Reversal => println!(
+                "  trials {:4}-{:4}: clicks in the window per trial, the paying light {:.2}, the other {:.2} ({} pays)",
+                b * block,
+                (b + 1) * block,
+                rev[b].0 as f64 / rev[b].1.max(1) as f64,
+                rev[b].2 as f64 / rev[b].3.max(1) as f64,
+                if (b * block / world.reversal_period.max(1)) % 2 == 0 { "A" } else { "B" }
             ),
             _ => println!(
                 "  trials {:4}-{:4}: clicks in the window per trial, cue {:.2} no cue {:.2}; touches per cue trial {:.2}; value at the cue {:+.3} (no cue {:+.3})",

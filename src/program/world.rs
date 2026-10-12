@@ -173,6 +173,10 @@ pub enum Conditioning {
     Instrumental,
     /// a light is on for one step; a click three to five steps later gets a stroke
     Delayed,
+    /// serial reversal: one of two lights (A on cue trials, B on the others) is on for three
+    /// steps every trial; a click while it is on, or the step after, gets a stroke if that light
+    /// is the one paying now: A for the first `reversal_period` trials, then B, then A again...
+    Reversal,
 }
 
 /// A record of one step, for an observer (never sent to the mind).
@@ -271,6 +275,12 @@ pub struct World {
     /// conditioning cues: two tones (heard) and a light (seen)
     tones: Vec<BitVector>,
     light: BitVector,
+    /// the reversal probe's second light
+    light_b: BitVector,
+    /// conditioning: trials in all, and the reversal probe's period (trials before the paying
+    /// light changes)
+    cond_total: usize,
+    pub reversal_period: usize,
     tract: VocalTract,
     mouse: VocalTract,
     /// the screen: what lies at each place (none, or a book's words), and the child's cursor
@@ -326,6 +336,9 @@ impl World {
             attending: face[0].clone(),
             tones: codes(2, ACTIVE, &mut r(0x7070)),
             light: codes(1, ACTIVE, &mut r(0x1167)).remove(0),
+            light_b: codes(1, ACTIVE, &mut r(0x1168)).remove(0),
+            cond_total: 0,
+            reversal_period: 500,
             tract,
             mouse,
             places: vec![None; npos],
@@ -396,7 +409,14 @@ impl World {
         self.reset_screen(false);
         self.present = true;
         let cue = self.rng.gen_bool(0.5);
+        self.cond_total = trials;
         self.scene = Scene::Conditioning(kind, trials, 0, cue, false);
+    }
+
+    /// The reversal probe: whether light A pays on the trial with `left` trials to go (counting
+    /// this one).
+    pub fn a_pays(&self, left: usize) -> bool {
+        (self.cond_total - left) / self.reversal_period.max(1) % 2 == 0
     }
 
     /// A lesson: the teacher reads a story, asks for it to be read or told, waits, and the task
@@ -547,6 +567,15 @@ impl World {
                             self.extra_sight = Some(self.light.clone());
                         }
                         if cue && click && (3..=5).contains(&t) && !stroked {
+                            self.stroke_next = true;
+                            stroked = true;
+                        }
+                    }
+                    Conditioning::Reversal => {
+                        if (2..=4).contains(&t) {
+                            self.extra_sight = Some(if cue { self.light.clone() } else { self.light_b.clone() });
+                        }
+                        if click && (3..=5).contains(&t) && !stroked && cue == self.a_pays(left) {
                             self.stroke_next = true;
                             stroked = true;
                         }

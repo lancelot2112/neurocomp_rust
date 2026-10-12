@@ -143,8 +143,14 @@ pub struct Amygdala {
     /// features from this index on are acts (efference copies); None: no baseline
     act_from: Option<u32>,
     /// value cells form and fire only on attended features (and one's own acts): attention
-    /// gates learning, as associability does (default on)
+    /// gates learning, as associability does
     pub gated: bool,
+    /// elemental cells: a new value cell samples one cue's bits (one area's onsets, at one age),
+    /// as a lateral amygdala cell's plasticity is specific to the input stream that drove it;
+    /// else the whole trace's (a conjunction of whatever else was there)
+    pub elemental: bool,
+    /// features per area (a cue is one area's features)
+    group: u32,
     /// attended features, and features seen before (bit vectors over the features)
     attended: BitVector,
     seen: BitVector,
@@ -166,6 +172,8 @@ impl Amygdala {
             baseline: Pool::default(),
             act_from: None,
             gated: true,
+            elemental: true,
+            group: crate::program::world::BITS as u32,
             attended: BitVector::new(feat, Some(0)),
             seen: BitVector::new(feat, Some(0)),
             now: 0,
@@ -223,6 +231,17 @@ impl Amygdala {
             c[b / 64] |= 1 << (b % 64);
         }
         c
+    }
+
+    /// The contexts of the cues among some items, one per (age, area) with enough bits for a cell.
+    fn cue_contexts(&self, items: &[(usize, u32)]) -> Vec<Vec<u64>> {
+        let mut keys: Vec<(usize, u32)> = items.iter().map(|&(a, f)| (a, f / self.group)).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        keys.into_iter()
+            .map(|(a, g)| Self::context(items.iter().filter(|x| x.0 == a && x.1 / self.group == g).map(|(a, f)| (*a, f)), true))
+            .filter(|c| c.iter().map(|w| w.count_ones() as usize).sum::<usize>() >= CELL_BITS)
+            .collect()
     }
 
     /// The trace's items at ages `ages`.
@@ -297,24 +316,32 @@ impl Amygdala {
         self.stats.1 += err.unsigned_abs() as u64;
         let k = (err.abs() / UNIT).min(4) as usize;
         let (app, avr) = (self.appetitive.firing(&ctx), self.aversive.firing(&ctx));
+        // elemental: each new cell on one cue's context (and firing cells stay on their cue)
+        let cues = if self.elemental { self.cue_contexts(&past) } else { Vec::new() };
         if err >= UNIT {
-            for &i in &app {
-                self.appetitive.toward(i, &ctx, self.now, &mut self.rng);
+            if !self.elemental {
+                for &i in &app {
+                    self.appetitive.toward(i, &ctx, self.now, &mut self.rng);
+                }
             }
             let gone = avr.len().min(k);
             self.aversive.remove(&avr, gone, &mut self.rng);
             for _ in gone..k {
-                self.appetitive.recruit(&ctx, self.now, &mut self.rng);
+                let c = if cues.is_empty() { &ctx } else { &cues[self.rng.gen_range(0..cues.len())] };
+                self.appetitive.recruit(c, self.now, &mut self.rng);
             }
         } else if err <= -UNIT {
-            for &i in &avr {
-                self.aversive.toward(i, &ctx, self.now, &mut self.rng);
+            if !self.elemental {
+                for &i in &avr {
+                    self.aversive.toward(i, &ctx, self.now, &mut self.rng);
+                }
             }
             let gone = app.len().min(k);
             self.appetitive.remove(&app, gone, &mut self.rng);
             if r < 0 {
                 for _ in gone..k {
-                    self.aversive.recruit(&ctx, self.now, &mut self.rng);
+                    let c = if cues.is_empty() { &ctx } else { &cues[self.rng.gen_range(0..cues.len())] };
+                    self.aversive.recruit(c, self.now, &mut self.rng);
                 }
             }
         }

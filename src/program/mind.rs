@@ -250,6 +250,10 @@ pub struct Config {
     /// the amygdala's and orbitofrontal learner's value cells form and fire only on attended
     /// cues (and one's own acts) (MIND_ATTEND_GATE=1 on; off by default: it broke tone learning)
     pub attend_gate: bool,
+    /// the amygdala's new value cells each sample one cue (one area's onsets at one age), not the
+    /// whole trace; the orbitofrontal learner keeps its conjunctions of act and cues
+    /// (MIND_ELEMENTAL=0 off)
+    pub elemental: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -263,7 +267,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -298,6 +302,7 @@ impl Config {
             per_act: on("MIND_PER_ACT"),
             act_credit: on("MIND_ACT_CREDIT"),
             attend_gate: std::env::var("MIND_ATTEND_GATE").map_or(false, |v| v == "1"),
+            elemental: on("MIND_ELEMENTAL"),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
             predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),
@@ -445,6 +450,7 @@ impl Mind {
         }
         let act_baseline = cfg.act_baseline;
         let attend_gate = cfg.attend_gate;
+        let elemental = cfg.elemental;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -458,11 +464,13 @@ impl Mind {
             amy: {
                 let mut a = Amygdala::new(SLOTS.len() * BITS, seed);
                 a.gated = attend_gate;
+                a.elemental = elemental;
                 a
             },
             ofc: {
                 let mut o = Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC);
                 o.gated = attend_gate;
+                o.elemental = false;
                 if act_baseline {
                     o.with_act_baseline((SLOTS.len() * BITS) as u32)
                 } else {

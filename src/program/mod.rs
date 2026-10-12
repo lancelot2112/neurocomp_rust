@@ -81,6 +81,7 @@ pub mod area;
 pub mod world;
 pub mod index_hc;
 pub mod mind;
+pub mod amygdala;
 pub mod column;
 pub use striatum::Striatum;
 pub use mask_striatum::MaskStriatum;

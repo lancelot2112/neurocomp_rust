@@ -437,7 +437,7 @@ pub struct Brain {
 const CAP: usize = 8192;
 
 /// Room for this many pairwise association areas as sources of the full one.
-const MAX_PAIRS: usize = 16;
+pub const MAX_PAIRS: usize = 16;
 
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
@@ -556,23 +556,56 @@ impl Brain {
         self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.code.clone())
     }
 
+    /// Each association column's layer 4 code for the areas' codes (`codes`, by area; a missing
+    /// one is silent), pairs first, then the full area (over the pairs' codes). Not learned.
+    pub fn assoc_inputs(&self, codes: &[BitVector]) -> Vec<BitVector> {
+        let silent = BitVector::new(self.bits, Some(0));
+        let mut v: Vec<BitVector> = self.pairs.iter().map(|((a, b), col)| col.l4.as_ref().unwrap().encode(&[(0, codes.get(*a).unwrap_or(&silent)), (1, codes.get(*b).unwrap_or(&silent))])).collect();
+        if let Some(full) = self.full.as_ref() {
+            let input: Vec<(usize, &BitVector)> = v.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
+            let f = full.l4.as_ref().unwrap().encode(&input);
+            v.push(f);
+        }
+        v
+    }
+
+    /// Feedback down the hierarchy: association column `i`'s cells `cells` project back through
+    /// its layer 4's synapses to its sources' codes (the full area to the pairs, a pair to its two
+    /// areas), and on down, as far as the areas. Returns (area, its layer 4 code expected).
+    pub fn cascade_down(&self, i: usize, cells: &BitVector) -> Vec<(usize, BitVector)> {
+        let mut out: Vec<(usize, BitVector)> = Vec::new();
+        let n = self.pairs.len();
+        let pair_down = |p: usize, code: &BitVector, out: &mut Vec<(usize, BitVector)>| {
+            let ((a, b), col) = &self.pairs[p];
+            let l4 = col.l4.as_ref().unwrap();
+            for (side, area) in [(0usize, *a), (1, *b)] {
+                let c = l4.backproject(code, side);
+                if c.count_ones() > 0 {
+                    out.push((area, c));
+                }
+            }
+        };
+        if i < n {
+            pair_down(i, cells, &mut out);
+        } else if let (true, Some(full)) = (i == n, self.full.as_ref()) {
+            let l4 = full.l4.as_ref().unwrap();
+            for p in 0..n {
+                let c = l4.backproject(cells, p);
+                if c.count_ones() > 0 {
+                    pair_down(p, &c, &mut out);
+                }
+            }
+        }
+        out
+    }
+
     /// Self-organizing: every association column steps. Its input is its layer 4's code for the
     /// areas' codes (`codes`), with any cells `extra` reinstates there; its layer 2/3 predicts its
     /// next input with `tuft` on its tuft; its layer 5 offers a goal (what a motor area should
     /// produce) from its input, tuft and expectation. Returns, per column: (its layer 5's goal
     /// and whether it burst, its input, its expectation), to learn from and to mix.
     pub fn step_columns(&mut self, codes: &[BitVector], extra: &[(usize, BitVector)], tuft: &BitVector, learn: bool) -> Vec<(Option<(BitVector, bool)>, BitVector, BitVector)> {
-        let silent = BitVector::new(self.bits, Some(0));
-        let inputs: Vec<BitVector> = {
-            let pair_inputs = self.pairs.iter().map(|((a, b), col)| col.l4.as_ref().unwrap().encode(&[(0, codes.get(*a).unwrap_or(&silent)), (1, codes.get(*b).unwrap_or(&silent))]));
-            let mut v: Vec<BitVector> = pair_inputs.collect();
-            if let Some(full) = self.full.as_ref() {
-                let input: Vec<(usize, &BitVector)> = v.iter().enumerate().filter(|(_, c)| c.count_ones() > 0).collect();
-                let f = full.l4.as_ref().unwrap().encode(&input);
-                v.push(f);
-            }
-            v
-        };
+        let inputs = self.assoc_inputs(codes);
         let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
         let mut out = Vec::new();
         for (i, (col, inp)) in self.assoc_columns().into_iter().zip(inputs).enumerate() {

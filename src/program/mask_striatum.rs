@@ -335,6 +335,12 @@ pub struct MaskStriatum {
     pub swaps: u64,
     /// cholinergic pauses (actor plasticity)
     pub pauses: u64,
+    /// the cholinergic interneurons pause now (a learned response to a cue), opening actor
+    /// plasticity for the dopamine that closes this step whatever its size
+    pub pause_open: bool,
+    /// the input groups the next choices see instead of the whole state (a loop's own cortical
+    /// territory: corticostriatal topography), with their context
+    view: Option<(Vec<Vec<usize>>, Vec<u64>)>,
 }
 
 fn mix(x: u64) -> u64 {
@@ -386,6 +392,8 @@ impl MaskStriatum {
             last_delta: 0,
             swaps: 0,
             pauses: 0,
+            pause_open: false,
+            view: None,
         }
     }
 
@@ -396,7 +404,8 @@ impl MaskStriatum {
     /// input. The candidate never counts alone, so "candidates like this" are valued only "in
     /// states like that" (as a spiny cell with synapses from both).
     fn candidate_context(&self, candidate: &[Vec<usize>]) -> Vec<u64> {
-        let mut c = self.context_k(&self.state, self.k / 2);
+        let state: &[Vec<usize>] = self.view.as_ref().map_or(&self.state, |v| &v.0);
+        let mut c = self.context_k(state, self.k / 2);
         let picks = |groups: &[Vec<usize>], n: usize| -> Vec<u64> {
             let live: Vec<&Vec<usize>> = groups.iter().filter(|g| !g.is_empty()).collect();
             let mut out = Vec::new();
@@ -412,7 +421,7 @@ impl MaskStriatum {
             }
             out
         };
-        let (a, b) = (picks(&self.state, 16), picks(candidate, 8));
+        let (a, b) = (picks(state, 16), picks(candidate, 8));
         // nothing in the state: the candidate's own input (the cortex's proposal reaches the
         // striatum directly) is the context, so a choice made with no situation can still be learned
         if a.is_empty() && !b.is_empty() {
@@ -617,7 +626,7 @@ impl MaskStriatum {
         if delta == 0 {
             return;
         }
-        let pause = delta.abs() >= self.pause_min * UNIT;
+        let pause = delta.abs() >= self.pause_min * UNIT || std::mem::take(&mut self.pause_open);
         self.pauses += pause as u64;
         let n = self.recent.len();
         // (index into recent, credit weight in Q16)
@@ -728,16 +737,24 @@ impl MaskStriatum {
         self.reward += r;
     }
 
+    /// The next choices see only `groups` (a loop's own cortical territory); None: the whole
+    /// state again. The critic always sees the whole state.
+    pub fn set_view(&mut self, groups: Option<Vec<Vec<usize>>>) {
+        self.view = groups.map(|g| {
+            let c = self.context(&g);
+            (g, c)
+        });
+    }
+
     /// One of `n` actions on `channel` (0: the default, nothing released).
     pub fn choose(&mut self, channel: usize, n: usize, explore: bool) -> usize {
         self.ensure(channel, n);
         let keep = self.keep(explore);
-        let c = self.c.clone();
+        let c = self.view.as_ref().map_or_else(|| self.c.clone(), |v| v.1.clone());
         let mut q: Vec<i32> = (1..n).map(|a| self.q(channel, a, &c, &keep)).collect();
         self.jitter(&mut q, explore);
         match self.release(&q) {
             Some(i) => {
-                let c = self.c.clone();
                 if let Some(st) = self.recent.last_mut() {
                     st.choices.push((channel, i + 1, c));
                 }

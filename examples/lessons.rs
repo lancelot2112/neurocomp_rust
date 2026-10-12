@@ -10,7 +10,7 @@
 //! At test the teacher only listens (no demonstration, no correction), and smiles at right
 //! words as always; the mind does not know it is being tested, and keeps learning.
 
-use neurocomp::program::mind::Mind;
+use neurocomp::program::mind::{Config, Mind};
 use neurocomp::program::world::{Acts, Book, Lesson, Phase, Task, Who, World};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -40,7 +40,7 @@ fn main() {
     let sleep_every: usize = env("LS_SLEEP", 10);
     let mut rng = StdRng::seed_from_u64(seed ^ 0xC0FE);
     let mut world = World::new(seed);
-    let mut mind = Mind::new(world.body(), seed);
+    let mut mind = Mind::with_config(world.body(), seed, Config::from_env());
     mind.spontaneous = env("LS_SPONT", 1);
     let t0 = std::time::Instant::now();
     let mut acts = Acts::default();

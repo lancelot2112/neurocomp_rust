@@ -36,7 +36,8 @@ use rand::{Rng, RngCore, SeedableRng};
 
 use crate::bitvec::BitVector;
 use crate::fixed::ONE;
-use crate::program::area::{Brain, ColumnId, Kind};
+use crate::program::amygdala::Amygdala;
+use crate::program::area::{Brain, ColumnId, Kind, MAX_PAIRS};
 use crate::program::cerebellar_circuit::CerebellarCircuit;
 use crate::program::index_hc::IndexHc;
 use crate::program::mask_striatum::MaskStriatum;
@@ -151,6 +152,78 @@ pub fn part(v: &BitVector, a: usize) -> BitVector {
     out
 }
 
+/// Association column `i`'s slot in the association-level index (pairs at their index, the full
+/// area at the last slot, so a slot never moves as pairs grow).
+fn assoc_slot(i: usize, pairs: usize) -> usize {
+    if i < pairs {
+        i
+    } else {
+        MAX_PAIRS
+    }
+}
+
+/// Where each kind of input sits in the striatum's input ids (stable across loops and the critic).
+fn column_offset(id: ColumnId) -> usize {
+    match id {
+        ColumnId::Sense(a) => a * BITS,
+        ColumnId::Assoc(i) => (8 + i) * BITS,
+    }
+}
+const WM_OFFSET: usize = 40 * BITS;
+const RECALL_OFFSET: usize = 41 * BITS;
+const AMY_OFFSET: usize = 80 * BITS;
+/// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
+const VALUE_BASE: usize = ACT_BASE + 8 * BITS;
+
+/// What the mind is built with (each switch is a part of the biology, to be ablated).
+#[derive(Clone, Debug)]
+pub struct Config {
+    /// the hippocampus's input and output at the top of the association hierarchy (the full and
+    /// pairwise association columns, as the entorhinal cortex's inputs are); recall reaches the
+    /// senses only by the columns' feedback. false: it indexes every sensing area directly
+    pub hc_assoc: bool,
+    /// each loop sees its own cortical territory (corticostriatal topography); false: the whole state
+    pub topographic: bool,
+    /// the amygdala: fast cue value, attention to predictive cues, the onset trace to the striatum
+    pub amygdala: bool,
+    /// the cholinergic interneurons learn to pause to cues that came before large dopamine errors
+    pub learned_pause: bool,
+    /// a reply pays only as far as replies are contingent on its own sounds (a contingency
+    /// detector); false: any sound from outside soon after its own sound
+    pub contingency: bool,
+    /// the motor gate sees the amygdala's value of the act's imagined outcome
+    pub imagine_value: bool,
+    /// the valuation of its own effect (the senses' surprise after its own act)
+    pub own_effect: bool,
+    /// the valuation of a response
+    pub response: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, response: true }
+    }
+}
+
+impl Config {
+    /// The defaults, with any switch turned off by its variable set to 0 (MIND_HC=senses for the
+    /// sensory-level index): MIND_TOPO, MIND_AMY, MIND_PAUSE, MIND_CONTINGENCY, MIND_IMAGINE_VALUE,
+    /// MIND_OWN, MIND_RESPONSE.
+    pub fn from_env() -> Self {
+        let on = |k: &str| std::env::var(k).map_or(true, |v| v != "0");
+        Self {
+            hc_assoc: std::env::var("MIND_HC").map_or(true, |v| v != "senses"),
+            topographic: on("MIND_TOPO"),
+            amygdala: on("MIND_AMY"),
+            learned_pause: on("MIND_PAUSE"),
+            contingency: on("MIND_CONTINGENCY"),
+            imagine_value: on("MIND_IMAGINE_VALUE"),
+            own_effect: on("MIND_OWN"),
+            response: on("MIND_RESPONSE"),
+        }
+    }
+}
+
 /// What the cortex did this step, kept to learn from what comes next.
 struct Step {
     /// per association column, its input and expectation; the tuft; per sense, (area, code, expectation)
@@ -181,16 +254,23 @@ pub struct Report {
     pub recalled: bool,
     /// columns with a loop
     pub loops: usize,
+    /// the cholinergic interneurons paused (a learned cue)
+    pub paused: bool,
+    /// the critic's value of this step's state, and the dopamine error closing the last step
+    pub value: i32,
+    pub delta: i32,
 }
 
 pub struct Mind {
     rng: StdRng,
+    pub cfg: Config,
     pub brain: Brain,
     cb: CerebellarCircuit,
     relay: ThalamicRelay,
     wm: WorkingMemory,
     pub bg: MaskStriatum,
     pub hc: IndexHc,
+    pub amy: Amygdala,
     /// each motor area, its primitives (the genome's pattern generators), and the sensing area
     /// its acts are sensed by (its result)
     motors: Vec<(usize, Vec<BitVector>, usize)>,
@@ -198,19 +278,23 @@ pub struct Mind {
     pons: BitVector,
     /// top-down input for the next step, per area: what is imagined
     topdown: Vec<(usize, BitVector)>,
-    /// each sensing area's input at the last step (its changes are attention outward)
+    /// each sensing area's raw input and layer 4 code at the last step
     prev_in: Vec<BitVector>,
+    prev_codes: Vec<BitVector>,
     last_recall: BitVector,
     last: Option<Step>,
     last_expect: BitVector,
     /// the command issued last step per motor area (the efference copy)
     issued: Vec<(usize, BitVector)>,
-    /// motor areas whose act's result is sensed this step
     acted: usize,
     /// goals followed recently: (column, cell), newest last
     followed: Vec<Vec<(ColumnId, usize)>>,
-    /// steps since its own sound was last heard aloud (a reply soon after is contingent)
+    /// steps since its own sound was last heard aloud
     since_said: usize,
+    /// the contingency detector (`Q16`): how often a sound from outside comes within two steps
+    /// after its own sound, and otherwise
+    p_after: i32,
+    p_else: i32,
     /// a primitive of each effector is spontaneously active 1 step in this many
     pub spontaneous: u32,
     pub report: Report,
@@ -218,6 +302,10 @@ pub struct Mind {
 
 impl Mind {
     pub fn new(body: Body, seed: u64) -> Self {
+        Self::with_config(body, seed, Config::default())
+    }
+
+    pub fn with_config(body: Body, seed: u64, cfg: Config) -> Self {
         let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
         b.columns = true;
         b.selforg = true;
@@ -237,19 +325,23 @@ impl Mind {
         bg.push_pull = false;
         bg.release = 2;
         bg.grow = true;
+        let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
+            cfg,
             brain: b,
             cb,
             relay: ThalamicRelay::new(),
             wm: WorkingMemory::new(BITS, 1),
             bg,
-            hc: IndexHc::new(SLOTS.len() * BITS, seed),
+            hc: IndexHc::new(hc_bits, seed),
+            amy: Amygdala::new(),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             smile: body.smile,
             pons: zero(),
             topdown: Vec::new(),
             prev_in: vec![zero(); SLOTS.len()],
+            prev_codes: vec![zero(); SLOTS.len()],
             last_recall: zero(),
             last: None,
             last_expect: zero(),
@@ -257,6 +349,8 @@ impl Mind {
             acted: 0,
             followed: Vec::new(),
             since_said: usize::MAX,
+            p_after: 0,
+            p_else: 0,
             spontaneous: 1,
             report: Report::default(),
         }
@@ -273,6 +367,20 @@ impl Mind {
 
     fn slot(a: usize) -> usize {
         SLOTS.iter().position(|&x| x == a).unwrap()
+    }
+
+    /// The association columns' codes for the areas' codes (by area), packed by slot: the
+    /// association-level index's input.
+    fn assoc_state(&self, codes: &[BitVector]) -> BitVector {
+        let n = self.brain.pairs.len();
+        let mut v = BitVector::new((MAX_PAIRS + 1) * BITS, Some(0));
+        for (i, c) in self.brain.assoc_inputs(codes).iter().enumerate() {
+            let slot = assoc_slot(i, n);
+            for b in ones(c) {
+                v.bit_set(slot * BITS + b);
+            }
+        }
+        v
     }
 
     /// One step: senses in, acts out.
@@ -303,23 +411,35 @@ impl Mind {
             codes[a] = c;
             self.brain.associate_codes(&codes, true);
         }
-        // 2. the hippocampus: the whole cortical state (each area's code for what it senses, or
-        // what is imagined there), attention outward where an input changed, one's own sound
-        // marked by the efference copy
+        // 2. what the cortex holds of what came (each area's code, with what is imagined there),
+        // the onsets (cues) for the amygdala, attention outward where an input changed
         let td = std::mem::take(&mut self.topdown);
-        let mut parts: Vec<(usize, BitVector)> = Vec::new();
+        let mut codes = vec![zero(); self.brain.areas.len()];
         let mut outward = false;
+        let mut onsets: Vec<u32> = Vec::new();
         for (k, &a) in SLOTS.iter().enumerate() {
-            let mut c = self.brain.encode(a, &raw[k], false);
+            let c = self.brain.encode(a, &raw[k], false);
             if !(a == EAR && own) && raw[k].count_ones() > 0 && !same(&raw[k], &self.prev_in[k]) {
                 outward = true;
             }
-            for (_, t) in td.iter().filter(|x| x.0 == a) {
-                c = or(&c, t);
+            for b in ones(&c) {
+                if !self.prev_codes[k].bit_get(b) {
+                    onsets.push((k * BITS + b) as u32);
+                }
             }
-            parts.push((a, c));
+            self.prev_codes[k] = c.clone();
+            let mut with = c;
+            for (_, t) in td.iter().filter(|x| x.0 == a) {
+                with = or(&with, t);
+            }
+            codes[a] = with;
         }
-        let state = multi(&parts.iter().map(|(a, c)| (*a, c)).collect::<Vec<_>>());
+        if self.cfg.amygdala || self.cfg.learned_pause || self.cfg.imagine_value {
+            self.amy.onsets(onsets);
+        }
+        // the hippocampus: one step over the cortical state at its level (the association
+        // columns', or every sensing area's)
+        let state = if self.cfg.hc_assoc { self.assoc_state(&codes) } else { multi(&SLOTS.iter().map(|&a| (a, &codes[a])).collect::<Vec<_>>()) };
         let surprise = ONE - overlap(&self.last_expect, &s.ear).min(ACTIVE as u32) * ONE / ACTIVE as u32;
         let recall = self.hc.step(&state, outward, own, surprise);
         self.report.recalled = recall.count_ones() > 0;
@@ -330,8 +450,10 @@ impl Mind {
         // 4. valuing what came
         let mut r = [0i32; 4];
         if self.acted > 0 {
-            let sensed = SLOTS.iter().map(|&a| self.brain.surprise(a)).max().unwrap_or(0);
-            r[0] += sensed as i32 / 4;
+            if self.cfg.own_effect {
+                let sensed = SLOTS.iter().map(|&a| self.brain.surprise(a)).max().unwrap_or(0);
+                r[0] += sensed as i32 / 4;
+            }
             r[3] -= EFFORT * self.acted as i32;
         }
         if own {
@@ -339,9 +461,18 @@ impl Mind {
         } else {
             self.since_said = self.since_said.saturating_add(1);
         }
-        let ear_onset = !same(&s.ear, &self.prev_in[Self::slot(EAR)]);
-        if s.presence.count_ones() > 0 && ear_onset && !own && (1..=2).contains(&self.since_said) {
-            r[1] += ONE as i32 / 2;
+        let ear_onset = !same(&s.ear, &self.prev_in[Self::slot(EAR)]) && !own;
+        let after = (1..=2).contains(&self.since_said);
+        // the contingency detector: how much likelier a sound from outside is soon after its own
+        // sound than otherwise (Watson's contingency detection in infants)
+        let heard = if ear_onset { ONE as i32 } else { 0 };
+        if after {
+            self.p_after += (heard - self.p_after) / 32;
+        } else {
+            self.p_else += (heard - self.p_else) / 32;
+        }
+        if self.cfg.response && s.presence.count_ones() > 0 && ear_onset && after {
+            r[1] += if self.cfg.contingency { (self.p_after - self.p_else).max(0) / 2 } else { ONE as i32 / 2 };
         }
         if overlap(&s.presence, &self.smile) * 2 >= self.smile.count_ones() as u32 {
             r[2] += ONE as i32;
@@ -352,16 +483,25 @@ impl Mind {
             }
         }
         self.report.valued = r;
-        // 5. the striatum sees every column's activity, working memory, and recall; the TD
-        // error that closes the last step reaches the goal cells followed recently
+        if self.cfg.amygdala || self.cfg.imagine_value || self.cfg.learned_pause {
+            self.amy.learn(r[0] + r[1] + r[2]);
+        }
+        // 5. the striatum: the critic sees everything; the dopamine error closing the last step
+        // reaches the goal cells followed recently; the interneurons pause to learned cues
         let ids = self.brain.column_ids();
         self.report.loops = ids.len();
-        let mut groups: Vec<BitVector> = ids.iter().map(|&id| self.brain.activity_of(id)).collect();
-        groups.push(self.wm.content());
-        groups.push(self.last_recall.clone());
-        let state: Vec<Vec<usize>> = groups.iter().enumerate().map(|(k, v)| ones(v).into_iter().map(|b| b + k * SLOTS.len() * BITS).collect()).collect();
-        self.bg.begin_groups(&state, true);
+        let all = self.state_groups(&ids, &ids, true, true);
+        if self.cfg.learned_pause {
+            self.bg.pause_open = self.amy.pausing();
+            self.report.paused = self.bg.pause_open;
+        }
+        self.bg.begin_groups(&all, true);
         let delta = self.bg.last_delta;
+        self.report.delta = delta;
+        self.report.value = self.bg.value();
+        if self.cfg.learned_pause {
+            self.amy.learn_pause(delta, self.bg.pause_min * (ONE as i32 / 8));
+        }
         if delta != 0 {
             for (age, step) in self.followed.iter().rev().enumerate() {
                 for &(id, cell) in step {
@@ -373,9 +513,71 @@ impl Mind {
         self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2);
         let acts = self.choose(&ids);
         self.bg.extra_noise = 0;
+        self.bg.set_view(None);
         self.prev_in = raw;
         self.last = Some(st);
         acts
+    }
+
+    /// The striatal input groups of some columns (`cols`), with working memory and recall if
+    /// asked, and the amygdala's attended trace: each at its stable place among the input ids.
+    fn state_groups(&self, cols: &[ColumnId], _all: &[ColumnId], wm: bool, recall: bool) -> Vec<Vec<usize>> {
+        let mut groups: Vec<Vec<usize>> = cols.iter().map(|&id| ones(&self.brain.activity_of(id)).into_iter().map(|b| b + column_offset(id)).collect()).collect();
+        if wm {
+            groups.push(ones(&self.wm.content()).into_iter().map(|b| b + WM_OFFSET).collect());
+        }
+        if recall {
+            groups.push(ones(&self.last_recall).into_iter().map(|b| b + RECALL_OFFSET).collect());
+        }
+        if self.cfg.amygdala {
+            groups.push(self.amy.attended().into_iter().map(|f| f + AMY_OFFSET).collect());
+        }
+        groups
+    }
+
+    /// The association columns over area `a` (pairs that include it).
+    fn pairs_with(&self, a: usize) -> Vec<ColumnId> {
+        self.brain.pairs.iter().enumerate().filter(|(_, p)| p.0 .0 == a || p.0 .1 == a).map(|(i, _)| ColumnId::Assoc(i)).collect()
+    }
+
+    /// A loop's view (its cortical territory): a sensory column with the association columns over
+    /// it; a pairwise one with its two areas and the full area above, and working memory; the
+    /// full area with working memory and recall.
+    fn loop_view(&self, id: ColumnId) -> Vec<Vec<usize>> {
+        let n = self.brain.pairs.len();
+        match id {
+            ColumnId::Sense(a) => {
+                let mut cols = vec![id];
+                cols.extend(self.pairs_with(a));
+                self.state_groups(&cols, &[], false, false)
+            }
+            ColumnId::Assoc(i) if i < n => {
+                let (a, b) = self.brain.pairs[i].0;
+                let mut cols = vec![id];
+                for x in [a, b] {
+                    if self.brain.areas[x].col.is_some() {
+                        cols.push(ColumnId::Sense(x));
+                    }
+                }
+                if self.brain.full.is_some() {
+                    cols.push(ColumnId::Assoc(n));
+                }
+                self.state_groups(&cols, &[], true, false)
+            }
+            ColumnId::Assoc(_) => self.state_groups(&[id], &[], true, true),
+        }
+    }
+
+    /// A motor loop's view: the column of the sense its acts are sensed by, the association
+    /// columns over it or over the motor area, and working memory.
+    fn motor_view(&self, motor: usize, sense: usize) -> Vec<Vec<usize>> {
+        let mut cols = vec![ColumnId::Sense(sense)];
+        for c in self.pairs_with(sense).into_iter().chain(self.pairs_with(motor)) {
+            if !cols.contains(&c) {
+                cols.push(c);
+            }
+        }
+        self.state_groups(&cols, &[], true, false)
     }
 
     /// The loops: each column's takes its goal in or not (and an association column's may load
@@ -383,6 +585,10 @@ impl Mind {
     fn choose(&mut self, ids: &[ColumnId]) -> Acts {
         let mut taken: Vec<(ColumnId, usize, BitVector)> = Vec::new();
         for &id in ids {
+            if self.cfg.topographic {
+                let v = self.loop_view(id);
+                self.bg.set_view(Some(v));
+            }
             if let Some((cell, g, _)) = self.brain.goal_of(id) {
                 let offer = vec![vec![ones(&g).into_iter().map(|b| ACT_BASE + b).collect::<Vec<usize>>()]];
                 if self.bg.choose_among(loop_channel(id), &offer, true).is_some() {
@@ -434,7 +640,13 @@ impl Mind {
             if cands.is_empty() {
                 continue;
             }
-            let motor = self.motors[k].0;
+            let (motor, sense) = (self.motors[k].0, self.motors[k].2);
+            if self.cfg.topographic {
+                let v = self.motor_view(motor, sense);
+                self.bg.set_view(Some(v));
+            } else {
+                self.bg.set_view(None);
+            }
             let (loop_ch, gate) = motor_channels(motor);
             let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![c.1.clone()]).collect();
             let Some(i) = self.bg.choose_among(loop_ch, &offer, true) else { continue };
@@ -442,7 +654,21 @@ impl Mind {
             if let Some(f) = from {
                 followed_now.push(f);
             }
-            if self.bg.choose_among(gate, &[offer[i].clone()], true).is_some() {
+            // the motor gate sees the candidate and, with imagined value, what its imagined
+            // outcome has been worth (the forward model's result, valued by the amygdala)
+            let mut gate_offer = offer[i].clone();
+            if self.cfg.imagine_value {
+                if let Some(result) = self.brain.areas[motor].motor.as_mut().and_then(|m| m.predict(&cmd)) {
+                    let code = self.brain.encode_only(sense, &result);
+                    let feats: Vec<u32> = ones(&code).into_iter().map(|b| (Self::slot(sense) * BITS + b) as u32).collect();
+                    let v = self.amy.value_of(&feats);
+                    if v.abs() >= ONE as i32 / 8 {
+                        let base = VALUE_BASE + if v > 0 { 0 } else { 16 };
+                        gate_offer.push((base..base + 16).collect());
+                    }
+                }
+            }
+            if self.bg.choose_among(gate, &[gate_offer], true).is_some() {
                 self.brain.areas[motor].issue(&cmd);
                 self.issued.push((motor, cmd.clone()));
                 self.report.from_goal |= from.is_some();
@@ -499,8 +725,11 @@ impl Mind {
     }
 
     /// The cortex's step: every column senses, the association columns grow and predict, every
-    /// layer 5 offers a goal, and the relay mixes them into the expectation.
+    /// layer 5 offers a goal, and the relay mixes them into the expectation. Recall arrives where
+    /// the index points: in the association columns (and down the hierarchy by their feedback),
+    /// or in the senses directly.
     fn cortex(&mut self, raw: &[BitVector], recall: &BitVector, td: Vec<(usize, BitVector)>) -> Step {
+        let hc_assoc = self.cfg.hc_assoc;
         let b = &mut self.brain;
         let mut ff: Vec<BitVector> = SLOTS.iter().enumerate().map(|(k, &a)| b.encode(a, &raw[k], true)).collect();
         let ear = &raw[Self::slot(EAR)];
@@ -522,7 +751,32 @@ impl Mind {
         let (fb, _) = b.columns_activity();
         // top-down (recall and what is imagined) arrives as feedback and weak input, never
         // through layer 4: a column learns only from what it sensed
-        let mut down: Vec<BitVector> = SLOTS.iter().map(|&a| part(recall, a)).collect();
+        let mut down: Vec<BitVector> = vec![zero(); SLOTS.len()];
+        let mut extra: Vec<(usize, BitVector)> = Vec::new();
+        if hc_assoc {
+            let n = b.pairs.len();
+            let cols = n + b.full.is_some() as usize;
+            for i in 0..cols {
+                let slot = assoc_slot(i, n);
+                let mut cells = zero();
+                for x in ones(recall).into_iter().filter(|&x| x / BITS == slot) {
+                    cells.bit_set(x % BITS);
+                }
+                if cells.count_ones() == 0 {
+                    continue;
+                }
+                for (a, c) in b.cascade_down(i, &cells) {
+                    if let Some(k) = SLOTS.iter().position(|&x| x == a) {
+                        down[k] = or(&down[k], &c);
+                    }
+                }
+                extra.push((i, cells));
+            }
+        } else {
+            for (k, &a) in SLOTS.iter().enumerate() {
+                down[k] = part(recall, a);
+            }
+        }
         for (a, c) in td {
             down[Self::slot(a)] = or(&down[Self::slot(a)], &c);
         }
@@ -538,7 +792,7 @@ impl Mind {
         // association columns grow from what is sensed together
         b.associate_codes(&codes, true);
         let tuft = or(&pfc, &cb_out);
-        let outs = b.step_columns(&with_down, &[], &tuft, true);
+        let outs = b.step_columns(&with_down, &extra, &tuft, true);
         let mut sense_ins = Vec::new();
         for a in SLOTS {
             if let Some((code, exp)) = b.sense_state(a) {
@@ -603,12 +857,24 @@ impl Mind {
     /// row follows what it completes now.
     pub fn sleep(&mut self, chains: usize) {
         let mut rng = StdRng::seed_from_u64(self.rng.next_u64());
-        let mut hc = std::mem::replace(&mut self.hc, IndexHc::new(SLOTS.len() * BITS, 0));
+        let bits = if self.cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
+        let mut hc = std::mem::replace(&mut self.hc, IndexHc::new(bits, 0));
         hc.replay(&mut rng, chains, |frame| {
             let blank = vec![zero(); SLOTS.len()];
             let st = self.cortex(&blank, frame, Vec::new());
-            let e4 = self.brain.encode_only(EAR, &st.expect);
-            ones(&multi(&[(EAR, &e4)]))
+            if self.cfg.hc_assoc {
+                // what the senses' columns now hold, as the association columns code it
+                let mut codes = vec![zero(); self.brain.areas.len()];
+                for a in SLOTS {
+                    if let Some((c, _)) = self.brain.sense_state(a) {
+                        codes[a] = c;
+                    }
+                }
+                ones(&self.assoc_state(&codes))
+            } else {
+                let e4 = self.brain.encode_only(EAR, &st.expect);
+                ones(&multi(&[(EAR, &e4)]))
+            }
         });
         self.hc = hc;
         self.last = None;

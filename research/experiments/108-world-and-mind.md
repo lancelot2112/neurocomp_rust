@@ -81,4 +81,120 @@ curriculum (speech play, mouse play, lessons) and the observer.
 
 ## Results
 
-(running)
+### The first version: silent in lessons
+Before loops grew with the cortex, the relay's mixed plan was offered straight to the voice. The
+mind (seeds 0 and 2) went through 600 steps of speech play, 300 mouse-play episodes, 1,000 lessons
+and 200 test lessons.
+
+| | seed 0 | seed 2 |
+|---|---|---|
+| speech play, said aloud (first half, second half, of 300 steps) | 123, 185 | 193, 258 |
+| mouse play, clicks on a book | 11 of 35, then 0 of 1 | 379 of 820, then 400 of 724 |
+| practice, silent | 99.9–100% | 99.7–100% |
+| test, words right | 0.0% | 0.2–0.7% |
+| test, silent | 100% | 71–79% |
+| test, book opened while waiting | 0 | 0 |
+
+- **Silent in the lessons.** Babbling held up in play, but practice was almost entirely silent
+  and the test right rate was at chance.
+- **Clicks were not tied to the book.** The rate of clicks landing on a book was about the share
+  of places holding one.
+
+That led to the redesign above: loops per column, goals of the columns' own, one hippocampal
+step. Then the biology was checked for how cue → contingent reward is learned (next section).
+
+### Conditioning probes
+The question was whether the setup can map an external cue to a contingent reward at all, before
+relying on it in lessons. `examples/conditioning.rs` runs a fresh mind in trials of 10 steps, with
+a caregiver present throughout and a smile as the only outcome. Seed 0.
+- **Pavlovian:** a tone (CS+, half the trials) is followed by a smile two steps later; another tone
+  (CS−) by nothing.
+- **Instrumental:** a light on for three steps (half the trials); a click while it is on, or the
+  step after, gets a smile.
+- **Delayed:** a light for one step; a click three to five steps later gets a smile.
+
+**What was built from the biology.** Every part has a switch, so each can be ablated.
+- **The hippocampus at the association level.** Its input and output are the association columns'
+  codes (pairs, and the full area), as the entorhinal cortex's inputs are the top of the hierarchy
+  (perirhinal, parahippocampal, prefrontal; Lavenex & Amaral 2000). Recall reaches the senses only
+  through the columns' layer 4 back-projections, down the hierarchy (`MIND_HC=senses`: the old
+  sensory-level index).
+- **Topographic striatal input.** Each loop sees its own cortical territory (Alexander, DeLong &
+  Strick; Haber's spirals). Before, every choice's 64-bit context was shared among about 20 groups,
+  about 3 bits per column. The critic sees the limbic territory: the amygdala, recall, working
+  memory and presence.
+- **An amygdala.** A fast learner of cue value: Rescorla–Wagner on a time-tagged trace of onsets,
+  with associability after Pearce–Hall and Mackintosh. It learns from outcomes only (a smile, a
+  response), not from the surprise of the mind's own acts. That surprise is agency, not value
+  (Redgrave & Gurney); it still reaches the critic as intrinsic drive. Its attended trace goes to
+  the striatum.
+- **Learned cholinergic pauses** (Aosaki et al. 1994; Morris et al. 2004): cues that came one or
+  two steps before large dopamine errors learn to pause the interneurons, which opens actor
+  plasticity.
+- **A contingency detector** (Watson): a reply pays only as far as sounds from outside are likelier
+  just after its own sound than otherwise. Before, the teacher's next word counted as a reply to
+  anything the child said.
+- **The motor gate sees the amygdala's value of the act's imagined outcome** (vicarious trial and
+  error: Johnson & Redish 2007).
+
+**Pavlovian results**
+
+| version (300 trials) | value at the tone, CS+ / CS− (last 100 trials) | dopamine at the smile (first, last 100) | amygdala's prediction at the smile, CS+ / CS− (last 100) |
+|---|---|---|---|
+| critic sees everything; every valuation into the amygdala | +0.45 / +0.24 | +0.95, +0.72 | – |
+| critic on the limbic territory, pauses balanced | +1.40 / +1.32 | +0.79, +0.85 | +0.00 / +0.00 |
+| the same, own-effect and response valuations off | **+0.68 / −0.28** | **+0.25, −0.18** | **+0.46 / +0.13** |
+| every valuation on, the amygdala learning from outcomes only | +0.40 / +0.41 | +0.70, +0.86 | +0.00 / +0.00 |
+| the same, the amygdala summing cue values (Rescorla–Wagner) | +0.86 / +0.88 | +0.79, +0.84 | +0.05 / +0.02 |
+
+- **It can work.** Without the own-effect and response valuations, the critic tells CS+ from CS−.
+  Dopamine moves from the smile to the tone: at the tone +0.24 to +0.41 for CS+ and negative for
+  CS−; at the smile it falls from +0.25 to −0.18. The amygdala learns CS+.
+- **The mind's own activity masks it.** With those valuations on, the mind acts on about half the
+  steps or more (0.9 acts per step in the Pavlovian probe), and every act's effect is a stream of
+  rewards no cue predicts. The critic's value rises everywhere instead of at the tone. The
+  amygdala's prediction stays near 0 even when it learns from outcomes only and sums cue values.
+- **Attention to cues collapses.** Its attended trace fell to about 4–5 features per step, so the
+  tone is barely seen.
+- **A first version paused almost always** (on 2,405 of 3,000 steps), which made every dopamine
+  error train every recent choice: wrong, and slow (130 ms per step). Learning pauses only from cues
+  just before large errors, unlearned at the same rate, brought it to about 300 pauses.
+
+**Instrumental results** (clicks in the window per trial, light against no light, per 100 trials)
+
+| version | 0–100 | 100–200 | 200–300 | 300–400 |
+|---|---|---|---|---|
+| every valuation on | 0.08 / 0.10 | 0.62 / 0.56 | 0.40 / 0.21 | 0.02 / 0.00 |
+| own-effect and response off | 0.04 / 0.18 | 0.62 / 0.56 | 0.72 / 0.84 | 0.18 / 0.18 |
+| every valuation on, the amygdala summing | 0.06 / 0.14 | 0.86 / 0.86 | 0.26 / 0.49 | 0.00 / 0.00 |
+| delayed (light for one step), every valuation on, summing | 0.18 / 0.12 | 0.04 / 0.12 | 0.11 / 0.16 | 0.00 / 0.00 |
+
+- **No version learns to click for the light.** Clicking rises (smiles come, half the trials have
+  the light), then collapses to nothing. Clicks without the light are not punished, only unpaid
+  and costly, so the effort cost wins.
+- **The critic learns the light when the mind is quiet,** but the hand's loop does not use it: at
+  the end, value +0.67 at the light against −0.44 without, with clicks 0.18 against 0.18.
+
+**What this says.**
+- **Learning what a cue is worth works** in isolation. The parts that make it work are the critic
+  on its own (limbic) territory, the amygdala and the time-tagged trace.
+- **The mind's own effects drown it.** A reward for every act's surprise is a constant stream no
+  cue predicts. Biologically the short-latency response to self-caused sensory change habituates
+  per stimulus and is thought to train which acts have effects (agency), not what things are worth.
+  Here it goes straight into the same critic as the smile. The next step is to separate the two:
+  agency trains the motor loops' choice of acts with effects, value trains the critic, or the
+  own-effect response habituates per act and stimulus.
+- **Acting on a cue does not follow from knowing its value.** The hand loop sees the light only
+  through the amygdala's attended trace, and the attention collapses. A loop also has no way to use
+  "the critic now expects reward" except as a dopamine error after the fact. In the biology the
+  amygdala's cue value invigorates and biases action directly (Pavlovian–instrumental transfer,
+  through the central amygdala and the ventral striatum).
+
+**Next.**
+1. **Separate agency from value.** The own-effect signal trains the motor loops (which acts have
+   effects) and habituates per act and outcome; the critic learns from outcomes.
+2. **Pavlovian–instrumental transfer:** a cue's amygdala value raises the motor loops' readiness to
+   release (the brake), as cue value invigorates responding.
+3. **Keep cues attended** while their value is learned (the Mackintosh term), and check the delayed
+   probe once the immediate one works.
+4. **Then the lessons again,** comparing with the first version above.

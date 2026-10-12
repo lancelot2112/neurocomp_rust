@@ -173,6 +173,7 @@ const AMY_OFFSET: usize = 80 * BITS;
 const AMY_VALUE_OFFSET: usize = 120 * BITS;
 const EFFERENCE_OFFSET: usize = 130 * BITS;
 const OFC_VALUE_OFFSET: usize = 140 * BITS;
+const SUSTAINED_OFFSET: usize = 150 * BITS;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
 const VALUE_BASE: usize = ACT_BASE + 8 * BITS;
 
@@ -217,11 +218,14 @@ pub struct Config {
     pub effort: i32,
     /// withholding is recorded as a choice, so the no-go side learns (MIND_NOGO=0 off)
     pub nogo: bool,
+    /// the motor loops see the senses' sustained state, and valued groups take a larger share of
+    /// the striatum's context (MIND_SALIENCE=0 off)
+    pub salience: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true }
     }
 }
 
@@ -246,6 +250,7 @@ impl Config {
             efference: on("MIND_EFFERENCE"),
             tonic: on("MIND_TONIC"),
             nogo: on("MIND_NOGO"),
+            salience: on("MIND_SALIENCE"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -686,16 +691,44 @@ impl Mind {
             }
         }
         let mut groups = self.state_groups(&cols, &[], true, false);
+        // the senses' sustained state (what is in view, heard, felt now, not only what began):
+        // a cue that stays on is a context while it is on
+        if self.cfg.salience {
+            for k in 0..SLOTS.len() {
+                if SLOTS[k] != sense {
+                    groups.push(ones(&self.prev_codes[k]).into_iter().map(|b| b + SUSTAINED_OFFSET + k * BITS).collect());
+                }
+            }
+        }
+        // salience gain: a group the learners value takes a larger share of the striatum's
+        // context (it is repeated, each copy hashed apart), as attention raises a predictive
+        // cue's gain
+        let gain = |v: i32| if self.cfg.salience { 1 + (v.abs() / (ONE as i32 / 4)).clamp(0, 3) as usize } else { 1 };
+        let amy_gain = gain(self.amy.cue_value());
+        if self.cfg.salience && self.cfg.amygdala {
+            if let Some(att) = groups.iter().position(|g| g.first().map_or(false, |&b| (AMY_OFFSET..AMY_VALUE_OFFSET).contains(&b))) {
+                let g = groups[att].clone();
+                for _ in 1..amy_gain {
+                    groups.push(g.clone());
+                }
+            }
+        }
         // the amygdala's value cells firing on the cues now (the basolateral amygdala reaches the
         // striatum's motor territory too): "a valued cue is here" is a context the loop can learn
         if self.cfg.amygdala {
-            groups.push(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect());
+            let g: Vec<usize> = self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect();
+            for _ in 0..amy_gain {
+                groups.push(g.clone());
+            }
         }
         // the act just done (motor cortex's collaterals to the dorsal striatum: the efference
         // copy) and what the orbitofrontal learner says it is worth here
         if self.cfg.efference {
             groups.push(self.efference_now.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());
-            groups.push(self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect());
+            let g: Vec<usize> = self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect();
+            for _ in 0..gain(self.ofc.cue_value()) {
+                groups.push(g.clone());
+            }
         }
         groups
     }

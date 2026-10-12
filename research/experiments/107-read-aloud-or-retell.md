@@ -1921,6 +1921,38 @@ with a caregiver answering only what is said aloud, so overt babbling is what pa
 speech can grow later where it pays. Words held back are now scored (were they the right word?), to
 tell "knows it but keeps it in" from "does not know".
 
+### Play chosen by the basal ganglia, a presence, and a plateau
+**Play through the gates.** Babbling and mouse play no longer come from the driver. The body's
+motor primitives (the vocal tract's syllables, the hand's moves) are spontaneously active, as
+brainstem pattern generators make an infant babble; the basal ganglia take one into the loop or
+none, then release it or hold it back. What pays is internal, and comes from the network's own act:
+- the ear's surprise at its own sound;
+- a reply from a caregiver who is there, sensed as a presence (someone there and attending,
+  however it is sensed: no face area);
+- for the mouse, the eye's surprise right after its own act.
+
+**Speech play as one stream.** At first an end every 8 babbles told the critic "nothing more will
+come", a dip as large as what was expected. That punished babbling most where it paid most, and
+babbling with a caregiver stopped. As one continuous stream, babbles said aloud were 99–100% with a
+caregiver there and 71% then 89% alone. It still did not carry over to the tasks: with two gates
+the network was about 100% silent at test. The suspected cause is the critic: by then it expected
+the listening rewards, and the tasks' state differs from play's.
+
+**More training, the same result** (`RT_TWO_GATES=0 RT_PLAY=1000`, seed 2, 4,000 training
+trials, 150 test):
+- Words planned right while listening: 45.2% at trial 500, 48.8% at 1,000, then 48.5–49.9% to
+  4,000.
+- Practice words said right: 12.7–21.3%, with no trend.
+- At test, read same / read other / tell same / tell other / tell closed: 6.8 / 9.0 / 6.2 / 6.3 /
+  5.5% right, and 46–68% silent.
+- Recall held the wanted word on 9.5% of telling steps.
+- No book was reached at test.
+
+It is a plateau: past 1,000 trials nothing improves. The limit is not the amount of training; it
+is the setup. In this driver the driver decides what is a trial, when the network listens and
+when it speaks, and what reward a heard word carries. The next step takes those decisions out of
+the driver (experiment 108).
+
 ## Next
 - **Imagining as one operation for every modality** (do or imagine, forward models onto the
   tufts, recall as feedback).

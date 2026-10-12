@@ -1247,3 +1247,80 @@ not yet use it.
 - Then raise the held population's weight in a loop's choice of regions by its associability.
   The light, surprising and followed by reward, should come to dominate what the hand loop
   samples.
+
+**v40: the column alone, two areas** (`examples/two_area.rs`).
+- **Set-up:**
+  - A lower area: layer 4 over the input, with no held population.
+  - An upper area: layer 4 over the lower area's code, with a held population.
+  - A trial: a familiar scene for 3 steps, then a cue (A or B) joins it for one step, then a gap
+    of 4 steps (the scene, or silence). A distractor C may join in the middle of the gap.
+  - Read at the gap's end: is the upper area's held state closer to this trial's cue (as the
+    upper area coded it) than to the other cue? And how much of the cue is left in the lower
+    area's code?
+- **Without layer 4 coverage the cue never reaches the upper area.** With 32 winners, the lower
+  area's code for scene plus cue is the scene's own code. The upper area loaded on surprise 10
+  times in 400 trials.
+- In the mind, coverage was on only in the senses, not in the association areas. That is likely
+  why the light was so faint in the full association column's held state.
+
+**With coverage** (400 trials, by block of 50):
+
+| gap | held closer to its own cue | own cue's bits held | other cue's bits held |
+|---|---|---|---|
+| silence, distractor | 84–90% | 20.5–22.2 | 0 |
+| silence, no distractor | 72–74%, then 52% | 13.0–18.1 | 0 |
+| scene, no distractor | 66% → 46% | 11.4 → 7.7 | 0 |
+| scene, distractor | 50–58%, then 38% | 8.9–13.4 | 0 |
+
+- **The lower area stays clean:** none of the cue's bits are left in its code at the gap's end.
+- **The wrong cue is never held.** The misses are trials where nothing of the cue is held.
+- **A familiar cue stops being held.** In the scene conditions the hold falls with training.
+  As A and B become expected (each comes after the scene half the time), less of them is a
+  surprise, and less loads.
+- **Surprise is the right switch for what is new, not for what matters.** Holding a familiar,
+  task-relevant cue is the gate's job (the basal ganglia, learned from reward), as the review
+  said of prefrontal cortex.
+
+**v41: in the mind.**
+- Coverage now also covers the association areas' and the orbitofrontal area's layer 4.
+- **A held state is tagged with the cues' associability when it loads** (the amygdala's α of the
+  trace then), and the tag fades by 1/16 a step. The hand loop draws its new cells' second region
+  in proportion to it, so a surprising, rewarded cue held in mind draws the loop's cells.
+
+**Delayed trace, held states** (overlap between trials):
+
+| | step 2, light / light | step 2, light / none | step 5, light / light | step 5, light / none | step 7, light / light | step 7, light / none |
+|---|---|---|---|---|---|---|
+| working memory | 0.54 | 0.32 | 0.46 | 0.36 | 0.33 | 0.40 |
+| orbitofrontal hold | 0.33 | 0.34 | 0.32 | 0.36 | 0.42 | 0.34 |
+
+- **With coverage the light is clearer in working memory** at its step (0.54 against 0.32), and
+  some is left three steps on (0.46 against 0.36). It is gone by step 7.
+- **The held states grew to 100–160 bits** (from about 32). Coverage lets a code grow up to four
+  times k, and the novel part a load takes is not capped. A held state that large mixes the
+  light with everything else that was new.
+
+**Probes, v41:**
+- **Delayed, last block:** 0.18/0.15, 0.44/0.35, 0.17/0.09. Not learned.
+- **Light probe:** seed 1 at 0.64–0.82 against 0.36–0.48. Seed 0 peaks at 0.75/0.21, then fades
+  to 0.05/0.04.
+- **Reversal:** seed 0 learns A (0.79/0.33), and after the reversal clicks the old light
+  (0.31/0.73). Neither seed reverses.
+- **The tone holds** (+0.90 → +0.98; the touch's dopamine +0.53 → +0.34).
+
+**What this says.**
+- **The column now does in isolation what it should:**
+  - it holds what was new, through silence and a distractor;
+  - it never holds the wrong cue;
+  - the area below stays driven and clean.
+- **In the mind the held state is too big and too mixed.** And the mind's gate, the one thing
+  that could hold a familiar, task-relevant light, is chosen by a loop that has no reason yet to
+  open it at the light's step.
+
+**Next:**
+1. Cap a load at k bits, the most unexpected first (the held population is as sparse as the
+   code).
+2. Train the gate. It should learn to open when holding pays: the dopamine error at the click's
+   outcome should reach the gate's choice at the cue step, three to five steps back. That needs
+   either a longer eligibility for the gate's loop, or the held state itself being in the hand
+   loop's view, so that the credit lands where the choice was made.

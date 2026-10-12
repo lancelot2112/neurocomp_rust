@@ -531,6 +531,12 @@ impl Mind {
         bg.balance = cfg.balance;
         bg.focused = cfg.focused;
         bg.window = cfg.window;
+        // the prefrontal gates (each association column's "take in", the orbitofrontal hold)
+        // keep their eligibility longer: holding pays only when what is held is used later
+        if cfg.recur {
+            bg.long_channels = (0..=MAX_PAIRS).map(|i| loop_channel(ColumnId::Assoc(i)) + 1).chain([OFC_HOLD_CHANNEL]).collect();
+            bg.long_window = 8;
+        }
         if cfg.nogo_symmetric {
             bg.nogo_channels = [VOICE, HAND].iter().map(|&m| motor_channels(m).1).collect();
         }

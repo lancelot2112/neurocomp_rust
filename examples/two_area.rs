@@ -79,7 +79,9 @@ fn main() {
         let (l, u) = step(&or(&scene, cue), &mut lower, &mut upper, &mut rng);
         // the cue's own bits in the lower area's code (what the scene alone does not have)
         lower_cue = BitVector::from_words(l.as_words().iter().zip(l_scene.as_words()).map(|(x, y)| x & !y).collect());
-        cue_code[which] = Some(u);
+        // the upper area's driven code for the cue step (its layer 4's; the held part left out)
+        let _ = u;
+        cue_code[which] = Some(upper.l4.as_ref().unwrap().encode(&[(0, &l)]));
         let mut last_lower = BitVector::new(BITS, Some(0));
         for g in 0..gap {
             let base = if silent_gap { silent.clone() } else { scene.clone() };

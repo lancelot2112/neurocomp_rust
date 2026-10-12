@@ -458,6 +458,10 @@ pub struct MaskStriatum {
     /// steps back a dopamine error reaches (the synaptic eligibility trace), credit fading ⅘ a
     /// step
     pub window: usize,
+    /// channels whose choices keep their eligibility longer (`long_window` steps): the
+    /// prefrontal gates, whose choice to hold pays only when what is held is used later
+    pub long_channels: Vec<usize>,
+    pub long_window: usize,
     /// the q (go minus no-go cells) of the candidate released last, without the noise
     pub last_q: i32,
     /// the learning rate the next choices carry (Pearce–Hall associability of their cues); the
@@ -522,6 +526,8 @@ impl MaskStriatum {
             view: None,
             focused: false,
             window: WINDOW,
+            long_channels: Vec::new(),
+            long_window: WINDOW,
             last_q: 0,
             alpha: (256, Vec::new()),
         }
@@ -816,7 +822,7 @@ impl MaskStriatum {
             TAPS.iter().zip([ONE as u64, ONE as u64 * 3 / 4, ONE as u64 / 2, ONE as u64 * 3 / 8, ONE as u64 / 4]).filter(|(d, _)| **d <= n).map(|(d, w)| (n - d, w)).collect()
         } else {
             let mut w = ONE as u64;
-            (0..n.min(self.window))
+            (0..n.min(self.window.max(if self.long_channels.is_empty() { 0 } else { self.long_window })))
                 .map(|i| {
                     let x = (n - 1 - i, w);
                     w = w * 4 / 5;
@@ -834,6 +840,8 @@ impl MaskStriatum {
                 continue;
             }
             let st = self.recent[k].clone();
+            // how far back this step is: beyond `window`, only the long channels' choices learn
+            let back = n - 1 - k;
             if st.critic && k + 1 == n && self.grow {
                 let (more, fewer) = if delta > 0 { (&mut self.vpool.0, &mut self.vpool.1) } else { (&mut self.vpool.1, &mut self.vpool.0) };
                 self.swaps += Self::grow_learn(more, fewer, &st.c, bits, false, false, self.focused, &[], self.clock, &mut self.rng);
@@ -858,6 +866,9 @@ impl MaskStriatum {
             // act is likelier next time). The go cells were silent and do not change.
             if self.grow {
                 for (ch, x) in &st.withheld {
+                    if back >= self.window && !self.long_channels.contains(ch) {
+                        continue;
+                    }
                     let nogo = &mut self.pools[*ch][1].1;
                     let fired = nogo.firing(x, None);
                     if self.nogo_symmetric {
@@ -898,6 +909,9 @@ impl MaskStriatum {
                 }
             }
             for (ch, a, x, lr) in &st.choices {
+                if back >= self.window && !self.long_channels.contains(ch) {
+                    continue;
+                }
                 let stick = self.sticky && delta > 0;
                 if self.grow {
                     let n = Self::scaled(bits, lr.0, &mut self.rng);
@@ -971,7 +985,7 @@ impl MaskStriatum {
             }
         }
         self.recent.push(Step { c: self.c.clone(), choices: Vec::new(), withheld: Vec::new(), critic: true });
-        let cap = if self.taps { HISTORY } else { WINDOW.max(self.window) };
+        let cap = if self.taps { HISTORY } else { WINDOW.max(self.window).max(self.long_window) };
         if self.recent.len() > cap {
             self.recent.remove(0);
         }

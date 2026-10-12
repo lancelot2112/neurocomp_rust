@@ -21,12 +21,15 @@
 //!   senses). Driving input (layer 4) alone decides what the area codes now; beside it, cells
 //!   that sustain themselves hold a state, as prefrontal cells keep firing for a cue while
 //!   others answer what is there now. The column's code is the two together (in silence, the
-//!   held state alone). What its layer 2/3 did not expect of the input (graded surprise:
-//!   acetylcholine's switch from recurrent completion to feedforward encoding, Hasselmo) joins
-//!   what is held, newest first; when its loop opens the gate (`refresh`: the basal ganglia and
-//!   thalamus) the whole driven code is held. Otherwise the held state maintains itself: an
-//!   autoassociative map, which learns every driven code, completes it each step after a random
-//!   sixteenth drops out (noise), and what it cannot complete fades.
+//!   held state alone). Items are superposed in the one held vector (sparse codes barely
+//!   overlap): what layer 2/3 did not expect of the input (graded surprise: acetylcholine's
+//!   switch from recurrent completion to feedforward encoding, Hasselmo) joins what is held as
+//!   an item of at most 32 bits, as does the driven code when the column's loop opens the gate
+//!   (`refresh`: the basal ganglia and thalamus); at most 128 bits are held (about four items).
+//!   Each step a random sixteenth drops out (noise), and an autoassociative map, which learns
+//!   every driven code and every item held, restores each learned pattern still mostly present;
+//!   what nothing restores fades. A held bit is restored only for `life` steps after it was
+//!   loaded (the area's persistence; then adaptation lets it go), so what is held is recent.
 //!
 //! Both layers learn the same way: a confirmed prediction strengthens the cells that made it;
 //! where nothing predicted the target, a cell is grown for the moment (its tuft on the
@@ -171,8 +174,12 @@ pub struct Column {
     auto: Map,
     gain: u32,
     gate: bool,
-    /// the held population's state
+    /// the held population's state, and each held bit's age (steps since it was loaded)
     held: BitVector,
+    age: Vec<u16>,
+    /// steps a held bit is restored by completion before adaptation lets it go (the area's
+    /// persistence)
+    pub life: u16,
     /// (loads on surprise, loads by the gate) for diagnosis
     pub loads: (u64, u64),
 }
@@ -190,7 +197,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, held: BitVector::new(bits, Some(0)), loads: (0, 0) }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, loads: (0, 0) }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -220,42 +227,104 @@ impl Column {
         if learn && n_in > 0 {
             self.auto.learn(input, None, None, input, rng);
         }
-        // maintained: noise, then completion to a learned state (an unlearned one fades)
+        // maintained: each held bit ages; one past the area's persistence (`life`) adapts and
+        // goes at random (half a step), and is not restored. The rest lose a random sixteenth
+        // (noise), and the autoassociative map restores each learned pattern still mostly held
+        // by them, the restored bits as old as the youngest of their pattern; what nothing
+        // restores fades. Items held together in one sparse vector are completed together.
         if self.held.count_ones() > 0 {
-            let mut noisy = self.held.clone();
+            let life = self.life;
+            let mut young = self.held.clone();
+            let mut old = BitVector::new(self.bits, Some(0));
+            for b in 0..self.bits {
+                if self.held.bit_get(b) {
+                    self.age[b] = self.age[b].saturating_add(1);
+                    if self.age[b] > life {
+                        young.bit_clear(b);
+                        if rng.gen_range(0..2) == 0 {
+                            old.bit_set(b);
+                        }
+                    }
+                }
+            }
+            let mut noisy = young.clone();
             for x in noisy.as_words_mut() {
                 *x &= !(rng.next_u64() & rng.next_u64() & rng.next_u64() & rng.next_u64());
             }
-            self.held = self.auto.predict(&noisy, None, None).unwrap_or(noisy);
+            let mut held = noisy.clone();
+            if noisy.count_ones() > 0 && self.auto.predict(&noisy, None, None).is_some() {
+                for (p, _) in self.auto.proposals() {
+                    // a pattern is restored only where most of it is still held (and young)
+                    if overlap(&p, &noisy) * 2 >= p.count_ones() as u32 {
+                        let youngest = (0..self.bits).filter(|&b| p.bit_get(b) && noisy.bit_get(b)).map(|b| self.age[b]).min().unwrap_or(0);
+                        for b in 0..self.bits {
+                            if p.bit_get(b) && !held.bit_get(b) {
+                                held.bit_set(b);
+                                self.age[b] = youngest;
+                            }
+                        }
+                    }
+                }
+            }
+            for (w, y) in held.as_words_mut().iter_mut().zip(old.as_words()) {
+                *w |= y;
+            }
+            self.held = held;
         }
-        if gate && n_in > 0 {
-            // the gate: what drives the area now is held
-            self.held = input.clone();
+        // a new item joins what is held (superposed: sparse codes barely overlap), at most `K`
+        // bits of it: on the gate, what drives the area now; on surprise, what layer 2/3 did not
+        // expect (acetylcholine). The held population keeps at most `HELD` bits (about four
+        // items): beyond that, bits go at random
+        let item: Option<BitVector> = if n_in == 0 {
+            None
+        } else if gate {
             self.loads.1 += 1;
-        } else if n_in > 0 {
-            // surprise, graded: the part of the input layer 2/3 did not expect joins what is held
-            // (the newest first, `K` bits in all)
+            Some(Self::sparse(input.as_words(), 32, rng))
+        } else {
             let novel: Vec<u64> = match self.expected.as_ref() {
                 Some(e) => input.as_words().iter().zip(e.as_words()).map(|(a, b)| a & !b).collect(),
                 None => input.as_words().to_vec(),
             };
             let n_novel: u32 = novel.iter().map(|w| w.count_ones()).sum();
-            if n_novel >= 4 {
-                let mut room = (32u32).saturating_sub(n_novel) as usize;
-                let mut held = BitVector::from_words(novel);
-                let old: Vec<usize> = (0..self.bits).filter(|&b| self.held.bit_get(b) && !held.bit_get(b)).collect();
-                for b in old {
-                    if room == 0 {
-                        break;
-                    }
-                    held.bit_set(b);
-                    room -= 1;
-                }
-                self.held = held;
+            (n_novel >= 4).then(|| {
                 self.loads.0 += 1;
+                Self::sparse(&novel, 32, rng)
+            })
+        };
+        if let Some(it) = item {
+            // the map learns the item as it is held: what is held often becomes an attractor
+            if learn {
+                self.auto.learn(&it, None, None, &it, rng);
             }
+            for b in 0..self.bits {
+                if it.bit_get(b) {
+                    self.age[b] = 0;
+                }
+            }
+            let others: Vec<u64> = self.held.as_words().iter().zip(it.as_words()).map(|(h, i)| h & !i).collect();
+            let keep = Self::sparse(&others, 128usize.saturating_sub(it.count_ones() as usize), rng);
+            self.held = BitVector::from_words(keep.as_words().iter().zip(it.as_words()).map(|(a, b)| a | b).collect());
         }
         BitVector::from_words(input.as_words().iter().zip(self.held.as_words()).map(|(a, b)| a | b).collect())
+    }
+
+    /// At most `k` of the bits of `words`, chosen at random.
+    fn sparse<R: rand::Rng + ?Sized>(words: &[u64], k: usize, rng: &mut R) -> BitVector {
+        let mut on: Vec<usize> = Vec::new();
+        for (w, &x) in words.iter().enumerate() {
+            let mut x = x;
+            while x != 0 {
+                on.push(w * 64 + x.trailing_zeros() as usize);
+                x &= x - 1;
+            }
+        }
+        let mut v = BitVector::from_words(vec![0; words.len()]);
+        for i in 0..k.min(on.len()) {
+            let j = rng.gen_range(i..on.len());
+            on.swap(i, j);
+            v.bit_set(on[i]);
+        }
+        v
     }
 
     /// The trace decays one step.

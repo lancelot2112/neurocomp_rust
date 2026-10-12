@@ -308,6 +308,81 @@ is turning "the light is worth something" into "click when the light is on". The
   come would teach "not without the light". That dip needs the critic to predict the smile after
   a click in light trials only, which is the conjunction it has not yet learned.
 
+### Three seeds, four versions; the efference copy and the orbitofrontal split
+- **The versions.** Seeds 0–2, every valuation on, 300 Pavlovian trials and 400 instrumental.
+  - **v8:** no cost to act; the value cells reach the motor loops.
+  - **v9:** v8, and the value cells reach the critic.
+  - **v10:** v9, and the efference copy of the act just done reaches the amygdala's trace and the
+    critic.
+  - **v11:** the split. The amygdala sees cues only. An orbitofrontal/prelimbic learner (the same
+    bit cells) sees cues and the efference copy, and its values reach the critic and the motor
+    loops. The efference copy itself reaches only the motor loops, as motor cortex's collaterals
+    reach the dorsal striatum.
+- **Why the conjunction is needed.** The dip is the ordinary TD error. What was missing was an
+  expectation that could fail: a click on nothing has no sensory effect, so without an efference
+  copy no learner knew a click had happened.
+
+**Pavlovian, last 100 trials**
+
+| version | seed | dopamine at the tone, CS+ / CS− | dopamine at the smile | amygdala's prediction, CS+ / CS− |
+|---|---|---|---|---|
+| v8 | 0, 1, 2 | +0.15 / −0.11; −0.03 / −0.05; −0.16 / −0.07 | +0.91, +0.80, +0.90 | +0.93 / +0.01; +0.40 / +0.00; +0.01 / +0.00 |
+| v9 | 0, 1, 2 | +0.12 / −0.01; −0.06 / −0.01; −0.03 / −0.03 | +0.54, +0.86, +0.87 | +0.31 / +0.01; +0.00 / +0.00; +0.00 / +0.00 |
+| v10 | 0, 1, 2 | +0.06 / −0.05; +0.08 / −0.19; −0.19 / +0.17 | +0.95, **−0.09, −0.11** | +0.31 / +0.01; **+1.00 / +0.00; +1.00 / +0.00** |
+| v11 | 0, 1, 2 | **+0.03 / −0.26; +0.07 / −0.16; +0.01 / −0.40** | +0.47, +0.67, +0.57 | **+0.91 / +0.02; +0.93 / +0.01; +0.83 / +0.01** |
+
+- **v8's clean seed-0 transfer (dopamine +0.49 at CS+) did not replicate.** The same seed gave
+  +0.15 in the sweep (different build, same switches), and seeds 1 and 2 none.
+- **v9 is worse:** the amygdala learned nothing on two seeds of three.
+- **v10 makes the smile fully predicted on two seeds** (dopamine at the smile about −0.1), but the
+  critic's dopamine at the tone does not separate.
+- **v11 is the most consistent.**
+  - The amygdala learns CS+ on all three seeds (+0.83 to +0.93 against +0.01 to +0.02).
+  - The critic now dips at CS− on all three (−0.16 to −0.40), with CS+ near 0, so the dopamine at
+    the tone discriminates.
+  - The smile is about half predicted (+0.47 to +0.67).
+  - The orbitofrontal learner grows 36–350 cells and no aversive ones.
+
+**Instrumental, clicks per trial in the window, light / none, by block of 100**
+
+| version | seed 0 | seed 1 | seed 2 |
+|---|---|---|---|
+| v8 | 0.16/0.16, 0.52/0.72, 0.93/0.91, 0.23/0.48 | 0.09/0.09, 0.28/0.21, 0.69/0.53, 0.00/0.00 | 0.26/0.25, 0.59/0.78, 0.00/0.00, 0.00/0.00 |
+| v9 | 0.08/0.12, 0.38/0.56, 0.68/0.84, 0.04/0.02 | 0.06/0.09, 0.08/0.04, 0.00/0.02, 0.00/0.00 | 0.07/0.12, 0.69/0.61, 0.89/0.80, 0.42/0.79 |
+| v10 | 0.10/0.10, **0.94/0.66, 0.96/0.53**, 0.50/0.57 | 0.15/0.11, 0.04/0.06, 0.00/0.00, 0.00/0.00 | 0.21/0.14, 0.71/0.86, 0.86/0.98, 0.19/0.29 |
+| v11 | 0.10/0.12, 0.06/0.14, 0.00/0.00, 0.00/0.00 | 0.13/0.32, 0.11/0.40, 0.29/0.16, 0.75/0.62 | 0.02/0.09, 0.16/0.12, 0.23/0.38, 0.56/0.79 |
+
+- **No version learns to click for the light.** One run (v10, seed 0) clicked clearly more with
+  the light for two blocks (0.96 against 0.53), then lost it.
+- **The common failure is that clicking dies out,** in about half the runs, by block 3 or 4, even
+  with no cost to act.
+
+**What is missing.** Four things, from the biology.
+1. **A reason to hold back.** With no cost, clicking always collects every smile there is: the
+   best policy does not depend on the light. Animals discriminate because responding costs effort
+   and time. The flat effort cost was removed because, without an exploration floor, it killed
+   acting; the problem was the pair, not the cost.
+2. **Exploration that rises when reward is scarce.** The agency signal fades once clicking on
+   nothing is predictable. Curiosity noise fades with learning progress. So acting can stop, and
+   then nothing more is learned. In the brain, tonic dopamine tracks the average reward rate (the
+   opportunity cost of time; Niv et al. 2007). The locus coeruleus shifts to a tonic, exploratory
+   mode when utility falls (Aston-Jones & Cohen 2005).
+3. **Withholding as a learned choice.** A gate that withholds records no choice, so no dopamine
+   ever credits "not clicking here". The indirect pathway learns no-go from dips in the brain
+   (Frank). Here a dip after a click without the light now has an expectation to fall from (the
+   orbitofrontal learner), but the actor has no record of the withholds to credit.
+4. **The light is faint in the actor's view.** It is a few bits of a 64-bit context shared among
+   6–8 groups, and only as an onset trace that fades over 4 steps. Nothing says "the light is on"
+   while it stays on. A predictive cue gains attention gain in the brain, and the striatum gets
+   sustained sensory context.
+
+**Next.**
+1. A slow average reward rate (tonic dopamine and noradrenaline) that sets both the exploration
+   noise and a price per act (opportunity cost).
+2. Withholds recorded as choices.
+3. Sustained sensory state, and a learned gain per input group, in the striatum's context.
+4. Then 3–5 seeds and more trials.
+
 **Next (from the first probes).**
 1. **Separate agency from value.** The own-effect signal trains the motor loops (which acts have
    effects) and habituates per act and outcome; the critic learns from outcomes.

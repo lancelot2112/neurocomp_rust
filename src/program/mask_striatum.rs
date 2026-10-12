@@ -236,15 +236,29 @@ const JITTER: i32 = 3;
 #[derive(Clone, Default)]
 struct CellPool {
     cells: Vec<(Mask, u64)>,
+    /// branches: each region a cell has bits in is a dendritic branch that must reach its own
+    /// threshold (5 of 8), so every input the cell takes must be there (focused cells)
+    branches: bool,
 }
 
 impl CellPool {
+    fn fires(&self, m: &Mask, x: &[u64], keep: Option<&[u64]>) -> bool {
+        if !self.branches {
+            return m.overlap(x, keep) as u32 >= CELL_THETA;
+        }
+        m.bits.iter().zip(x).enumerate().all(|(w, (&b, &c))| {
+            let n = b.count_ones();
+            let k = keep.map_or(!0, |r| r[w]);
+            n == 0 || (b & c & k).count_ones() * 8 >= n * 5
+        })
+    }
+
     fn firing(&self, x: &[u64], keep: Option<&[u64]>) -> Vec<usize> {
-        (0..self.cells.len()).filter(|&i| self.cells[i].0.overlap(x, keep) as u32 >= CELL_THETA).collect()
+        (0..self.cells.len()).filter(|&i| self.fires(&self.cells[i].0, x, keep)).collect()
     }
 
     fn count(&self, x: &[u64], keep: Option<&[u64]>) -> i32 {
-        self.cells.iter().filter(|c| c.0.overlap(x, keep) as u32 >= CELL_THETA).count() as i32
+        self.cells.iter().filter(|c| self.fires(&c.0, x, keep)).count() as i32
     }
 
     /// A new cell for context `x`: `CELL_BITS` of its bits. A full pool first drops, of a few
@@ -627,7 +641,8 @@ impl MaskStriatum {
             self.pools.push(Vec::new());
         }
         while self.pools[channel].len() < n {
-            self.pools[channel].push((CellPool::default(), CellPool::default()));
+            let p = CellPool { cells: Vec::new(), branches: self.focused };
+            self.pools[channel].push((p.clone(), p));
         }
         let words = self.d / 64;
         while self.actors.len() <= channel {
@@ -917,6 +932,8 @@ impl MaskStriatum {
 
     pub fn begin_groups(&mut self, state: &[Vec<usize>], learn: bool) {
         self.clock += 1;
+        self.vpool.0.branches = self.focused;
+        self.vpool.1.branches = self.focused;
         self.c = self.context(state);
         self.state = state.to_vec();
         let v = self.v(&self.c);

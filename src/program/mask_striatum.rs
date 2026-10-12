@@ -223,6 +223,9 @@ impl Mask {
 /// Bits in a mask-cell, how many must be in the context for it to fire, and a pool's size.
 const CELL_BITS: usize = 16;
 const CELL_THETA: u32 = 10;
+/// Focused contexts: each input group's bits fall in a region of its own (one 64-bit word),
+/// `SHARE` of them; the candidate's in the last region.
+const SHARE: usize = 16;
 const POOL_CAP: usize = 2048;
 /// Grow mode: GPi's tonic noise per option when exploring.
 const JITTER: i32 = 3;
@@ -270,6 +273,72 @@ impl CellPool {
             m.bits[on[i] / 64] |= 1 << (on[i] % 64);
         }
         self.cells.push((m, now));
+    }
+
+    /// Focused: a new cell on two regions of `x` (two input groups), the candidate's (the last
+    /// region) and one other if the candidate is there, else two at random; more regions only if
+    /// these have too few bits. A spiny cell's inputs are clustered, from a few sources.
+    fn recruit_focused(&mut self, x: &[u64], now: u64, rng: &mut StdRng) {
+        let last = x.len() - 1;
+        let mut regions: Vec<usize> = (0..last).filter(|&w| x[w] != 0).collect();
+        let mut chosen: Vec<usize> = Vec::new();
+        if x[last] != 0 {
+            chosen.push(last);
+        }
+        while (chosen.len() < 2 || chosen.iter().map(|&w| x[w].count_ones() as usize).sum::<usize>() < CELL_BITS) && !regions.is_empty() {
+            let j = rng.gen_range(0..regions.len());
+            chosen.push(regions.swap_remove(j));
+        }
+        let mut y = vec![0u64; x.len()];
+        for &w in &chosen {
+            y[w] = x[w];
+        }
+        // an equal share from each region chosen, then any of their bits
+        let mut on: Vec<Vec<usize>> = chosen.iter().map(|&w| (0..64).filter(|b| y[w] >> b & 1 == 1).map(|b| w * 64 + b).collect()).collect();
+        let total: usize = on.iter().map(|v| v.len()).sum();
+        if total < CELL_THETA as usize {
+            return;
+        }
+        if self.cells.len() >= POOL_CAP {
+            let i = (0..8).map(|_| rng.gen_range(0..self.cells.len())).min_by_key(|&i| self.cells[i].1).unwrap();
+            self.cells.swap_remove(i);
+        }
+        let words = x.len();
+        let mut m = Mask { bits: vec![0; words], sticky: vec![0; words], tag1: vec![0; words], tag2: vec![0; words] };
+        let mut n = 0;
+        let per = CELL_BITS / on.len().max(1);
+        for v in on.iter_mut() {
+            for i in 0..per.min(v.len()) {
+                let j = rng.gen_range(i..v.len());
+                v.swap(i, j);
+                m.bits[v[i] / 64] |= 1 << (v[i] % 64);
+                n += 1;
+            }
+            v.drain(..per.min(v.len()));
+        }
+        let mut rest: Vec<usize> = on.into_iter().flatten().collect();
+        while n < CELL_BITS && !rest.is_empty() {
+            let j = rng.gen_range(0..rest.len());
+            let b = rest.swap_remove(j);
+            m.bits[b / 64] |= 1 << (b % 64);
+            n += 1;
+        }
+        self.cells.push((m, now));
+    }
+
+    fn add(&mut self, x: &[u64], focused: bool, now: u64, rng: &mut StdRng) {
+        if focused {
+            self.recruit_focused(x, now, rng);
+        } else {
+            self.recruit(x, now, rng);
+        }
+    }
+}
+
+impl Mask {
+    /// The regions (words) the mask has bits in, all ones there.
+    fn own(&self) -> Vec<u64> {
+        self.bits.iter().map(|&w| if w != 0 { !0 } else { 0 }).collect()
     }
 }
 
@@ -354,6 +423,11 @@ pub struct MaskStriatum {
     /// the input groups the next choices see instead of the whole state (a loop's own cortical
     /// territory: corticostriatal topography), with their context
     view: Option<(Vec<Vec<usize>>, Vec<u64>)>,
+    /// focused contexts and cells: each input group in a region of its own with `SHARE` bits (not
+    /// an equal share of `k`), and each new cell on two groups (with a candidate, the candidate
+    /// and one other), moving only within them: so a cell can stand for "this act with that cue"
+    /// however many groups the view has
+    pub focused: bool,
 }
 
 fn mix(x: u64) -> u64 {
@@ -411,6 +485,7 @@ impl MaskStriatum {
             nogo_symmetric: false,
             balance: false,
             view: None,
+            focused: false,
         }
     }
 
@@ -422,6 +497,18 @@ impl MaskStriatum {
     /// states like that" (as a spiny cell with synapses from both).
     fn candidate_context(&self, candidate: &[Vec<usize>]) -> Vec<u64> {
         let state: &[Vec<usize>] = self.view.as_ref().map_or(&self.state, |v| &v.0);
+        // focused: the state's groups in their regions, the candidate's in the last
+        if self.focused {
+            let mut c = vec![0u64; self.d / 64];
+            self.context_focused(state, &mut c);
+            let last = c.len() - 1;
+            let mut h: Vec<u64> = candidate.iter().flatten().map(|&b| mix(b as u64 ^ 0xCA4D)).collect();
+            h.sort_unstable();
+            for &x in h.iter().take(SHARE) {
+                c[last] |= 1 << (x % 64);
+            }
+            return c;
+        }
         let mut c = self.context_k(state, self.k / 2);
         let picks = |groups: &[Vec<usize>], n: usize| -> Vec<u64> {
             let live: Vec<&Vec<usize>> = groups.iter().filter(|g| !g.is_empty()).collect();
@@ -476,10 +563,29 @@ impl MaskStriatum {
         c
     }
 
+    /// Focused: each live group's `SHARE` smallest-hash bits in a region (word) of its own, the
+    /// regions before the last (the candidate's), in turn.
+    fn context_focused(&self, groups: &[Vec<usize>], c: &mut [u64]) {
+        let regions = c.len() - 1;
+        for (gi, g) in groups.iter().filter(|g| !g.is_empty()).enumerate() {
+            let salt = 0x5EED ^ (gi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ salt)).collect();
+            h.sort_unstable();
+            let w = gi % regions;
+            for &x in h.iter().take(SHARE) {
+                c[w] |= 1 << (x % 64);
+            }
+        }
+    }
+
     fn context(&self, groups: &[Vec<usize>]) -> Vec<u64> {
         let live: Vec<&Vec<usize>> = groups.iter().filter(|g| !g.is_empty()).collect();
         let mut c = vec![0u64; self.d / 64];
         if live.is_empty() {
+            return c;
+        }
+        if self.focused {
+            self.context_focused(groups, &mut c);
             return c;
         }
         // with conjunctions, half the bits are single inputs and half are pairs of inputs from
@@ -568,16 +674,16 @@ impl MaskStriatum {
     /// ones are recruited (the error says the state is worth `n` cells more or less); up to `n`
     /// cells of `fewer` that fired move away from `x` (with `loosen`, their habits first loosen).
     #[allow(clippy::too_many_arguments)]
-    fn grow_learn(more: &mut CellPool, fewer: &mut CellPool, x: &[u64], n: usize, stick: bool, loosen: bool, now: u64, rng: &mut StdRng) -> u64 {
+    fn grow_learn(more: &mut CellPool, fewer: &mut CellPool, x: &[u64], n: usize, stick: bool, loosen: bool, focused: bool, now: u64, rng: &mut StdRng) -> u64 {
         let mut changed = 0u64;
         let fired = more.firing(x, None);
         for &i in &fired {
-            more.cells[i].0.swap(x, 1, stick, rng);
+            Self::toward(&mut more.cells[i].0, x, focused, stick, rng);
             more.cells[i].1 = now;
             changed += 1;
         }
         for _ in 0..n {
-            more.recruit(x, now, rng);
+            more.add(x, focused, now, rng);
             changed += 1;
         }
         let mut against = fewer.firing(x, None);
@@ -587,10 +693,30 @@ impl MaskStriatum {
             if loosen {
                 fewer.cells[i].0.loosen(x, rng);
             }
-            fewer.cells[i].0.away(x, 2, rng);
+            Self::away_from(&mut fewer.cells[i].0, x, focused, rng);
             changed += 1;
         }
         changed
+    }
+
+    /// A cell moves one bit toward `x` (focused: within its own regions).
+    fn toward(m: &mut Mask, x: &[u64], focused: bool, stick: bool, rng: &mut StdRng) {
+        if focused {
+            let y: Vec<u64> = m.own().iter().zip(x).map(|(o, c)| o & c).collect();
+            m.swap(&y, 1, stick, rng);
+        } else {
+            m.swap(x, 1, stick, rng);
+        }
+    }
+
+    /// A cell moves two bits away from `x` (focused: its new bits within its own regions).
+    fn away_from(m: &mut Mask, x: &[u64], focused: bool, rng: &mut StdRng) {
+        if focused {
+            let y: Vec<u64> = m.own().iter().zip(x).map(|(o, c)| !o | c).collect();
+            m.away(&y, 2, rng);
+        } else {
+            m.away(x, 2, rng);
+        }
     }
 
     /// The dropout keep-masks R, one for each pathway (independent noise in D1 and D2; None
@@ -671,7 +797,7 @@ impl MaskStriatum {
             let st = self.recent[k].clone();
             if st.critic && k + 1 == n && self.grow {
                 let (more, fewer) = if delta > 0 { (&mut self.vpool.0, &mut self.vpool.1) } else { (&mut self.vpool.1, &mut self.vpool.0) };
-                self.swaps += Self::grow_learn(more, fewer, &st.c, bits, false, false, self.clock, &mut self.rng);
+                self.swaps += Self::grow_learn(more, fewer, &st.c, bits, false, false, self.focused, self.clock, &mut self.rng);
             } else if st.critic && k + 1 == n {
                 let (up, down) = if delta > 0 { (&mut self.critic.0, &mut self.critic.1) } else { (&mut self.critic.1, &mut self.critic.0) };
                 if self.push_pull {
@@ -698,12 +824,12 @@ impl MaskStriatum {
                     if self.nogo_symmetric {
                         if delta < 0 {
                             for &i in &fired {
-                                nogo.cells[i].0.swap(x, 1, false, &mut self.rng);
+                                Self::toward(&mut nogo.cells[i].0, x, self.focused, false, &mut self.rng);
                                 nogo.cells[i].1 = self.clock;
                             }
                             if fired.is_empty() {
                                 for _ in 0..bits {
-                                    nogo.recruit(x, self.clock, &mut self.rng);
+                                    nogo.add(x, self.focused, self.clock, &mut self.rng);
                                 }
                             }
                         } else {
@@ -718,11 +844,11 @@ impl MaskStriatum {
                     }
                     if delta < 0 {
                         for &i in &fired {
-                            nogo.cells[i].0.swap(x, 1, false, &mut self.rng);
+                            Self::toward(&mut nogo.cells[i].0, x, self.focused, false, &mut self.rng);
                             nogo.cells[i].1 = self.clock;
                         }
                         for _ in 0..bits {
-                            nogo.recruit(x, self.clock, &mut self.rng);
+                            nogo.add(x, self.focused, self.clock, &mut self.rng);
                         }
                     } else {
                         for &i in fired.iter().take(bits) {
@@ -738,7 +864,7 @@ impl MaskStriatum {
                     let pair = &mut self.pools[*ch][*a];
                     let (more, fewer) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
                     // a dip moves the go cells that fired away (go LTD) and loosens their habits
-                    self.swaps += Self::grow_learn(more, fewer, x, bits, stick, delta < 0 && self.sticky, self.clock, &mut self.rng);
+                    self.swaps += Self::grow_learn(more, fewer, x, bits, stick, delta < 0 && self.sticky, self.focused, self.clock, &mut self.rng);
                     continue;
                 }
                 let pair = &mut self.actors[*ch][*a];
@@ -844,7 +970,7 @@ impl MaskStriatum {
         for (ch, a, x) in st.choices.iter().filter(|c| channels.contains(&c.0)) {
             let pair = &mut self.pools[*ch][*a];
             let (more, fewer) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
-            self.swaps += Self::grow_learn(more, fewer, x, bits, false, false, self.clock, &mut self.rng);
+            self.swaps += Self::grow_learn(more, fewer, x, bits, false, false, self.focused, self.clock, &mut self.rng);
         }
     }
 

@@ -97,6 +97,30 @@ impl Pool {
         self.next_id = self.next_id.wrapping_add(1);
     }
 
+    /// A new cell on an equal share of each part's bits (`CELL_BITS` in all; none if the parts
+    /// have too few).
+    fn recruit_parts(&mut self, parts: &[&Vec<u64>], now: u64, rng: &mut StdRng) {
+        let mut ons: Vec<Vec<usize>> = parts.iter().map(|p| bits_of(p)).collect();
+        let per = CELL_BITS / ons.len().max(1);
+        if ons.iter().any(|v| v.len() < per) {
+            return;
+        }
+        if self.cells.len() >= CAP {
+            let i = (0..8).map(|_| rng.gen_range(0..self.cells.len())).min_by_key(|&i| self.cells[i].1).unwrap();
+            self.cells.swap_remove(i);
+        }
+        let mut m = vec![0u64; D / 64];
+        for on in ons.iter_mut() {
+            for i in 0..per {
+                let j = rng.gen_range(i..on.len());
+                on.swap(i, j);
+                m[on[i] / 64] |= 1 << (on[i] % 64);
+            }
+        }
+        self.cells.push((m, now, self.next_id));
+        self.next_id = self.next_id.wrapping_add(1);
+    }
+
     /// Cell `i` moves one bit toward the context: a bit it has that is absent goes, a present one
     /// it lacks comes (constant density).
     fn toward(&mut self, i: usize, ctx: &[u64], now: u64, rng: &mut StdRng) {
@@ -149,6 +173,10 @@ pub struct Amygdala {
     /// as a lateral amygdala cell's plasticity is specific to the input stream that drove it;
     /// else the whole trace's (a conjunction of whatever else was there)
     pub elemental: bool,
+    /// paired cells (with `act_from`): a new value cell samples half its bits from one act (its
+    /// efference copy) and half from one cue, so it stands for "this act after that cue" (an
+    /// orbitofrontal cell coding a stimulus with the response made to it)
+    pub paired: bool,
     /// features per area (a cue is one area's features)
     group: u32,
     /// attended features, and features seen before (bit vectors over the features)
@@ -175,6 +203,7 @@ impl Amygdala {
             act_from: None,
             gated: true,
             elemental: true,
+            paired: false,
             group: crate::program::world::BITS as u32,
             attended: BitVector::new(feat, Some(0)),
             seen: BitVector::new(feat, Some(0)),
@@ -238,13 +267,41 @@ impl Amygdala {
 
     /// The contexts of the cues among some items, one per (age, area) with enough bits for a cell.
     fn cue_contexts(&self, items: &[(usize, u32)]) -> Vec<Vec<u64>> {
+        self.group_contexts(items, CELL_BITS)
+    }
+
+    /// The contexts of the (age, area) groups among some items with at least `min` bits.
+    fn group_contexts(&self, items: &[(usize, u32)], min: usize) -> Vec<Vec<u64>> {
         let mut keys: Vec<(usize, u32)> = items.iter().map(|&(a, f)| (a, f / self.group)).collect();
         keys.sort_unstable();
         keys.dedup();
         keys.into_iter()
             .map(|(a, g)| Self::context(items.iter().filter(|x| x.0 == a && x.1 / self.group == g).map(|(a, f)| (*a, f)), true))
-            .filter(|c| c.iter().map(|w| w.count_ones() as usize).sum::<usize>() >= CELL_BITS)
+            .filter(|c| c.iter().map(|w| w.count_ones() as usize).sum::<usize>() >= min)
             .collect()
+    }
+
+    /// Paired: (the acts' group contexts, the cues') among some items, each with half a cell's bits.
+    fn pair_contexts(&self, items: &[(usize, u32)]) -> (Vec<Vec<u64>>, Vec<Vec<u64>>) {
+        let t = self.act_from.unwrap_or(u32::MAX);
+        let acts: Vec<(usize, u32)> = items.iter().copied().filter(|x| x.1 >= t).collect();
+        let cues: Vec<(usize, u32)> = items.iter().copied().filter(|x| x.1 < t).collect();
+        (self.group_contexts(&acts, CELL_BITS / 2), self.group_contexts(&cues, CELL_BITS / 2))
+    }
+
+    /// A new cell in `pool` (0 appetitive, 1 aversive): paired (an act and a cue), elemental (a
+    /// cue), or on the whole context.
+    fn recruit_in(&mut self, pool: usize, ctx: &[u64], cues: &[Vec<u64>], pairs: &(Vec<Vec<u64>>, Vec<Vec<u64>>)) {
+        let (now, rng) = (self.now, &mut self.rng);
+        let p = if pool == 0 { &mut self.appetitive } else { &mut self.aversive };
+        if !pairs.0.is_empty() && !pairs.1.is_empty() {
+            let (a, c) = (&pairs.0[rng.gen_range(0..pairs.0.len())], &pairs.1[rng.gen_range(0..pairs.1.len())]);
+            p.recruit_parts(&[a, c], now, rng);
+        } else if !cues.is_empty() {
+            p.recruit(&cues[rng.gen_range(0..cues.len())], now, rng);
+        } else {
+            p.recruit(ctx, now, rng);
+        }
     }
 
     /// The trace's items at ages `ages`.
@@ -321,8 +378,10 @@ impl Amygdala {
         let (app, avr) = (self.appetitive.firing(&ctx), self.aversive.firing(&ctx));
         // elemental: each new cell on one cue's context (and firing cells stay on their cue)
         let cues = if self.elemental { self.cue_contexts(&past) } else { Vec::new() };
+        let pairs = if self.paired { self.pair_contexts(&past) } else { (Vec::new(), Vec::new()) };
+        let fixed = self.elemental || self.paired;
         if err >= UNIT {
-            if !self.elemental {
+            if !fixed {
                 for &i in &app {
                     self.appetitive.toward(i, &ctx, self.now, &mut self.rng);
                 }
@@ -330,12 +389,11 @@ impl Amygdala {
             let gone = avr.len().min(k);
             self.aversive.remove(&avr, gone, &mut self.rng);
             for _ in gone..k {
-                let c = if cues.is_empty() { &ctx } else { &cues[self.rng.gen_range(0..cues.len())] };
                 self.churn.0 += 1;
-                self.appetitive.recruit(c, self.now, &mut self.rng);
+                self.recruit_in(0, &ctx, &cues, &pairs);
             }
         } else if err <= -UNIT {
-            if !self.elemental {
+            if !fixed {
                 for &i in &avr {
                     self.aversive.toward(i, &ctx, self.now, &mut self.rng);
                 }
@@ -345,8 +403,7 @@ impl Amygdala {
             self.appetitive.remove(&app, gone, &mut self.rng);
             if r < 0 {
                 for _ in gone..k {
-                    let c = if cues.is_empty() { &ctx } else { &cues[self.rng.gen_range(0..cues.len())] };
-                    self.aversive.recruit(c, self.now, &mut self.rng);
+                    self.recruit_in(1, &ctx, &cues, &pairs);
                 }
             }
         }

@@ -254,6 +254,10 @@ pub struct Config {
     /// whole trace; the orbitofrontal learner keeps its conjunctions of act and cues
     /// (MIND_ELEMENTAL=0 off)
     pub elemental: bool,
+    /// focused cells: the striatum's contexts keep each input group in a region of its own, and
+    /// its new cells take two groups (the candidate act and one other); the orbitofrontal
+    /// learner's new cells pair one act with one cue (MIND_FOCUSED=0 off)
+    pub focused: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -267,7 +271,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -303,6 +307,7 @@ impl Config {
             act_credit: on("MIND_ACT_CREDIT"),
             attend_gate: std::env::var("MIND_ATTEND_GATE").map_or(false, |v| v == "1"),
             elemental: on("MIND_ELEMENTAL"),
+            focused: on("MIND_FOCUSED"),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
             predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),
@@ -445,12 +450,14 @@ impl Mind {
         bg.learn_nogo = cfg.nogo;
         bg.nogo_symmetric = cfg.nogo_symmetric;
         bg.balance = cfg.balance;
+        bg.focused = cfg.focused;
         if cfg.nogo_symmetric {
             bg.nogo_channels = [VOICE, HAND].iter().map(|&m| motor_channels(m).1).collect();
         }
         let act_baseline = cfg.act_baseline;
         let attend_gate = cfg.attend_gate;
         let elemental = cfg.elemental;
+        let focused = cfg.focused;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -471,6 +478,7 @@ impl Mind {
                 let mut o = Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC);
                 o.gated = attend_gate;
                 o.elemental = false;
+                o.paired = focused;
                 if act_baseline {
                     o.with_act_baseline((SLOTS.len() * BITS) as u32)
                 } else {

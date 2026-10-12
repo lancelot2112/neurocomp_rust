@@ -267,12 +267,21 @@ impl Amygdala {
     /// attended. Returns the error.
     pub fn learn(&mut self, r: i32) -> i32 {
         let ctx = self.past();
-        if ctx.iter().all(|&w| w == 0) {
-            return 0;
-        }
         let past = self.past_items();
         let v = self.value_items(&past);
         let err = r - v;
+        // attention first, over the whole trace (a cue that lost attention can win it back
+        // when a surprise follows it): surprise (Pearce–Hall) or a cue worth something
+        // (Mackintosh)
+        if err.abs() >= 2 * UNIT || v.abs() >= 2 * UNIT {
+            let fs: Vec<u32> = self.items(1, TRACE).map(|(_, &f)| f).collect();
+            for f in fs {
+                self.attended.bit_set(f as usize);
+            }
+        }
+        if ctx.iter().all(|&w| w == 0) {
+            return 0;
+        }
         // the baseline: one cell at a time toward the outcome on its own (an average per act)
         let actx = self.act_context(&past);
         if actx.iter().any(|&w| w != 0) {
@@ -307,13 +316,6 @@ impl Amygdala {
                 for _ in gone..k {
                     self.aversive.recruit(&ctx, self.now, &mut self.rng);
                 }
-            }
-        }
-        // attention: surprise (Pearce–Hall) or a cue worth something (Mackintosh)
-        if err.abs() >= 2 * UNIT || v.abs() >= 2 * UNIT {
-            let fs: Vec<u32> = self.items(1, TRACE).map(|(_, &f)| f).collect();
-            for f in fs {
-                self.attended.bit_set(f as usize);
             }
         }
         err

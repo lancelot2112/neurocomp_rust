@@ -687,7 +687,8 @@ block, then the last block)
   runs: v24 seeds 0 and 1 in the last block (0.68/0.10, 0.65/0.06), and v23 seed 4. That run then
   stopped acting altogether, light or not: its no-go won, the die-out seen before the balance
   rule.
-- **The Pavlovian probe broke at the same time.** From v24 on, the amygdala predicted almost
+- **The Pavlovian probe broke at the same time** (two causes, found below: the attention gate,
+  and a world that dropped the tone under the child's own voice). From v24 on, the amygdala predicted almost
   nothing for either tone (+0.00 to +0.02 at the touch's step on eight of nine runs; v25 seed 2
   reached +0.51), and the dopamine at the touch stayed near its
   naive +0.85, where v22 had +0.80 to +0.94 for CS+ against +0.00 to +0.04 for CS−.
@@ -744,6 +745,69 @@ be read out. The gate here did both. An attention signal that only scales learni
 recruited for an attended cue, the same context to read) would match that, and is the way to
 bring it back.
 
-**Defaults now (v28):** the attention gate is off (`MIND_ATTEND_GATE=1` turns it on).
-Per-act cost and credit, compaction and consolidation stay on. Predictive transmission stays off.
+**v28: the gate off.** On seed 0 the tone is learned and held over 600 trials. The amygdala
+predicts +0.94 to +1.00 for CS+ against +0.00 to +0.03 for CS−, and the dopamine at the touch
+falls to +0.15–0.30. Seeds 1 and 2 learn it in the first 100 trials (+0.44, +0.47), then lose it.
+Instrumental, 1000 trials, three seeds: clicking rises to about one per trial with and without the
+light. The only discrimination is brief: seed 1 at 0.73/0.33 in trials 100–200, and seed 2 at
+0.44/0.15 in trials 200–300.
 
+**A second bisect, seed 1** (200 trials, CS+ prediction in trials 100–200):
+
+| switched off | CS+ | acts per step |
+|---|---|---|
+| nothing | +0.04 | 0.71 |
+| sleep | +0.06 | 0.62 |
+| compaction | +0.08 | 0.67 |
+| consolidation | +0.49 | 0.45 |
+| per-act cost and credit | +0.74 | 0.31 |
+
+Sleep and compaction are cleared. What tracks the loss is how much the child acts.
+
+**v29: elemental value cells** (`MIND_ELEMENTAL=0` off). A value cell was a mask of 16 bits drawn
+from the whole trace, about 100 bits of which the tone was a few. A cell then fired on the tone
+only while about seven incidental onsets recurred too, and more acting made them vary. Now each
+new amygdala cell samples one cue: one area's onsets at one age. This is how a lateral amygdala
+cell's plasticity is specific to the input stream that drove it, and it makes the cells
+Rescorla–Wagner's elements. Cells no longer drift toward whatever else was in the trace. The
+orbitofrontal learner keeps its conjunctions of act and cues, since that is its job. Elemental
+cells alone fixed seed 2 but not seeds 0 and 1.
+
+**The real cause: the world masked the tone.** A diagnosis of the trace at the tone's step
+(seed 0) showed it:
+- In trials 0–100, the CS+ tone made about 18 ear onsets, 13 of them the same as last time.
+- In trials 100–200 it made none.
+- The world played the conditioning tone only when nothing else was heard. A voice replaced it,
+  including the child's own.
+- With per-act cost, the child talks on most steps, so it talked over the tone and never heard
+  it. That is why the tone's loss tracked acting. The light was never masked: it is drawn over
+  whatever else the eye sees.
+- Now sounds at once mix: the tone is heard over a voice.
+
+**v30: the tone mixes.** Pavlovian, 300 trials:
+
+| seed | cells | CS+ / CS−, 0–100 | 100–200 | 200–300 | dopamine at the touch, 0–100 → 200–300 |
+|---|---|---|---|---|---|
+| 0 | elemental | +0.90 / +0.00 | +1.00 / +0.00 | +1.00 / +0.00 | +0.33 → +0.17 |
+| 1 | elemental | +0.91 / +0.00 | +1.00 / +0.00 | +1.00 / +0.00 | +0.47 → +0.10 |
+| 2 | elemental | +0.90 / +0.02 | +1.00 / +0.00 | +1.00 / +0.00 | +0.60 → +0.15 |
+| 0 | conjunctive | +0.91 / +0.00 | +1.00 / +0.00 | +0.99 / +0.00 | +0.29 → +0.17 |
+| 1 | conjunctive | +0.89 / +0.02 | +0.99 / +0.01 | +1.00 / +0.00 | +0.55 → +0.24 |
+| 2 | conjunctive | +0.78 / +0.01 | +0.99 / +0.00 | +0.98 / +0.00 | +0.64 → +0.35 |
+
+- **The tone is learned on every seed, with every switch on**, in under 100 trials, and held.
+  The tone is now heard every time: 31–32 ear onsets, all the same as last time.
+- **The dopamine at the touch is cut to a fifth or less** as the tone comes to predict it, and the
+  dopamine at the CS+ tone rises above the CS−'s (+0.05 to +0.15 against −0.01 to −0.03).
+- **Elemental cells learn faster and cancel the touch's dopamine further.** They stay on.
+
+**What this says about the earlier per-act results.** The per-act bisect rows above measured
+mostly how often the child talked over the tone, not the per-act machinery itself. The attention
+gate's effect was separate and real: on seed 0, with the same acting, it alone made the
+difference between +0.002 and +0.995.
+
+**Defaults now (v30):**
+- The attention gate is off (`MIND_ATTEND_GATE=1` turns it on).
+- Elemental amygdala cells are on.
+- Per-act cost and credit, compaction and consolidation are on.
+- Predictive transmission is off.

@@ -490,6 +490,10 @@ pub struct Brain {
     /// association columns and of the full one
     pub pair_tau: u32,
     pub full_tau: u32,
+    /// recurrent self-excitation (`Column::set_recurrence`) of the pairwise and full association
+    /// columns
+    pub pair_gain: u32,
+    pub full_gain: u32,
     rng: StdRng,
 }
 
@@ -502,7 +506,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -878,6 +882,7 @@ impl Brain {
                         let seed = self.seed.wrapping_add(1000 + 31 * self.pairs.len() as u64);
                         let mut col = Column::granular(self.bits, Pool::new(2, self.bits, self.bits, self.k, 2, seed), CAP);
                         col.set_persistence(self.pair_tau);
+                        col.set_recurrence(self.pair_gain);
                         self.pairs.push((key, col));
                     }
                 }
@@ -895,6 +900,7 @@ impl Brain {
         if self.full.is_none() && self.pairs.len() >= 2 {
             let mut col = Column::granular(self.bits, Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)), CAP);
             col.set_persistence(self.full_tau);
+            col.set_recurrence(self.full_gain);
             self.full = Some(col);
         }
         // the highest level active: the full area when it has a code, else the pairwise codes

@@ -295,8 +295,14 @@ pub struct Config {
     /// association columns' activity outlasts their input a little (τ 1), the full one's and the
     /// orbitofrontal area's longer (τ 3, 4); a loop's "take in" refreshes its column's own trace.
     /// This replaces the separate working-memory store and the orbitofrontal held copy
-    /// (MIND_PERSIST=0: those instead)
+    /// (MIND_PERSIST=1 on; off by default, recurrence instead)
     pub persist: bool,
+    /// recurrent self-excitation in every column (`Column::set_recurrence`): none in the senses,
+    /// gain 1 in the pairwise association columns (it only tips ties), 3 in the full one and the
+    /// orbitofrontal area (a learned state sustains itself and holds against new input until the
+    /// column's loop opens its gate). Working memory is the full association column's state, the
+    /// orbitofrontal hold its own; the separate store and copy are not used (MIND_RECUR=0 off)
+    pub recur: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -310,7 +316,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -353,7 +359,8 @@ impl Config {
             ofc_value_z: on("MIND_OFC_VALUE_Z"),
             ofc_split: on("MIND_OFC_SPLIT"),
             frustration: on("MIND_FRUSTRATION"),
-            persist: on("MIND_PERSIST"),
+            persist: std::env::var("MIND_PERSIST").map_or(false, |v| v == "1"),
+            recur: on("MIND_RECUR"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -480,7 +487,10 @@ impl Mind {
         let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
         b.columns = true;
         b.selforg = true;
-        if cfg.persist {
+        if cfg.recur {
+            b.pair_gain = 1;
+            b.full_gain = 3;
+        } else if cfg.persist {
             b.pair_tau = 1;
             b.full_tau = 3;
         }
@@ -521,6 +531,7 @@ impl Mind {
         let focused = cfg.focused;
         let value_z = cfg.ofc_column && cfg.ofc_value_z;
         let persist = cfg.persist;
+        let recur = cfg.recur;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -554,7 +565,9 @@ impl Mind {
             },
             ofc_area: {
                 let mut o = Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA);
-                if persist {
+                if recur {
+                    o.set_recurrence(3);
+                } else if persist {
                     o.set_persistence(4);
                 }
                 o
@@ -1022,6 +1035,18 @@ impl Mind {
     /// What working memory holds: with persistence, the full association column's trace (else
     /// the pairs' traces merged); else the separate store.
     fn wm_content(&self) -> BitVector {
+        if self.cfg.recur {
+            // the full association column's state (else the pairs' merged)
+            let n = self.brain.pairs.len();
+            if self.brain.full.is_some() {
+                return self.brain.code_of_column(ColumnId::Assoc(n));
+            }
+            let mut v = zero();
+            for i in 0..n {
+                v = or(&v, &self.brain.code_of_column(ColumnId::Assoc(i)));
+            }
+            return v;
+        }
         if !self.cfg.persist {
             return self.wm.content();
         }
@@ -1151,8 +1176,9 @@ impl Mind {
             }
             if let ColumnId::Assoc(_) = id {
                 if self.bg.choose(loop_channel(id) + 1, 2, true) == 1 {
-                    if self.cfg.persist {
-                        // the loop keeps what the column holds (its own trace)
+                    if self.cfg.persist || self.cfg.recur {
+                        // the loop keeps what the column holds (its own trace), or with
+                        // recurrence opens its gate (the input becomes its state)
                         self.brain.refresh(id, false);
                     } else {
                         let c = self.brain.code_of_column(id);

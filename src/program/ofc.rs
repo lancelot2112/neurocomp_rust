@@ -52,6 +52,8 @@ pub struct Ofc {
     /// with persistence (the column's own trace, `set_persistence`), what is held is the trace
     /// and holding refreshes it; else the separate copy `held`
     persist: bool,
+    /// recurrence (`set_recurrence`)
+    recur: bool,
     /// the row the outcome layer last predicted from (input, context), and what it predicted
     last: Option<(BitVector, BitVector, Option<BitVector>)>,
     /// how surprising the latest outcome was (`Q16`): 1 for a touch not expected or an
@@ -79,6 +81,7 @@ impl Ofc {
             outcome: Map::new(bits, cap),
             held: z,
             persist: false,
+            recur: false,
             last: None,
             surprise: 0,
             familiar: 0,
@@ -107,8 +110,18 @@ impl Ofc {
         self.persist = tau > 0;
     }
 
-    /// What is held: the column's trace, or the separate copy.
+    /// Recurrence: the column holds its own state by self-excitation (`Column::set_recurrence`);
+    /// holding or splitting opens its gate (the input becomes the state).
+    pub fn set_recurrence(&mut self, gain: u32) {
+        self.col.set_recurrence(gain);
+        self.recur = gain > 0;
+    }
+
+    /// What is held: with recurrence the column's own state, else its trace, or the separate copy.
     pub fn held_state(&self) -> BitVector {
+        if self.recur {
+            return self.col.code.clone();
+        }
         if self.persist {
             self.col.trace().clone()
         } else {
@@ -118,7 +131,7 @@ impl Ofc {
 
     /// The tuft's context: what is held (with persistence the column puts its trace there itself).
     fn tuft(&self) -> BitVector {
-        if self.persist {
+        if self.persist || self.recur {
             BitVector::new(self.bits, Some(0))
         } else {
             self.held.clone()
@@ -178,7 +191,7 @@ impl Ofc {
         if on {
             let z = self.z();
             if z.count_ones() > 0 {
-                if self.persist {
+                if self.persist || self.recur {
                     self.col.refresh(false);
                 } else {
                     self.held = z;
@@ -196,7 +209,7 @@ impl Ofc {
         if gate && self.surprise >= one * 3 / 4 && self.prev_familiar >= one / 2 {
             let z = self.z();
             if z.count_ones() > 0 {
-                if self.persist {
+                if self.persist || self.recur {
                     self.col.refresh(true);
                 } else {
                     self.held = z;

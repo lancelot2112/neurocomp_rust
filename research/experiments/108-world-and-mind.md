@@ -44,27 +44,37 @@ closed at about 5%. That points at the setup, not the amount of training.
 
 **The mind** (`src/program/mind.rs`, with the always-completing index in `src/program/index_hc.rs`)
 runs one pipeline every step, `step(senses) -> acts`:
-1. **Learn what came.** The cortex learns from its last state what was sensed now: the next sound,
-   or after a hand act what the hand felt. The motor areas learn each act's result, with no
-   babbling phase handed the world's answers.
-2. **Value what came.** These innate valuations are the only dopamine:
-   - *own effect:* after its own act, as surprising as the sensory column finds the result;
+1. **Learn what came.** The columns learn from their last state what the effectors' senses
+   received: the hand's touch if it acted, else the ear. The motor areas learn each act's result,
+   with no babbling phase handed the world's answers.
+2. **One hippocampal step over the whole cortical state.** The input is every sensing area's
+   cells, sensed or imagined; nobody tells the hippocampus what was heard.
+   - An input that changed is attention outward: acetylcholine rises and the state is stored.
+   - The voice's efference copy marks a sound as its own: it is represented, not stored.
+   - A new state that came from neither is attention turned inward: acetylcholine falls.
+   - An unchanged state is nothing new, so the offer holds.
+3. **Sense.** Every column, the motion stream, the mirror, the association columns, and the
+   cerebellum. The relay's mix is now only the cortex's expectation (for surprise); nothing routes
+   it to the voice.
+4. **Value what came.** These innate valuations are the only dopamine:
+   - *own effect:* after its own act, as surprising as the senses find what came;
    - *response:* someone present, and a sound from outside within two steps of its own sound
      said aloud;
    - *smile:* an innately recognised pattern in the presence sense;
    - *effort:* every act costs a little.
-3. **Sense.** In order:
-   - the hippocampus first: what the cortex represents of what came is stored if it came from
-     outside, then completed;
-   - then every column, the motion stream and the mirror, the association columns, the
-     cerebellum, and the relay's mix into a plan.
-4. **Choose.** One loop per effector, as the basal ganglia's loops run in parallel:
-   - candidates are the cortex's goals that the effector can plan, plus one spontaneously active
-     primitive of each effector per step;
-   - the loop's gate takes one into the loop (or none), and the effector's motor gate releases it
-     or withholds it;
-   - withheld, it runs inwardly: imagined through the forward model, and completed by the
-     hippocampus.
+5. **Loops grow with the cortex** (Alexander, DeLong & Strick 1986).
+   - **Column loops.** Every column with a layer 5, sensory or association, gets its own loop
+     through the basal ganglia when it is created. The striatum sees each column's activity as
+     its own group.
+   - **A column's goal is learned.** Its layer 5 offers the fired cell whose output has been
+     worth most when followed. That worth is learned from the dopamine that follows: the TD error
+     reaches the goal cells followed in the last four steps.
+   - **Taking a goal in.** The column's loop takes its goal in or not. An association column's
+     loop can also gate its content into working memory (PBWM's stripes).
+   - **Motor loops.** Each motor area's loop chooses among the goals taken in that it can plan,
+     plus its own spontaneously active primitive (one per step). Its motor gate then releases the
+     choice to the body or withholds it. Withheld, it is imagined: the forward model's result
+     comes back top-down at the next step, to the cortex and to the hippocampus alike.
 
 The mind never knows it is being tested and never stops learning. `examples/lessons.rs` is the
 curriculum (speech play, mouse play, lessons) and the observer.

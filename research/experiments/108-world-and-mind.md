@@ -1111,3 +1111,31 @@ episodes, 1000 lessons, 200 test lessons):
   speak", and which word, held across the story. Without it, speaking is an act whose worth is
   the average over every moment, and that average is below its cost.
 - The other seed (2) is still running.
+
+**Reversal with frustration against the orbitofrontal value** (v36b, every default on, 2000
+trials; paying light / the other):
+
+| seed | 100–200 (A) | 400–500 (A) | 900–1000 (B) | 1000–1100 (A) | 1400–1500 (A) | 1900–2000 (B) |
+|---|---|---|---|---|---|---|
+| 0 | 0.54/0.33 | 0.23/0.35 | **0.61/0.45** | 0.10/0.44 | 0.02/0.02 | 0.00/0.00 |
+| 1 | 0.83/0.35 | 0.52/0.27 | 0.05/0.07 | 0.04/0.04 | 0.14/0.14 | 0.04/0.04 |
+
+- **Frustration now stays small:** 0.03–0.27 a block.
+- **It does not bring reversal.**
+  - Seed 0 shifts to B slowly over the second phase (0.61/0.45 at its end), keeps clicking on B
+    when A pays again (0.44 on B, 0.10 on A), and stops.
+  - Seed 1 learns A (0.83/0.35), and its clicking fades after the first reversal.
+- **What frustration lacks is direction.** Its noise loosens every choice alike. An animal after
+  a reversal tries the alternative because something represents it as an alternative: the
+  other light's value, or the rule. Here nothing marks clicking on B as the thing to try.
+- **The parts now in place for that:** the orbitofrontal state can split on the surprise, and
+  the striatum can learn from it. What is missing is that the new state starts with the old
+  values: a split should make the old light's learned value not apply, so the other light is
+  tried as new.
+
+**Next.**
+1. After a split, the old state's value cells should not fire in the new state (they sit on Z,
+   which changes), and the act's baseline should be relearned there. Check in the Bitfield
+   Scope whether Z actually changes at a split, and whether the hand loop's cells that carried
+   "click on A" stop firing.
+2. Record a reversal trace around trial 500 for that check.

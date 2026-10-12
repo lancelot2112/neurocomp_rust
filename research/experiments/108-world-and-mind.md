@@ -496,6 +496,80 @@ presence sense: a separate path.
 3. **Homeostasis:** the go and no-go pools of a loop kept in balance (synaptic scaling), so neither
    can run to its cap.
 
+### A quiet critic, symmetric no-go, homeostasis
+The three changes, added one at a time.
+- **v18, a quiet critic.** The critic no longer sees recall and working memory, which change
+  every step whatever happens (`MIND_CRITIC_ALL=1` restores them). It sees the amygdala's attended
+  cues and value cells, the orbitofrontal learner's value cells, presence and affective touch.
+- **v19, plus symmetric no-go at the motor gates** (`MIND_NOGO_SYM=0` off).
+  - A dip strengthens the held-back candidate's no-go cells that fired, or recruits new ones only
+    where none fired.
+  - A burst removes as many of those that fired.
+  - Withholds are recorded only at the motor gates, not at every column's loop.
+- **v20, plus homeostasis** (`MIND_BALANCE=0` off): a channel's go and no-go pools are kept within
+  twice each other plus 16 cells; the larger pool's stalest cells go (synaptic scaling).
+
+Instrumental probe, 600 trials, seeds 0–4. v17 (the corrected withhold rule, before these) for
+comparison.
+
+**Clicks per trial in the window, light / none**
+
+| version | seed | 0–100 | 100–200 | 200–300 | 300–400 | 400–500 | 500–600 |
+|---|---|---|---|---|---|---|---|
+| v18 | 0 | 0.02/0.12 | 0.18/0.24 | 0.74/0.79 | 1.04/0.77 | 1.00/1.27 | 1.02/0.98 |
+| v18 | 1 | 0.31/0.37 | 0.57/0.69 | 0.86/1.08 | 0.40/0.77 | 0.92/1.08 | 0.82/0.96 |
+| v18 | 2 | 0.04/0.07 | 0.15/0.21 | 0.22/0.29 | 0.72/0.74 | 0.43/0.69 | 0.87/0.82 |
+| v18 | 3 | 0.12/0.17 | 0.24/0.18 | 0.87/0.80 | 0.45/0.80 | 0.71/0.98 | 1.12/1.18 |
+| v18 | 4 | 0.09/0.08 | 0.11/0.14 | 0.40/0.16 | 0.72/0.24 | 1.07/0.24 | 1.09/1.22 |
+| v19 | 0 | 0.08/0.04 | 0.26/0.40 | 0.78/0.90 | 0.60/0.69 | 0.80/1.12 | 1.09/0.83 |
+| v19 | 1 | 0.31/0.37 | 0.51/0.55 | 0.86/1.02 | 1.02/1.19 | 1.04/1.00 | 1.27/0.83 |
+| v19 | 2 | 0.04/0.07 | 0.21/0.13 | 0.68/0.83 | 0.66/0.90 | 0.86/0.86 | 1.03/0.88 |
+| v19 | 3 | 0.26/0.19 | 0.50/0.65 | 0.64/0.70 | 0.40/0.47 | 0.80/0.87 | 1.02/1.16 |
+| v19 | 4 | 0.22/0.18 | 0.42/0.53 | 0.88/0.86 | 0.93/1.05 | 0.87/1.20 | 1.07/0.89 |
+| v20 | 0 | 0.08/0.04 | 0.04/0.20 | 0.25/0.66 | 0.22/0.53 | 0.40/0.50 | 0.85/0.65 |
+| v20 | 1 | 0.25/0.32 | 0.12/0.04 | 0.22/0.18 | 0.54/0.37 | 0.61/0.59 | 0.87/0.95 |
+| v20 | 2 | 0.16/0.04 | 0.18/0.10 | 0.31/0.16 | 0.84/0.76 | 0.57/0.66 | 0.80/0.77 |
+| v20 | 3 | 0.20/0.20 | 0.11/0.30 | 0.36/0.09 | 0.74/0.31 | 0.53/0.60 | 0.65/0.96 |
+| v20 | 4 | 0.20/0.14 | 0.70/0.40 | 1.00/0.96 | 0.51/0.89 | 1.00/0.94 | 0.93/0.93 |
+
+**The last 100 trials:** the hand loop's go and no-go cells, the dopamine per step, and the acts
+per step
+
+| version | go / no-go cells (seeds 0–4) | dips per step | at a pause: dips / bursts | acts per step |
+|---|---|---|---|---|
+| v17 | 1,569/1,582; 92/2,048; 105/617; 581/1,214; 822/2,048 | −0.004 to −0.18 | 0–40 / 0–73 | 0.05–0.67 |
+| v18 | 947/77; 965/100; 605/49; 808/141; 1,117/1,063 | −0.008 to −0.034 | 6–32 / 76–149 | 0.78–0.90 |
+| v19 | 889/160; 1,200/124; 866/197; 1,511/114; 1,157/482 | −0.007 to −0.045 | 6–75 / 119–249 | 0.75–0.92 |
+| v20 | 100/44; 424/205; 232/108; 382/185; 468/236 | −0.007 to −0.019 | 1–17 / 48–139 | 0.59–0.91 |
+
+**What this says.**
+- **Acting no longer dies out.** All 15 runs click to the end, at 0.6–1.3 clicks per trial in the
+  window, where v17 lost it on three seeds of five.
+- **The quiet critic is what fixed it.** Dips per step fell from as much as −0.18 to −0.01 to
+  −0.03, and no-go no longer runs away. Symmetric no-go and homeostasis kept the pools smaller and
+  in balance (v20: 100–468 go cells), but did not change the outcome.
+- **The light is no longer used.** In every run, clicks with and without the light end about
+  equal. The swing went from a no-go runaway to go dominance: bursts at a pause outnumber dips 5 to
+  25 times, and nothing holds the hand back when the light is off.
+  - **A click without the light gets no dip.** Nothing expected a touch then. The orbitofrontal
+    learner's conjunctive cells extinguish "a click alone predicts a touch", so its prediction
+    for a click without the light is zero, as it should be, and zero minus zero is no error.
+  - **The only cost of a useless click is the effort,** 1/32. That is small beside the bursts the
+    light trials bring.
+  - **The two earlier successes were partly luck of balance.** v15 seed 1 and v17 seeds 0, 3 and 4
+    held back without the light while no-go was large. Their holding back came from the runaway
+    that later killed acting, not from the dip a useless click should bring.
+
+**Next.**
+1. **Opportunity cost (Niv et al. 2007).** An act costs the average reward rate, the slow average
+   that is already kept: when acting usually pays, an act that brings nothing is a loss of what
+   that time could have brought, so a useless click is a dip. The cost scales with how rich the
+   world is, unlike a fixed effort.
+2. **The act-alone expectation kept as a baseline.** In the orbitofrontal learner, the value of
+   an act regardless of cues stays a prediction that fails without the light, instead of being
+   extinguished entirely: a dip after a click without the light.
+3. **Then the 5 seeds again,** and the Pavlovian probe to check it is unchanged.
+
 **Next (from the first probes).**
 1. **Separate agency from value.** The own-effect signal trains the motor loops (which acts have
    effects) and habituates per act and outcome; the critic learns from outcomes.

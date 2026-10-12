@@ -1139,3 +1139,111 @@ trials; paying light / the other):
    Scope whether Z actually changes at a split, and whether the hand loop's cells that carried
    "click on A" stop firing.
 2. Record a reversal trace around trial 500 for that check.
+
+### Holding a state in the cortex itself: trace, recurrence, a held population
+The orbitofrontal area is a general column, and it needed a bolt-on `held` copy, as prefrontal
+working memory needed a separate store (`WorkingMemory`). That pointed at the column. Its layer
+2/3 fires only on its basal input (this step's layer 4 code). Its recurrence (its own previous
+activity) reaches only the tuft, where it primes and never drives. When the input stops, nothing
+fires, so a column can hold nothing. Three versions followed, each replacing the store and the
+copy.
+
+**v37: a persistent trace** (`MIND_PERSIST=1`).
+- Each column's layer 2/3 activity leaves a trace. Each bit clears at random with probability
+  2^-τ a step, τ the area's own: none in the senses, 1 in the pairs, 3 in the full association
+  area, 4 in the orbitofrontal area. Intrinsic timescales lengthen up the hierarchy (Murray et al.
+  2014).
+- The trace sits on the column's tuft and goes out with its activity. A loop's "take in"
+  refreshes its column's trace.
+- **Delayed, 600 trials, last block, light / none:**
+
+  | seed | with the trace | without |
+  |---|---|---|
+  | 0 | 0.42/0.27 | 0.11/0.07 |
+  | 1 | 0.04/0.06 | 0.06/0.04 |
+  | 2 | 0.02/0.00 | 0.06/0.00 |
+
+  Clicking fades either way.
+- **The light probe weakens** (seed 0 best 1.08/0.36, last 0.48/0.48). The tone holds.
+- **Why it cannot be enough:** the trace keeps whatever fired, noise included, and loses it at a
+  fixed rate. It cannot clean up a state or keep only learned ones.
+
+**v38: recurrent self-excitation** (an autoassociative map in each column).
+- The map learns each input code as predicting itself, so a learned state, even half present,
+  completes to the whole (tested: 18 of 32 bits complete to 32).
+- The previous state, less a random sixteenth (noise) and completed, drives the code with the
+  area's gain against layer 4's input, and the strongest 32 bits win. The gain is 0 in the senses,
+  1 in the pairs, and 3 in the full association area and the orbitofrontal area.
+- The loop's gate opens it for one step (the input becomes the state). Noise was first applied
+  after the completion, which kept every state short of whole. It must come before, so the
+  attractor restores it.
+- A unit test held a learned state through 8 silent steps, held it against a new input with the
+  gate closed, and switched on the gate.
+- **In the mind it held one state, not the light.** A delayed-probe trace (40 trials) showed
+  working memory keeping 79% of its bits from step to step, all the time. Five steps after the
+  light, light trials' held states overlapped each other no more than they overlapped no-light
+  trials' (59% against 65%; the orbitofrontal area 54% against 79%).
+- At gain 3 the held state beat the input, so the light got in only when the gate happened to
+  open at its step.
+- Delayed did not discriminate (last block 0.00/0.26 to 0.35/0.53). The light probe was weak
+  (best 0.75/0.57). Reversal seed 0 learned A (0.93/0.71) and stopped clicking after the switch.
+  The tone held.
+
+**v39: a held population beside the driven code.** A review of the cortex, given with the
+request, put it this way:
+- An area is mainly a driven contextual predictor.
+- Driving input (layer 4) decides what it represents.
+- Context and its own past arrive on the apical dendrites and select among driven
+  interpretations; they do not create them.
+- Local recurrence cleans up. Persistence, an attractor held without input, is a dial that turns
+  up toward prefrontal cortex.
+- Gain is set dynamically by the thalamus (mediodorsal amplification of prefrontal recurrence) and
+  by acetylcholine: high acetylcholine favours feedforward encoding and suppresses recurrence, low
+  acetylcholine releases completion (Hasselmo). Mismatch is what switches it.
+
+So, in v39:
+- **The driven code is layer 4's alone.** Recurrence no longer competes with input.
+- **A held population sits beside it,** in the full association column and the orbitofrontal
+  area only. The column's code is the two together, and in silence the held state alone.
+- **Graded surprise loads it** (acetylcholine): the part of the input that layer 2/3 did not
+  expect joins what is held, newest first, 32 bits in all. All-or-nothing surprise (load only
+  when half the input is unexpected) loaded nothing: the light changes only part of the full
+  area's input.
+- **The gate loads the whole driven code** (the basal ganglia through the thalamus).
+- **Otherwise the held state maintains itself** by completion against noise. What the map cannot
+  complete fades.
+- **Working memory** is the full association column's held population; the orbitofrontal hold is
+  its own. The separate store and copy are not used (`MIND_RECUR=0` brings them back).
+- A unit test: a scene, with A or B on some steps. An unexpected A is held while the expected
+  scene drives the area, and through silence; the gate loads B.
+
+**The held state now carries the light, weakly** (delayed trace, overlap between held states):
+
+| | step 2, light / light | step 2, light / none | step 5, light / light | step 5, light / none |
+|---|---|---|---|---|
+| working memory | 0.79 | 0.66 | 0.81 | 0.75 |
+| orbitofrontal hold | 0.80 | 0.59 | 0.73 | 0.65 |
+
+**Probes, v39:**
+- **Delayed, last block:** 0.15/0.23, 0.13/0.26, 0.39/0.39. Not learned.
+- **Light probe:** seed 1 reaches 0.82/0.22. Seed 0 peaks at 0.92/0.49, then fades (0.28/0.11).
+- **Reversal:**
+  - Seed 0 keeps clicking through the first reversal and turns slowly to B (0.56/0.50, 0.52/0.34
+    at the end of the phase), then fades in the third phase.
+  - Seed 1 stops after the first reversal.
+- **The tone holds** (+0.89 → +0.99, the touch's dopamine +0.44 → +0.31).
+
+**What this says.** The cortex now holds what surprised it, with no store built for the purpose.
+But the light is a small part of what is held (6–13 points of overlap), and the hand loop does
+not yet use it.
+- **The held state mixes the light with whatever else was new.** A mix is not a learned pattern,
+  so completion cannot keep it whole, and it fades.
+- **The hand loop sees the held state as one region among about twenty.** Its cells sample two
+  regions at random, so few take the held one.
+
+**Next** (from the review's own suggestion): a two-area test of the column alone.
+- Only the upper area has a held population; the lower one is driven and clean.
+- Does the upper one hold a context across a gap and a distractor while the lower one stays clean?
+- Then raise the held population's weight in a loop's choice of regions by its associability.
+  The light, surprising and followed by reward, should come to dominate what the hand loop
+  samples.

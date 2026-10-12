@@ -142,6 +142,9 @@ pub struct Amygdala {
     baseline: Pool,
     /// features from this index on are acts (efference copies); None: no baseline
     act_from: Option<u32>,
+    /// value cells form and fire only on attended features (and one's own acts): attention
+    /// gates learning, as associability does (default on)
+    pub gated: bool,
     /// attended features, and features seen before (bit vectors over the features)
     attended: BitVector,
     seen: BitVector,
@@ -162,6 +165,7 @@ impl Amygdala {
             pause: Pool::default(),
             baseline: Pool::default(),
             act_from: None,
+            gated: true,
             attended: BitVector::new(feat, Some(0)),
             seen: BitVector::new(feat, Some(0)),
             now: 0,
@@ -195,12 +199,18 @@ impl Amygdala {
 
     /// The trace's items from earlier steps (ages 1..), as owned (age, feature).
     fn past_items(&self) -> Vec<(usize, u32)> {
-        self.items(1, TRACE).map(|(a, &f)| (a, f)).collect()
+        self.items(1, TRACE).filter(|(_, f)| self.counts(**f)).map(|(a, &f)| (a, f)).collect()
+    }
+
+    /// Whether a feature takes part in value (associability gates learning, Pearce–Hall): an
+    /// attended cue, or one's own act; with `gated` off, every feature.
+    fn counts(&self, f: u32) -> bool {
+        !self.gated || self.act_from.map_or(false, |t| f >= t) || self.attended.bit_get(f as usize)
     }
 
     /// The trace's items now, each a step older (what they predict for the next step).
     fn now_items(&self) -> Vec<(usize, u32)> {
-        self.items(0, TRACE - 1).map(|(a, &f)| (a + 1, f)).collect()
+        self.items(0, TRACE - 1).filter(|(_, f)| self.counts(**f)).map(|(a, &f)| (a + 1, f)).collect()
     }
 
     /// The context of some traced (age, feature) items: each hashed to one of `D` bits
@@ -222,7 +232,8 @@ impl Amygdala {
 
     /// The context of the trace from earlier steps (ages 1..): what predicts this step.
     fn past(&self) -> Vec<u64> {
-        Self::context(self.items(1, TRACE), true)
+        let items = self.past_items();
+        Self::context(items.iter().map(|(a, f)| (*a, f)), true)
     }
 
     /// This step's onsets (features newly active). Shifts the trace; a feature never seen before
@@ -323,7 +334,8 @@ impl Amygdala {
     /// The value cells firing on the cues now (as `cue_value` reads them): appetitive cells' ids
     /// below 4096, aversive ones' from 4096, baseline ones' from 8192, each modulo 4096 (an input group for the striatum).
     pub fn value_cells(&self) -> Vec<usize> {
-        let ctx = Self::context(self.items(0, TRACE - 1).map(|(a, f)| (a + 1, f)), true);
+        let now = self.now_items();
+        let ctx = Self::context(now.iter().map(|(a, f)| (*a, f)), true);
         let app = self.appetitive.firing(&ctx).into_iter().map(|i| self.appetitive.cells[i].2 as usize % 4096);
         let avr = self.aversive.firing(&ctx).into_iter().map(|i| 4096 + self.aversive.cells[i].2 as usize % 4096);
         let actx = self.act_context(&self.now_items());
@@ -341,7 +353,7 @@ impl Amygdala {
     /// What some features would be worth if they came now (an imagined outcome: they predict
     /// the next step as one step old), `Q16`.
     pub fn value_of(&self, features: &[u32]) -> i32 {
-        self.value_items(&features.iter().map(|&f| (1usize, f)).collect::<Vec<_>>())
+        self.value_items(&features.iter().filter(|&&f| self.counts(f)).map(|&f| (1usize, f)).collect::<Vec<_>>())
     }
 
     /// The dopamine error `delta` came (`Q16`): if it is large, a pause cell is recruited on the

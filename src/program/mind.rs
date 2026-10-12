@@ -247,11 +247,14 @@ pub struct Config {
     /// separate credit per act: its outcome against its usual worth goes to its own loop's and
     /// gate's choices (MIND_ACT_CREDIT=0 off)
     pub act_credit: bool,
+    /// the amygdala's and orbitofrontal learner's value cells form and fire only on attended
+    /// cues (and one's own acts) (MIND_ATTEND_GATE=0 off)
+    pub attend_gate: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: true }
     }
 }
 
@@ -285,6 +288,7 @@ impl Config {
             act_baseline: on("MIND_ACT_BASELINE"),
             per_act: on("MIND_PER_ACT"),
             act_credit: on("MIND_ACT_CREDIT"),
+            attend_gate: on("MIND_ATTEND_GATE"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -423,6 +427,7 @@ impl Mind {
             bg.nogo_channels = [VOICE, HAND].iter().map(|&m| motor_channels(m).1).collect();
         }
         let act_baseline = cfg.act_baseline;
+        let attend_gate = cfg.attend_gate;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -433,9 +438,14 @@ impl Mind {
             wm: WorkingMemory::new(BITS, 1),
             bg,
             hc: IndexHc::new(hc_bits, seed),
-            amy: Amygdala::new(SLOTS.len() * BITS, seed),
+            amy: {
+                let mut a = Amygdala::new(SLOTS.len() * BITS, seed);
+                a.gated = attend_gate;
+                a
+            },
             ofc: {
-                let o = Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC);
+                let mut o = Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC);
+                o.gated = attend_gate;
                 if act_baseline {
                     o.with_act_baseline((SLOTS.len() * BITS) as u32)
                 } else {

@@ -824,10 +824,15 @@ impl MaskStriatum {
     /// sensory effect is thought to train which acts have effects (agency), not what states are
     /// worth.
     pub fn reinforce_last(&mut self, channels: &[usize], delta: i32) {
+        self.reinforce_at(channels, delta, 0);
+    }
+
+    /// As `reinforce_last`, for the choices made `back` steps before the latest.
+    pub fn reinforce_at(&mut self, channels: &[usize], delta: i32, back: usize) {
         if delta == 0 || !self.grow {
             return;
         }
-        let Some(st) = self.recent.last().cloned() else { return };
+        let Some(st) = self.recent.len().checked_sub(1 + back).map(|i| self.recent[i].clone()) else { return };
         let amount = delta.unsigned_abs() as u64 / UNIT as u64 / RATE_DIV;
         let mut bits = (amount >> 16) as usize;
         if self.rng.gen_range(0..ONE as u64) < (amount & 0xFFFF) {

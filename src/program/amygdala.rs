@@ -331,6 +331,13 @@ impl Amygdala {
         app.chain(avr).chain(base).collect()
     }
 
+    /// An act's usual worth (`Q16`): the baseline cells firing on its features (its efference
+    /// copy) as one step old; 0 without a baseline.
+    pub fn act_worth(&self, features: &[u32]) -> i32 {
+        let items: Vec<(usize, u32)> = features.iter().map(|&f| (1usize, f)).collect();
+        self.baseline.firing(&self.act_context(&items)).len() as i32 * UNIT
+    }
+
     /// What some features would be worth if they came now (an imagined outcome: they predict
     /// the next step as one step old), `Q16`.
     pub fn value_of(&self, features: &[u32]) -> i32 {

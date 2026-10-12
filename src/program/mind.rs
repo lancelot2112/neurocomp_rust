@@ -241,11 +241,17 @@ pub struct Config {
     /// the orbitofrontal learner keeps a baseline value per act, never extinguished, its other
     /// cells learning what the cues add (MIND_ACT_BASELINE=0 off)
     pub act_baseline: bool,
+    /// the opportunity cost is each act's own usual worth (its orbitofrontal baseline), not one
+    /// average for every act (MIND_PER_ACT=0 off)
+    pub per_act: bool,
+    /// separate credit per act: its outcome against its usual worth goes to its own loop's and
+    /// gate's choices (MIND_ACT_CREDIT=0 off)
+    pub act_credit: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true }
     }
 }
 
@@ -277,6 +283,8 @@ impl Config {
             balance: on("MIND_BALANCE"),
             opportunity: on("MIND_OPPORTUNITY"),
             act_baseline: on("MIND_ACT_BASELINE"),
+            per_act: on("MIND_PER_ACT"),
+            act_credit: on("MIND_ACT_CREDIT"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -365,7 +373,8 @@ pub struct Mind {
     /// what an act usually brings (`Q16`), and the acts whose outcome window is still open
     /// (steps left, outcome so far)
     rate_act: i32,
-    act_windows: Vec<(u8, i32)>,
+    /// (steps left, outcome so far, motor area, the act's usual worth when done)
+    act_windows: Vec<(u8, i32, usize, i32)>,
     /// the contingency detector (`Q16`): how often a sound from outside comes within two steps
     /// after its own sound, and otherwise
     p_after: i32,
@@ -503,11 +512,15 @@ impl Mind {
         // the efference copy of what was just done (the motor area's command), as features after
         // the senses' (each motor area a slot of BITS): the amygdala and the critic see the act
         let mut efference: Vec<u32> = Vec::new();
+        // each act sensed now: (motor area, its efference features)
+        let mut acts_now: Vec<(usize, Vec<u32>)> = Vec::new();
         for (a, c) in std::mem::take(&mut self.issued) {
-            if self.cfg.efference {
-                if let Some(k) = self.motors.iter().position(|m| m.0 == a) {
-                    efference.extend(ones(&c).into_iter().map(|b| ((SLOTS.len() + k) * BITS + b) as u32));
+            if let Some(k) = self.motors.iter().position(|m| m.0 == a) {
+                let f: Vec<u32> = ones(&c).into_iter().map(|b| ((SLOTS.len() + k) * BITS + b) as u32).collect();
+                if self.cfg.efference {
+                    efference.extend(f.iter().copied());
                 }
+                acts_now.push((a, f));
             }
             let sense = self.motors.iter().find(|m| m.0 == a).map_or(EAR, |m| m.2);
             let result = raw[Self::slot(sense)].clone();
@@ -578,9 +591,14 @@ impl Mind {
             }
             // with a tonic level to keep exploring, acting costs a little effort again; with
             // opportunity cost, what acting usually brings, if that is more (Niv et al. 2007)
+            // (per act: each act costs its own usual worth, the orbitofrontal baseline cells that
+            // fire on its efference copy, which grow as new acts are done)
             if self.cfg.tonic {
-                let cost = if self.cfg.opportunity { self.cfg.effort.max(self.rate_act) } else { self.cfg.effort };
-                r[3] -= cost * self.acted as i32;
+                for (_, f) in &acts_now {
+                    let worth = if self.cfg.per_act { self.ofc.act_worth(f) } else { self.rate_act };
+                    let cost = if self.cfg.opportunity { self.cfg.effort.max(worth) } else { self.cfg.effort };
+                    r[3] -= cost;
+                }
             }
         }
         if own {
@@ -611,13 +629,20 @@ impl Mind {
             w.1 += outcome;
             w.0 -= 1;
         }
-        for _ in 0..self.acted {
-            self.act_windows.push((1, outcome));
+        for (a, f) in &acts_now {
+            let worth = self.ofc.act_worth(f);
+            self.act_windows.push((1, outcome, *a, worth));
         }
-        let done: Vec<i32> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| w.1).collect();
+        let done: Vec<(i32, usize, i32)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3)).collect();
         self.act_windows.retain(|w| w.0 > 0);
-        for got in done {
+        for (got, motor, worth) in done {
             self.rate_act += (got - self.rate_act) / 32;
+            // separate credit per act: what it brought against what it is usually worth (its
+            // advantage), straight to its own loop's and gate's choices of two steps back
+            if self.cfg.act_credit {
+                let (l, g) = motor_channels(motor);
+                self.bg.reinforce_at(&[l, g], got - worth, 1);
+            }
         }
         // outcomes go to the critic; its own effect, with agency, trains the motor
         // loops' last choices directly

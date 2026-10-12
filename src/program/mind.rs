@@ -446,7 +446,7 @@ pub struct Mind {
     /// (steps left, outcome so far)
     rate_act: i32,
     /// (steps left, outcome so far, motor area, the act's usual worth when done)
-    act_windows: Vec<(u8, i32, usize, i32, Option<(i32, i32)>)>,
+    act_windows: Vec<(u8, i32, usize, i32, Option<(i32, i32)>, i32)>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
     /// loops expected of it there
     chosen_q: Vec<(usize, i32, i32)>,
@@ -751,11 +751,14 @@ impl Mind {
         for (a, f) in &acts_now {
             let worth = self.ofc.act_worth(&self.ofc_act(f));
             let q = self.chosen_q.iter().find(|x| x.0 == *a).map(|x| (x.1, x.2));
-            self.act_windows.push((1, outcome, *a, worth, q));
+            // what the orbitofrontal value cells expect now, with the act in its trace: what
+            // this act, here, should bring
+            let here = self.ofc.cue_value().max(0);
+            self.act_windows.push((1, outcome, *a, worth, q, here));
         }
-        let done: Vec<(i32, usize, i32, Option<(i32, i32)>)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3, w.4)).collect();
+        let done: Vec<(i32, usize, i32, Option<(i32, i32)>, i32)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3, w.4, w.5)).collect();
         self.act_windows.retain(|w| w.0 > 0);
-        for (got, motor, worth, q) in done {
+        for (got, motor, worth, q, here) in done {
             self.rate_act += (got - self.rate_act) / 32;
             // separate credit per act, straight to its own loop's and gate's choices of two steps
             // back: what it brought against what each expected of it there (its q, a cell an
@@ -772,13 +775,10 @@ impl Mind {
                     _ => self.bg.reinforce_at(&[l, g], got - worth, 1),
                 }
             }
-            // frustration: what the act was expected to bring and did not (relief: more came)
+            // frustration: what the act, here, was expected to bring (the orbitofrontal value) and
+            // did not; relief when more came
             if self.cfg.frustration {
-                let expect = match q {
-                    Some((ql, qg)) => ((ql + qg) * ONE as i32 / 16).clamp(0, ONE as i32).max(worth),
-                    None => worth,
-                };
-                self.frustration = (self.frustration + expect - got).clamp(0, 2 * ONE as i32);
+                self.frustration = (self.frustration + here.min(ONE as i32) - got.min(ONE as i32)).clamp(0, 2 * ONE as i32);
             }
         }
         // outcomes go to the critic; its own effect, with agency, trains the motor

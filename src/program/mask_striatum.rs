@@ -343,6 +343,14 @@ pub struct MaskStriatum {
     /// holding back is a choice too: a candidate the loop withheld is recorded, and the dopamine
     /// that follows trains its no-go cells only (a dip potentiates them, a burst depresses them)
     pub learn_nogo: bool,
+    /// withholds are recorded only on these channels (empty: every channel)
+    pub nogo_channels: Vec<usize>,
+    /// symmetric no-go plasticity: a dip strengthens the no-go cells that fired, or (none fired)
+    /// recruits new ones; a burst removes as many of those that fired
+    pub nogo_symmetric: bool,
+    /// homeostasis: after learning, a channel's go and no-go pools are kept within twice each
+    /// other (plus a margin): the stalest cells of the larger go (synaptic scaling)
+    pub balance: bool,
     /// the input groups the next choices see instead of the whole state (a loop's own cortical
     /// territory: corticostriatal topography), with their context
     view: Option<(Vec<Vec<usize>>, Vec<u64>)>,
@@ -399,6 +407,9 @@ impl MaskStriatum {
             pauses: 0,
             pause_open: false,
             learn_nogo: false,
+            nogo_channels: Vec::new(),
+            nogo_symmetric: false,
+            balance: false,
             view: None,
         }
     }
@@ -684,6 +695,27 @@ impl MaskStriatum {
                 for (ch, x) in &st.withheld {
                     let nogo = &mut self.pools[*ch][1].1;
                     let fired = nogo.firing(x, None);
+                    if self.nogo_symmetric {
+                        if delta < 0 {
+                            for &i in &fired {
+                                nogo.cells[i].0.swap(x, 1, false, &mut self.rng);
+                                nogo.cells[i].1 = self.clock;
+                            }
+                            if fired.is_empty() {
+                                for _ in 0..bits {
+                                    nogo.recruit(x, self.clock, &mut self.rng);
+                                }
+                            }
+                        } else {
+                            let mut gone: Vec<usize> = fired.iter().copied().take(bits).collect();
+                            gone.sort_unstable_by(|a, b| b.cmp(a));
+                            for i in gone {
+                                nogo.cells.swap_remove(i);
+                            }
+                        }
+                        self.swaps += (fired.len() + bits) as u64;
+                        continue;
+                    }
                     if delta < 0 {
                         for &i in &fired {
                             nogo.cells[i].0.swap(x, 1, false, &mut self.rng);
@@ -734,6 +766,22 @@ impl MaskStriatum {
         }
     }
 
+    /// Homeostasis: every channel's go and no-go pools within twice each other plus 16 cells;
+    /// the larger pool's stalest cells go.
+    fn rebalance(&mut self) {
+        for pairs in self.pools.iter_mut() {
+            for (go, nogo) in pairs.iter_mut() {
+                let (g, n) = (go.cells.len(), nogo.cells.len());
+                for (pool, limit) in [(go, 2 * n + 16), (nogo, 2 * g + 16)] {
+                    if pool.cells.len() > limit {
+                        pool.cells.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+                        pool.cells.truncate(limit);
+                    }
+                }
+            }
+        }
+    }
+
     fn dopamine(&self, drive: i32) -> i32 {
         if drive < 0 {
             return (drive / UNIT).max(DA_BASE - POP) * UNIT;
@@ -750,6 +798,9 @@ impl MaskStriatum {
             let disc = if self.gamma_div > 0 { v / self.gamma_div } else { 0 };
             let delta = self.dopamine(self.reward + v - disc - self.value);
             self.learn(delta);
+            if self.balance {
+                self.rebalance();
+            }
         }
         self.recent.push(Step { c: self.c.clone(), choices: Vec::new(), withheld: Vec::new(), critic: true });
         let cap = if self.taps { HISTORY } else { WINDOW };
@@ -833,7 +884,7 @@ impl MaskStriatum {
         self.jitter(&mut q, explore);
         let Some(i) = self.release(&q) else {
             // nothing released: with `learn_nogo`, the best candidate held back is recorded
-            if self.learn_nogo {
+            if self.learn_nogo && (self.nogo_channels.is_empty() || self.nogo_channels.contains(&channel)) {
                 if let (Some((b, _)), Some(st)) = (q.iter().enumerate().max_by_key(|x| *x.1), self.recent.last_mut()) {
                     st.withheld.push((channel, xs[b].clone()));
                 }

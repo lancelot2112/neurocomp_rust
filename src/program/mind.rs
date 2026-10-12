@@ -227,11 +227,19 @@ pub struct Config {
     pub salience: bool,
     /// the senses' layer 4 cover every part of their input (MIND_COVERAGE=0 off)
     pub coverage: bool,
+    /// the critic also sees recall and working memory (MIND_CRITIC_ALL=1; default off: they
+    /// change every step whatever happens, and made errors where nothing happened)
+    pub critic_all: bool,
+    /// no-go plasticity symmetric (a burst removes as many no-go cells as a dip adds, new ones
+    /// only where none fired), and withholds recorded only at the motor gates (MIND_NOGO_SYM=0 off)
+    pub nogo_symmetric: bool,
+    /// homeostasis: a loop's go and no-go pools kept within twice each other (MIND_BALANCE=0 off)
+    pub balance: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true }
     }
 }
 
@@ -258,6 +266,9 @@ impl Config {
             nogo: on("MIND_NOGO"),
             salience: on("MIND_SALIENCE"),
             coverage: on("MIND_COVERAGE"),
+            critic_all: std::env::var("MIND_CRITIC_ALL").map_or(false, |v| v == "1"),
+            nogo_symmetric: on("MIND_NOGO_SYM"),
+            balance: on("MIND_BALANCE"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -383,6 +394,11 @@ impl Mind {
         bg.release = 2;
         bg.grow = true;
         bg.learn_nogo = cfg.nogo;
+        bg.nogo_symmetric = cfg.nogo_symmetric;
+        bg.balance = cfg.balance;
+        if cfg.nogo_symmetric {
+            bg.nogo_channels = [VOICE, HAND].iter().map(|&m| motor_channels(m).1).collect();
+        }
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -589,9 +605,12 @@ impl Mind {
         let ids = self.brain.column_ids();
         self.report.loops = ids.len();
         // the critic (ventral striatum) sees its own territory with topography: the limbic
-        // inputs (the amygdala's attended cues, the hippocampus's recall, working memory, and
-        // someone's presence); without, everything
-        let mut all = if self.cfg.topographic { self.state_groups(&[ColumnId::Sense(PRESENCE), ColumnId::Sense(AFFECT)], &[], true, true) } else { self.state_groups(&ids, &ids, true, true) };
+        // inputs (the amygdala's attended cues and value cells, the orbitofrontal learner's value
+        // cells, someone's presence, affective touch); without, everything
+        // (with a quiet critic, MIND_CRITIC_ALL=0 by default: not recall or working memory, which
+        // change every step whatever happens, so a step with nothing in it has no error)
+        let wide = self.cfg.critic_all;
+        let mut all = if self.cfg.topographic { self.state_groups(&[ColumnId::Sense(PRESENCE), ColumnId::Sense(AFFECT)], &[], wide, wide) } else { self.state_groups(&ids, &ids, true, true) };
         // and the amygdala's value cells firing on the cues now: the basolateral amygdala drives
         // the ventral striatum (and through it the dopamine neurons) at the cue
         if self.cfg.amygdala && self.cfg.amy_critic {

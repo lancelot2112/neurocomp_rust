@@ -203,11 +203,13 @@ pub struct Config {
     pub pit: bool,
     /// the valuation of a response
     pub response: bool,
+    /// the critic sees the amygdala's value cells firing (MIND_AMY_CRITIC=0 off)
+    pub amy_critic: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true }
     }
 }
 
@@ -228,6 +230,7 @@ impl Config {
             agency: std::env::var("MIND_OWN").map_or(true, |v| v != "critic"),
             pit: on("MIND_PIT"),
             response: on("MIND_RESPONSE"),
+            amy_critic: on("MIND_AMY_CRITIC"),
         }
     }
 }
@@ -517,7 +520,12 @@ impl Mind {
         // the critic (ventral striatum) sees its own territory with topography: the limbic
         // inputs (the amygdala's attended cues, the hippocampus's recall, working memory, and
         // someone's presence); without, everything
-        let all = if self.cfg.topographic { self.state_groups(&[ColumnId::Sense(PRESENCE)], &[], true, true) } else { self.state_groups(&ids, &ids, true, true) };
+        let mut all = if self.cfg.topographic { self.state_groups(&[ColumnId::Sense(PRESENCE)], &[], true, true) } else { self.state_groups(&ids, &ids, true, true) };
+        // and the amygdala's value cells firing on the cues now: the basolateral amygdala drives
+        // the ventral striatum (and through it the dopamine neurons) at the cue
+        if self.cfg.amygdala && self.cfg.amy_critic {
+            all.push(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect());
+        }
         if self.cfg.learned_pause {
             self.bg.pause_open = self.amy.pausing();
             self.report.paused = self.bg.pause_open;

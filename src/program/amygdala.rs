@@ -1,169 +1,311 @@
 //! A fast learner of what cues are worth, and of which cues deserve attention (after the
 //! basolateral and central amygdala), with the striatum's cholinergic interneurons' learned pause.
+//! Bitwise throughout: populations of mask cells (AND and popcount), as the striatum's.
 //!
-//! - **Cues are onsets:** a feature (a cell of some sensing area's layer 4 code, as `slot * bits
-//!   + cell`) that was not active the step before. Each onset leaves a trace for a few steps,
-//!   tagged by its age (as time-locked "microstimuli": the cue at 1, 2, 3 steps back are different
-//!   inputs), so value can attach to a cue across a delay.
-//! - **Value** (basolateral amygdala, which gets sensory input directly and learns in a few
-//!   pairings): per feature and age, Rescorla–Wagner toward the innate valuations that follow:
-//!   v += α · (r − V(trace)) for each traced feature, where V is the mean over the trace.
-//! - **Associability** (Pearce–Hall, with the central amygdala and cholinergic basal forebrain): a
-//!   feature's α moves toward the size of the surprise that followed it, and a feature whose value
-//!   has grown stays attended (Mackintosh: good predictors are attended). Only attended features
-//!   reach the striatum, so a cue that predicts something is not swamped by everything that
-//!   happens to be on screen; a new feature starts attended (novelty).
-//! - **The cholinergic pause** (TANs: Aosaki et al. 1994; Morris et al. 2004): a feature in the
-//!   recent trace when a large dopamine error came grows a pause weight (and loses it slowly
-//!   otherwise); when a feature with a strong pause weight is present, the interneurons pause and
-//!   striatal plasticity opens for whatever dopamine comes.
+//! - **Cues are onsets:** a feature (a cell of some sensing area's layer 4 code, `slot * bits +
+//!   cell`) that was not active the step before. Each onset stays in a trace for a few steps,
+//!   tagged by its age (time-locked "microstimuli": the cue 1, 2, 3 steps back are different
+//!   inputs), so value can attach to a cue across a delay. The tagged trace is hashed into a
+//!   context bit vector of `D` bits.
+//! - **Value** (the basolateral amygdala, which gets sensory input directly and learns in a few
+//!   pairings): two pools of value cells, appetitive and aversive, each cell a mask of 16 context
+//!   bits that fires when 12 are present. The value predicted is the appetitive cells firing minus
+//!   the aversive, a unit each. Learning follows Rescorla–Wagner's shared error: the outcome came,
+//!   the error is what came minus what the trace predicted. A positive error removes aversive
+//!   cells that fired, recruits appetitive cells on the trace's context for the rest of the error
+//!   (one per unit) and moves the firing ones toward it; a negative error removes appetitive cells
+//!   that fired (extinction), or recruits aversive ones. The cues present add up, so a cue that
+//!   predicts nothing does not dilute one that does.
+//! - **Attention** (Pearce–Hall's surprise, Mackintosh's good predictors; the central amygdala and
+//!   cholinergic basal forebrain): a bit vector over features. Features in the trace when the
+//!   error or the predicted value is large are set (they stay attended while their value is being
+//!   learned, and while it holds); each step a random 1/32 of the bits clear; a feature never seen
+//!   before is attended (novelty). Only attended features reach the striatum.
+//! - **The cholinergic pause** (TANs: Aosaki et al. 1994; Morris et al. 2004): pause cells, masks
+//!   over the features (untagged) of the cues one or two steps before a large dopamine error,
+//!   recruited then; a pause cell that fires when no large error follows is removed now and then.
+//!   When one fires on the cues now, the interneurons pause and striatal plasticity opens.
 
-use std::collections::HashMap;
+use rand::rngs::StdRng;
+use rand::{Rng, RngCore, SeedableRng};
 
+use crate::bitvec::BitVector;
 use crate::fixed::ONE;
 
 /// Steps an onset stays in the trace.
 pub const TRACE: usize = 4;
 /// Features attended at most (reach the striatum).
 const ATTEND: usize = 64;
-/// Features in one sensory code (a cue's worth): predictions are summed per this many.
-const CODE: i64 = 32;
+/// Context bits (the tagged trace, hashed).
+const D: usize = 4096;
+/// Bits per cell, and how many must be present for it to fire.
+const CELL_BITS: usize = 16;
+const THETA: u32 = 12;
+/// Cells per pool at most (the stalest goes).
+const CAP: usize = 2048;
+/// The value of one cell (`Q16`).
+const UNIT: i32 = (ONE / 16) as i32;
 
-#[derive(Clone, Copy, Default)]
-struct Feature {
-    /// value per age in the trace (`Q16`)
-    value: [i32; TRACE],
-    /// associability (`Q16`)
-    alpha: i32,
-    /// cholinergic pause weight (`Q16`)
-    pause: i32,
-    seen: bool,
+fn mix(x: u64) -> u64 {
+    let mut y = x.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    y ^= y >> 29;
+    y = y.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+    y ^ (y >> 31)
+}
+
+fn bits_of(v: &[u64]) -> Vec<usize> {
+    let mut out = Vec::new();
+    for (w, &x) in v.iter().enumerate() {
+        let mut x = x;
+        while x != 0 {
+            out.push(w * 64 + x.trailing_zeros() as usize);
+            x &= x - 1;
+        }
+    }
+    out
+}
+
+/// A pool of mask cells: (mask, the step it last fired or was made).
+#[derive(Default)]
+struct Pool {
+    cells: Vec<(Vec<u64>, u64)>,
+}
+
+impl Pool {
+    fn firing(&self, ctx: &[u64]) -> Vec<usize> {
+        self.cells.iter().enumerate().filter(|(_, (m, _))| m.iter().zip(ctx).map(|(a, b)| (a & b).count_ones()).sum::<u32>() >= THETA).map(|(i, _)| i).collect()
+    }
+
+    /// A new cell on `CELL_BITS` of the context's bits (none if it has too few).
+    fn recruit(&mut self, ctx: &[u64], now: u64, rng: &mut StdRng) {
+        let mut on = bits_of(ctx);
+        if on.len() < CELL_BITS {
+            return;
+        }
+        if self.cells.len() >= CAP {
+            let i = (0..8).map(|_| rng.gen_range(0..self.cells.len())).min_by_key(|&i| self.cells[i].1).unwrap();
+            self.cells.swap_remove(i);
+        }
+        let mut m = vec![0u64; ctx.len()];
+        for i in 0..CELL_BITS {
+            let j = rng.gen_range(i..on.len());
+            on.swap(i, j);
+            m[on[i] / 64] |= 1 << (on[i] % 64);
+        }
+        self.cells.push((m, now));
+    }
+
+    /// Cell `i` moves one bit toward the context: a bit it has that is absent goes, a present one
+    /// it lacks comes (constant density).
+    fn toward(&mut self, i: usize, ctx: &[u64], now: u64, rng: &mut StdRng) {
+        let (m, t) = &mut self.cells[i];
+        *t = now;
+        let off = bits_of(&m.iter().zip(ctx).map(|(a, c)| a & !c).collect::<Vec<u64>>());
+        let add = bits_of(&m.iter().zip(ctx).map(|(a, c)| c & !a).collect::<Vec<u64>>());
+        if off.is_empty() || add.is_empty() {
+            return;
+        }
+        let (o, n) = (off[rng.gen_range(0..off.len())], add[rng.gen_range(0..add.len())]);
+        m[o / 64] &= !(1 << (o % 64));
+        m[n / 64] |= 1 << (n % 64);
+    }
+
+    /// Remove up to `k` of the cells `among`, chosen at random.
+    fn remove(&mut self, among: &[usize], k: usize, rng: &mut StdRng) {
+        let mut ids = among.to_vec();
+        let mut gone = Vec::new();
+        for _ in 0..k.min(ids.len()) {
+            let j = rng.gen_range(0..ids.len());
+            gone.push(ids.swap_remove(j));
+        }
+        gone.sort_unstable_by(|a, b| b.cmp(a));
+        for i in gone {
+            self.cells.swap_remove(i);
+        }
+    }
 }
 
 pub struct Amygdala {
-    features: HashMap<u32, Feature>,
+    /// features in all (every sensing area's cells, area by area)
+    feat: usize,
     /// onsets of the last steps, newest first
     trace: Vec<Vec<u32>>,
+    appetitive: Pool,
+    aversive: Pool,
+    pause: Pool,
+    /// attended features, and features seen before (bit vectors over the features)
+    attended: BitVector,
+    seen: BitVector,
+    now: u64,
+    rng: StdRng,
     /// (updates, sum of |error|)
     pub stats: (u64, u64),
 }
 
-impl Default for Amygdala {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Amygdala {
-    pub fn new() -> Self {
-        Self { features: HashMap::new(), trace: Vec::new(), stats: (0, 0) }
+    /// `feat`: how many features there are (every sensing area's cells).
+    pub fn new(feat: usize, seed: u64) -> Self {
+        Self {
+            feat,
+            trace: Vec::new(),
+            appetitive: Pool::default(),
+            aversive: Pool::default(),
+            pause: Pool::default(),
+            attended: BitVector::new(feat, Some(0)),
+            seen: BitVector::new(feat, Some(0)),
+            now: 0,
+            rng: StdRng::seed_from_u64(seed ^ 0xA316),
+            stats: (0, 0),
+        }
     }
 
-    fn entry(&mut self, f: u32) -> &mut Feature {
-        self.features.entry(f).or_insert(Feature { alpha: ONE as i32 / 2, ..Default::default() })
+    /// The context of some traced (age, feature) items: each hashed to one of `D` bits
+    /// (`tagged`: the age is part of it; else the feature alone).
+    fn context<'a>(items: impl Iterator<Item = (usize, &'a u32)>, tagged: bool) -> Vec<u64> {
+        let mut c = vec![0u64; D / 64];
+        for (age, &f) in items {
+            let id = if tagged { f as u64 * TRACE as u64 + age as u64 } else { f as u64 ^ 0xF00D_0000_0000 };
+            let b = (mix(id) % D as u64) as usize;
+            c[b / 64] |= 1 << (b % 64);
+        }
+        c
     }
 
-    /// This step's onsets (features newly active). Shifts the trace.
-    /// (steps, onsets, attended) summed, for diagnosis
-    pub fn trace_sizes(&self) -> (usize, usize) {
-        (self.trace.first().map_or(0, |t| t.len()), self.attended().len())
+    /// The trace's items at ages `ages`.
+    fn items(&self, skip: usize, take: usize) -> impl Iterator<Item = (usize, &u32)> {
+        self.trace.iter().enumerate().skip(skip).take(take).flat_map(|(a, fs)| fs.iter().map(move |f| (a, f)))
     }
 
+    /// The context of the trace from earlier steps (ages 1..): what predicts this step.
+    fn past(&self) -> Vec<u64> {
+        Self::context(self.items(1, TRACE), true)
+    }
+
+    /// This step's onsets (features newly active). Shifts the trace; a feature never seen before
+    /// is attended (novelty); attention fades (a random 1/32 of the bits clear).
     pub fn onsets(&mut self, onsets: Vec<u32>) {
+        self.now += 1;
+        let onsets: Vec<u32> = onsets.into_iter().filter(|&f| (f as usize) < self.feat).collect();
         for &f in &onsets {
-            self.entry(f).seen = true;
+            if !self.seen.bit_get(f as usize) {
+                self.seen.bit_set(f as usize);
+                self.attended.bit_set(f as usize);
+            }
         }
         self.trace.insert(0, onsets);
         self.trace.truncate(TRACE);
+        let rng = &mut self.rng;
+        for w in self.attended.as_words_mut().iter_mut() {
+            // a bit clears where all five random words are 0: 1/32
+            let keep = (0..5).fold(0u64, |k, _| k | rng.next_u64());
+            *w &= keep;
+        }
     }
 
-    /// What the trace predicts for this step (`Q16`): the sum over the features traced from
-    /// earlier steps of their value at their age, per code's worth of features (`CODE`): as in
-    /// Rescorla–Wagner, the cues present add up, so a cue that predicts nothing does not dilute
-    /// one that does (it learns toward zero on the shared error).
+    fn value_of_ctx(&self, ctx: &[u64]) -> i32 {
+        let n = self.appetitive.firing(ctx).len() as i32 - self.aversive.firing(ctx).len() as i32;
+        (n * UNIT).clamp(-2 * ONE as i32, 2 * ONE as i32)
+    }
+
+    /// What the trace predicts for this step (`Q16`).
     pub fn predicted(&self) -> i32 {
-        let mut sum = 0i64;
-        for (age, fs) in self.trace.iter().enumerate().skip(1) {
-            for f in fs {
-                if let Some(x) = self.features.get(f) {
-                    sum += x.value[age - 1] as i64;
+        self.value_of_ctx(&self.past())
+    }
+
+    /// The innate valuations of outcomes `r` (`Q16`) came this step: the value cells learn the
+    /// shared error, and the features traced when the error or the prediction is large are
+    /// attended. Returns the error.
+    pub fn learn(&mut self, r: i32) -> i32 {
+        let ctx = self.past();
+        if ctx.iter().all(|&w| w == 0) {
+            return 0;
+        }
+        let v = self.value_of_ctx(&ctx);
+        let err = r - v;
+        self.stats.0 += 1;
+        self.stats.1 += err.unsigned_abs() as u64;
+        let k = (err.abs() / UNIT).min(4) as usize;
+        let (app, avr) = (self.appetitive.firing(&ctx), self.aversive.firing(&ctx));
+        if err >= UNIT {
+            for &i in &app {
+                self.appetitive.toward(i, &ctx, self.now, &mut self.rng);
+            }
+            let gone = avr.len().min(k);
+            self.aversive.remove(&avr, gone, &mut self.rng);
+            for _ in gone..k {
+                self.appetitive.recruit(&ctx, self.now, &mut self.rng);
+            }
+        } else if err <= -UNIT {
+            for &i in &avr {
+                self.aversive.toward(i, &ctx, self.now, &mut self.rng);
+            }
+            let gone = app.len().min(k);
+            self.appetitive.remove(&app, gone, &mut self.rng);
+            if r < 0 {
+                for _ in gone..k {
+                    self.aversive.recruit(&ctx, self.now, &mut self.rng);
                 }
             }
         }
-        (sum / CODE) as i32
-    }
-
-    /// The innate valuations of outcomes `r` (`Q16`) came this step: every traced feature's value
-    /// at its age moves by its share of the shared error (times its associability), and its
-    /// associability toward the size of the error.
-    pub fn learn(&mut self, r: i32) {
-        let err = r - self.predicted();
-        let traced: Vec<(usize, u32)> = self.trace.iter().enumerate().skip(1).flat_map(|(age, fs)| fs.iter().map(move |&f| (age, f))).collect();
-        if traced.is_empty() {
-            return;
+        // attention: surprise (Pearce–Hall) or a cue worth something (Mackintosh)
+        if err.abs() >= 2 * UNIT || v.abs() >= 2 * UNIT {
+            let fs: Vec<u32> = self.items(1, TRACE).map(|(_, &f)| f).collect();
+            for f in fs {
+                self.attended.bit_set(f as usize);
+            }
         }
-        self.stats.0 += 1;
-        self.stats.1 += err.unsigned_abs() as u64;
-        for (age, f) in traced {
-            let x = self.entry(f);
-            let a = x.alpha.max(ONE as i32 / 16) as i64;
-            x.value[age - 1] += ((err as i64 * a) >> 18) as i32;
-            x.alpha += (err.abs().min(ONE as i32) - x.alpha) / 8;
-        }
-    }
-
-    /// How much a feature deserves attention (`Q16`): its associability, or its largest learned
-    /// value (a good predictor stays attended).
-    fn attention(x: &Feature) -> i32 {
-        let v = x.value.iter().map(|v| v.abs()).max().unwrap_or(0);
-        x.alpha.max(2 * v)
+        err
     }
 
     /// The attended features in the trace, tagged by age (`feature * TRACE + age`): what the
-    /// amygdala and the time-locked trace send the striatum. At most `ATTEND`, most attended first.
+    /// amygdala and the time-locked trace send the striatum (at most `ATTEND`, newest first).
     pub fn attended(&self) -> Vec<usize> {
-        let mut v: Vec<(i32, usize)> = Vec::new();
-        for (age, fs) in self.trace.iter().enumerate() {
-            for f in fs {
-                if let Some(x) = self.features.get(f) {
-                    let a = Self::attention(x);
-                    if a >= ONE as i32 / 4 {
-                        v.push((a, *f as usize * TRACE + age));
-                    }
-                }
-            }
-        }
-        v.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        v.into_iter().take(ATTEND).map(|x| x.1).collect()
+        self.items(0, TRACE).filter(|(_, f)| self.attended.bit_get(**f as usize)).take(ATTEND).map(|(a, &f)| f as usize * TRACE + a).collect()
     }
 
-    /// The value of some features if they came now (an outcome imagined: its features at age 0),
-    /// `Q16`: the mean of what they have been worth one step on.
+    /// The value now of the cues in the trace (`Q16`): what the newest cues (one step old next
+    /// step) and the older ones predict.
+    pub fn cue_value(&self) -> i32 {
+        self.value_of_ctx(&Self::context(self.items(0, TRACE - 1).map(|(a, f)| (a + 1, f)), true))
+    }
+
+    /// What some features would be worth if they came now (an imagined outcome: they predict
+    /// the next step as one step old), `Q16`.
     pub fn value_of(&self, features: &[u32]) -> i32 {
-        let sum: i64 = features.iter().filter_map(|f| self.features.get(f)).map(|x| x.value[0] as i64).sum();
-        (sum / CODE) as i32
+        self.value_of_ctx(&Self::context(features.iter().map(|f| (1usize, f)), true))
     }
 
-    /// The dopamine error `delta` came (`Q16`): features in the last steps' trace learn whether
-    /// they come before large errors (their pause weight). Returns whether the interneurons pause
-    /// now: some feature in the trace has a pause weight above half.
+    /// The dopamine error `delta` came (`Q16`): if it is large, a pause cell is recruited on the
+    /// cues of one and two steps before (unless one fires on them already); a pause cell that
+    /// fired on those cues with no large error is removed now and then. Returns whether the
+    /// interneurons pause now.
     pub fn learn_pause(&mut self, delta: i32, large: i32) -> bool {
-        // the cues one or two steps back came before this error; those present now and before
-        // that learn it was small
-        let before: Vec<u32> = self.trace.iter().skip(1).take(2).flatten().copied().collect();
-        for f in before {
-            let x = self.entry(f);
+        let before = Self::context(self.items(1, 2), false);
+        if before.iter().any(|&w| w != 0) {
+            let firing = self.pause.firing(&before);
             if delta.abs() >= large {
-                x.pause += (ONE as i32 - x.pause) / 8;
-            } else {
-                x.pause -= x.pause / 8;
+                if firing.is_empty() {
+                    self.pause.recruit(&before, self.now, &mut self.rng);
+                }
+            } else if !firing.is_empty() && self.rng.gen_range(0..4) == 0 {
+                self.pause.remove(&firing, 1, &mut self.rng);
             }
         }
         self.pausing()
     }
 
-    /// The interneurons pause: a feature in the trace has a strong pause weight.
+    /// The interneurons pause: a pause cell fires on the cues now or one step before.
     pub fn pausing(&self) -> bool {
-        self.trace.iter().take(3).flatten().any(|f| self.features.get(f).map_or(false, |x| x.pause > ONE as i32 / 2))
+        !self.pause.firing(&Self::context(self.items(0, 2), false)).is_empty()
+    }
+
+    /// (this step's onsets, attended features in the trace), for diagnosis.
+    pub fn trace_sizes(&self) -> (usize, usize) {
+        (self.trace.first().map_or(0, |t| t.len()), self.attended().len())
+    }
+
+    /// (appetitive, aversive, pause) cells.
+    pub fn cells(&self) -> (usize, usize, usize) {
+        (self.appetitive.cells.len(), self.aversive.cells.len(), self.pause.cells.len())
     }
 }

@@ -737,6 +737,30 @@ impl MaskStriatum {
         self.reward += r;
     }
 
+    /// A signal for some loops only (`channels`), not the critic: the choices made on them at the
+    /// latest step learn from `delta` (`Q16`) at once, as the dopamine that follows an act's
+    /// sensory effect is thought to train which acts have effects (agency), not what states are
+    /// worth.
+    pub fn reinforce_last(&mut self, channels: &[usize], delta: i32) {
+        if delta == 0 || !self.grow {
+            return;
+        }
+        let Some(st) = self.recent.last().cloned() else { return };
+        let amount = delta.unsigned_abs() as u64 / UNIT as u64 / RATE_DIV;
+        let mut bits = (amount >> 16) as usize;
+        if self.rng.gen_range(0..ONE as u64) < (amount & 0xFFFF) {
+            bits += 1;
+        }
+        if bits == 0 {
+            return;
+        }
+        for (ch, a, x) in st.choices.iter().filter(|c| channels.contains(&c.0)) {
+            let pair = &mut self.pools[*ch][*a];
+            let (more, fewer) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
+            self.swaps += Self::grow_learn(more, fewer, x, bits, false, false, self.clock, &mut self.rng);
+        }
+    }
+
     /// The next choices see only `groups` (a loop's own cortical territory); None: the whole
     /// state again. The critic always sees the whole state.
     pub fn set_view(&mut self, groups: Option<Vec<Vec<usize>>>) {

@@ -193,22 +193,29 @@ pub struct Config {
     pub contingency: bool,
     /// the motor gate sees the amygdala's value of the act's imagined outcome
     pub imagine_value: bool,
-    /// the valuation of its own effect (the senses' surprise after its own act)
+    /// the valuation of its own effect (how far an act's result was from what its forward model
+    /// expected: fading per act and outcome as the forward model learns them)
     pub own_effect: bool,
+    /// the own-effect signal trains only the motor loops' choices (agency); false: it goes to the
+    /// critic with the outcomes (MIND_OWN=critic)
+    pub agency: bool,
+    /// Pavlovian–instrumental transfer: what the cues now are worth (the amygdala) lowers the motor
+    /// loops' brake (or raises it, if they are worth less than nothing)
+    pub pit: bool,
     /// the valuation of a response
     pub response: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, response: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true }
     }
 }
 
 impl Config {
     /// The defaults, with any switch turned off by its variable set to 0 (MIND_HC=senses for the
     /// sensory-level index): MIND_TOPO, MIND_AMY, MIND_PAUSE, MIND_CONTINGENCY, MIND_IMAGINE_VALUE,
-    /// MIND_OWN, MIND_RESPONSE.
+    /// MIND_OWN (or =critic: into the critic), MIND_PIT, MIND_RESPONSE.
     pub fn from_env() -> Self {
         let on = |k: &str| std::env::var(k).map_or(true, |v| v != "0");
         Self {
@@ -219,6 +226,8 @@ impl Config {
             contingency: on("MIND_CONTINGENCY"),
             imagine_value: on("MIND_IMAGINE_VALUE"),
             own_effect: on("MIND_OWN"),
+            agency: std::env::var("MIND_OWN").map_or(true, |v| v != "critic"),
+            pit: on("MIND_PIT"),
             response: on("MIND_RESPONSE"),
         }
     }
@@ -337,7 +346,7 @@ impl Mind {
             wm: WorkingMemory::new(BITS, 1),
             bg,
             hc: IndexHc::new(hc_bits, seed),
-            amy: Amygdala::new(),
+            amy: Amygdala::new(SLOTS.len() * BITS, seed),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             smile: body.smile,
             pons: zero(),
@@ -398,13 +407,19 @@ impl Mind {
             self.learn(&st, target);
         }
         self.acted = self.issued.len();
+        // its own effect: how far each act's result was from what the forward model expected
+        let mut effect = 0u32;
+        let mut effect_on: Vec<usize> = Vec::new();
         for (a, c) in std::mem::take(&mut self.issued) {
             let sense = self.motors.iter().find(|m| m.0 == a).map_or(EAR, |m| m.2);
             let result = raw[Self::slot(sense)].clone();
             let area = &mut self.brain.areas[a];
             area.sense(&result, false);
             if let Some(m) = area.motor.as_mut() {
-                m.observe(&c, &result, &mut self.rng);
+                let e = m.observe(&c, &result, &mut self.rng);
+                effect = effect.max(e);
+                let (l, g) = motor_channels(a);
+                effect_on.extend([l, g]);
             }
             // what the act produced, sensed with the command that made it (the dorsal stream)
             let r4 = self.brain.encode(sense, &result, true);
@@ -453,8 +468,7 @@ impl Mind {
         let mut r = [0i32; 4];
         if self.acted > 0 {
             if self.cfg.own_effect {
-                let sensed = SLOTS.iter().map(|&a| self.brain.surprise(a)).max().unwrap_or(0);
-                r[0] += sensed as i32 / 4;
+                r[0] += effect as i32 / 4;
             }
             r[3] -= EFFORT * self.acted as i32;
         }
@@ -479,8 +493,15 @@ impl Mind {
         if overlap(&s.presence, &self.smile) * 2 >= self.smile.count_ones() as u32 {
             r[2] += ONE as i32;
         }
-        for &x in &r {
-            if x != 0 {
+        // outcomes and effort go to the critic; its own effect, with agency, trains the motor
+        // loops' last choices directly
+        for (k, &x) in r.iter().enumerate() {
+            if x == 0 {
+                continue;
+            }
+            if k == 0 && self.cfg.agency {
+                self.bg.reinforce_last(&effect_on, x);
+            } else {
                 self.bg.reward(x);
             }
         }
@@ -656,8 +677,17 @@ impl Mind {
                 self.bg.set_view(None);
             }
             let (loop_ch, gate) = motor_channels(motor);
+            // Pavlovian–instrumental transfer: cues worth something lower the brake
+            let brake = self.bg.release;
+            if self.cfg.pit {
+                let v = self.amy.cue_value();
+                self.bg.release = brake - (v / (ONE as i32 / 4)).clamp(-2, 2);
+            }
             let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![c.1.clone()]).collect();
-            let Some(i) = self.bg.choose_among(loop_ch, &offer, true) else { continue };
+            let Some(i) = self.bg.choose_among(loop_ch, &offer, true) else {
+                self.bg.release = brake;
+                continue;
+            };
             let (cmd, _, from) = cands[i].clone();
             if let Some(f) = from {
                 followed_now.push(f);
@@ -676,7 +706,9 @@ impl Mind {
                     }
                 }
             }
-            if self.bg.choose_among(gate, &[gate_offer], true).is_some() {
+            let released = self.bg.choose_among(gate, &[gate_offer], true).is_some();
+            self.bg.release = brake;
+            if released {
                 self.brain.areas[motor].issue(&cmd);
                 self.issued.push((motor, cmd.clone()));
                 self.report.from_goal |= from.is_some();

@@ -486,8 +486,10 @@ impl Mind {
         }
         self.report.valued = r;
         if self.cfg.amygdala || self.cfg.imagine_value || self.cfg.learned_pause {
+            // the amygdala learns what outcomes are worth (a response, a smile), not the surprise of
+            // its own acts' effects (agency, not value)
             self.report.amy_predicted = self.amy.predicted();
-            self.amy.learn(r[0] + r[1] + r[2]);
+            self.amy.learn(r[1] + r[2]);
         }
         // 5. the striatum: the critic sees everything; the dopamine error closing the last step
         // reaches the goal cells followed recently; the interneurons pause to learned cues

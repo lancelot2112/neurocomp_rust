@@ -486,6 +486,10 @@ pub struct Brain {
     /// self-organizing (with columns): the association columns' layers 2/3 and 5 are stepped by
     /// `step_columns`, every column's layer 5 offering goals to every motor area
     pub selforg: bool,
+    /// persistence (each column's trace decay, `Column::set_persistence`) of the pairwise
+    /// association columns and of the full one
+    pub pair_tau: u32,
+    pub full_tau: u32,
     rng: StdRng,
 }
 
@@ -498,7 +502,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -605,6 +609,19 @@ impl Brain {
     /// A column's layer 2/3 activity (what its projection to the striatum carries).
     pub fn activity_of(&self, id: ColumnId) -> BitVector {
         self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.activity())
+    }
+
+    /// A column's loop chose to keep what the column holds (its trace refreshed; `replace`: the
+    /// trace becomes its activity now).
+    pub fn refresh(&mut self, id: ColumnId, replace: bool) {
+        if let Some(c) = self.column_mut(id) {
+            c.refresh(replace);
+        }
+    }
+
+    /// A column's persistent trace (empty if it has none).
+    pub fn trace_of(&self, id: ColumnId) -> BitVector {
+        self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.trace().clone())
     }
 
     /// A column's current input code (what holding it in working memory would hold).
@@ -859,7 +876,9 @@ impl Brain {
                     if *n >= self.pair_after {
                         self.together.remove(&key);
                         let seed = self.seed.wrapping_add(1000 + 31 * self.pairs.len() as u64);
-                        self.pairs.push((key, Column::granular(self.bits, Pool::new(2, self.bits, self.bits, self.k, 2, seed), CAP)));
+                        let mut col = Column::granular(self.bits, Pool::new(2, self.bits, self.bits, self.k, 2, seed), CAP);
+                        col.set_persistence(self.pair_tau);
+                        self.pairs.push((key, col));
                     }
                 }
             }
@@ -874,7 +893,9 @@ impl Brain {
             pair_codes.push(Self::code_of(col, &input, learn, columns, &mut self.rng));
         }
         if self.full.is_none() && self.pairs.len() >= 2 {
-            self.full = Some(Column::granular(self.bits, Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)), CAP));
+            let mut col = Column::granular(self.bits, Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)), CAP);
+            col.set_persistence(self.full_tau);
+            self.full = Some(col);
         }
         // the highest level active: the full area when it has a code, else the pairwise codes
         if let Some(full) = self.full.as_mut() {

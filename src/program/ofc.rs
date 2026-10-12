@@ -49,6 +49,9 @@ pub struct Ofc {
     pub outcome: Map,
     /// what the area holds on its tuft (empty: nothing)
     pub held: BitVector,
+    /// with persistence (the column's own trace, `set_persistence`), what is held is the trace
+    /// and holding refreshes it; else the separate copy `held`
+    persist: bool,
     /// the row the outcome layer last predicted from (input, context), and what it predicted
     last: Option<(BitVector, BitVector, Option<BitVector>)>,
     /// how surprising the latest outcome was (`Q16`): 1 for a touch not expected or an
@@ -75,6 +78,7 @@ impl Ofc {
             col: Column::granular(bits, Pool::new(4, bits, bits, k, 1, seed ^ 0x0FC0), cap),
             outcome: Map::new(bits, cap),
             held: z,
+            persist: false,
             last: None,
             surprise: 0,
             familiar: 0,
@@ -96,9 +100,29 @@ impl Ofc {
         }
     }
 
-    /// The tuft's context: what is held.
+    /// Persistence: the column keeps its own trace (decaying with probability 2^-`tau` a bit a
+    /// step); holding refreshes it, and the separate copy is not used.
+    pub fn set_persistence(&mut self, tau: u32) {
+        self.col.set_persistence(tau);
+        self.persist = tau > 0;
+    }
+
+    /// What is held: the column's trace, or the separate copy.
+    pub fn held_state(&self) -> BitVector {
+        if self.persist {
+            self.col.trace().clone()
+        } else {
+            self.held.clone()
+        }
+    }
+
+    /// The tuft's context: what is held (with persistence the column puts its trace there itself).
     fn tuft(&self) -> BitVector {
-        self.held.clone()
+        if self.persist {
+            BitVector::new(self.bits, Some(0))
+        } else {
+            self.held.clone()
+        }
     }
 
     /// One step: `inputs` by source (cues, act, outcome as sensed, context; an empty one is
@@ -136,6 +160,7 @@ impl Ofc {
             (None, _) => 0,
         };
         let ctx = or(&self.col.activity(), &tuft);
+        // (the column's activity carries its trace when it persists)
         if n > 0 {
             let pred = self.outcome.predict(&code, Some(&ctx), None);
             self.last = Some((code, ctx, pred));
@@ -153,7 +178,11 @@ impl Ofc {
         if on {
             let z = self.z();
             if z.count_ones() > 0 {
-                self.held = z;
+                if self.persist {
+                    self.col.refresh(false);
+                } else {
+                    self.held = z;
+                }
                 self.stats.2 += 1;
             }
         }
@@ -167,7 +196,11 @@ impl Ofc {
         if gate && self.surprise >= one * 3 / 4 && self.prev_familiar >= one / 2 {
             let z = self.z();
             if z.count_ones() > 0 {
-                self.held = z;
+                if self.persist {
+                    self.col.refresh(true);
+                } else {
+                    self.held = z;
+                }
                 self.stats.3 += 1;
                 return true;
             }

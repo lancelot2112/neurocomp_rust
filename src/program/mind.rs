@@ -291,6 +291,12 @@ pub struct Config {
     /// when what paid stops paying the mind tries harder and more variously before it gives up
     /// (MIND_FRUSTRATION=0 off)
     pub frustration: bool,
+    /// persistence in every column (intrinsic timescales grow up the hierarchy): the pairwise
+    /// association columns' activity outlasts their input a little (τ 1), the full one's and the
+    /// orbitofrontal area's longer (τ 3, 4); a loop's "take in" refreshes its column's own trace.
+    /// This replaces the separate working-memory store and the orbitofrontal held copy
+    /// (MIND_PERSIST=0: those instead)
+    pub persist: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -304,7 +310,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -347,6 +353,7 @@ impl Config {
             ofc_value_z: on("MIND_OFC_VALUE_Z"),
             ofc_split: on("MIND_OFC_SPLIT"),
             frustration: on("MIND_FRUSTRATION"),
+            persist: on("MIND_PERSIST"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -473,6 +480,10 @@ impl Mind {
         let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
         b.columns = true;
         b.selforg = true;
+        if cfg.persist {
+            b.pair_tau = 1;
+            b.full_tau = 3;
+        }
         b.attach("eye", Kind::Sensor);
         b.attach("ear", Kind::Sensor);
         b.attach("hand", Kind::SensorMotor);
@@ -509,6 +520,7 @@ impl Mind {
         let elemental = cfg.elemental;
         let focused = cfg.focused;
         let value_z = cfg.ofc_column && cfg.ofc_value_z;
+        let persist = cfg.persist;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -540,7 +552,13 @@ impl Mind {
                     o
                 }
             },
-            ofc_area: Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA),
+            ofc_area: {
+                let mut o = Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA);
+                if persist {
+                    o.set_persistence(4);
+                }
+                o
+            },
             efference_now: Vec::new(),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             pons: zero(),
@@ -881,7 +899,7 @@ impl Mind {
     fn state_groups(&self, cols: &[ColumnId], _all: &[ColumnId], wm: bool, recall: bool) -> Vec<Vec<usize>> {
         let mut groups: Vec<Vec<usize>> = cols.iter().map(|&id| ones(&self.brain.activity_of(id)).into_iter().map(|b| b + column_offset(id)).collect()).collect();
         if wm {
-            groups.push(ones(&self.wm.content()).into_iter().map(|b| b + WM_OFFSET).collect());
+            groups.push(ones(&self.wm_content()).into_iter().map(|b| b + WM_OFFSET).collect());
         }
         if recall {
             groups.push(ones(&self.last_recall).into_iter().map(|b| b + RECALL_OFFSET).collect());
@@ -986,9 +1004,9 @@ impl Mind {
     pub fn snapshot(&self) -> Vec<(&'static str, Vec<usize>)> {
         let names = ["eye", "ear", "hand", "acts", "presence", "affect"];
         let mut v: Vec<(&'static str, Vec<usize>)> = names.iter().enumerate().map(|(k, n)| (*n, ones(&self.prev_codes[k]))).collect();
-        v.push(("wm", ones(&self.wm.content())));
+        v.push(("wm", ones(&self.wm_content())));
         v.push(("ofc_z", ones(&self.ofc_area.z())));
-        v.push(("ofc_held", ones(&self.ofc_area.held)));
+        v.push(("ofc_held", ones(&self.ofc_area.held_state())));
         v.push(("amy_onsets", self.amy.trace_at(0).iter().map(|&f| f as usize).collect()));
         v.push(("amy_value", self.amy.value_cells().into_iter().map(|c| c % 8192).collect()));
         v
@@ -999,6 +1017,23 @@ impl Mind {
     pub fn hand_view(&self) -> (Option<(Vec<usize>, Vec<Vec<usize>>, Vec<Vec<usize>>)>, (usize, usize)) {
         let (l, _) = motor_channels(HAND);
         (self.bg.choice_view(l), self.bg.pool_sizes(l))
+    }
+
+    /// What working memory holds: with persistence, the full association column's trace (else
+    /// the pairs' traces merged); else the separate store.
+    fn wm_content(&self) -> BitVector {
+        if !self.cfg.persist {
+            return self.wm.content();
+        }
+        let n = self.brain.pairs.len();
+        if self.brain.full.is_some() {
+            return self.brain.trace_of(ColumnId::Assoc(n));
+        }
+        let mut v = zero();
+        for i in 0..n {
+            v = or(&v, &self.brain.trace_of(ColumnId::Assoc(i)));
+        }
+        v
     }
 
     /// Whether the orbitofrontal value cells read the area's state.
@@ -1053,7 +1088,7 @@ impl Mind {
 
     /// The orbitofrontal area's state and what it holds, as input groups for the striatum.
     fn ofc_groups(&self) -> Vec<Vec<usize>> {
-        vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
+        vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
     }
 
     /// A motor choice's learning rate from its cues' associability: a gain from the trace's
@@ -1116,9 +1151,14 @@ impl Mind {
             }
             if let ColumnId::Assoc(_) = id {
                 if self.bg.choose(loop_channel(id) + 1, 2, true) == 1 {
-                    let c = self.brain.code_of_column(id);
-                    if c.count_ones() > 0 {
-                        self.wm.load(0, &c);
+                    if self.cfg.persist {
+                        // the loop keeps what the column holds (its own trace)
+                        self.brain.refresh(id, false);
+                    } else {
+                        let c = self.brain.code_of_column(id);
+                        if c.count_ones() > 0 {
+                            self.wm.load(0, &c);
+                        }
                     }
                 }
             }
@@ -1276,10 +1316,10 @@ impl Mind {
     /// or in the senses directly.
     fn cortex(&mut self, raw: &[BitVector], recall: &BitVector, td: Vec<(usize, BitVector)>) -> Step {
         let hc_assoc = self.cfg.hc_assoc;
+        let pfc = self.wm_content();
         let b = &mut self.brain;
         let mut ff: Vec<BitVector> = SLOTS.iter().enumerate().map(|(k, &a)| b.encode(a, &raw[k], true)).collect();
         let ear = &raw[Self::slot(EAR)];
-        let pfc = self.wm.content();
         let mossy = frames(&[ear, &self.pons]);
         let cb_out = self.cb.predict(&mossy).clone();
         let mut props: Vec<(u8, Driver, BitVector)> = Vec::new();

@@ -10,6 +10,13 @@
 //! - **Layer 5** (`BitCells`): the column's output. In a motor column it maps what is meant (a
 //!   sensory goal) to the command that produces it: the inverse model.
 //!
+//! - **Persistence** (`set_persistence`): layer 2/3's activity outlasts its input, each bit of
+//!   the trace clearing at random with probability 2^-τ a step, τ the area's own (none in the
+//!   senses, longer up the hierarchy: intrinsic timescales grow from sensory to prefrontal
+//!   cortex, Murray et al. 2014). The trace sits on the column's tuft and goes out with its
+//!   activity; a loop through the basal ganglia and thalamus can refresh it (`refresh`), so what
+//!   is kept is chosen.
+//!
 //! Both layers learn the same way: a confirmed prediction strengthens the cells that made it;
 //! where nothing predicted the target, a cell is grown for the moment (its tuft on the
 //! context, silent synapses on the input, the target as its output).
@@ -144,6 +151,10 @@ pub struct Column {
     pub hits: (u64, u64),
     /// how many of the latest code's bits were expected
     pub last_hit: u32,
+    /// the persistent trace of layer 2/3's activity, and its decay (each bit clears with
+    /// probability 2^-tau a step; tau 0: no persistence)
+    trace: BitVector,
+    tau: u32,
 }
 
 impl Column {
@@ -159,7 +170,43 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z, expected: None, last: None, hits: (0, 0), last_hit: 0 }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0 }
+    }
+
+    /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
+    pub fn set_persistence(&mut self, tau: u32) {
+        self.tau = tau;
+    }
+
+    /// The trace decays one step.
+    fn decay<R: rand::Rng + ?Sized>(&mut self, rng: &mut R) {
+        if self.tau == 0 {
+            for w in self.trace.as_words_mut() {
+                *w = 0;
+            }
+            return;
+        }
+        for w in self.trace.as_words_mut() {
+            let mut clear = !0u64;
+            for _ in 0..self.tau {
+                clear &= rng.next_u64();
+            }
+            *w &= !clear;
+        }
+    }
+
+    /// The loop chose to keep what the column holds now: its activity joins the trace (or, with
+    /// `replace`, becomes it: a new context).
+    pub fn refresh(&mut self, replace: bool) {
+        let rec = self.rec.clone();
+        for (w, r) in self.trace.as_words_mut().iter_mut().zip(rec.as_words()) {
+            *w = if replace { *r } else { *w | r };
+        }
+    }
+
+    /// The persistent trace.
+    pub fn trace(&self) -> &BitVector {
+        &self.trace
     }
 
     fn project(&self, cells: &[usize]) -> BitVector {
@@ -202,8 +249,11 @@ impl Column {
                     self.l23.learn(&inp, Some(&c), None, &code, rng);
                 }
             }
-            // the tuft: context from above and the column's own previous activity
+            // the tuft: context from above, the column's own previous activity and its trace
             let mut c = self.rec.clone();
+            for (w, y) in c.as_words_mut().iter_mut().zip(self.trace.as_words()) {
+                *w |= y;
+            }
             if let Some(x) = ctx {
                 for (w, y) in c.as_words_mut().iter_mut().zip(x.as_words()) {
                     *w |= y;
@@ -212,16 +262,31 @@ impl Column {
             self.expected = self.l23.predict(&self.code, Some(&c), None);
             self.rec = self.project(&self.l23.last_fired());
             self.last = Some((self.code.clone(), c));
+            // the trace: what fired stays on, fading
+            if self.tau > 0 {
+                self.decay(rng);
+                let rec = self.rec.clone();
+                for (w, r) in self.trace.as_words_mut().iter_mut().zip(rec.as_words()) {
+                    *w |= r;
+                }
+            }
         } else {
             self.expected = None;
             self.last = None;
+            if self.tau > 0 {
+                self.decay(rng);
+            }
         }
         self.code.clone()
     }
 
-    /// Layer 2/3's recent activity (projected), as feedback to the tufts of the areas below.
+    /// Layer 2/3's recent activity (projected) and its persistent trace, as feedback to the
+    /// tufts of the areas below and to the striatum.
     pub fn activity(&self) -> BitVector {
-        self.rec.clone()
+        if self.tau == 0 {
+            return self.rec.clone();
+        }
+        BitVector::from_words(self.rec.as_words().iter().zip(self.trace.as_words()).map(|(a, b)| a | b).collect())
     }
 
     /// Motor: the command for what is meant (layer 5, the inverse model).

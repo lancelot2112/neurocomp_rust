@@ -119,6 +119,11 @@ impl Map {
     pub fn committed(&self) -> usize {
         self.cells.committed()
     }
+
+    /// Sleep's compaction of this layer (see `BitCells::compact`): (merged, pruned).
+    pub fn compact(&mut self, idle: u64) -> (usize, usize) {
+        self.cells.compact(idle)
+    }
 }
 
 /// A column: layer 4 (or none: agranular), layer 2/3, layer 5.

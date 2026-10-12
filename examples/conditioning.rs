@@ -22,6 +22,8 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 fn main() {
     let seed: u64 = env("SEED", 0);
     let trials: usize = env("COND_TRIALS", 600);
+    // sleep every this many trials (0: never)
+    let sleep_every: usize = env("COND_SLEEP", 50);
     let kind = match std::env::var("COND").unwrap_or_default().as_str() {
         "instr" => Conditioning::Instrumental,
         "delayed" => Conditioning::Delayed,
@@ -69,6 +71,21 @@ fn main() {
         let Some((t, cue)) = ev.cond else { continue };
         if t == 0 && world.events.len() > 1 {
             trial += 1;
+            if sleep_every > 0 && trial % sleep_every == 0 {
+                mind.sleep(3);
+                if trial % block == 0 {
+                    let (n, h) = mind.brain.sense_hits();
+                    println!(
+                        "  sleep at trial {trial}: cortical cells {}, sensory predictions right {:.1}%; compacted so far {} merged, {} pruned; hippocampal rows {}, consolidated {}",
+                        mind.brain.cortical_cells(),
+                        100.0 * h as f64 / n.max(1) as f64,
+                        mind.compacted.0,
+                        mind.compacted.1,
+                        mind.hc.mem.rows(),
+                        mind.hc.consolidated
+                    );
+                }
+            }
         }
         let b = (trial / block).min(63);
         let x = &mut stats[b][cue as usize];

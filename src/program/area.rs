@@ -771,6 +771,62 @@ impl Brain {
     }
 
     /// The sensory columns' predictions: (checked, right).
+    /// Sleep's compaction of every column's layers 2/3 and 5 (senses, motor sides, association
+    /// columns): (merged, pruned).
+    pub fn compact(&mut self, idle: u64) -> (usize, usize) {
+        let mut cols: Vec<&mut Column> = Vec::new();
+        for a in self.areas.iter_mut() {
+            if let Some(c) = a.col.as_mut() {
+                cols.push(c);
+            }
+            if let Some(Motor::Column(c)) = a.motor.as_mut() {
+                cols.push(c);
+            }
+        }
+        for p in self.pairs.iter_mut() {
+            cols.push(&mut p.1);
+        }
+        if let Some(f) = self.full.as_mut() {
+            cols.push(f);
+        }
+        let mut t = (0, 0);
+        for c in cols {
+            for (m, p) in [c.l23.compact(idle), c.l5.compact(idle)] {
+                t.0 += m;
+                t.1 += p;
+            }
+        }
+        t
+    }
+
+    /// What area `a`'s layer 4 code `code` expects of its raw input (layer 4's back-projection).
+    pub fn raw_of(&self, a: usize, code: &BitVector) -> BitVector {
+        match self.areas[a].l4.as_ref() {
+            Some(l4) => l4.backproject(code, 0),
+            None => code.clone(),
+        }
+    }
+
+    /// Committed cells in every column's layers 2/3 and 5.
+    pub fn cortical_cells(&self) -> usize {
+        let mut n = 0;
+        for a in &self.areas {
+            if let Some(c) = a.col.as_ref() {
+                n += c.l23.committed() + c.l5.committed();
+            }
+            if let Some(Motor::Column(c)) = a.motor.as_ref() {
+                n += c.l23.committed() + c.l5.committed();
+            }
+        }
+        for p in &self.pairs {
+            n += p.1.l23.committed() + p.1.l5.committed();
+        }
+        if let Some(f) = self.full.as_ref() {
+            n += f.l23.committed() + f.l5.committed();
+        }
+        n
+    }
+
     pub fn sense_hits(&self) -> (u64, u64) {
         self.areas.iter().filter_map(|a| a.col.as_ref()).fold((0, 0), |a, c| (a.0 + c.hits.0, a.1 + c.hits.1))
     }

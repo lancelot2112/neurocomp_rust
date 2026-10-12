@@ -193,6 +193,8 @@ fn main() {
         println!("  {:<11}: {} steps; goals taken per step {:.2}; acts {} ({} from a goal); imagined {}; recall reached the cortex on {:.0}% of steps", names[k], x[0], x[1] as f64 / x[0].max(1) as f64, x[3], x[2], x[4], 100.0 * x[5] as f64 / x[0].max(1) as f64);
     }
     println!("loops: {} columns with a loop", mind.report.loops);
+    let (n, h) = mind.brain.sense_hits();
+    println!("cortex: {} cells, sensory predictions right {:.1}%; sleep compacted {} merged, {} pruned; hippocampal rows consolidated {}", mind.brain.cortical_cells(), 100.0 * h as f64 / n.max(1) as f64, mind.compacted.0, mind.compacted.1, mind.hc.consolidated);
     let (c, o, b, r, a) = mind.hc.stats;
     println!("hippocampus: {} rows, {c} completions ({o} reached the cortex), {b} boundaries, {r} relearned awake, {a} asleep; {:.0} s", mind.hc.mem.rows(), t0.elapsed().as_secs_f64());
 }

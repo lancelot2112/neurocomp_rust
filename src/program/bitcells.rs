@@ -270,6 +270,58 @@ impl BitCells {
         self.cells.iter().filter(|c| !c.out.is_empty()).count()
     }
 
+    /// Sleep's compaction. Returns (merged, pruned).
+    /// - **Merge:** committed cells with the same output and the same input synapses present
+    ///   (basal masks equal word for word) are duplicates; the one with the stronger trace
+    ///   stays, the others are freed.
+    /// - **Prune:** a committed cell is freed if it has not fired for `idle` predictions, or if
+    ///   it missed at least 12 of its last 16 predictions as the winner.
+    pub fn compact(&mut self, idle: u64) -> (usize, usize) {
+        let mut groups: std::collections::HashMap<(Vec<u32>, Vec<(u32, u64)>), Vec<usize>> = std::collections::HashMap::new();
+        for (c, cell) in self.cells.iter().enumerate() {
+            if cell.out.is_empty() {
+                continue;
+            }
+            let mut out = cell.out.clone();
+            out.sort_unstable();
+            let mut basal: Vec<(u32, u64)> = cell.basal.iter().map(|s| (s.w, s.present())).filter(|x| x.1 != 0).collect();
+            basal.sort_unstable();
+            groups.entry((out, basal)).or_default().push(c);
+        }
+        let mut merged = 0;
+        let mut gone: Vec<usize> = Vec::new();
+        for (_, cs) in groups {
+            if cs.len() < 2 {
+                continue;
+            }
+            let keep = *cs.iter().max_by_key(|&&c| (self.cells[c].trace, std::cmp::Reverse(c))).unwrap();
+            for &c in &cs {
+                if c != keep {
+                    gone.push(c);
+                    merged += 1;
+                }
+            }
+        }
+        let mut pruned = 0;
+        for c in 0..self.cells.len() {
+            let cell = &self.cells[c];
+            if cell.out.is_empty() || gone.contains(&c) {
+                continue;
+            }
+            let last = cell.prime_tick.max(cell.wired_tick);
+            let stale = self.tick.saturating_sub(last) > idle;
+            let wrong = cell.hist.count_ones() >= 12;
+            if stale || wrong {
+                gone.push(c);
+                pruned += 1;
+            }
+        }
+        for c in gone {
+            self.free(c);
+        }
+        (merged, pruned)
+    }
+
     pub fn threshold(&self) -> Q16 {
         if self.interneurons {
             self.area_theta()

@@ -250,11 +250,20 @@ pub struct Config {
     /// the amygdala's and orbitofrontal learner's value cells form and fire only on attended
     /// cues (and one's own acts) (MIND_ATTEND_GATE=0 off)
     pub attend_gate: bool,
+    /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
+    /// (MIND_COMPACT=0 off)
+    pub compact: bool,
+    /// sleep's replay teaches the cortex (the next replayed row's sound as its goals' target),
+    /// and rows the cortex now completes fade faster (MIND_CONSOLIDATE=0 off)
+    pub consolidate: bool,
+    /// predictive transmission: each sense passes up only what its column did not predict
+    /// (MIND_PREDICTIVE=1 on; default off)
+    pub predictive: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -289,6 +298,9 @@ impl Config {
             per_act: on("MIND_PER_ACT"),
             act_credit: on("MIND_ACT_CREDIT"),
             attend_gate: on("MIND_ATTEND_GATE"),
+            compact: on("MIND_COMPACT"),
+            consolidate: on("MIND_CONSOLIDATE"),
+            predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -386,7 +398,12 @@ pub struct Mind {
     /// a primitive of each effector is spontaneously active 1 step in this many
     pub spontaneous: u32,
     pub report: Report,
+    /// sleep's compaction so far: (merged, pruned) cortical cells
+    pub compacted: (usize, usize),
 }
+
+/// A cortical cell unfired for this many of its layer's predictions is pruned at sleep.
+const COMPACT_IDLE: u64 = 20_000;
 
 impl Mind {
     pub fn new(body: Body, seed: u64) -> Self {
@@ -473,6 +490,7 @@ impl Mind {
             p_else: 0,
             spontaneous: 1,
             report: Report::default(),
+            compacted: (0, 0),
         }
     }
 
@@ -1054,12 +1072,26 @@ impl Mind {
         }
         let mut codes = vec![zero(); b.areas.len()];
         let mut with_down = vec![zero(); b.areas.len()];
+        let predictive = self.cfg.predictive;
         for (k, &a) in SLOTS.iter().enumerate() {
             let sensed = ff[k].count_ones() > 0;
             let input = or(&ff[k], &down[k]);
+            // predictive transmission: what the column expected (from the step before) is
+            // cancelled, and only the unpredicted part goes up (Rao & Ballard)
+            let expected = if predictive { b.sense_state(a).map(|x| x.1) } else { None };
             b.sense_step(a, &input, Some(&or(&fb, &down[k])), sensed);
-            codes[a] = ff[k].clone();
-            with_down[a] = input;
+            let up = |x: &BitVector| match expected.as_ref() {
+                Some(e) => {
+                    let mut v = x.clone();
+                    for (w, y) in v.as_words_mut().iter_mut().zip(e.as_words()) {
+                        *w &= !y;
+                    }
+                    v
+                }
+                None => x.clone(),
+            };
+            codes[a] = up(&ff[k]);
+            with_down[a] = up(&input);
         }
         // association columns grow from what is sensed together
         b.associate_codes(&codes, true);
@@ -1131,10 +1163,25 @@ impl Mind {
         let mut rng = StdRng::seed_from_u64(self.rng.next_u64());
         let bits = if self.cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         let mut hc = std::mem::replace(&mut self.hc, IndexHc::new(bits, 0));
+        hc.consolidate = self.cfg.consolidate;
+        // consolidation: each replayed row is presented to the cortex, and the cortex's goals
+        // learn the next replayed row's sound as their target, interleaved over chains of rows
+        // (the hippocampus teaching the slow cortex what episodes share: McClelland, McNaughton
+        // & O'Reilly 1995)
+        let mut prev: Option<Step> = None;
+        let consolidate = self.cfg.consolidate && self.cfg.hc_assoc;
         hc.replay(&mut rng, chains, |frame| {
             let blank = vec![zero(); SLOTS.len()];
             let st = self.cortex(&blank, frame, Vec::new());
-            if self.cfg.hc_assoc {
+            if consolidate {
+                let target = self.recalled_raw(frame, EAR);
+                if let Some(p) = prev.take() {
+                    if target.count_ones() > 0 {
+                        self.learn(&p, &target);
+                    }
+                }
+            }
+            let out = if self.cfg.hc_assoc {
                 // what the senses' columns now hold, as the association columns code it
                 let mut codes = vec![zero(); self.brain.areas.len()];
                 for a in SLOTS {
@@ -1146,10 +1193,46 @@ impl Mind {
             } else {
                 let e4 = self.brain.encode_only(EAR, &st.expect);
                 ones(&multi(&[(EAR, &e4)]))
-            }
+            };
+            prev = Some(st);
+            out
         });
         self.hc = hc;
+        // compaction: duplicate and useless cortical cells go
+        if self.cfg.compact {
+            let (m, p) = self.brain.compact(COMPACT_IDLE);
+            self.compacted.0 += m;
+            self.compacted.1 += p;
+        }
         self.last = None;
+    }
+
+    /// What a recalled frame (the association columns' slots) expects area `a` to sense, as raw
+    /// input: each slot's cells cascade down to the area's layer 4 code, and that back to its
+    /// input.
+    fn recalled_raw(&self, frame: &BitVector, a: usize) -> BitVector {
+        let n = self.brain.pairs.len();
+        let cols = n + self.brain.full.is_some() as usize;
+        let mut code = zero();
+        for i in 0..cols {
+            let slot = assoc_slot(i, n);
+            let mut cells = zero();
+            for x in ones(frame).into_iter().filter(|&x| x / BITS == slot) {
+                cells.bit_set(x % BITS);
+            }
+            if cells.count_ones() == 0 {
+                continue;
+            }
+            for (area, c) in self.brain.cascade_down(i, &cells) {
+                if area == a {
+                    code = or(&code, &c);
+                }
+            }
+        }
+        if code.count_ones() == 0 {
+            return code;
+        }
+        self.brain.raw_of(a, &code)
     }
 
     /// A motor area's loop and gate: (go cells, no-go cells) each, for diagnosis.

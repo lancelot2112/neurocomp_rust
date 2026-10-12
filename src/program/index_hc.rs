@@ -77,6 +77,10 @@ pub struct IndexHc {
     out_bits: usize,
     /// (completions, of which reached the cortex), boundaries, rows relearned, relearned asleep
     pub stats: (usize, usize, usize, usize, usize),
+    /// replay marks rows the cortex now completes as consolidated (they fade faster)
+    pub consolidate: bool,
+    /// rows marked consolidated so far
+    pub consolidated: usize,
 }
 
 impl IndexHc {
@@ -106,6 +110,8 @@ impl IndexHc {
             last_state: Vec::new(),
             out_bits,
             stats: (0, 0, 0, 0, 0),
+            consolidate: false,
+            consolidated: 0,
         }
     }
 
@@ -281,6 +287,12 @@ impl IndexHc {
                 if kept * 2 >= r.ec.len() && now != r.ec {
                     self.mem.reconsolidate(row, &now);
                     self.stats.4 += 1;
+                }
+                // the cortex now holds it (completes at least 3/4 of it on its own): the row is
+                // consolidated, and fades four times faster from now on
+                if self.consolidate && kept * 4 >= 3 * r.ec.len() {
+                    self.mem.mark_consolidated(&[row]);
+                    self.consolidated += 1;
                 }
             }
         }

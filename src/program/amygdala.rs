@@ -186,6 +186,12 @@ pub struct Amygdala {
     rng: StdRng,
     /// (updates, sum of |error|)
     pub stats: (u64, u64),
+    /// associability per feature (Pearce–Hall, the central amygdala's), 0–255: how much more
+    /// surprising the outcomes after it have been than outcomes usually are; a cue never seen
+    /// before starts high
+    alpha: Vec<u8>,
+    /// the usual |error| (`Q16`), slowly averaged: the baseline surprise is measured against
+    surprise: i32,
     /// diagnosis: appetitive cells (recruited, removed by a negative error, replaced at the cap)
     pub churn: (u64, u64, u64),
 }
@@ -211,6 +217,8 @@ impl Amygdala {
             rng: StdRng::seed_from_u64(seed ^ 0xA316),
             stats: (0, 0),
             churn: (0, 0, 0),
+            alpha: vec![0; feat],
+            surprise: 0,
         }
     }
 
@@ -324,6 +332,7 @@ impl Amygdala {
             if !self.seen.bit_get(f as usize) {
                 self.seen.bit_set(f as usize);
                 self.attended.bit_set(f as usize);
+                self.alpha[f as usize] = 192;
             }
         }
         self.trace.insert(0, onsets);
@@ -349,6 +358,15 @@ impl Amygdala {
         let past = self.past_items();
         let v = self.value_items(&past);
         let err = r - v;
+        // associability: each traced cue moves a quarter of the way toward how far this error
+        // exceeds the usual one (0 when no more surprising than usual)
+        self.surprise += (err.abs() - self.surprise) / 32;
+        let target = ((err.abs() - self.surprise).max(0) as i64 * 255 / ONE as i64).min(255) as i32;
+        let fs: Vec<u32> = self.items(1, TRACE).map(|(_, &f)| f).collect();
+        for f in fs {
+            let a = &mut self.alpha[f as usize];
+            *a = (*a as i32 + (target - *a as i32) / 4).clamp(0, 255) as u8;
+        }
         // attention first, over the whole trace (a cue that lost attention can win it back
         // when a surprise follows it): surprise (Pearce–Hall) or a cue worth something
         // (Mackintosh)
@@ -474,6 +492,23 @@ impl Amygdala {
     /// (this step's onsets, attended features in the trace), for diagnosis.
     pub fn trace_sizes(&self) -> (usize, usize) {
         (self.trace.first().map_or(0, |t| t.len()), self.attended().len())
+    }
+
+    /// A feature's associability (0–255).
+    pub fn alpha_of(&self, f: usize) -> u8 {
+        self.alpha.get(f).copied().unwrap_or(0)
+    }
+
+    /// The associability of the cues in the trace now: the mean of the highest `ACTIVE`-many
+    /// (one cue's worth of features), 0–255.
+    pub fn alpha_now(&self) -> u32 {
+        let mut a: Vec<u8> = self.items(0, TRACE).map(|(_, &f)| self.alpha[f as usize]).collect();
+        a.sort_unstable_by(|x, y| y.cmp(x));
+        a.truncate(32);
+        if a.is_empty() {
+            return 0;
+        }
+        a.iter().map(|&x| x as u32).sum::<u32>() / a.len() as u32
     }
 
     /// Diagnosis: the trace's items at an age.

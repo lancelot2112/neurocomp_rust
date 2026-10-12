@@ -264,6 +264,9 @@ pub struct Config {
     /// steps back the dopamine error reaches the striatum's choices (its eligibility trace;
     /// MIND_WINDOW, default 2)
     pub window: usize,
+    /// associability (Pearce–Hall): the amygdala's per-cue surprise sets a motor choice's
+    /// learning rate and where its new cells draw from (MIND_ALPHA=0 off)
+    pub alpha: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -277,7 +280,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -315,6 +318,7 @@ impl Config {
             elemental: on("MIND_ELEMENTAL"),
             focused: on("MIND_FOCUSED"),
             credit_own: on("MIND_CREDIT_OWN"),
+            alpha: on("MIND_ALPHA"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -898,6 +902,35 @@ impl Mind {
         groups
     }
 
+    /// A motor choice's learning rate from its cues' associability: a gain from the trace's
+    /// (¼× when nothing has been surprising, up to about 2¼×), and a weight per region of the
+    /// striatum's focused context (one per live input group, in order) from the mean
+    /// associability of the group's features where they are features (the senses' sustained
+    /// codes, the amygdala's attended trace), else a middling weight.
+    fn choice_alpha(&self, groups: &[Vec<usize>]) -> (u32, Vec<u16>) {
+        let gain = 64 + 2 * self.amy.alpha_now();
+        let regions = 2048 / 64 - 1;
+        let mut w = vec![0u16; regions];
+        for (gi, g) in groups.iter().filter(|g| !g.is_empty()).enumerate() {
+            let feats: Vec<usize> = g
+                .iter()
+                .filter_map(|&b| {
+                    if (SUSTAINED_OFFSET..SUSTAINED_OFFSET + SLOTS.len() * BITS).contains(&b) {
+                        Some(b - SUSTAINED_OFFSET)
+                    } else if (AMY_OFFSET..AMY_VALUE_OFFSET).contains(&b) {
+                        Some((b - AMY_OFFSET) / crate::program::amygdala::TRACE)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let a = if feats.is_empty() { 32 } else { feats.iter().map(|&f| self.amy.alpha_of(f) as u32).sum::<u32>() / feats.len() as u32 };
+            let r = gi % regions;
+            w[r] = w[r].max(8 + a as u16);
+        }
+        (gain, w)
+    }
+
     /// The loops: each column's takes its goal in or not (and an association column's may load
     /// working memory); each motor area's takes one candidate and releases or withholds it.
     fn choose(&mut self, ids: &[ColumnId]) -> Acts {
@@ -966,6 +999,12 @@ impl Mind {
                 self.bg.set_view(None);
             }
             let (loop_ch, gate) = motor_channels(motor);
+            // associability (Pearce–Hall): how much this choice learns, and from which of its
+            // inputs its new cells draw, follow how surprising its cues have been
+            if self.cfg.alpha && self.cfg.topographic {
+                let v = self.motor_view(motor, sense);
+                self.bg.alpha = self.choice_alpha(&v);
+            }
             // Pavlovian–instrumental transfer: cues worth something lower the brake
             let brake = self.bg.release;
             if self.cfg.pit {
@@ -975,6 +1014,7 @@ impl Mind {
             let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![c.1.clone()]).collect();
             let Some(i) = self.bg.choose_among(loop_ch, &offer, true) else {
                 self.bg.release = brake;
+                self.bg.alpha = (256, Vec::new());
                 continue;
             };
             let q_loop = self.bg.last_q;
@@ -998,6 +1038,7 @@ impl Mind {
             }
             let released = self.bg.choose_among(gate, &[gate_offer], true).is_some();
             self.bg.release = brake;
+            self.bg.alpha = (256, Vec::new());
             if released {
                 let q_gate = self.bg.last_q;
                 self.chosen_q.retain(|x| x.0 != motor);

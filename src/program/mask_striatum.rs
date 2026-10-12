@@ -292,15 +292,23 @@ impl CellPool {
     /// Focused: a new cell on two regions of `x` (two input groups), the candidate's (the last
     /// region) and one other if the candidate is there, else two at random; more regions only if
     /// these have too few bits. A spiny cell's inputs are clustered, from a few sources.
-    fn recruit_focused(&mut self, x: &[u64], now: u64, rng: &mut StdRng) {
+    fn recruit_focused(&mut self, x: &[u64], weights: &[u16], now: u64, rng: &mut StdRng) {
         let last = x.len() - 1;
         let mut regions: Vec<usize> = (0..last).filter(|&w| x[w] != 0).collect();
         let mut chosen: Vec<usize> = Vec::new();
         if x[last] != 0 {
             chosen.push(last);
         }
+        // a region is drawn in proportion to its weight (its cues' associability)
+        let weight = |w: usize| weights.get(w).copied().unwrap_or(1).max(1) as u64;
         while (chosen.len() < 2 || chosen.iter().map(|&w| x[w].count_ones() as usize).sum::<usize>() < CELL_BITS) && !regions.is_empty() {
-            let j = rng.gen_range(0..regions.len());
+            let total: u64 = regions.iter().map(|&w| weight(w)).sum();
+            let mut r = rng.gen_range(0..total);
+            let mut j = 0;
+            while r >= weight(regions[j]) {
+                r -= weight(regions[j]);
+                j += 1;
+            }
             chosen.push(regions.swap_remove(j));
         }
         let mut y = vec![0u64; x.len()];
@@ -340,9 +348,9 @@ impl CellPool {
         self.cells.push((m, now));
     }
 
-    fn add(&mut self, x: &[u64], focused: bool, now: u64, rng: &mut StdRng) {
+    fn add(&mut self, x: &[u64], focused: bool, weights: &[u16], now: u64, rng: &mut StdRng) {
         if focused {
-            self.recruit_focused(x, now, rng);
+            self.recruit_focused(x, weights, now, rng);
         } else {
             self.recruit(x, now, rng);
         }
@@ -356,11 +364,16 @@ impl Mask {
     }
 }
 
+/// A choice's learning rate (Pearce–Hall associability): a gain on its swaps (256: 1×), and
+/// weights per region (input group) for where its new cells' second input comes from (empty:
+/// all alike).
+type Lr = (u32, Vec<u16>);
+
 #[derive(Clone)]
 struct Step {
     c: Vec<u64>,
     /// (channel, action, the context the choice saw: C, or C with the candidate)
-    choices: Vec<(usize, usize, Vec<u64>)>,
+    choices: Vec<(usize, usize, Vec<u64>, Lr)>,
     /// (channel, the context of the candidate held back) for choices that released nothing
     withheld: Vec<(usize, Vec<u64>)>,
     critic: bool,
@@ -447,6 +460,9 @@ pub struct MaskStriatum {
     pub window: usize,
     /// the q (go minus no-go cells) of the candidate released last, without the noise
     pub last_q: i32,
+    /// the learning rate the next choices carry (Pearce–Hall associability of their cues); the
+    /// default `(256, [])` is 1× with every region alike
+    pub alpha: Lr,
 }
 
 fn mix(x: u64) -> u64 {
@@ -507,6 +523,7 @@ impl MaskStriatum {
             focused: false,
             window: WINDOW,
             last_q: 0,
+            alpha: (256, Vec::new()),
         }
     }
 
@@ -696,7 +713,7 @@ impl MaskStriatum {
     /// ones are recruited (the error says the state is worth `n` cells more or less); up to `n`
     /// cells of `fewer` that fired move away from `x` (with `loosen`, their habits first loosen).
     #[allow(clippy::too_many_arguments)]
-    fn grow_learn(more: &mut CellPool, fewer: &mut CellPool, x: &[u64], n: usize, stick: bool, loosen: bool, focused: bool, now: u64, rng: &mut StdRng) -> u64 {
+    fn grow_learn(more: &mut CellPool, fewer: &mut CellPool, x: &[u64], n: usize, stick: bool, loosen: bool, focused: bool, weights: &[u16], now: u64, rng: &mut StdRng) -> u64 {
         let mut changed = 0u64;
         let fired = more.firing(x, None);
         for &i in &fired {
@@ -705,7 +722,7 @@ impl MaskStriatum {
             changed += 1;
         }
         for _ in 0..n {
-            more.add(x, focused, now, rng);
+            more.add(x, focused, weights, now, rng);
             changed += 1;
         }
         let mut against = fewer.firing(x, None);
@@ -819,7 +836,7 @@ impl MaskStriatum {
             let st = self.recent[k].clone();
             if st.critic && k + 1 == n && self.grow {
                 let (more, fewer) = if delta > 0 { (&mut self.vpool.0, &mut self.vpool.1) } else { (&mut self.vpool.1, &mut self.vpool.0) };
-                self.swaps += Self::grow_learn(more, fewer, &st.c, bits, false, false, self.focused, self.clock, &mut self.rng);
+                self.swaps += Self::grow_learn(more, fewer, &st.c, bits, false, false, self.focused, &[], self.clock, &mut self.rng);
             } else if st.critic && k + 1 == n {
                 let (up, down) = if delta > 0 { (&mut self.critic.0, &mut self.critic.1) } else { (&mut self.critic.1, &mut self.critic.0) };
                 if self.push_pull {
@@ -851,7 +868,7 @@ impl MaskStriatum {
                             }
                             if fired.is_empty() {
                                 for _ in 0..bits {
-                                    nogo.add(x, self.focused, self.clock, &mut self.rng);
+                                    nogo.add(x, self.focused, &[], self.clock, &mut self.rng);
                                 }
                             }
                         } else {
@@ -870,7 +887,7 @@ impl MaskStriatum {
                             nogo.cells[i].1 = self.clock;
                         }
                         for _ in 0..bits {
-                            nogo.add(x, self.focused, self.clock, &mut self.rng);
+                            nogo.add(x, self.focused, &[], self.clock, &mut self.rng);
                         }
                     } else {
                         for &i in fired.iter().take(bits) {
@@ -880,13 +897,14 @@ impl MaskStriatum {
                     self.swaps += (fired.len() + bits) as u64;
                 }
             }
-            for (ch, a, x) in &st.choices {
+            for (ch, a, x, lr) in &st.choices {
                 let stick = self.sticky && delta > 0;
                 if self.grow {
+                    let n = Self::scaled(bits, lr.0, &mut self.rng);
                     let pair = &mut self.pools[*ch][*a];
                     let (more, fewer) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
                     // a dip moves the go cells that fired away (go LTD) and loosens their habits
-                    self.swaps += Self::grow_learn(more, fewer, x, bits, stick, delta < 0 && self.sticky, self.focused, self.clock, &mut self.rng);
+                    self.swaps += Self::grow_learn(more, fewer, x, n, stick, delta < 0 && self.sticky, self.focused, &lr.1, self.clock, &mut self.rng);
                     continue;
                 }
                 let pair = &mut self.actors[*ch][*a];
@@ -984,18 +1002,26 @@ impl MaskStriatum {
         }
         let Some(st) = self.recent.len().checked_sub(1 + back).map(|i| self.recent[i].clone()) else { return };
         let amount = delta.unsigned_abs() as u64 * ONE as u64 / UNIT as u64 / RATE_DIV;
-        let mut bits = (amount >> 16) as usize;
-        if self.rng.gen_range(0..ONE as u64) < (amount & 0xFFFF) {
-            bits += 1;
-        }
-        if bits == 0 {
+        if amount == 0 {
             return;
         }
-        for (ch, a, x) in st.choices.iter().filter(|c| channels.contains(&c.0)) {
+        for (ch, a, x, lr) in st.choices.iter().filter(|c| channels.contains(&c.0)) {
+            // the amount with this choice's gain, in whole swaps rounded at random
+            let g = amount * lr.0 as u64 / 256;
+            let n = (g >> 16) as usize + (self.rng.gen_range(0..ONE as u64) < (g & 0xFFFF)) as usize;
+            if n == 0 {
+                continue;
+            }
             let pair = &mut self.pools[*ch][*a];
             let (more, fewer) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
-            self.swaps += Self::grow_learn(more, fewer, x, bits, false, false, self.focused, self.clock, &mut self.rng);
+            self.swaps += Self::grow_learn(more, fewer, x, n, false, false, self.focused, &lr.1, self.clock, &mut self.rng);
         }
+    }
+
+    /// `bits` scaled by a gain (256: 1×), rounded at random.
+    fn scaled(bits: usize, gain: u32, rng: &mut StdRng) -> usize {
+        let a = bits as u64 * gain as u64;
+        (a >> 8) as usize + (rng.gen_range(0..256u64) < (a & 255)) as usize
     }
 
     /// The next choices see only `groups` (a loop's own cortical territory); None: the whole
@@ -1017,7 +1043,7 @@ impl MaskStriatum {
         match self.release(&q) {
             Some(i) => {
                 if let Some(st) = self.recent.last_mut() {
-                    st.choices.push((channel, i + 1, c));
+                    st.choices.push((channel, i + 1, c, self.alpha.clone()));
                 }
                 i + 1
             }
@@ -1047,7 +1073,7 @@ impl MaskStriatum {
             return None;
         };
         if let Some(st) = self.recent.last_mut() {
-            st.choices.push((channel, 1, xs[i].clone()));
+            st.choices.push((channel, 1, xs[i].clone(), self.alpha.clone()));
         }
         self.last_q = self.q(channel, 1, &xs[i], &None);
         Some(i)
@@ -1058,7 +1084,7 @@ impl MaskStriatum {
         self.ensure(channel, 2);
         let x = self.candidate_context(candidate);
         if let Some(st) = self.recent.last_mut() {
-            st.choices.push((channel, 1, x));
+            st.choices.push((channel, 1, x, self.alpha.clone()));
         }
     }
 

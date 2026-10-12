@@ -41,7 +41,7 @@ fn main() {
     let mut rng = StdRng::seed_from_u64(seed ^ 0xC0FE);
     let mut world = World::new(seed);
     let mut mind = Mind::new(world.body(), seed);
-    mind.spontaneous = env("LS_SPONT", 2);
+    mind.spontaneous = env("LS_SPONT", 1);
     let t0 = std::time::Instant::now();
     let mut acts = Acts::default();
     // the valuations summed (own effect, response, smile, effort), per stage
@@ -74,19 +74,30 @@ fn main() {
     if n_play > 0 {
         let mut opened = [0usize; 2];
         let mut moves = [0usize; 2];
+        // (clicks on a book, clicks) by half
+        let mut clicks = [(0usize, 0usize); 2];
         for k in 0..n_play {
             world.mouse_play();
             let start = run!(1);
             let h = (2 * k >= n_play) as usize;
             opened[h] += world.events[start..].iter().filter(|e| e.opened).count();
             moves[h] += world.events[start..].iter().filter(|e| e.moved.is_some()).count();
+            for e in &world.events[start..] {
+                if e.moved == Some(neurocomp::program::world::CLICK) {
+                    clicks[h].0 += e.opened as usize;
+                    clicks[h].1 += 1;
+                }
+            }
         }
-        println!("mouse play: {n_play} episodes; books opened {} then {} (first, second half); hand moves {} then {}", opened[0], opened[1], moves[0], moves[1]);
+        println!("mouse play: {n_play} episodes; books opened {} then {} (first, second half); hand moves {} then {}; clicks on a book {} of {} then {} of {}", opened[0], opened[1], moves[0], moves[1], clicks[0].0, clicks[0].1, clicks[1].0, clicks[1].1);
     }
     // lessons
     let books = [Book::Same, Book::Other, Book::Closed];
     let mut res = [[Tally::default(); 3]; 2];
     let mut train = [(0usize, 0usize, 0usize); 2];
+    // per phase (story, instruction, wait, task by teacher, task by child, pause): (steps, child aloud, hand moves, smiles)
+    let mut by_phase = [[0usize; 4]; 6];
+    let mut steps = 0usize;
     for lesson in 0..n_train + n_test {
         let testing = lesson >= n_train;
         let read = rng.gen_bool(0.5);
@@ -98,7 +109,20 @@ fn main() {
         let ev = &world.events[start..];
         // the observer: the words wanted in the task and what the child said
         let mut t = Tally { lessons: 1, ..Default::default() };
+        steps += ev.len();
         for e in ev {
+            let k = match e.phase {
+                Phase::Story => 0,
+                Phase::Instruction => 1,
+                Phase::Wait => 2,
+                Phase::Task(false) => 3,
+                Phase::Task(true) => 4,
+                _ => 5,
+            };
+            by_phase[k][0] += 1;
+            by_phase[k][1] += e.said.iter().any(|s| s.0 == Who::Child) as usize;
+            by_phase[k][2] += e.moved.is_some() as usize;
+            by_phase[k][3] += e.smiled as usize;
             if let (Phase::Task(true), Some(w)) = (e.phase, e.want) {
                 t.words += 1;
                 match e.said.iter().find(|s| s.0 == Who::Child) {
@@ -125,6 +149,11 @@ fn main() {
             mind.sleep(3);
         }
         if !testing && (lesson + 1) % 500 == 0 {
+            let names = ["story", "instr", "wait", "task-T", "task-C", "pause"];
+            let line: Vec<String> = (0..6).map(|k| format!("{} {}/{}/{}/{}", names[k], by_phase[k][0], by_phase[k][1], by_phase[k][2], by_phase[k][3])).collect();
+            println!("  phases (steps/aloud/moves/smiles): {}; {:.0} steps per lesson", line.join(", "), steps as f64 / 500.0);
+            by_phase = [[0usize; 4]; 6];
+            steps = 0;
             println!(
                 "  lesson {:5}: practice words right {:.1}%, silent {:.1}% (this half so far); hippocampus rows {} ({:.0} s)",
                 lesson + 1,

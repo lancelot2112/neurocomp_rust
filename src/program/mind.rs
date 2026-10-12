@@ -57,6 +57,8 @@ const CH_LOAD: usize = 3;
 const CH_ACT: usize = 5;
 const CH_IMAGINE: usize = 7;
 const CH_SPEAK: usize = 9;
+/// the hand's loop (the voice's is the imagine channel)
+const CH_HAND_LOOP: usize = 11;
 /// where candidates sit in the striatum's input ids: goals, then each effector's primitives
 const ACT_BASE: usize = 1 << 25;
 const EFFORT: i32 = (ONE / 16) as i32;
@@ -150,15 +152,6 @@ struct Step {
     plan: BitVector,
 }
 
-/// A candidate for the gates.
-#[derive(Clone)]
-enum Cand {
-    /// a goal of the cortex (a sensory pattern meant), for whichever effector can produce it
-    Goal(BitVector),
-    /// a motor primitive spontaneously active: (effector area, command)
-    Primitive(usize, BitVector),
-}
-
 /// What the mind did, for an observer (never fed back).
 #[derive(Clone, Default, Debug)]
 pub struct Report {
@@ -245,7 +238,7 @@ impl Mind {
             voice_cmd: None,
             hand_cmd: None,
             since_said: usize::MAX,
-            spontaneous: 2,
+            spontaneous: 1,
             report: Report::default(),
         }
     }
@@ -343,82 +336,80 @@ impl Mind {
 
     /// The candidates, the two gates, and the act (or the inward run).
     fn choose(&mut self, st: &Step) -> Acts {
-        let mut cands: Vec<Cand> = Vec::new();
+        let mut goals: Vec<BitVector> = Vec::new();
         if st.plan.count_ones() > 0 {
-            cands.push(Cand::Goal(st.plan.clone()));
+            goals.push(st.plan.clone());
         }
         for (_, p, _) in self.brain.goal_proposals() {
-            if cands.len() < 8 && !cands.iter().any(|c| matches!(c, Cand::Goal(g) if overlap(g, &p) * 2 >= ACTIVE as u32)) {
-                cands.push(Cand::Goal(p));
+            if goals.len() < 8 && !goals.iter().any(|g| overlap(g, &p) * 2 >= ACTIVE as u32) {
+                goals.push(p);
+            }
+        }
+        // a goal is a candidate for an effector that can plan it (a command from its inverse
+        // model, or for the voice the imitation route): the one whose forward model would
+        // reproduce it best
+        let mut cands: Vec<(usize, BitVector, Vec<usize>)> = Vec::new();
+        for g in goals {
+            let mut best: Option<(u32, usize, BitVector)> = None;
+            for a in [VOICE, HAND] {
+                if let Some(c) = self.command(a, &g) {
+                    let fit = self.brain.areas[a].motor.as_mut().and_then(|m| m.predict(&c)).map_or(0, |p| overlap(&p, &g));
+                    if best.as_ref().map_or(true, |b| fit > b.0) {
+                        best = Some((fit, a, c));
+                    }
+                }
+            }
+            if let Some((_, a, c)) = best {
+                cands.push((a, c, ones(&g).into_iter().map(|b| ACT_BASE + b).collect()));
             }
         }
         // spontaneous motor primitives (pattern generators), one per effector now and then
-        if self.rng.gen_range(0..self.spontaneous) == 0 {
-            let k = self.rng.gen_range(0..self.body.voice.len());
-            cands.push(Cand::Primitive(VOICE, self.body.voice[k].clone()));
+        for (a, k) in [(VOICE, 1usize), (HAND, 2)] {
+            if self.rng.gen_range(0..self.spontaneous) == 0 {
+                let prims = if a == VOICE { &self.body.voice } else { &self.body.hand };
+                let c = prims[self.rng.gen_range(0..prims.len())].clone();
+                let bits = ones(&c).into_iter().map(|b| ACT_BASE + k * BITS + b).collect();
+                cands.push((a, c, bits));
+            }
         }
-        if self.rng.gen_range(0..self.spontaneous) == 0 {
-            let k = self.rng.gen_range(0..self.body.hand.len());
-            cands.push(Cand::Primitive(HAND, self.body.hand[k].clone()));
-        }
-        let offer: Vec<Vec<Vec<usize>>> = cands
-            .iter()
-            .map(|c| {
-                let (base, v) = match c {
-                    Cand::Goal(g) => (ACT_BASE, g),
-                    Cand::Primitive(a, cmd) => (ACT_BASE + if *a == VOICE { BITS } else { 2 * BITS }, cmd),
-                };
-                vec![ones(v).into_iter().map(|b| base + b).collect()]
-            })
-            .collect();
         self.voice_cmd = None;
         self.hand_cmd = None;
         let mut acts = Acts::default();
-        let Some(i) = self.bg.choose_among(CH_IMAGINE, &offer, true) else {
-            // nothing taken into the loop: the cortex's own state moves the hippocampus's context
-            if st.plan.count_ones() > 0 {
-                let e4 = self.brain.encode_only(EAR, &st.plan);
-                self.hc.represent(&ones(&multi(&[(EAR, &e4)])));
+        let mut taken = false;
+        // one loop per effector (parallel cortico-basal ganglia loops): its gate takes one of
+        // its candidates into the loop (or none), its motor gate releases it or withholds it
+        for (motor, loop_ch, gate) in [(VOICE, CH_IMAGINE, CH_SPEAK), (HAND, CH_HAND_LOOP, CH_ACT)] {
+            let mine: Vec<&(usize, BitVector, Vec<usize>)> = cands.iter().filter(|c| c.0 == motor).collect();
+            if mine.is_empty() {
+                continue;
             }
-            return acts;
-        };
-        // which effector, and its command
-        let (motor, cmd) = match &cands[i] {
-            Cand::Primitive(a, c) => (*a, Some(c.clone())),
-            Cand::Goal(g) => {
-                let v = self.command(VOICE, g);
-                let h = self.command(HAND, g);
-                let fit = |m: &mut Mind, a: usize, c: &Option<BitVector>| c.as_ref().and_then(|c| m.brain.areas[a].motor.as_mut().and_then(|x| x.predict(c))).map_or(0, |p| overlap(&p, g));
-                let (fv, fh) = (fit(self, VOICE, &v), fit(self, HAND, &h));
-                if fv == 0 && fh == 0 {
-                    (VOICE, v.or(h))
-                } else if fv >= fh {
-                    (VOICE, v)
+            let offer: Vec<Vec<Vec<usize>>> = mine.iter().map(|c| vec![c.2.clone()]).collect();
+            let Some(i) = self.bg.choose_among(loop_ch, &offer, true) else { continue };
+            taken = true;
+            let cmd = mine[i].1.clone();
+            if self.bg.choose_among(gate, &[offer[i].clone()], true).is_some() {
+                self.brain.areas[motor].issue(&cmd);
+                if motor == VOICE {
+                    self.voice_cmd = Some(cmd.clone());
+                    acts.voice = Some(cmd);
+                    self.report.spoke = true;
                 } else {
-                    (HAND, h)
+                    self.hand_cmd = Some(cmd.clone());
+                    acts.hand = Some(cmd);
+                    self.report.moved = true;
                 }
-            }
-        };
-        let Some(cmd) = cmd else { return acts };
-        let gate = if motor == VOICE { CH_SPEAK } else { CH_ACT };
-        if self.bg.choose_among(gate, &[offer[i].clone()], true).is_some() {
-            if motor == VOICE {
-                self.brain.areas[VOICE].issue(&cmd);
-                self.voice_cmd = Some(cmd.clone());
-                acts.voice = Some(cmd);
-                self.report.spoke = true;
             } else {
-                self.brain.areas[HAND].issue(&cmd);
-                self.hand_cmd = Some(cmd.clone());
-                acts.hand = Some(cmd);
-                self.report.moved = true;
+                // withheld: it runs inwardly
+                let cue = self.imagine(motor, &cmd);
+                self.hc.represent(&ones(&cue));
+                self.last_recall = self.hc.complete();
+                self.report.inward = true;
             }
-        } else {
-            // withheld: it runs inwardly
-            let cue = self.imagine(motor, &cmd);
-            self.hc.represent(&ones(&cue));
-            self.last_recall = self.hc.complete();
-            self.report.inward = true;
+        }
+        if !taken && st.plan.count_ones() > 0 {
+            // nothing taken into a loop: the cortex's own state moves the hippocampus's context
+            let e4 = self.brain.encode_only(EAR, &st.plan);
+            self.hc.represent(&ones(&multi(&[(EAR, &e4)])));
         }
         acts
     }

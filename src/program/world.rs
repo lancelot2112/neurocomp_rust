@@ -227,6 +227,7 @@ struct LessonState {
     owed: Option<usize>,
     smile_next: bool,
     started_task: bool,
+    steps: usize,
 }
 
 /// The world.
@@ -391,7 +392,7 @@ impl World {
         // the wait: long enough, with a book to open, for the teacher to show how from anywhere
         let wait_left = if lesson.task == Task::Read { 3 + self.places.len() - 1 } else { 3 };
         self.present = true;
-        self.scene = Scene::Lesson(LessonState { lesson, queue, target, wait_left, tcur: None, tdone: false, t: 0, owed: None, smile_next: false, started_task: false });
+        self.scene = Scene::Lesson(LessonState { lesson, queue, target, wait_left, tcur: None, tdone: false, t: 0, owed: None, smile_next: false, started_task: false, steps: 0 });
     }
 
     /// A story's words, as indices.
@@ -552,14 +553,19 @@ impl World {
             *smile = true;
         }
         // a word the teacher owes (said after the child's turn), if the child is quiet now
-        if let Some(w) = l.owed {
+        // (if the child talks over it, the teacher lets it go)
+        if let Some(w) = l.owed.take() {
             if heard.is_none() {
-                l.owed = None;
                 *heard = Some(w);
                 ev.said.push((Who::Teacher, w));
             }
             ev.phase = l.queue.front().map_or(Phase::Task(l.lesson.child_does), |x| x.0);
             return false;
+        }
+        // a lesson has an end, however it goes
+        l.steps += 1;
+        if l.steps > 200 {
+            return true;
         }
         // the script: the story, the pause, the instruction
         if let Some((phase, w)) = l.queue.front().copied() {

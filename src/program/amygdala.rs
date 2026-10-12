@@ -156,13 +156,15 @@ impl Amygdala {
     /// they come before large errors (their pause weight). Returns whether the interneurons pause
     /// now: some feature in the trace has a pause weight above half.
     pub fn learn_pause(&mut self, delta: i32, large: i32) -> bool {
-        let recent: Vec<u32> = self.trace.iter().take(3).flatten().copied().collect();
-        for f in recent {
+        // the cues one or two steps back came before this error; those present now and before
+        // that learn it was small
+        let before: Vec<u32> = self.trace.iter().skip(1).take(2).flatten().copied().collect();
+        for f in before {
             let x = self.entry(f);
             if delta.abs() >= large {
-                x.pause += (ONE as i32 - x.pause) / 4;
+                x.pause += (ONE as i32 - x.pause) / 8;
             } else {
-                x.pause -= x.pause / 32;
+                x.pause -= x.pause / 8;
             }
         }
         self.pausing()

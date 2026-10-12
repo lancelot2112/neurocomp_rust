@@ -490,7 +490,10 @@ impl Mind {
         // reaches the goal cells followed recently; the interneurons pause to learned cues
         let ids = self.brain.column_ids();
         self.report.loops = ids.len();
-        let all = self.state_groups(&ids, &ids, true, true);
+        // the critic (ventral striatum) sees its own territory with topography: the limbic
+        // inputs (the amygdala's attended cues, the hippocampus's recall, working memory, and
+        // someone's presence); without, everything
+        let all = if self.cfg.topographic { self.state_groups(&[ColumnId::Sense(PRESENCE)], &[], true, true) } else { self.state_groups(&ids, &ids, true, true) };
         if self.cfg.learned_pause {
             self.bg.pause_open = self.amy.pausing();
             self.report.paused = self.bg.pause_open;

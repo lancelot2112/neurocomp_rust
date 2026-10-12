@@ -37,6 +37,7 @@ use rand::{Rng, RngCore, SeedableRng};
 use crate::bitvec::BitVector;
 use crate::fixed::ONE;
 use crate::program::amygdala::Amygdala;
+use crate::program::ofc::{self as ofc_area, Ofc};
 use crate::program::area::{Brain, ColumnId, Kind, MAX_PAIRS};
 use crate::program::cerebellar_circuit::CerebellarCircuit;
 use crate::program::index_hc::IndexHc;
@@ -178,6 +179,11 @@ const AMY_VALUE_OFFSET: usize = 120 * BITS;
 const EFFERENCE_OFFSET: usize = 130 * BITS;
 const OFC_VALUE_OFFSET: usize = 140 * BITS;
 const SUSTAINED_OFFSET: usize = 150 * BITS;
+/// the orbitofrontal area's state Z, and what it holds
+const OFC_Z_OFFSET: usize = 160 * BITS;
+const OFC_HELD_OFFSET: usize = 161 * BITS;
+/// the orbitofrontal area's hold loop (hold the state or not)
+const OFC_HOLD_CHANNEL: usize = 300;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
 const VALUE_BASE: usize = ACT_BASE + 8 * BITS;
 
@@ -267,6 +273,14 @@ pub struct Config {
     /// associability (Pearce–Hall): the amygdala's per-cue surprise sets a motor choice's
     /// learning rate and where its new cells draw from (MIND_ALPHA=0 off)
     pub alpha: bool,
+    /// the orbitofrontal cortex as a cortical area: a column over the cues, the act, the outcome
+    /// and the hippocampus's context, its layer 2/3's activity the state Z (to the striatum and
+    /// the critic), an outcome layer predicting the next touch, and a loop that chooses to hold
+    /// the state (MIND_OFC_COLUMN=0 off)
+    pub ofc_column: bool,
+    /// the orbitofrontal value cells read the area's state Z (and the act), not the raw cue
+    /// trace (MIND_OFC_VALUE_Z=0 off; needs the column)
+    pub ofc_value_z: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -280,7 +294,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -319,6 +333,8 @@ impl Config {
             focused: on("MIND_FOCUSED"),
             credit_own: on("MIND_CREDIT_OWN"),
             alpha: on("MIND_ALPHA"),
+            ofc_column: on("MIND_OFC_COLUMN"),
+            ofc_value_z: on("MIND_OFC_VALUE_Z"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -384,6 +400,8 @@ pub struct Mind {
     /// the orbitofrontal / prelimbic outcome learner: the same bit-cell value learner, over the
     /// cues and the efference copy of the act just done ("this act, here, leads to that")
     pub ofc: Amygdala,
+    /// the orbitofrontal cortex as an area (its state Z, what it holds, its outcome expectation)
+    pub ofc_area: Ofc,
     /// the efference copy of the act sensed this step (features), for the motor loops' view
     efference_now: Vec<u32>,
     /// each motor area, its primitives (the genome's pattern generators), and the sensing area
@@ -474,6 +492,7 @@ impl Mind {
         let attend_gate = cfg.attend_gate;
         let elemental = cfg.elemental;
         let focused = cfg.focused;
+        let value_z = cfg.ofc_column && cfg.ofc_value_z;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -491,16 +510,21 @@ impl Mind {
                 a
             },
             ofc: {
-                let mut o = Amygdala::new((SLOTS.len() + 2) * BITS, seed ^ 0x0FC);
-                o.gated = attend_gate;
-                o.elemental = false;
+                // on Z: the area's state (BITS features) then the acts; else the senses' cues
+                // then the acts
+                let z = value_z;
+                let first = if z { BITS } else { SLOTS.len() * BITS };
+                let mut o = Amygdala::new(first + 2 * BITS, seed ^ 0x0FC);
+                o.gated = attend_gate && !z;
+                o.elemental = z;
                 o.paired = focused;
                 if act_baseline {
-                    o.with_act_baseline((SLOTS.len() * BITS) as u32)
+                    o.with_act_baseline(first as u32)
                 } else {
                     o
                 }
             },
+            ofc_area: Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA),
             efference_now: Vec::new(),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             pons: zero(),
@@ -625,7 +649,7 @@ impl Mind {
         }
         // the amygdala: cues alone (what a stimulus leads to); the orbitofrontal learner: cues and
         // the act just done (what an act leads to, here)
-        if self.cfg.efference {
+        if self.cfg.efference && !self.value_z() {
             let mut with_act = onsets.clone();
             with_act.extend(efference.iter().copied());
             self.ofc.onsets(with_act);
@@ -644,6 +668,18 @@ impl Mind {
         // 3. the cortex
         let st = self.cortex(&raw, &recall, td);
         self.last_expect = st.expect.clone();
+        // the orbitofrontal area: the cues (the association areas' code), the act just made, the
+        // outcome as sensed (affective touch) and the hippocampus's context
+        if self.cfg.ofc_column {
+            let z = self.ofc_step(&codes, &acts_now, &recall);
+            if self.value_z() {
+                let mut feats: Vec<u32> = ones(&z).into_iter().map(|b| b as u32).collect();
+                for (_, f) in &acts_now {
+                    feats.extend(self.ofc_act(f));
+                }
+                self.ofc.onsets(feats);
+            }
+        }
         // 4. valuing what came
         let mut r = [0i32; 4];
         if self.acted > 0 {
@@ -656,7 +692,7 @@ impl Mind {
             // fire on its efference copy, which grow as new acts are done)
             if self.cfg.tonic {
                 for (_, f) in &acts_now {
-                    let worth = if self.cfg.per_act { self.ofc.act_worth(f) } else { self.rate_act };
+                    let worth = if self.cfg.per_act { self.ofc.act_worth(&self.ofc_act(f)) } else { self.rate_act };
                     let cost = if self.cfg.opportunity { self.cfg.effort.max(worth) } else { self.cfg.effort };
                     r[3] -= cost;
                 }
@@ -691,7 +727,7 @@ impl Mind {
             w.0 -= 1;
         }
         for (a, f) in &acts_now {
-            let worth = self.ofc.act_worth(f);
+            let worth = self.ofc.act_worth(&self.ofc_act(f));
             let q = self.chosen_q.iter().find(|x| x.0 == *a).map(|x| (x.1, x.2));
             self.act_windows.push((1, outcome, *a, worth, q));
         }
@@ -757,6 +793,11 @@ impl Mind {
         // (the critic gets act values only through it; motor efference itself goes dorsally)
         if self.cfg.efference {
             all.push(self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect());
+        }
+        // and the orbitofrontal area's state and what it holds (the ventral striatum's cortical
+        // input is orbitofrontal and medial prefrontal)
+        if self.cfg.ofc_column {
+            all.extend(self.ofc_groups());
         }
         if self.cfg.learned_pause {
             self.bg.pause_open = self.amy.pausing();
@@ -892,6 +933,9 @@ impl Mind {
         }
         // the act just done (motor cortex's collaterals to the dorsal striatum: the efference
         // copy) and what the orbitofrontal learner says it is worth here
+        if self.cfg.ofc_column {
+            groups.extend(self.ofc_groups());
+        }
         if self.cfg.efference {
             groups.push(self.efference_now.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());
             let g: Vec<usize> = self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect();
@@ -900,6 +944,59 @@ impl Mind {
             }
         }
         groups
+    }
+
+    /// Whether the orbitofrontal value cells read the area's state.
+    fn value_z(&self) -> bool {
+        self.cfg.ofc_column && self.cfg.ofc_value_z
+    }
+
+    /// An act's efference features as the orbitofrontal value cells take them (after the state's
+    /// features when they read the state, else after the senses').
+    fn ofc_act(&self, f: &[u32]) -> Vec<u32> {
+        if !self.value_z() {
+            return f.to_vec();
+        }
+        let from = (SLOTS.len() * BITS) as u32;
+        f.iter().map(|&x| x - from + BITS as u32).collect()
+    }
+
+    /// The orbitofrontal area's step: its four inputs from this step's codes (by area), the acts
+    /// sensed now and the hippocampus's recall. Returns the state Z.
+    fn ofc_step(&mut self, codes: &[BitVector], acts_now: &[(usize, Vec<u32>)], recall: &BitVector) -> BitVector {
+        let assoc = self.brain.assoc_inputs(codes);
+        // the cues: the full association area's code, else the pairs' merged
+        let mut cues = zero();
+        match (self.brain.full.is_some(), assoc.last()) {
+            (true, Some(f)) if f.count_ones() > 0 => cues = f.clone(),
+            _ => {
+                for c in &assoc {
+                    cues = or(&cues, c);
+                }
+            }
+        }
+        let mut act = zero();
+        for (_, f) in acts_now {
+            for &x in f {
+                act.bit_set(x as usize % BITS);
+            }
+        }
+        let outcome = codes[AFFECT].clone();
+        let mut context = zero();
+        for x in ones(recall).into_iter().filter(|&x| x / BITS == MAX_PAIRS) {
+            context.bit_set(x % BITS);
+        }
+        let mut inputs: [BitVector; 4] = [zero(), zero(), zero(), zero()];
+        inputs[ofc_area::CUES] = cues;
+        inputs[ofc_area::ACT] = act;
+        inputs[ofc_area::OUTCOME] = outcome;
+        inputs[ofc_area::CONTEXT] = context;
+        self.ofc_area.step(&inputs, true)
+    }
+
+    /// The orbitofrontal area's state and what it holds, as input groups for the striatum.
+    fn ofc_groups(&self) -> Vec<Vec<usize>> {
+        vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
     }
 
     /// A motor choice's learning rate from its cues' associability: a gain from the trace's
@@ -934,6 +1031,20 @@ impl Mind {
     /// The loops: each column's takes its goal in or not (and an association column's may load
     /// working memory); each motor area's takes one candidate and releases or withholds it.
     fn choose(&mut self, ids: &[ColumnId]) -> Acts {
+        // the orbitofrontal area's loop (through the mediodorsal thalamus): hold its state now,
+        // or not; it sees the state, what is held, the cues' and the state's values, and the
+        // outcome as sensed
+        if self.cfg.ofc_column {
+            if self.cfg.topographic {
+                let mut v = self.ofc_groups();
+                v.push(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect());
+                v.push(self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect());
+                v.push(ones(&self.prev_codes[Self::slot(AFFECT)]).into_iter().map(|b| b + SUSTAINED_OFFSET + Self::slot(AFFECT) * BITS).collect());
+                self.bg.set_view(Some(v));
+            }
+            let hold = self.bg.choose(OFC_HOLD_CHANNEL, 2, true) == 1;
+            self.ofc_area.hold(hold);
+        }
         let mut taken: Vec<(ColumnId, usize, BitVector)> = Vec::new();
         for &id in ids {
             if self.cfg.topographic {

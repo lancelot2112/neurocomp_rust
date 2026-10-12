@@ -251,5 +251,7 @@ fn main() {
         println!("  block {b}: appetitive cells removed / recruited by trial step: {}; the trace's items two steps back at the touch {:.1}; the tone's ear onsets {:.1}, {:.1} of them as last time", c.iter().map(|(r, a)| format!("{r}/{a}")).collect::<Vec<_>>().join(" "), age2[b].0 as f64 / age2[b].1.max(1) as f64, tone[b].0 as f64 / tone[b].2.max(1) as f64, tone[b].1 as f64 / tone[b].2.max(1) as f64);
     }
     println!("amygdala cells (appetitive, aversive, pause, baseline): {:?}; orbitofrontal {:?}; what an act usually brings {:+.3}", mind.amy.cells(), mind.ofc.cells(), mind.report.rate_act as f64 / 65536.0);
+    let o = &mind.ofc_area;
+    println!("orbitofrontal area: cells (layer 2/3, outcome) {:?}; outcomes expected right {} of {}; holds {}; splits {}", o.cells(), o.stats.1, o.stats.0, o.stats.2, o.stats.3);
     println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}, tonic noise {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64, tonic_sum as f64 / sizes.0 as f64);
 }

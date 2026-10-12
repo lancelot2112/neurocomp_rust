@@ -211,11 +211,15 @@ pub struct Config {
     /// of the act just done); its values reach the critic and the motor loops, and the efference
     /// copy itself the motor loops (MIND_EFFERENCE=0 off)
     pub efference: bool,
+    /// a tonic level from the average outcomes: exploration rises when reward is scarce or
+    /// falling, and acting costs `effort` (MIND_TONIC=0 off; MIND_EFFORT, `Q16`, default 1/32)
+    pub tonic: bool,
+    pub effort: i32,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32 }
     }
 }
 
@@ -238,6 +242,8 @@ impl Config {
             response: on("MIND_RESPONSE"),
             amy_critic: on("MIND_AMY_CRITIC"),
             efference: on("MIND_EFFERENCE"),
+            tonic: on("MIND_TONIC"),
+            effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
 }
@@ -279,6 +285,8 @@ pub struct Report {
     pub delta: i32,
     /// what the amygdala predicted for this step before it came (`Q16`)
     pub amy_predicted: i32,
+    /// the tonic exploration noise added this step
+    pub tonic: i32,
 }
 
 pub struct Mind {
@@ -316,6 +324,9 @@ pub struct Mind {
     followed: Vec<Vec<(ColumnId, usize)>>,
     /// steps since its own sound was last heard aloud
     since_said: usize,
+    /// fast and slow averages of the outcomes (`Q16`): the tonic level
+    rate_fast: i32,
+    rate_slow: i32,
     /// the contingency detector (`Q16`): how often a sound from outside comes within two steps
     /// after its own sound, and otherwise
     p_after: i32,
@@ -376,6 +387,8 @@ impl Mind {
             acted: 0,
             followed: Vec::new(),
             since_said: usize::MAX,
+            rate_fast: 0,
+            rate_slow: 0,
             p_after: 0,
             p_else: 0,
             spontaneous: 1,
@@ -502,6 +515,10 @@ impl Mind {
             if self.cfg.own_effect {
                 r[0] += effect as i32 / 4;
             }
+            // with a tonic level to keep exploring, acting costs a little effort again
+            if self.cfg.tonic {
+                r[3] -= self.cfg.effort * self.acted as i32;
+            }
         }
         if own {
             self.since_said = 0;
@@ -582,8 +599,22 @@ impl Mind {
                 }
             }
         }
+        // the tonic level (noradrenaline's tonic mode, tonic dopamine): a fast and a slow average of
+        // the outcomes; where the recent ones fall below the long-run ones, or nothing has paid
+        // lately, choices loosen (exploration rises when utility falls: Aston-Jones & Cohen)
+        let outcome = r[1] + r[2];
+        self.rate_fast += (outcome - self.rate_fast) / 16;
+        self.rate_slow += (outcome - self.rate_slow) / 256;
+        let tonic = if self.cfg.tonic {
+            let falling = ((self.rate_slow - self.rate_fast) * 64 / ONE as i32).clamp(0, 2);
+            let barren = (self.rate_fast < ONE as i32 / 64) as i32;
+            falling + barren
+        } else {
+            0
+        };
+        self.report.tonic = tonic;
         // curiosity: where the cortex's goals are getting better, choices loosen a little
-        self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2);
+        self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2) + tonic;
         let acts = self.choose(&ids);
         self.bg.extra_noise = 0;
         self.bg.set_view(None);

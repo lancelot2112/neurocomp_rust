@@ -42,6 +42,7 @@ fn main() {
     let mut trial = 0usize;
     let mut pauses = 0usize;
     let mut sizes = (0usize, 0usize, 0usize, 0usize);
+    let mut tonic_sum = 0usize;
     while !world.done() {
         let senses = world.step(&acts);
         acts = mind.step(&senses);
@@ -59,6 +60,7 @@ fn main() {
         sizes.1 += on;
         sizes.2 += att;
         sizes.3 += (r.spoke || r.moved) as usize;
+        tonic_sum += r.tonic as usize;
         // the cue is sensed at step 2
         if t == 2 {
             x.0 += r.value as i64;
@@ -117,5 +119,5 @@ fn main() {
         }
     }
     println!("amygdala cells (appetitive, aversive, pause): {:?}; orbitofrontal {:?}", mind.amy.cells(), mind.ofc.cells());
-    println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64);
+    println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}, tonic noise {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64, tonic_sum as f64 / sizes.0 as f64);
 }

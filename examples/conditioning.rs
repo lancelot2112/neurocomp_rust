@@ -51,6 +51,7 @@ fn main() {
     let mut pauses = 0usize;
     let mut sizes = (0usize, 0usize, 0usize, 0usize);
     let mut tonic_sum = 0usize;
+    let mut frus = [(0i64, 0u64); 64];
     // per block: (dips while paused, bursts while paused, sum of dips, sum of bursts, steps)
     let mut da = [(0u64, 0u64, 0i64, 0i64, 0u64); 64];
     let mut cells_at: Vec<[(usize, usize); 2]> = Vec::new();
@@ -132,6 +133,11 @@ fn main() {
         sizes.2 += att;
         sizes.3 += (r.spoke || r.moved) as usize;
         tonic_sum += r.tonic as usize;
+        {
+            let b = (trial / block).min(63);
+            frus[b].0 += r.frustration as i64;
+            frus[b].1 += 1;
+        }
         {
             let b = (trial / block).min(63);
             let d = &mut da[b];
@@ -251,6 +257,7 @@ fn main() {
         println!("  block {b}: appetitive cells removed / recruited by trial step: {}; the trace's items two steps back at the touch {:.1}; the tone's ear onsets {:.1}, {:.1} of them as last time", c.iter().map(|(r, a)| format!("{r}/{a}")).collect::<Vec<_>>().join(" "), age2[b].0 as f64 / age2[b].1.max(1) as f64, tone[b].0 as f64 / tone[b].2.max(1) as f64, tone[b].1 as f64 / tone[b].2.max(1) as f64);
     }
     println!("amygdala cells (appetitive, aversive, pause, baseline): {:?}; orbitofrontal {:?}; what an act usually brings {:+.3}", mind.amy.cells(), mind.ofc.cells(), mind.report.rate_act as f64 / 65536.0);
+    println!("frustration per block: {}", frus.iter().filter(|x| x.1 > 0).map(|x| format!("{:.3}", x.0 as f64 / x.1 as f64 / 65536.0)).collect::<Vec<_>>().join(" "));
     let o = &mind.ofc_area;
     println!("orbitofrontal area: cells (layer 2/3, outcome) {:?}; outcomes expected right {} of {}; holds {}; splits {}", o.cells(), o.stats.1, o.stats.0, o.stats.2, o.stats.3);
     println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}, tonic noise {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64, tonic_sum as f64 / sizes.0 as f64);

@@ -285,6 +285,12 @@ pub struct Config {
     /// familiar input, with the cues associable, makes it hold its state now (a new context)
     /// (MIND_OFC_SPLIT=0 off)
     pub ofc_split: bool,
+    /// frustration (Amsel): an act that brings less than its loops expected adds the shortfall
+    /// (one that brings more takes it away), fading by 1/16 a step; it lowers the motor loops'
+    /// brake (the extinction burst) and widens their noise (extinction-induced variability), so
+    /// when what paid stops paying the mind tries harder and more variously before it gives up
+    /// (MIND_FRUSTRATION=0 off)
+    pub frustration: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -298,7 +304,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -340,6 +346,7 @@ impl Config {
             ofc_column: on("MIND_OFC_COLUMN"),
             ofc_value_z: on("MIND_OFC_VALUE_Z"),
             ofc_split: on("MIND_OFC_SPLIT"),
+            frustration: on("MIND_FRUSTRATION"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -390,6 +397,8 @@ pub struct Report {
     pub tonic: i32,
     /// what an act usually brings (`Q16`)
     pub rate_act: i32,
+    /// frustration now (`Q16`)
+    pub frustration: i32,
 }
 
 pub struct Mind {
@@ -430,6 +439,8 @@ pub struct Mind {
     since_said: usize,
     /// fast and slow averages of the outcomes (`Q16`): the tonic level
     rate_fast: i32,
+    /// frustration (`Q16`): expected outcomes of acts that did not come
+    frustration: i32,
     rate_slow: i32,
     /// what an act usually brings (`Q16`), and the acts whose outcome window is still open
     /// (steps left, outcome so far)
@@ -544,6 +555,7 @@ impl Mind {
             followed: Vec::new(),
             since_said: usize::MAX,
             rate_fast: 0,
+            frustration: 0,
             rate_slow: 0,
             rate_act: 0,
             act_windows: Vec::new(),
@@ -760,6 +772,14 @@ impl Mind {
                     _ => self.bg.reinforce_at(&[l, g], got - worth, 1),
                 }
             }
+            // frustration: what the act was expected to bring and did not (relief: more came)
+            if self.cfg.frustration {
+                let expect = match q {
+                    Some((ql, qg)) => ((ql + qg) * ONE as i32 / 16).clamp(0, ONE as i32).max(worth),
+                    None => worth,
+                };
+                self.frustration = (self.frustration + expect - got).clamp(0, 2 * ONE as i32);
+            }
         }
         // outcomes go to the critic; its own effect, with agency, trains the motor
         // loops' last choices directly
@@ -831,6 +851,8 @@ impl Mind {
         // the outcomes; where the recent ones fall below the long-run ones, or nothing has paid
         // lately, choices loosen (exploration rises when utility falls: Aston-Jones & Cohen)
         let outcome = r[1] + r[2];
+        self.frustration -= self.frustration / 16;
+        self.report.frustration = self.frustration;
         self.rate_fast += (outcome - self.rate_fast) / 16;
         self.rate_slow += (outcome - self.rate_slow) / 256;
         let tonic = if self.cfg.tonic {
@@ -843,7 +865,9 @@ impl Mind {
         self.report.tonic = tonic;
         self.report.rate_act = self.rate_act;
         // curiosity: where the cortex's goals are getting better, choices loosen a little
-        self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2) + tonic;
+        // frustration widens the choices (extinction-induced variability)
+        let varied = if self.cfg.frustration { (self.frustration / (ONE as i32 / 8)).clamp(0, 6) } else { 0 };
+        self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2) + tonic + varied;
         let acts = self.choose(&ids);
         self.bg.extra_noise = 0;
         self.bg.set_view(None);
@@ -1133,6 +1157,10 @@ impl Mind {
             if self.cfg.pit {
                 let v = self.amy.cue_value();
                 self.bg.release = brake - (v / (ONE as i32 / 4)).clamp(-2, 2);
+            }
+            // frustration lowers it too (the extinction burst)
+            if self.cfg.frustration {
+                self.bg.release -= (self.frustration / (ONE as i32 / 4)).clamp(0, 2);
             }
             let offer: Vec<Vec<Vec<usize>>> = cands.iter().map(|c| vec![c.1.clone()]).collect();
             let Some(i) = self.bg.choose_among(loop_ch, &offer, true) else {

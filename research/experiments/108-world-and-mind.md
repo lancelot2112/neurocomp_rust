@@ -383,6 +383,119 @@ is turning "the light is worth something" into "click when the light is on". The
 3. Sustained sensory state, and a learned gain per input group, in the striatum's context.
 4. Then 3–5 seeds and more trials.
 
+### What was missing, tried in order; coverage; affective touch; why acting dies out
+**What was added, in order.** Each has a switch.
+1. **A tonic level** (`MIND_TONIC`): fast and slow averages of the outcomes. Where the recent ones
+   fall below the long-run ones, or nothing has paid lately, the striatum's choices get extra noise
+   (exploration rises when utility falls; Aston-Jones & Cohen 2005; tonic dopamine, Niv et al.
+   2007). Acting costs a little effort again (1/32 per act, `MIND_EFFORT`).
+2. **Withholding as a choice** (`MIND_NOGO`): a candidate a loop held back is recorded, so the
+   dopamine that follows can train it. The first version grew no-go on a burst ("holding back was
+   right"). That is the reverse of D2 plasticity. **Corrected:** only the held-back candidate's
+   no-go (D2) cells change; a dip potentiates them, a burst depresses them; the go cells were
+   silent and do not change (Shen et al. 2008; Frank 2005).
+3. **Sustained sensory state and salience gain** (`MIND_SALIENCE`): the motor loops see every
+   sense's current code, not only onsets. A group the amygdala or the orbitofrontal learner values
+   is repeated in the striatum's context, up to four times, so a predictive cue claims more of the
+   64 bits.
+
+**Why the light was not seen.** The eye area's layer 4 codes the whole frame with its 32
+most-driven cells, and recruits only when fewer than 16 fire. The cursor is always in view and
+already has its cells. So when the light came on, the eye's code kept 29.5–32 of its 32 cells:
+the light had no cells of its own. Only the seen-acts area (onsets) coded it, for one step. The
+tone, heard alone, always had a clean code; that is why the Pavlovian probe worked and the
+instrumental one did not.
+- **The fix: coverage in the senses' layer 4** (`MIND_COVERAGE`). Input left uncovered by the
+  fired cells' synapses (a quarter or more) recruits cells on that part alone, and the winners grow
+  with the input (k to 4k), as divisive normalization lets more input drive more cells. The light
+  now adds about 30 cells: the eye's code goes from 32 to 61–65, keeping the cursor's 30–32.
+- **Later:** a retinotopic eye, so things in different places have separate cells and local
+  competition.
+
+**Affective touch instead of a smile.** The smile was an innate detector reading a pattern in the
+presence sense: a separate path.
+- **It is now a sense of its own.** A slow, gentle stroke on the skin (the stimulus C-tactile
+  afferents respond to) activates a run of neighbouring receptors on the skin's map.
+- **It goes through its own area and column,** like any sense.
+- **Its value is the receptor line's own activity:** a labelled line, as sweet taste's or pain's.
+- **Only another person can give it.** This body's one effector moves a mouse and cannot reach its
+  own skin. In the brain, touch one makes oneself is attenuated by the efference copy (one cannot
+  tickle oneself, Blakemore et al. 1998), though some hedonic touch is not (genital sensation), so
+  a body that can reach its own skin would need that attenuation.
+
+**Results, instrumental** (600 trials; clicks per trial in the window, light / none, by block of
+100)
+
+| version | seed | 0–100 | 100–200 | 200–300 | 300–400 | 400–500 | 500–600 |
+|---|---|---|---|---|---|---|---|
+| tonic level | 0 | 0.10/0.18 | 0.22/0.24 | 0.53/0.40 | 0.61/0.89 | 0.76/0.64 | 0.12/0.17 |
+| tonic level | 1 | 0.15/0.15 | 0.28/0.34 | 0.67/1.11 | 0.80/0.87 | 0.30/1.16 | 0.22/1.13 |
+| tonic level | 2 | 0.30/0.35 | 0.84/0.61 | 0.45/0.38 | 0.00/0.00 | 0.00/0.00 | 0.00/0.00 |
+| + withholding (first rule) | 0–2 | | | | | | dies out on all three by block 4–5 |
+| + salience | 0 | 0.06/0.04 | 0.06/0.02 | 0.00/0.00 | … | | 0.00/0.00 |
+| + salience | 1 | 0.15/0.06 | **0.70/0.00** | **0.91/0.04** | **0.96/0.02** | **0.88/0.00** | 0.41/0.07 |
+| + salience | 2 | 0.07/0.12 | 0.24/0.24 | 0.86/0.57 | 0.76/0.76 | 0.48/0.26 | 0.00/0.00 |
+| + coverage, affective touch | 0 | 0.20/0.09 | 0.41/0.00 | **0.68/0.00** | 0.06/0.00 | 0.00/0.00 | 0.10/0.12 |
+| + coverage, affective touch | 1 | 0.15/0.24 | 0.25/0.13 | **0.79/0.00** | 0.66/0.11 | **0.94/0.00** | **0.93/0.03** |
+| + coverage, affective touch | 2 | 0.07/0.13 | 0.38/0.15 | 0.78/0.51 | 0.88/0.79 | 0.91/0.81 | 0.92/0.96 |
+| + coverage, affective touch | 3 | 0.13/0.16 | 0.10/0.04 | 0.00/0.00 | 0.02/0.00 | 0.00/0.00 | 0.15/0.00 |
+| + coverage, affective touch | 4 | 0.23/0.33 | 0.29/0.69 | 0.56/0.64 | 0.35/0.46 | 0.21/0.38 | 0.83/0.28 |
+| + the withhold rule corrected | 0 | 0.23/0.15 | 0.49/0.49 | 0.46/0.42 | 0.42/0.56 | 0.49/0.21 | **0.80/0.00** |
+| + the withhold rule corrected | 1 | 0.04/0.15 | 0.06/0.11 | 0.02/0.00 | 0.02/0.00 | 0.00/0.00 | 0.00/0.00 |
+| + the withhold rule corrected | 2 | 0.11/0.09 | 0.00/0.02 | 0.00/0.00 | 0.00/0.00 | 0.00/0.00 | 0.00/0.00 |
+| + the withhold rule corrected | 3 | 0.12/0.12 | 0.08/0.06 | 0.17/0.02 | **0.80/0.00** | 0.54/0.33 | 0.23/0.27 |
+| + the withhold rule corrected | 4 | 0.08/0.23 | **0.52/0.11** | **0.75/0.16** | **1.05/0.00** | 0.52/0.28 | 0.00/0.00 |
+
+- **The mind now learns to click for the light.** Clicks with the light and almost none without
+  (0.70–1.05 against 0.00–0.04), on one seed of three with salience, and on three or four of five
+  seeds with coverage, for at least a block.
+- **It does not keep it.** Only one run held it to the end (coverage, seed 1: 0.94 and 0.93
+  against 0.00 and 0.03). The others lose clicking altogether, or lose the discrimination.
+
+**Results, Pavlovian** (with coverage and affective touch; last 100 trials)
+- **Seeds 0 and 2: clean.**
+  - Dopamine at the tone: CS+ +0.45 and +0.22, against CS− −0.14 and −0.08.
+  - Dopamine at the touch: fell to +0.14 and +0.07.
+  - The amygdala's prediction: 1.00 against 0.00.
+- **Seed 1 failed.** It acted on 94% of steps, and the amygdala saw only 1.7 onsets per step.
+
+**Why acting dies out.** The hand loop's go and no-go cells and the dopamine, per block.
+- **Under the first withhold rule, it was not plain depression.** No-go led go by 10–25% on a seed
+  that learned and on one that died alike. On the seed that died, the hand's gate froze (137 go,
+  46 no-go cells from block 2 on), because once the loop offered nothing the gate had no choices to
+  learn from. The dopamine grew tenfold while the mind barely acted.
+- **Under the corrected rule, it is depression in the indirect pathway: no-go runs away.**
+
+  | seed | outcome | hand loop go / no-go cells at the end | dopamine per step (dips, bursts) at the worst |
+  |---|---|---|---|
+  | 1 | died | 92 / **2,048** (the cap) | −0.23, +0.24 |
+  | 2 | died | 105 / 617 | −0.06, +0.06 |
+  | 4 | learned, then died | 822 / **2,048** | −0.21, +0.22 |
+  | 0 | learned at the end | 1,569 / 1,582 | −0.11, +0.12 |
+
+  Two things combine.
+  - **The critic makes large errors when nothing is happening.** Its value is large (0.6 to over
+    1.0) and its state keeps changing (the hippocampus's offers, working memory, the attended trace,
+    effort), so V(s′) − V(s) swings by 0.1–0.2 per step with no outcome at all. A quiet mind gets
+    the largest dips.
+  - **The withhold rule is asymmetric.** A dip recruits new no-go cells for every candidate held
+    back on every loop, a few per step. A burst only moves the no-go cells that fired. Withholds
+    are most of all choices. So each spurious dip adds no-go cells, and bursts cannot take them
+    away at the same rate. The no-go pool fills to its cap (2,048) and the hand cannot act again.
+
+**Next.**
+1. **The critic's noise:** a quiet step should have no error.
+   - The critic learns the value of states it keeps visiting with nothing happening (it learns only
+     the latest state, TD(0); it should reach zero error there).
+   - Or keep value off states that predict nothing (the limbic view's noise: recall and working
+     memory changing).
+2. **Symmetric no-go plasticity:**
+   - A burst depresses as much as a dip potentiates.
+   - New no-go cells come only where none fired (as go recruitment does).
+   - Withholds are recorded only at the motor gates, not every column loop.
+3. **Homeostasis:** the go and no-go pools of a loop kept in balance (synaptic scaling), so neither
+   can run to its cap.
+
 **Next (from the first probes).**
 1. **Separate agency from value.** The own-effect signal trains the motor loops (which acts have
    effects) and habituates per act and outcome; the critic learns from outcomes.

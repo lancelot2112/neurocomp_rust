@@ -281,6 +281,10 @@ pub struct Config {
     /// the orbitofrontal value cells read the area's state Z (and the act), not the raw cue
     /// trace (MIND_OFC_VALUE_Z=0 off; needs the column)
     pub ofc_value_z: bool,
+    /// the orbitofrontal area splits on outcome surprise: an outcome badly mispredicted after a
+    /// familiar input, with the cues associable, makes it hold its state now (a new context)
+    /// (MIND_OFC_SPLIT=0 off)
+    pub ofc_split: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -294,7 +298,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -335,6 +339,7 @@ impl Config {
             alpha: on("MIND_ALPHA"),
             ofc_column: on("MIND_OFC_COLUMN"),
             ofc_value_z: on("MIND_OFC_VALUE_Z"),
+            ofc_split: on("MIND_OFC_SPLIT"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -671,7 +676,12 @@ impl Mind {
         // the orbitofrontal area: the cues (the association areas' code), the act just made, the
         // outcome as sensed (affective touch) and the hippocampus's context
         if self.cfg.ofc_column {
-            let z = self.ofc_step(&codes, &acts_now, &recall);
+            let mut z = self.ofc_step(&codes, &acts_now, &recall);
+            // the gate: the cues' associability (with it on), else open
+            let gate = !self.cfg.alpha || self.amy.alpha_now() >= 64;
+            if self.cfg.ofc_split && self.ofc_area.split(gate) {
+                z = self.ofc_area.z();
+            }
             if self.value_z() {
                 let mut feats: Vec<u32> = ones(&z).into_iter().map(|b| b as u32).collect();
                 for (_, f) in &acts_now {

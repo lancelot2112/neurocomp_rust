@@ -12,6 +12,12 @@
 //! - **Holding.** What the area holds (on its tuft, until replaced) is chosen by a loop through
 //!   the basal ganglia and the mediodorsal thalamus, as prefrontal working memory is gated
 //!   (O'Reilly & Frank's PBWM); the loop is the striatum's, learned from dopamine.
+//! - **Splitting on outcome surprise** (`split`): when an input the area expected well is
+//!   followed by an outcome it badly mispredicted, and the cues are associable (a neuromodulatory
+//!   gate: noradrenaline's network reset, Bouret & Sara 2005), the area holds its state now, the
+//!   one that carries the surprising outcome. From then on the same cues meet a different tuft:
+//!   their codes and the outcomes expected of them are learned in a new context, and the cells
+//!   of the old one are not retrained.
 
 use crate::bitvec::BitVector;
 use crate::program::area::Pool;
@@ -48,6 +54,8 @@ pub struct Ofc {
     pub surprise: u32,
     /// how well the latest input was expected by layer 2/3 (`Q16`, the share of its bits)
     pub familiar: u32,
+    /// `familiar` at the step before (when the outcome now checked was predicted)
+    prev_familiar: u32,
     rng: StdRng,
     /// (outcomes checked, right; holds; splits)
     pub stats: (u64, u64, u64, u64),
@@ -65,6 +73,7 @@ impl Ofc {
             last: None,
             surprise: 0,
             familiar: 0,
+            prev_familiar: 0,
             rng: StdRng::seed_from_u64(seed ^ 0x0FC1),
             stats: (0, 0, 0, 0),
         }
@@ -99,6 +108,7 @@ impl Ofc {
             }
         }
         let srcs: Vec<(usize, &BitVector)> = inputs.iter().enumerate().filter(|(_, x)| x.count_ones() > 0).collect();
+        self.prev_familiar = self.familiar;
         let expected = self.col.expected.clone();
         let tuft = self.tuft();
         let code = self.col.sense(&srcs, Some(&tuft), learn, &mut self.rng);
@@ -130,6 +140,22 @@ impl Ofc {
                 self.stats.2 += 1;
             }
         }
+    }
+
+    /// Split on outcome surprise: if the latest outcome was badly mispredicted (at least ¾) after
+    /// an input expected well (at least half) and `gate` is open, hold the state now (a new
+    /// context). Returns whether it split.
+    pub fn split(&mut self, gate: bool) -> bool {
+        let one = crate::fixed::ONE;
+        if gate && self.surprise >= one * 3 / 4 && self.prev_familiar >= one / 2 {
+            let z = self.z();
+            if z.count_ones() > 0 {
+                self.held = z;
+                self.stats.3 += 1;
+                return true;
+            }
+        }
+        false
     }
 
     /// The outcome expected next (Ô), if any.

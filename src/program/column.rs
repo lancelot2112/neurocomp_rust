@@ -34,6 +34,17 @@
 //!   what nothing restores fades. A held bit is restored only for `life` steps after it was
 //!   loaded (the area's persistence; then adaptation lets it go), so what is held is recent.
 //!
+//! - **Held until wrong** (`hold_until_wrong`, with a held population): no fixed persistence. What
+//!   is held stays by its own completion for as long as the predictions made with it hold, and
+//!   is stopped by inhibition: each step the input bits layer 2/3 did not expect drive the
+//!   dendritic (somatostatin) interneurons through facilitating synapses, and the bits it did
+//!   expect relieve them (an opponent count in bit lengths, at least zero). When that inhibition
+//!   reaches the held state's own strength (the bit length of the steps it has been held: what is
+//!   held longer is entrenched), the held population falls silent, and its bits stay adapted for
+//!   as many steps. While something is held, a surprise does not join it (the attractor holds
+//!   against input); silent, the next surprise is loaded and completed by the autoassociative
+//!   map, so the state comes back if what broke the last one has broken one before.
+//!
 //! Both layers learn the same way: a confirmed prediction strengthens the cells that made it;
 //! where nothing predicted the target, a cell is grown for the moment (its tuft on the
 //! context, silent synapses on the input, the target as its output).
@@ -138,6 +149,11 @@ impl Map {
         self.cells.progress()
     }
 
+    /// The latest winner's record: (right, missed) lately.
+    pub fn winner_record(&self) -> Option<(u32, u32)> {
+        self.cells.winner_record()
+    }
+
     /// The cells that fired at the latest prediction.
     pub fn last_fired(&self) -> Vec<usize> {
         self.cells.last_fired()
@@ -226,6 +242,16 @@ pub struct Column {
     pub resized: (u64, u64),
     /// (loads on surprise, loads by the gate) for diagnosis
     pub loads: (u64, u64),
+    /// held until wrong (see the module notes): the switch, the inhibition on the held state,
+    /// the steps it has been held, the steps its last bits stay adapted, and releases so far
+    pub hold_until_wrong: bool,
+    inhib: i32,
+    held_for: u32,
+    adapted_for: u32,
+    adapted: BitVector,
+    pub releases: u64,
+    /// the last prediction's winner record (right, missed lately), if a cell fired
+    record: Option<(u32, u32)>,
     /// topographic output (keep the order): layer 2/3's activity is sent up in layer 4's own
     /// coordinates. Each cell has a home, the layer 4 code it first fired for, and a slot there
     /// (the lowest free: 0 for the first cell for that input, 1, 2, … for cells for the same
@@ -269,7 +295,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, sparse_out: false, minicolumns: std::env::var("MIND_SPARSE_OUT").map_or(false, |v| v == "column"), strict: None, unexpected: BitVector::new(bits, Some(0)), bursting: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), hold_until_wrong: false, inhib: 0, held_for: 0, adapted_for: 0, adapted: BitVector::new(bits, Some(0)), releases: 0, record: None, topo: false, burst: false, sparse_out: false, minicolumns: std::env::var("MIND_SPARSE_OUT").map_or(false, |v| v == "column"), strict: None, unexpected: BitVector::new(bits, Some(0)), bursting: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -313,6 +339,35 @@ impl Column {
             }
         }
         self.surprise = 0;
+        if self.hold_until_wrong {
+            self.adapted_for = self.adapted_for.saturating_sub(1);
+            if self.adapted_for == 0 {
+                self.adapted = BitVector::new(self.bits, Some(0));
+            }
+            if self.held.count_ones() > 0 {
+                self.held_for = self.held_for.saturating_add(1);
+                // the winner's prediction, weighed by its own record: a miss by a cell that is
+                // usually right is evidence (its log-odds of being right, in bit lengths), a hit
+                // takes as much off; a cell right half the time (what cannot be known: which
+                // light comes next, a coin-flip payout) is no evidence either way
+                let bitlen = |x: u32| 32 - x.leading_zeros() as i32;
+                if let (Some((right, missed)), Some(e)) = (self.record, self.strict.as_ref()) {
+                    let odds = (bitlen(right) - bitlen(missed)).max(0);
+                    let hit = overlap(e, input) * 2 >= e.count_ones() as u32;
+                    self.inhib = (self.inhib + if hit { -odds } else { odds }).max(0);
+                }
+                let strength = bitlen(self.held_for);
+                if self.inhib >= strength {
+                    // the held state falls silent; its bits adapt for as long as it held
+                    self.adapted = self.held.clone();
+                    self.adapted_for = strength as u32;
+                    self.held = BitVector::new(self.bits, Some(0));
+                    self.inhib = 0;
+                    self.held_for = 0;
+                    self.releases += 1;
+                }
+            }
+        }
         // maintained: each held bit ages; one past the area's persistence (`life`) adapts and
         // goes at random (half a step), and is not restored. The rest lose a random sixteenth
         // (noise), and the autoassociative map restores each learned pattern still mostly held
@@ -323,7 +378,7 @@ impl Column {
             let mut young = self.held.clone();
             let mut old = BitVector::new(self.bits, Some(0));
             for b in 0..self.bits {
-                if self.held.bit_get(b) {
+                if self.held.bit_get(b) && !self.hold_until_wrong {
                     self.age[b] = self.age[b].saturating_add(1);
                     if self.age[b] > life {
                         young.bit_clear(b);
@@ -382,7 +437,7 @@ impl Column {
                 None => input.as_words().to_vec(),
             };
             let n_novel: u32 = novel.iter().map(|w| w.count_ones()).sum();
-            if n_novel < 4 {
+            if n_novel < 4 || (self.hold_until_wrong && self.held.count_ones() > 0) {
                 None
             } else if self.select {
                 // with a selector (the claustrum), the surprise is only proposed; it is held if
@@ -404,7 +459,32 @@ impl Column {
                 Some(Self::sparse(&novel, ITEM, rng))
             }
         };
+        let item = item.map(|it| {
+            if self.hold_until_wrong && self.adapted_for > 0 {
+                BitVector::from_words(it.as_words().iter().zip(self.adapted.as_words()).map(|(a, b)| a & !b).collect())
+            } else {
+                it
+            }
+        });
         if let Some(it) = item {
+            if self.hold_until_wrong && !gate {
+                // silent: the loaded surprise completes to a state held before, if it was one
+                let mut it = it;
+                if self.auto.predict(&it, None, None).is_some() {
+                    for (p, _) in self.auto.proposals() {
+                        if overlap(&p, &it) * 2 >= it.count_ones() as u32 {
+                            for (w, y) in it.as_words_mut().iter_mut().zip(p.as_words()) {
+                                *w |= y;
+                            }
+                            break;
+                        }
+                    }
+                }
+                self.held_for = 0;
+                self.inhib = 0;
+                self.load(it, learn, rng);
+                return BitVector::from_words(input.as_words().iter().zip(self.held.as_words()).map(|(a, b)| a | b).collect());
+            }
             if gate {
                 // the gate updates: what drives the area now replaces what was held (the basal
                 // ganglia's gating of prefrontal cortex; a gate that opens often holds only the
@@ -675,6 +755,7 @@ impl Column {
             }
             self.expected = self.l23.predict(&self.code, Some(&c), None);
             self.strict = self.expected.clone();
+            self.record = self.l23.winner_record();
             if self.superpose {
                 if let Some(e) = self.expected.as_mut() {
                     let props = self.l23.proposals();

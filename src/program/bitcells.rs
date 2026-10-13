@@ -67,8 +67,10 @@ struct Cell {
     out: Vec<u32>,
     trace: u32,
     misses: u16,
-    /// the cell's last 16 predictions as winner, newest in bit 0: 1 = missed
+    /// the cell's last 16 predictions as winner, newest in bit 0: 1 = missed; and how many of
+    /// those 16 it has made (a young cell's empty record is not a good one)
     hist: u16,
+    shown: u8,
     bursty: u32,
     /// present basal synapses, active apical synapses (kept as the masks change)
     nb: u32,
@@ -456,6 +458,18 @@ impl BitCells {
         })
     }
 
+    /// The latest winner's record: (its right, its missed) of the predictions it made as winner
+    /// lately (at most 16). None when nothing fired.
+    pub fn winner_record(&self) -> Option<(u32, u32)> {
+        self.last_win.map(|c| {
+            let cell = &self.cells[c];
+            let n = cell.shown as u32;
+            let mask = if n >= 16 { u16::MAX } else { (1u16 << n) - 1 };
+            let missed = (cell.hist & mask).count_ones();
+            (n - missed, missed)
+        })
+    }
+
     /// The cells that fired (spike or burst) at the latest prediction: layer 5's output
     /// population, as the pons receives it.
     pub fn last_fired(&self) -> Vec<usize> {
@@ -687,6 +701,7 @@ impl BitCells {
         cell.trace = ONE / 2;
         cell.misses = 0;
         cell.hist = 0;
+        cell.shown = 0;
         cell.prime = 0;
         cell.bursty = 0;
         cell.worth = 0;
@@ -723,6 +738,7 @@ impl BitCells {
             let missed = !predicts(&self.cells[wc]);
             let cell = &mut self.cells[wc];
             cell.hist = cell.hist << 1 | missed as u16;
+            cell.shown = (cell.shown + 1).min(16);
         }
         if let Some((wc, _, burst)) = w {
             // one plasticity event: one random word; its bytes index the synapses changed

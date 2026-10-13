@@ -414,11 +414,19 @@ pub struct Config {
     /// use) breaks ties, and inhibition lets the strongest through; a new assembly is recruited
     /// when unexplained acts outnumber the best one's evidence (Gershman, Blei & Niv 2010, as a circuit)
     pub latent: bool,
+    /// the latent-cause model as attractors (`MIND_LATENT=2`; Deco & Rolls 2005): the active
+    /// context assembly holds itself by recurrent excitation (no leak, no race with rivals);
+    /// nonreward (outcomes the active one did not predict) integrates over about 16 acts and,
+    /// past half that ceiling, drives the interneurons that silence it; with the slate cleared,
+    /// the stored assembly the outcomes now fit takes over (the silenced one adapted, held back
+    /// for 16 acts), and if none fits while unexplained acts integrate past the same half, new
+    /// cells are recruited
+    pub attractor: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false, latent: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false, latent: false, attractor: false }
     }
 }
 
@@ -485,7 +493,8 @@ impl Config {
             phase: std::env::var("MIND_PHASE").map_or(false, |v| v == "1"),
             explore: std::env::var("MIND_EXPLORE").map_or(false, |v| v == "1"),
             ilam: std::env::var("MIND_ILAM").map_or(false, |v| v == "1"),
-            latent: std::env::var("MIND_LATENT").map_or(false, |v| v == "1"),
+            latent: std::env::var("MIND_LATENT").map_or(false, |v| v == "1" || v == "2"),
+            attractor: std::env::var("MIND_LATENT").map_or(false, |v| v == "2"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -626,6 +635,13 @@ pub struct Mind {
     lc_uses: Vec<u32>,
     lc_new: i32,
     lc_recent: Vec<i32>,
+    /// the attractor form: the outcomes on each eye bit lately (sets a 16-act recency window);
+    /// the nonreward the active assembly has gathered; whether it has been silenced and not yet
+    /// replaced; the assembly silenced last and the acts until its adaptation wears off
+    lc_seen: Vec<u32>,
+    lc_nonreward: i32,
+    lc_unsettled: bool,
+    lc_adapted: (usize, u32),
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
@@ -834,6 +850,10 @@ impl Mind {
             lc_uses: vec![0],
             lc_new: 0,
             lc_recent: vec![-1; BITS],
+            lc_seen: vec![0; BITS],
+            lc_nonreward: 0,
+            lc_unsettled: false,
+            lc_adapted: (0, 0),
             gain_open: Vec::new(),
             eye_now: Vec::new(),
             chosen_q: Vec::new(),
@@ -1617,6 +1637,93 @@ impl Mind {
         self.lc_uses[to] += 1;
     }
 
+    /// How a context assembly answers an act: `Some(true)` when its best locked-in cue in view
+    /// paid lately within a factor of two of its worth, `Some(false)` when outside it, `None` when
+    /// it knows nothing in view or that cue is still being learned (no prediction to break).
+    fn lc_answer(&self, c: usize, bits: &[usize]) -> Option<bool> {
+        let vs = self.gain_v.get(c)?;
+        let b = bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b])?;
+        let (v, n) = (vs[b], self.gain_n[c][b] as i32);
+        let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
+        if 2 + n < window {
+            return None;
+        }
+        let r = self.lc_recent[b];
+        Some(2 * r >= v && r <= 2 * v)
+    }
+
+    /// The latent-cause model as attractors (see `MindConfig::attractor`).
+    fn latent_attract(&mut self, bits: &[usize], got: i32) {
+        // what each cue in view paid lately: over the last 16 acts at it (a fixed time constant,
+        // the same for every assembly)
+        for &b in bits {
+            let step = (2 + self.lc_seen[b] as i32).min(16);
+            self.lc_seen[b] = self.lc_seen[b].saturating_add(1);
+            let r = &mut self.lc_recent[b];
+            *r = if *r < 0 { got } else { *r + (got - *r) / step };
+        }
+        const TAU: i32 = 16;
+        let half = TAU / 2 * ONE as i32;
+        let n_ctx = self.lc_score.len().max(self.gain_v.len()).max(self.phase_now + 1);
+        while self.lc_score.len() < n_ctx {
+            self.lc_score.push(0);
+            self.lc_uses.push(0);
+        }
+        let answers: Vec<Option<bool>> = (0..n_ctx).map(|c| self.lc_answer(c, bits)).collect();
+        // each assembly's input drive: a leaky count of the acts it predicted (synaptic integration)
+        for c in 0..n_ctx {
+            self.lc_score[c] += (if answers[c] == Some(true) { ONE as i32 } else { 0 }) - self.lc_score[c] / TAU;
+        }
+        self.lc_adapted.1 = self.lc_adapted.1.saturating_sub(1);
+        let cur = self.phase_now;
+        let mut to = cur;
+        if !self.lc_unsettled {
+            // the active assembly holds; only nonreward it did not predict can silence it
+            self.lc_nonreward += (if answers[cur] == Some(false) { ONE as i32 } else { 0 }) - self.lc_nonreward / TAU;
+            if self.lc_nonreward >= half {
+                self.lc_unsettled = true;
+                self.lc_nonreward = 0;
+                self.lc_new = 0;
+                self.lc_adapted = (cur, TAU as u32);
+            }
+        }
+        if self.lc_unsettled {
+            // settling: a stored assembly the outcomes now fit completes (the adapted one only
+            // once its adaptation has worn off), the one with the most input drive first
+            let free = |c: usize| c != self.lc_adapted.0 || self.lc_adapted.1 == 0;
+            let fit = (0..n_ctx).filter(|&c| answers[c] == Some(true) && free(c)).max_by_key(|&c| self.lc_score[c]);
+            self.lc_new += (if fit.is_none() { ONE as i32 } else { 0 }) - self.lc_new / TAU;
+            if let Some(c) = fit {
+                to = c;
+                self.lc_unsettled = false;
+            } else if self.lc_new >= half {
+                // nothing stored explains what happens now: new cells
+                self.phase_count = self.phase_count.max(n_ctx) + 1;
+                self.lc_score.push(0);
+                self.lc_uses.push(0);
+                to = n_ctx;
+                self.lc_unsettled = false;
+            }
+            if !self.lc_unsettled {
+                self.lc_new = 0;
+            }
+        }
+        if std::env::var("MIND_DEBUG_PHASE").is_ok() {
+            eprintln!("attractor: got {:.2} answers {:?} drive {:?} nonreward {} unsettled {} new {} -> {to}", got as f64 / ONE as f64, answers, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_nonreward / ONE as i32, self.lc_unsettled, self.lc_new / ONE as i32);
+        }
+        if to != self.phase_now {
+            let from = self.phase_now;
+            self.phase_left.retain(|&c| c != from && c != to);
+            self.phase_left.insert(0, from);
+            self.phase_now = to;
+            self.phase_switches += 1;
+            self.ilam_open = true;
+        } else {
+            self.ilam_open = false;
+        }
+        self.lc_uses[to] += 1;
+    }
+
     /// The phase state's current context.
     pub fn phase_context(&self) -> usize {
         self.phase_now
@@ -1669,7 +1776,9 @@ impl Mind {
         self.gain_open.retain(|w| w.0 > 0);
         for (got, bits) in done {
             let got = got.clamp(0, ONE as i32);
-            if self.cfg.phase && self.cfg.latent {
+            if self.cfg.phase && self.cfg.attractor {
+                self.latent_attract(&bits, got);
+            } else if self.cfg.phase && self.cfg.latent {
                 self.latent_assign(&bits, got);
             }
             let ctx = self.phase_now;

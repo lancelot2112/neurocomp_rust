@@ -190,6 +190,8 @@ const OFC_HELD_OFFSET: usize = 164 * BITS;
 const STRIATAL_GROUPS: usize = SLOTS.len() + MAX_PAIRS + 20;
 /// the full association column's activity, at a fixed place (its column id moves as pairs grow)
 const TOP_OFFSET: usize = 168 * BITS;
+/// the orbitofrontal phase state (which hidden context the outcomes say this is)
+const PHASE_OFFSET: usize = 166 * BITS;
 /// the orbitofrontal area's hold loop (hold the state or not)
 const OFC_HOLD_CHANNEL: usize = 300;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
@@ -386,11 +388,11 @@ pub struct Config {
     /// bit worth half the mean half the time)
     pub l6_gain: bool,
     /// a phase state in the orbitofrontal cortex from runs of outcomes (`MIND_PHASE=1`): when
-    /// recent payout falls below half of what the context expects, the state moves to the context left most
-    /// recently (or, when every known one has been tried, to a new one); its code is on the
-    /// association columns' tufts and sets the eye's layer 6 gain (each context its own worths),
-    /// so it modulates what the cortex passes on and bursts, not the striatum's input itself (a
-    /// change of context does not silence the habits the striatum has learned)
+    /// a cue's recent payout falls below half of its worth in the context, the state moves to the context left most
+    /// recently (or, when every known one has been tried, to a new one); each cue is judged on
+    /// its own (what clicks at it paid lately against its locked-in worth in the context); the
+    /// context's code is a group in the striatum's view alongside the others, on the association
+    /// columns' tufts, and sets the eye's layer 6 gain (each context its own worths)
     pub phase: bool,
 }
 
@@ -581,17 +583,14 @@ pub struct Mind {
     /// 1/(2 + that), so it learns fast at first and then locks in (noise no longer moves it)
     gain_n: Vec<Vec<u16>>,
     /// the phase state: the current context, the contexts in the order last left (most recent
-    /// first), those tried since outcomes last fitted, how many there are, the recent payout of
-    /// the hand's acts and the current context's rate (`Q16`), and how many switches
+    /// first), those tried since outcomes last fitted, how many there are, and how many switches
     phase_now: usize,
     phase_left: Vec<usize>,
     phase_tried: Vec<usize>,
     phase_count: usize,
-    /// each context's locked-in payout rate for the hand's acts (`Q16`, −1: none yet) and how
-    /// many acts it has learned from (its rate moves at 1/(2 + that))
-    phase_rate: Vec<(i32, u32)>,
-    surprise_fast: i32,
-    surprise_slow: i32,
+    /// each context's recent payout per eye bit (`Q16`): what clicks with the bit in view paid
+    /// lately, against its locked-in worth
+    gain_r: Vec<Vec<i32>>,
     pub phase_switches: u32,
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
@@ -794,9 +793,7 @@ impl Mind {
             phase_left: Vec::new(),
             phase_tried: Vec::new(),
             phase_count: 1,
-            phase_rate: vec![(-1, 0)],
-            surprise_fast: 0,
-            surprise_slow: 0,
+            gain_r: vec![vec![-1; BITS]],
             phase_switches: 0,
             gain_open: Vec::new(),
             eye_now: Vec::new(),
@@ -1292,6 +1289,10 @@ impl Mind {
         if self.cfg.ofc_column {
             groups.extend(self.ofc_groups());
         }
+        // the phase context, alongside the other groups (habits in their regions stay)
+        if self.cfg.phase {
+            groups.push(self.phase_code().into_iter().map(|b| b + PHASE_OFFSET).collect());
+        }
         if self.cfg.efference {
             groups.push(self.efference_now.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());
             let g: Vec<usize> = self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect();
@@ -1423,38 +1424,23 @@ impl Mind {
         vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
     }
 
-    /// The phase state, one hand act closed: what it paid, against what acts pay in the current
-    /// context. Each context learns its payout rate Hebbian-style, at 1/(2 + the acts it has
-    /// learned from): fast at first, then locked in, so noise does not move it. Recent payout is
-    /// averaged over about 16 expected rewards (16 over the context's rate, in acts), starting from
-    /// the context's own rate when it is entered (or from the first outcome in a new one). When
-    /// recent payout falls below half of the context's rate, the context is wrong: the state moves to the
-    /// context left most recently not yet tried, else to a new one. Once recent payout is back at
-    /// half or more, the trying is over.
-    fn phase_step(&mut self, got: i32) {
+    /// The phase state, one hand act closed at cue bit `b` (the best-worth bit in view): when
+    /// what clicks at that cue paid lately falls below half of the cue's locked-in worth in this
+    /// context, the context is wrong for it (each cue judged on its own, so a cue that stopped
+    /// paying is seen even while another pays). The state moves to the context left most
+    /// recently not yet tried, else to a new one; the recent payouts of the context entered
+    /// start at its worths (it is assumed to fit until shown otherwise). A cue paying half or more
+    /// of its worth again ends the trying.
+    fn phase_check(&mut self, b: usize) {
         let ctx = self.phase_now;
-        while self.phase_rate.len() <= ctx {
-            self.phase_rate.push((-1, 0));
-        }
-        let (rate, n) = self.phase_rate[ctx];
-        // recent payout moves at a sixteenth, or as fast as the context's own rate while that is
-        // faster: until the context has locked in past the recent window the two agree, so only
-        // a settled context can be found wrong
-        // (the window spans about 16 expected rewards: 16 over the context's rate, so rare rewards
-        // are averaged over as many acts as frequent ones need)
-        let window = if rate > 0 { (16 * ONE as i64 / rate as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
-        let step = (2 + n as i32).min(window);
-        self.surprise_fast = if rate < 0 && n == 0 { got } else { self.surprise_fast + (got - self.surprise_fast) / step };
-        let new_rate = if rate < 0 { got } else { rate + (got - rate) / (2 + n as i32) };
-        self.phase_rate[ctx] = (new_rate, n + 1);
-        self.surprise_slow = new_rate;
+        let (v, r) = (self.gain_v[ctx][b], self.gain_r[ctx][b]);
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("phase: got {:.3} recent {:.3} context rate {:.3} acts {} context {}", got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, new_rate as f64 / ONE as f64, n + 1, ctx);
+            eprintln!("phase: cue {b} worth {:.3} recent {:.3} acts {} context {ctx}", v as f64 / ONE as f64, r as f64 / ONE as f64, self.gain_n[ctx][b]);
         }
-        if 2 * self.surprise_fast >= new_rate {
+        if 2 * r >= v {
             self.phase_tried.clear();
         }
-        if new_rate > 0 && 2 * self.surprise_fast < new_rate {
+        if v > 0 && 2 * r < v {
             let from = self.phase_now;
             self.phase_tried.push(from);
             let next = self.phase_left.iter().copied().find(|c| !self.phase_tried.contains(c));
@@ -1465,8 +1451,9 @@ impl Mind {
             self.phase_left.retain(|&c| c != from && c != to);
             self.phase_left.insert(0, from);
             self.phase_now = to;
-            // the context entered is assumed to fit: recent payout starts at its own rate
-            self.surprise_fast = self.phase_rate.get(to).map_or(0, |r| r.0.max(0));
+            if let (Some(rs), Some(vs)) = (self.gain_r.get_mut(to), self.gain_v.get(to)) {
+                rs.copy_from_slice(vs);
+            }
             self.phase_switches += 1;
         }
     }
@@ -1527,21 +1514,27 @@ impl Mind {
             while self.gain_v.len() <= ctx {
                 self.gain_v.push(vec![-1; BITS]);
                 self.gain_n.push(vec![0; BITS]);
+                self.gain_r.push(vec![-1; BITS]);
             }
-            // what this context expected of the act: the best worth among the bits in view (as a
+            // the cue this act was made at: the bit in view with the best locked-in worth (as a
             // value cell answers to its cue, not to the background)
-            let expected = bits.iter().map(|&b| self.gain_v[ctx][b]).filter(|&v| v >= 0).max();
+            let cue = bits.iter().copied().filter(|&b| self.gain_v[ctx][b] >= 0).max_by_key(|&b| self.gain_v[ctx][b]);
             // (without contexts, one worth must follow every change: an eighth, not locking in)
             let lock = self.cfg.phase;
             for &b in &bits {
-                let (v, n) = (&mut self.gain_v[ctx][b], &mut self.gain_n[ctx][b]);
+                let (v, n, r) = (&mut self.gain_v[ctx][b], &mut self.gain_n[ctx][b], &mut self.gain_r[ctx][b]);
                 let rate = if lock { 2 + *n as i32 } else { 8 };
+                // recent payout: as fast as the worth while that is faster, else over about 16
+                // expected rewards (16 over the worth, in acts)
+                let window = if *v > 0 { (16 * ONE as i64 / *v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
+                *r = if *r < 0 { got } else { *r + (got - *r) / rate.min(window) };
                 *v = if *v < 0 { got } else { *v + (got - *v) / rate };
                 *n = n.saturating_add(1);
             }
             if self.cfg.phase {
-                let _ = expected;
-                self.phase_step(got);
+                if let Some(b) = cue {
+                    self.phase_check(b);
+                }
             }
         }
     }

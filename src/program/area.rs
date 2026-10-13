@@ -157,6 +157,8 @@ pub struct Pool {
     last_on: Vec<u32>,
     /// the step of the last sleep (recycling): ages and recurrence are counted in sleep periods
     slept_at: u64,
+    /// the steps of the recent sleeps (the last `AGE_SLEEPS`): a cell's age is counted in them
+    sleeps: Vec<u64>,
     /// cells recruited by coverage on a salient step, by coverage of recurring input, and for
     /// input not covered at all
     pub why: (u64, u64, u64),
@@ -201,6 +203,7 @@ impl Pool {
             run: Vec::new(),
             last_on: Vec::new(),
             slept_at: 0,
+            sleeps: Vec::new(),
         };
         pool.scatter()
     }
@@ -637,7 +640,7 @@ impl Pool {
 
     /// A slot for a new cell: a new one while there is room, else the stalest of 8 sampled.
     /// A cell for new input: a free one, a new one while the pool has room, else (of 8 sampled)
-    /// the one unused longest; by need only if that one has gone unused since before the last sleep (a
+    /// the one unused longest; by need only if that one has gone unused for `AGE_SLEEPS` sleeps (a
     /// cell for something that comes now and then is not evicted for what comes every step;
     /// the input waits for sleep to free room). None: no room.
     fn place(&mut self) -> Option<usize> {
@@ -647,7 +650,7 @@ impl Pool {
                 let c = (self.next() as usize) % self.syn.len();
                 oldest = oldest.min(self.last[c]);
             }
-            if oldest >= self.slept_at {
+            if oldest >= self.aged() {
                 return None;
             }
         }
@@ -683,14 +686,14 @@ impl Pool {
         c
     }
 
-    /// Sleep's recycling: cells recruited before the last sleep that fired fewer than `min` times
+    /// Sleep's recycling: cells recruited `AGE_SLEEPS` sleeps ago or more that fired fewer than `min` times
     /// since it lose their synapses and are free for new input; every cell's count then halves
     /// (use is weighed over the last few sleeps). Returns how many.
     pub fn recycle(&mut self, min: u32) -> usize {
         let mut n = 0;
         for c in 0..self.syn.len() {
             // a cell recruited since the last sleep has not had a sleep period to be used yet
-            if self.syn[c].is_empty() || self.born[c] >= self.slept_at {
+            if self.syn[c].is_empty() || self.born[c] >= self.aged() {
                 continue;
             }
             if self.uses[c] < min {
@@ -705,6 +708,10 @@ impl Pool {
         self.recycled += n as u64;
         // a new sleep period: recurrence so far carries over at half
         self.slept_at = self.tick;
+        self.sleeps.push(self.tick);
+        if self.sleeps.len() > AGE_SLEEPS {
+            self.sleeps.remove(0);
+        }
         for t in self.tags.iter_mut() {
             *t >>= 1;
         }
@@ -719,6 +726,16 @@ impl Pool {
     /// When the cell behind output bit `b` was last recruited (its birth step; a reused index is a new cell).
     pub fn born_at(&self, b: usize) -> u64 {
         self.born.get(self.cell_of(b)).copied().unwrap_or(0)
+    }
+
+    /// The step before which a cell counts as old: the earliest of the last `AGE_SLEEPS` sleeps
+    /// (before that many sleeps, none is old).
+    fn aged(&self) -> u64 {
+        if self.sleeps.len() < AGE_SLEEPS {
+            0
+        } else {
+            self.sleeps[0]
+        }
     }
 
     /// Cells in use (recruited and not recycled).
@@ -891,6 +908,9 @@ const CAP: usize = 8192;
 
 /// Room for this many pairwise association areas as sources of the full one.
 pub const MAX_PAIRS: usize = 16;
+/// A layer 4 cell is old (it may be recycled, or evicted for new input) once this many sleeps
+/// have passed since it was recruited, or last used.
+pub const AGE_SLEEPS: usize = 4;
 
 impl Brain {
     /// Areas of `bits` cells each, `k` active.

@@ -1654,10 +1654,13 @@ impl Mind {
 
     /// The latent-cause model as attractors (see `MindConfig::attractor`).
     fn latent_attract(&mut self, bits: &[usize], got: i32) {
-        // what each cue in view paid lately: over the last 16 acts at it (a fixed time constant,
-        // the same for every assembly)
+        // what each cue in view paid lately: over about 16 expected rewards at it, at the best
+        // worth any assembly gives it (shared by all, so not slowed by the active one's
+        // indifference to the cue)
         for &b in bits {
-            let step = (2 + self.lc_seen[b] as i32).min(16);
+            let v = self.gain_v.iter().map(|vs| vs[b]).max().unwrap_or(-1);
+            let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
+            let step = (2 + self.lc_seen[b].min(i32::MAX as u32 / 2) as i32).min(window);
             self.lc_seen[b] = self.lc_seen[b].saturating_add(1);
             let r = &mut self.lc_recent[b];
             *r = if *r < 0 { got } else { *r + (got - *r) / step };

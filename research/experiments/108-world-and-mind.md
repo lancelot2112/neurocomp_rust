@@ -1324,3 +1324,83 @@ not yet use it.
    outcome should reach the gate's choice at the cue step, three to five steps back. That needs
    either a longer eligibility for the gate's loop, or the held state itself being in the hand
    loop's view, so that the credit lands where the choice was made.
+
+### Superposed held items, then superposition where readers recognize patterns
+**v42: the two-area test, how to share the held vector.** Each fix in turn, with the share of
+trials whose held state is closer to the right cue at the gap's end:
+
+| version | scene gap | silent gap | scene, distractor | silent, distractor |
+|---|---|---|---|---|
+| a load capped at 32 bits | 100% | 62–72% | 0% | 68–82% |
+| split capacity (a new item half the room) | 54–66% | 92% | 94–98% | 12–48% |
+| superposed items, no lifetime | both cues held | both | both | both |
+| **superposed items, 8-step lifetime** | **78–80%** | **74–86%** | **74–86%** | **88–96%** |
+
+- **Capping a load at 32 bits:** the distractor, as unexpected as the cue, took the whole held
+  state.
+- **Splitting capacity** traded one failure for another.
+- **Superposed items** (the suggestion): sparse codes barely overlap (32 of 2048 bits), so items
+  can share one vector.
+  - Each surprise adds an item of at most 32 bits beside what is held, 128 bits in all.
+  - Completion restores every learned pattern still mostly present. Its cells fire on each item
+    separately, so a union completes as a union.
+  - The map learns each item as it is held, so what is held often becomes an attractor.
+  - But nothing let go: completion restored the old items too, A and B piled up, and both cues
+    looked held.
+- **An adaptation lifetime fixed it.** A held bit is restored for only 8 steps after it loads,
+  then fades. That lifetime is the area's real persistence.
+- Final version: 18–22 of the right cue's bits held against under 1 of the other's. A distractor
+  sits beside the cue instead of erasing it. The lower area stays clean.
+
+The prefrontal gates (each association column's "take in", and the orbitofrontal hold) also
+keep their eligibility for 8 steps now. A reward three to five steps after the cue can then
+reach the gate's choice at the cue.
+
+**v43: superposition where the readers recognize patterns.** Superposition helps where the reader
+completes or matches whole patterns. It hurts where the reader samples random bits: the
+amygdala's value cells did, until they were made elemental.
+- **Layer 2/3 expects every next input its context supports** (`MIND_SUPERPOSE`): the union of
+  the cells that burst (or of all that fired, if none burst), up to four. A surprise is then
+  something not expected at all, where before it was anything other than the winner's guess.
+- **The hippocampus reinstates the runner-up episode's continuation too,** when the cue fits two
+  episodes about as well.
+- **The striatum's focused context grows to 4096 bits (63 regions).** A motor loop's view can
+  have more than 31 input groups, and past 31 two groups shared a region (a dendritic branch).
+  This keeps them apart, the opposite of superposition, because the striatum's cells sample by
+  region.
+
+**Probes:**
+
+| | v42, seed 0 | v42, seed 1 | v43, seed 0 | v43, seed 1 |
+|---|---|---|---|---|
+| delayed, best block | 0.62/0.39 | 0.72/0.65 (last) | 0.52/0.31 (first), then dies out | 0.47/0.29 |
+| light, best blocks | 0.31/0.12 | 0.51/0.36, 0.24/0.09 | 0.53/0.16, 0.72/0.26, 0.51/0.16 | 0.57/0.14, 0.50/0.07 |
+| reversal | **last phase 0.76–0.87 on B against 0.33–0.44** | does not reverse | B partly after the first (0.55/0.36), then fades | – |
+
+- **Delayed on v43, seed 2:** one good block (0.72/0.47), then fades.
+- **The tone holds:** CS+ +0.97 against +0.02 (v42), and +1.00 against +0.01 (v43), where the
+  dopamine at the touch falls to +0.09.
+- **v42 seed 0 is the first clear late reversal.** In the last phase B pays, and it clicks
+  0.76–0.87 on B against 0.33–0.44 on A.
+- **v43's light probe is the cleanest since v33:** 0.50/0.07 and 0.51/0.16 at the end.
+
+**Why delayed still fails: the held vector is full.** The v42 delayed trace shows working memory
+and the orbitofrontal hold at the 128-bit cap on every step. The light is no longer
+distinguishable in them: working memory 0.27 light/light against 0.25 light/none, the
+orbitofrontal hold 0.37 against 0.31.
+- The two-area test was a clean world with one surprise per trial. The mind's world has small
+  surprises at every step (the caregiver, its own acts, recall arriving), and each one loads an
+  item.
+- A bigger vector would not help. The load rate times the lifetime fills any cap. And the
+  striatum reads each input group as 16 sampled bits, so a light that is 20 of 128 held bits gets
+  2 or 3 of them, and fewer still from a larger vector.
+
+**Next: selective loading, as a claustrum.** Acetylcholine release from the basal forebrain is
+gated by salience (the central amygdala drives the nucleus basalis), not by surprise alone. The
+claustrum, reciprocally connected with nearly all of the cortex, is linked to resisting
+distractors (Atlan et al. 2018). So:
+- Each column with a held population proposes its surprise item.
+- A claustrum-like selector scores each by surprise × the associability of the cues behind it.
+- It lets one item per step load, above a threshold that adapts to keep loads occasional. Others
+  are suppressed.
+- The gate still loads deliberately.

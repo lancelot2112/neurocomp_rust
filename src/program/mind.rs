@@ -388,7 +388,7 @@ pub struct Config {
     /// bit worth half the mean half the time)
     pub l6_gain: bool,
     /// a phase state in the orbitofrontal cortex from runs of outcomes (`MIND_PHASE=1`): when
-    /// outcomes surprise at twice their usual rate, the state moves to the context left most
+    /// recent payout falls below half of what the context expects, the state moves to the context left most
     /// recently (or, when every known one has been tried, to a new one); its code is a group in
     /// the striatum's view and on the association columns' tufts, so what is learned is learned
     /// in its context and a context coming back brings its learning back
@@ -582,8 +582,8 @@ pub struct Mind {
     /// 1/(2 + that), so it learns fast at first and then locks in (noise no longer moves it)
     gain_n: Vec<Vec<u16>>,
     /// the phase state: the current context, the contexts in the order last left (most recent
-    /// first), those tried since outcomes last settled, how many there are, fast and slow
-    /// averages of surprising outcomes (`Q16`), and how many switches
+    /// first), those tried since outcomes last fitted, how many there are, the recent payout and
+    /// recent expectation of the hand's acts (`Q16`), and how many switches
     phase_now: usize,
     phase_left: Vec<usize>,
     phase_tried: Vec<usize>,
@@ -1423,27 +1423,24 @@ impl Mind {
         vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
     }
 
-    /// The phase state, one hand act closed: its outcome is surprising when it fell short of what
-    /// the current context expected of it by a quarter or more (the salience threshold: an
-    /// omission, frustration's signal). The context's expectations are Hebbian worths that learn
-    /// fast and then lock in, so a context still being learned absorbs its surprises and a
-    /// settled one does not. Surprise averaged fast (a sixteenth) and slow (a 256th); when the
-    /// fast rate is at least a quarter and twice the slow one, the context is wrong: the state moves to the
-    /// context left most recently not yet tried, else to a new one, and the fast rate starts
-    /// again from the slow one. Once surprise is back under the slow rate, the trials are over.
+    /// The phase state, one hand act closed: what it paid and what the current context expected
+    /// of it (its best locked-in worth in view) are averaged fast (a sixteenth). When the context
+    /// expects something (a quarter or more) and recent payout falls below half of it, the
+    /// context is wrong: the state moves to the context left most recently not yet tried, else to
+    /// a new one (whose worths start unknown, so it learns before it can be found wrong). Once
+    /// payout is back at half or more of what is expected, the trying is over.
     fn phase_step(&mut self, got: i32, here: i32) {
-        // an omission: what was expected here did not come (a reward that comes unexpectedly is
-        // learning, not a sign the context changed)
-        let surprised = if here - got >= ONE as i32 / 4 { ONE as i32 } else { 0 };
+        // recent payout and recent expectation (fast averages, a sixteenth each)
+        self.surprise_fast += (got - self.surprise_fast) / 16;
+        self.surprise_slow += (here - self.surprise_slow) / 16;
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("phase: here {:.3} got {:.3} fast {:.3} slow {:.3} context {} settled {}", here as f64 / ONE as f64, got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, self.surprise_slow as f64 / ONE as f64, self.phase_now, true);
+            eprintln!("phase: here {:.3} got {:.3} paid {:.3} expected {:.3} context {}", here as f64 / ONE as f64, got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, self.surprise_slow as f64 / ONE as f64, self.phase_now);
         }
-        self.surprise_fast += (surprised - self.surprise_fast) / 16;
-        self.surprise_slow += (surprised - self.surprise_slow) / 256;
-        if self.surprise_fast <= self.surprise_slow {
+        // the context fits again: what it expected is being paid (at least half)
+        if 2 * self.surprise_fast >= self.surprise_slow {
             self.phase_tried.clear();
         }
-        if self.surprise_fast >= ONE as i32 / 4 && self.surprise_fast >= 2 * self.surprise_slow {
+        if self.surprise_slow >= ONE as i32 / 4 && 2 * self.surprise_fast < self.surprise_slow {
             let from = self.phase_now;
             self.phase_tried.push(from);
             let next = self.phase_left.iter().copied().find(|c| !self.phase_tried.contains(c));
@@ -1454,7 +1451,8 @@ impl Mind {
             self.phase_left.retain(|&c| c != from && c != to);
             self.phase_left.insert(0, from);
             self.phase_now = to;
-            self.surprise_fast = self.surprise_slow;
+            self.surprise_fast = 0;
+            self.surprise_slow = 0;
             self.phase_switches += 1;
         }
     }
@@ -1516,9 +1514,9 @@ impl Mind {
                 self.gain_v.push(vec![-1; BITS]);
                 self.gain_n.push(vec![0; BITS]);
             }
-            // what this context expected of the act: its worth over the bits in view it knows
-            let known: Vec<i32> = bits.iter().map(|&b| self.gain_v[ctx][b]).filter(|&v| v >= 0).collect();
-            let expected = (!known.is_empty()).then(|| (known.iter().map(|&v| v as i64).sum::<i64>() / known.len() as i64) as i32);
+            // what this context expected of the act: the best worth among the bits in view (as a
+            // value cell answers to its cue, not to the background)
+            let expected = bits.iter().map(|&b| self.gain_v[ctx][b]).filter(|&v| v >= 0).max();
             // (without contexts, one worth must follow every change: an eighth, not locking in)
             let lock = self.cfg.phase;
             for &b in &bits {

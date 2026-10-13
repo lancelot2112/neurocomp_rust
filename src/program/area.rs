@@ -433,6 +433,17 @@ impl Pool {
         // absent sense is no evidence against it, so a pair's cell keeps both halves when one
         // comes alone)
         let present: Vec<bool> = (0..self.sources).map(|s| on.iter().any(|&b| b as usize / self.src_bits == s)).collect();
+        // by need, a winner tightens only toward input no fired cell covers yet: cells spread over
+        // the input rather than all drifting onto what is always there, so a cell for a part
+        // that comes now and then (the light) does not become a cell for the scene around it
+        let covered: Vec<u32> = if self.need {
+            let mut v: Vec<u32> = fired.iter().flat_map(|&(c, _)| self.syn[c as usize].iter().copied()).filter(|b| on.binary_search(b).is_ok()).collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        } else {
+            Vec::new()
+        };
         for &(c, _) in &fired {
             self.last[c as usize] = self.tick;
             self.uses[c as usize] = self.uses[c as usize].saturating_add(1);
@@ -443,7 +454,7 @@ impl Pool {
             let s = &self.syn[c as usize];
             let off: Vec<usize> = (0..s.len()).filter(|&i| on.binary_search(&s[i]).is_err() && present[s[i] as usize / self.src_bits]).collect();
             // and it moves within its source (each half stays a half)
-            let gain_in = |src: usize| on.iter().copied().filter(|b| s.binary_search(b).is_err() && *b as usize / self.src_bits == src).collect::<Vec<u32>>();
+            let gain_in = |src: usize| on.iter().copied().filter(|b| s.binary_search(b).is_err() && *b as usize / self.src_bits == src && covered.binary_search(b).is_err()).collect::<Vec<u32>>();
             let Some(&i) = off.get(((r >> 8) as usize) % off.len().max(1)) else { continue };
             let gain = gain_in(s[i] as usize / self.src_bits);
             if gain.is_empty() {

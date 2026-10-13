@@ -376,11 +376,15 @@ pub struct Config {
     /// differently its bits sit before paid and before unpaid acts of the hand, against the mean
     /// of the regions; new striatal cells sample regions in proportion to it
     pub attend_ctx: bool,
+    /// layer 5 bursts to the striatum (`MIND_BURST_OUT=1`): the association columns' tufts take
+    /// the orbitofrontal state and the amygdala's value, and the striatum reads each association
+    /// column's bursting cells (all that fired when none burst) instead of all that fired
+    pub burst_out: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false }
     }
 }
 
@@ -442,6 +446,7 @@ impl Config {
             consolidate: on("MIND_CONSOLIDATE"),
             predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),
             attend_ctx: std::env::var("MIND_ATTEND_CONTEXT").map_or(false, |v| v == "1"),
+            burst_out: std::env::var("MIND_BURST_OUT").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -1125,7 +1130,8 @@ impl Mind {
     /// The striatal input groups of some columns (`cols`), with working memory and recall if
     /// asked, and the amygdala's attended trace: each at its stable place among the input ids.
     fn state_groups(&self, cols: &[ColumnId], _all: &[ColumnId], wm: bool, recall: bool) -> Vec<Vec<usize>> {
-        let mut groups: Vec<Vec<usize>> = cols.iter().map(|&id| ones(&self.brain.activity_of(id)).into_iter().map(|b| b + column_offset(id)).collect()).collect();
+        let read = |id: ColumnId| if self.cfg.burst_out && matches!(id, ColumnId::Assoc(_)) { self.brain.bursts_of(id) } else { self.brain.activity_of(id) };
+        let mut groups: Vec<Vec<usize>> = cols.iter().map(|&id| ones(&read(id)).into_iter().map(|b| b + column_offset(id)).collect()).collect();
         if wm {
             groups.push(ones(&self.wm_content()).into_iter().map(|b| b + WM_OFFSET).collect());
         }
@@ -1217,7 +1223,7 @@ impl Mind {
         // proportion to its width
         if self.cfg.top_view {
             if let Some(f) = self.brain.full.as_ref() {
-                let act = ones(&f.activity());
+                let act = ones(&if self.cfg.burst_out { f.bursts() } else { f.activity() });
                 for q in 0..act.iter().map(|&b| b / 1024 + 1).max().unwrap_or(0) {
                     groups.push(act.iter().filter(|&&b| b / 1024 == q).map(|&b| b + TOP_OFFSET).collect());
                 }
@@ -1358,11 +1364,6 @@ impl Mind {
         vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
     }
 
-    /// A motor choice's learning rate from its cues' associability: a gain from the trace's
-    /// (¼× when nothing has been surprising, up to about 2¼×), and a weight per region of the
-    /// striatum's focused context (one per live input group, in order) from the mean
-    /// associability of the group's features where they are features (the senses' sustained
-    /// codes, the amygdala's attended trace), else a middling weight.
     /// Learned attention, one step: each open act of the hand gathers the outcome of the step it
     /// is sensed in and the next; when it closes, its context's bits count toward paid or unpaid
     /// in their regions. A hand act now opens with the hand loop's last context.
@@ -1431,6 +1432,11 @@ impl Mind {
         Some(if var <= 0.0 { 0 } else { ((signal / var).clamp(0.0, 1.0) * 65536.0) as u64 })
     }
 
+    /// A motor choice's learning rate from its cues' associability: a gain from the trace's
+    /// (¼× when nothing has been surprising, up to about 2¼×), and a weight per region of the
+    /// striatum's focused context (one per live input group, in order) from the mean
+    /// associability of the group's features where they are features (the senses' sustained
+    /// codes, the amygdala's attended trace), else a middling weight.
     fn choice_alpha(&self, groups: &[Vec<usize>]) -> (u32, Vec<u16>) {
         let gain = 64 + 2 * self.amy.alpha_now();
         let regions = self.bg.regions();
@@ -1684,6 +1690,19 @@ impl Mind {
     fn cortex(&mut self, raw: &[BitVector], recall: &BitVector, td: Vec<(usize, BitVector)>) -> Step {
         let hc_assoc = self.cfg.hc_assoc;
         let pfc = fit(&self.wm_content(), BITS);
+        // value on the association columns' tufts (`burst_out`): the orbitofrontal state and the
+        // amygdala's value cells, each at a fixed hashed bit, so a cell bursts where its input
+        // and what is valued now agree
+        let value = if self.cfg.burst_out {
+            let mut v = BitVector::new(BITS, Some(0));
+            let feats = ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).chain(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET));
+            for f in feats {
+                v.bit_set((crate::program::hippocampus::mix64(f as u64 ^ 0x7A1E) % BITS as u64) as usize);
+            }
+            Some(v)
+        } else {
+            None
+        };
         let b = &mut self.brain;
         let mut ff: Vec<BitVector> = SLOTS.iter().enumerate().map(|(k, &a)| b.encode(a, &raw[k], true)).collect();
         let ear = &raw[Self::slot(EAR)];
@@ -1760,6 +1779,10 @@ impl Mind {
         // association columns grow from what is sensed together
         b.associate_codes(&codes, true);
         let tuft = or(&pfc, &cb_out);
+        let tuft = match value.as_ref() {
+            Some(v) => or(&tuft, v),
+            None => tuft,
+        };
         let outs = b.step_columns(&with_down, &extra, &tuft, true);
         let mut sense_ins = Vec::new();
         for a in SLOTS {

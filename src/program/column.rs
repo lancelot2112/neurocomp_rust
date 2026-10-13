@@ -143,6 +143,11 @@ impl Map {
         self.cells.last_fired()
     }
 
+    /// The cells that burst at the latest prediction.
+    pub fn last_burst(&self) -> Vec<usize> {
+        self.cells.last_burst()
+    }
+
     /// How many times cell `c` has been freed (a reused cell is a new cell).
     pub fn generation(&self, c: usize) -> u32 {
         self.cells.generation(c)
@@ -232,6 +237,9 @@ pub struct Column {
     /// slot (as an unpredicted minicolumn bursts, every cell in it firing), so what came
     /// unexpected takes a large share of the output rather than its share of the input
     pub burst: bool,
+    /// layer 5's bursts, projected as layer 2/3's output is (the cells whose tuft agreed with
+    /// their input: what the corticostriatal projection carries most strongly)
+    bursting: BitVector,
     /// sparse output (with `topo`): each active layer 2/3 cell sends one bit, fixed by its home
     /// and slot, up to a thirty-second of the area (MIND_SPARSE_OUT=0: whole homes); with
     /// `minicolumns` (MIND_SPARSE_OUT=column) the column sends its driven layer 4 code instead,
@@ -261,7 +269,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, sparse_out: false, minicolumns: std::env::var("MIND_SPARSE_OUT").map_or(false, |v| v == "column"), strict: None, unexpected: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, sparse_out: false, minicolumns: std::env::var("MIND_SPARSE_OUT").map_or(false, |v| v == "column"), strict: None, unexpected: BitVector::new(bits, Some(0)), bursting: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -680,6 +688,8 @@ impl Column {
             }
             let fired = self.l23.last_fired();
             self.rec = if self.topo { self.project_topo(&fired) } else { self.project(&fired) };
+            let burst = self.l23.last_burst();
+            self.bursting = if self.topo { self.project_topo(&burst) } else { self.project(&burst) };
             self.last = Some((self.code.clone(), c));
             // the trace: what fired stays on, fading
             if self.tau > 0 {
@@ -698,6 +708,16 @@ impl Column {
             }
         }
         self.code.clone()
+    }
+
+    /// What the column sends the striatum when only bursts pass (`burst_out`): the cells whose
+    /// tuft agreed, or all that fired when none did.
+    pub fn bursts(&self) -> BitVector {
+        if self.bursting.count_ones() > 0 {
+            self.bursting.clone()
+        } else {
+            self.rec.clone()
+        }
     }
 
     /// Layer 2/3's recent activity (projected) and its persistent trace, as feedback to the

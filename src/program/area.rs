@@ -1396,6 +1396,11 @@ impl Brain {
         self.full.as_ref().and_then(|f| f.l4.as_ref()).map_or((0, 0, 0, (0, 0, 0)), |p| (p.in_use(), p.recruited, p.recycled, p.why))
     }
 
+    /// What association column `id` sends the striatum when only bursts pass.
+    pub fn bursts_of(&self, id: ColumnId) -> BitVector {
+        self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.bursts())
+    }
+
     /// What area `a`'s layer 4 code `code` expects of its raw input (layer 4's back-projection).
     pub fn raw_of(&self, a: usize, code: &BitVector) -> BitVector {
         match self.areas[a].l4.as_ref() {

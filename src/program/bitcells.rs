@@ -462,6 +462,11 @@ impl BitCells {
         self.cached.as_ref().map_or(Vec::new(), |(_, e)| e.fired.iter().map(|x| x.0).collect())
     }
 
+    /// The cells that burst at the latest prediction (their tuft agreed with their basal input).
+    pub fn last_burst(&self) -> Vec<usize> {
+        self.cached.as_ref().map_or(Vec::new(), |(_, e)| e.fired.iter().filter(|x| x.2).map(|x| x.0).collect())
+    }
+
     /// Every cell that fired at the latest prediction, as its output and whether it burst: the
     /// layer's competing proposals (the winner is one of them).
     pub fn proposals(&self, out_bits: usize) -> Vec<(BitVector, bool)> {

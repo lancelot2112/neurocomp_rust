@@ -409,10 +409,10 @@ pub struct Config {
     pub ilam: bool,
     /// the latent-cause model as competing cell assemblies (`MIND_LATENT=1`, instead of the phase
     /// state's own switching; with `MIND_PHASE=1`), in integers and bit counts: each context
-    /// assembly gathers evidence (a leaky count) of the acts it fits (its locked-in worth of the
-    /// cue in view within an octave of what the cue paid lately), has an excitability that grows
-    /// as the log of its use, and inhibition lets the strongest through; a new assembly is recruited
-    /// when no known one has fitted lately (Gershman, Blei & Niv 2010, as a circuit)
+    /// assembly gathers evidence (a leaky count) of the acts it fits (the cue in view paid lately
+    /// at least half its locked-in worth, or is still being learned), excitability (the log of its
+    /// use) breaks ties, and inhibition lets the strongest through; a new assembly is recruited
+    /// when unexplained acts outnumber the best one's evidence (Gershman, Blei & Niv 2010, as a circuit)
     pub latent: bool,
 }
 
@@ -1526,9 +1526,9 @@ impl Mind {
     /// - what clicks at each bit in view paid lately is shared by all assemblies (every one sees
     ///   the outcomes), averaged as fast as the active assembly's worth while that is learning, else
     ///   over about 16 expected rewards;
-    /// - an assembly fits the act when, for its own best-worth cue in view, the recent payout and
-    ///   its locked-in worth lie within an octave of each other (their bit lengths, a logarithmic
-    ///   code, differ by at most one: Weber's ratio rule for rates);
+    /// - an assembly fits the act unless, for its own best-worth cue in view, the cue has locked in
+    ///   and paid lately less than half its worth (a ratio rule for rates, as Weber's law; a cue
+    ///   still being learned cannot contradict its assembly);
     /// - each assembly's evidence is a leaky count (fading a sixteenth an act) of the acts it fits;
     ///   the evidence for a new cause counts the acts no known assembly fits;
     /// - its excitability is the bit length of the acts it has explained (a logarithm of use: the
@@ -1550,9 +1550,16 @@ impl Mind {
         let n_ctx = self.lc_score.len();
         let mut any = false;
         for c in 0..n_ctx {
-            // (an assembly that knows none of what is in view is not contradicted: it fits)
+            // it fits unless its best cue in view has locked in (its rate 1/(2 + n) slower than
+            // the recent window, 16 expected rewards) and paid lately less than half its worth
+            // (a shift and a compare); an assembly that knows none of what is in view, or whose cue
+            // is still being learned, is not contradicted
             let fits = self.gain_v.get(c).is_none_or(|vs| {
-                bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b]).is_none_or(|b| (bitlen(self.lc_recent[b]) - bitlen(vs[b])).abs() <= 1)
+                bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b]).is_none_or(|b| {
+                    let (v, n) = (vs[b], self.gain_n[c][b] as i32);
+                    let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
+                    2 + n < window || 2 * self.lc_recent[b] >= v
+                })
             });
             any |= fits;
             self.lc_score[c] += (if fits { ONE as i32 } else { 0 }) - self.lc_score[c] / 16;

@@ -72,6 +72,7 @@ fn main() {
     // cue, the panels); at each block's end, each panel's overlap with the same cue's code the
     // trial before, 50 and 100 trials before
     let mut seen_at: Vec<(usize, bool, Vec<(String, Vec<usize>)>)> = Vec::new();
+    let mut prev_sel: Vec<usize> = Vec::new();
     let drift_panels = ["eye", "top_in", "top_driven", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ctx"];
     while !world.done() {
         let senses = world.step(&acts);
@@ -150,6 +151,33 @@ fn main() {
                         }
                         let f = |a: (f64, usize)| if a.1 == 0 { "-".to_string() } else { format!("{:.2}", a.0 / a.1 as f64) };
                         line += &format!(" {name} {}/{}/{} x{}", f(acc[0]), f(acc[1]), f(acc[2]), f(cross));
+                    }
+                    // the fate of the last block's light-selective top layer 4 cells: how many still
+                    // fire on half the light trials, how many now fire on a tenth or more of the
+                    // others, how many fire on neither
+                    {
+                        let mut freq: [HashMap<usize, usize>; 2] = [HashMap::new(), HashMap::new()];
+                        let mut n = [0usize; 2];
+                        for (_, cue, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {
+                            n[*cue as usize] += 1;
+                            if let Some(x) = p.iter().find(|x| x.0 == "top_driven") {
+                                for &b in &x.1 {
+                                    *freq[*cue as usize].entry(b).or_default() += 1;
+                                }
+                            }
+                        }
+                        let on_cue = |b: &usize| freq[1].get(b).copied().unwrap_or(0) * 2 >= n[1].max(1);
+                        let on_none = |b: &usize| freq[0].get(b).copied().unwrap_or(0) * 10 > n[0];
+                        let (mut kept, mut smeared, mut silent) = (0, 0, 0);
+                        for b in &prev_sel {
+                            match (on_cue(b), on_none(b)) {
+                                (true, false) => kept += 1,
+                                (_, true) => smeared += 1,
+                                (false, false) => silent += 1,
+                            }
+                        }
+                        line += &format!(" fate {}: kept {kept} smeared {smeared} silent {silent}", prev_sel.len());
+                        prev_sel = freq[1].keys().copied().filter(|b| on_cue(b) && !on_none(b)).collect();
                     }
                     // selective bits: on in at least half the cue trials and at most a tenth of the
                     // others, per panel, over this block

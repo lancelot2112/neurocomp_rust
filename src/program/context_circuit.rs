@@ -39,7 +39,8 @@
 //! the least-used cells form a new assembly. Learning is Hebbian: the active assembly learns an
 //! input that drives it (within the one-bit allowance of what it expects); an input that
 //! inhibits it does not fire it and is not learned, so it does not come to expect what is taking
-//! it down.
+//! it down; it fires while held down, and that weakens its synapses onto the assembly
+//! (anti-Hebbian, long-term depression), so the assembly comes to reject what contradicts it.
 //!
 //! All integer: counts, bit lengths, compares.
 
@@ -175,6 +176,18 @@ impl ContextCircuit {
         }
     }
 
+    fn unlearn(&mut self, on: &[usize]) {
+        for &i in &self.active {
+            for &b in on {
+                let w = &mut self.inp[i * self.bits + b];
+                if *w > 0 {
+                    *w -= 1;
+                    self.sum[i] -= 1;
+                }
+            }
+        }
+    }
+
     /// The free cells of assembly `l` (at most k).
     fn cells_of(&self, l: usize) -> Vec<usize> {
         (0..self.n).filter(|&i| self.label[i] == Some(l) && self.adapted[i] == 0).take(self.k).collect()
@@ -236,9 +249,14 @@ impl ContextCircuit {
                 self.silence(strength);
             } else if net >= -1 {
                 // Hebbian: an input that drives the assembly (within the allowance of what it
-                // expects) strengthens its synapses; one that inhibits it does not fire it, and is
-                // not learned (a young assembly, expecting little, learns what comes)
+                // expects) strengthens its synapses (a young assembly, expecting little, learns
+                // what comes)
                 self.learn(&all);
+            } else {
+                // anti-Hebbian: an input that fires while it inhibits the assembly (presynaptic
+                // on, postsynaptic held down) weakens its synapses onto it (long-term depression),
+                // so the assembly comes to reject what contradicts it
+                self.unlearn(&all);
             }
         }
         if self.active.is_empty() {

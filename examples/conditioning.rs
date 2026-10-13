@@ -67,6 +67,11 @@ fn main() {
     // the ear's onsets at the CS+ tone: how many, and how many shared with the last CS+ tone's
     let mut tone = [(0u64, 0u64, 0u64); 64];
     let mut last_tone: Vec<u32> = Vec::new();
+    // drift: per light step (step 2) of each trial, per panel, its active bits (the trial, the
+    // cue, the panels); at each block's end, each panel's overlap with the same cue's code the
+    // trial before, 50 and 100 trials before
+    let mut seen_at: Vec<(usize, bool, Vec<(String, Vec<usize>)>)> = Vec::new();
+    let drift_panels = ["eye", "top_l4", "top_l23", "wm", "ofc_z", "ctx"];
     while !world.done() {
         let senses = world.step(&acts);
         {
@@ -84,6 +89,11 @@ fn main() {
         acts = mind.step(&senses);
         let ev = world.events.last().unwrap().clone();
         let Some((t, cue)) = ev.cond else { continue };
+        if t == 2 {
+            let mut p: Vec<(String, Vec<usize>)> = mind.snapshot().into_iter().filter(|(n, _)| drift_panels.contains(n)).map(|(n, b)| (n.to_string(), b)).collect();
+            p.push(("ctx".into(), mind.hand_view().0.map_or(Vec::new(), |v| v.0)));
+            seen_at.push((trial, cue, p));
+        }
         if t == 0 {
             a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
         }
@@ -99,6 +109,35 @@ fn main() {
                     Conditioning::Pavlov => eprintln!("progress {kind:?} seed {seed} trials {trial}: amygdala CS+ {:+.2} CS- {:+.2}", amy[b][1] as f64 / yes.6.max(1) as f64 / 65536.0, amy[b][0] as f64 / no.6.max(1) as f64 / 65536.0),
                     Conditioning::Reversal => eprintln!("progress {kind:?} seed {seed} trials {trial}: paying light {:.2}, the other {:.2}", r(rev[b].0, rev[b].1), r(rev[b].2, rev[b].3)),
                     _ => eprintln!("progress {kind:?} seed {seed} trials {trial}: clicks cue {:.2} none {:.2}", r(yes.5, yes.6), r(no.5, no.6)),
+                }
+                // drift: mean overlap (shared / larger) with the same cue's code 1, 50, 100 trials back
+                {
+                    let sim = |a: &[usize], b: &[usize]| -> f64 {
+                        let n = a.len().max(b.len());
+                        if n == 0 { return 1.0; }
+                        a.iter().filter(|x| b.binary_search(x).is_ok()).count() as f64 / n as f64
+                    };
+                    let mut line = String::new();
+                    for name in drift_panels {
+                        let mut acc = [(0.0f64, 0usize); 3];
+                        for (i, (tr, cue, p)) in seen_at.iter().enumerate().filter(|(_, x)| x.0 + block > trial && x.0 < trial) {
+                            let Some(now) = p.iter().find(|x| x.0 == name).map(|x| { let mut v = x.1.clone(); v.sort_unstable(); v }) else { continue };
+                            for (k, back) in [1usize, 50, 100].iter().enumerate() {
+                                let then = seen_at[..i].iter().rev().find(|x| x.1 == *cue && x.0 + back <= *tr);
+                                if let Some((_, _, q)) = then {
+                                    if let Some(old) = q.iter().find(|x| x.0 == name) {
+                                        let mut o = old.1.clone();
+                                        o.sort_unstable();
+                                        acc[k].0 += sim(&now, &o);
+                                        acc[k].1 += 1;
+                                    }
+                                }
+                            }
+                        }
+                        let f = |a: (f64, usize)| if a.1 == 0 { "-".to_string() } else { format!("{:.2}", a.0 / a.1 as f64) };
+                        line += &format!(" {name} {}/{}/{}", f(acc[0]), f(acc[1]), f(acc[2]));
+                    }
+                    eprintln!("progress {kind:?} seed {seed} trials {trial}: drift (1/50/100 back){line}");
                 }
                 let (used, rec, cyc, why) = mind.brain.full_l4();
                 eprintln!("progress {kind:?} seed {seed} trials {trial}: top layer 4 cells in use {used} (recruited {rec}: salient {}, recurring {}, new {}; recycled {cyc}; orbitofrontal recycled {})", why.0, why.1, why.2, mind.ofc_recycled);

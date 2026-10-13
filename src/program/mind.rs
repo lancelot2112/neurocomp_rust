@@ -1140,6 +1140,9 @@ impl Mind {
         v.push(("ofc_held", ones(&self.ofc_area.held_state())));
         v.push(("amy_onsets", self.amy.trace_at(0).iter().map(|&f| f as usize).collect()));
         v.push(("amy_value", self.amy.value_cells().into_iter().map(|c| c % 8192).collect()));
+        let (l4, l23) = self.brain.full.as_ref().map_or((zero(), zero()), |f| (f.code.clone(), f.activity()));
+        v.push(("top_l4", ones(&l4)));
+        v.push(("top_l23", ones(&l23)));
         v
     }
 

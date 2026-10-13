@@ -190,8 +190,6 @@ const OFC_HELD_OFFSET: usize = 164 * BITS;
 const STRIATAL_GROUPS: usize = SLOTS.len() + MAX_PAIRS + 20;
 /// the full association column's activity, at a fixed place (its column id moves as pairs grow)
 const TOP_OFFSET: usize = 168 * BITS;
-/// the orbitofrontal phase state (which hidden context the outcomes say this is)
-const PHASE_OFFSET: usize = 166 * BITS;
 /// the orbitofrontal area's hold loop (hold the state or not)
 const OFC_HOLD_CHANNEL: usize = 300;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
@@ -389,9 +387,10 @@ pub struct Config {
     pub l6_gain: bool,
     /// a phase state in the orbitofrontal cortex from runs of outcomes (`MIND_PHASE=1`): when
     /// recent payout falls below half of what the context expects, the state moves to the context left most
-    /// recently (or, when every known one has been tried, to a new one); its code is a group in
-    /// the striatum's view and on the association columns' tufts, so what is learned is learned
-    /// in its context and a context coming back brings its learning back
+    /// recently (or, when every known one has been tried, to a new one); its code is on the
+    /// association columns' tufts and sets the eye's layer 6 gain (each context its own worths),
+    /// so it modulates what the cortex passes on and bursts, not the striatum's input itself (a
+    /// change of context does not silence the habits the striatum has learned)
     pub phase: bool,
 }
 
@@ -1292,9 +1291,6 @@ impl Mind {
         // copy) and what the orbitofrontal learner says it is worth here
         if self.cfg.ofc_column {
             groups.extend(self.ofc_groups());
-        }
-        if self.cfg.phase {
-            groups.push(self.phase_code().into_iter().map(|b| b + PHASE_OFFSET).collect());
         }
         if self.cfg.efference {
             groups.push(self.efference_now.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());

@@ -686,24 +686,32 @@ impl Pool {
         c
     }
 
-    /// Sleep's recycling: cells recruited `AGE_SLEEPS` sleeps ago or more that fired fewer than `min` times
-    /// since it lose their synapses and are free for new input; every cell's count then halves
-    /// (use is weighed over the last few sleeps). Returns how many.
+    /// Sleep's recycling: of the cells recruited `AGE_SLEEPS` sleeps ago or more that fired fewer
+    /// than `min` times since, a subset is freed for new input: the least used first, at most a
+    /// `RECYCLE_SHARE`th of the cells in use each sleep (turnover is gradual, so a code that went
+    /// quiet for a while is not all wiped at once); every cell's count then halves (use is weighed
+    /// over the last few sleeps). Returns how many.
     pub fn recycle(&mut self, min: u32) -> usize {
-        let mut n = 0;
+        let aged = self.aged();
+        let mut idle: Vec<(u32, u64, usize)> = Vec::new();
         for c in 0..self.syn.len() {
             // a cell recruited since the last sleep has not had a sleep period to be used yet
-            if self.syn[c].is_empty() || self.born[c] >= self.aged() {
-                continue;
+            if !self.syn[c].is_empty() && self.born[c] < aged && self.uses[c] < min {
+                idle.push((self.uses[c], self.last[c], c));
             }
-            if self.uses[c] < min {
-                for &b in &std::mem::take(&mut self.syn[c]) {
-                    self.index[b as usize].retain(|&x| x as usize != c);
-                }
-                self.free.push(c);
-                n += 1;
+        }
+        idle.sort_unstable();
+        let share = (self.in_use() / recycle_share()).max(1);
+        let mut n = 0;
+        for &(_, _, c) in idle.iter().take(share) {
+            for &b in &std::mem::take(&mut self.syn[c]) {
+                self.index[b as usize].retain(|&x| x as usize != c);
             }
-            self.uses[c] /= 2;
+            self.free.push(c);
+            n += 1;
+        }
+        for u in self.uses.iter_mut() {
+            *u /= 2;
         }
         self.recycled += n as u64;
         // a new sleep period: recurrence so far carries over at half
@@ -910,7 +918,12 @@ const CAP: usize = 8192;
 pub const MAX_PAIRS: usize = 16;
 /// A layer 4 cell is old (it may be recycled, or evicted for new input) once this many sleeps
 /// have passed since it was recruited, or last used.
-pub const AGE_SLEEPS: usize = 4;
+pub const AGE_SLEEPS: usize = 1;
+
+/// Sleep frees at most this share (a 1/n) of the cells in use (`MIND_RECYCLE_SHARE`, default 16; 1: all idle ones).
+fn recycle_share() -> usize {
+    std::env::var("MIND_RECYCLE_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(16).max(1)
+}
 
 impl Brain {
     /// Areas of `bits` cells each, `k` active.

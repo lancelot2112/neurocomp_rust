@@ -389,7 +389,7 @@ impl Pool {
                 }
             }
             s.sort_unstable();
-            let c = self.place();
+            let Some(c) = self.place() else { break };
             for &b in &s {
                 self.index[b as usize].push(c as u32);
             }
@@ -489,7 +489,7 @@ impl Pool {
                         }
                     }
                     s.sort_unstable();
-                    let c = self.place();
+                    let Some(c) = self.place() else { break };
                     for &b in &s {
                         self.index[b as usize].push(c as u32);
                     }
@@ -533,7 +533,25 @@ impl Pool {
     }
 
     /// A slot for a new cell: a new one while there is room, else the stalest of 8 sampled.
-    fn place(&mut self) -> usize {
+    /// A cell for new input: a free one, a new one while the pool has room, else (of 8 sampled)
+    /// the one unused longest; by need only if that one has gone unused `RECYCLE_AGE` steps (a
+    /// cell for something that comes now and then is not evicted for what comes every step;
+    /// the input waits for sleep to free room). None: no room.
+    fn place(&mut self) -> Option<usize> {
+        if self.need && self.free.is_empty() && self.syn.len() >= self.out_bits {
+            let mut oldest = u64::MAX;
+            for _ in 0..8 {
+                let c = (self.next() as usize) % self.syn.len();
+                oldest = oldest.min(self.last[c]);
+            }
+            if self.tick.saturating_sub(oldest) < RECYCLE_AGE {
+                return None;
+            }
+        }
+        Some(self.place_any())
+    }
+
+    fn place_any(&mut self) -> usize {
         if let Some(c) = self.free.pop() {
             self.born[c] = self.tick;
             self.uses[c] = 0;

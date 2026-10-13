@@ -56,6 +56,9 @@ fn overlap(a: &BitVector, b: &BitVector) -> u32 {
 
 /// A layer of primed cells learning a map, input (and context) → target: rows are
 /// [input (basal) | context (tuft) | extra input (basal)].
+/// A held item's size, in bits (what a surprise loads; allowances are counted in items).
+pub const ITEM: usize = 32;
+
 pub struct Map {
     bits: usize,
     cells: BitCells,
@@ -287,12 +290,13 @@ impl Column {
         let gate = std::mem::take(&mut self.gate);
         self.proposal = None;
         // the allowance: a share of the area's effective width (at least one item, at most a
-        // thirty-second of the vector or three items); it shrinks slowly while well under used
+        // thirty-second of the area, or three items if that is more); it shrinks slowly while
+        // well under used
         self.clock = self.clock.wrapping_add(1);
         let width = self.l4.as_ref().map_or(self.bits, |p| p.cells().max(32));
         // (at most a thirty-second of the area: a held population denser than that saturates
         // whatever reads it, as the orbitofrontal hold did at half its area)
-        let most = if std::env::var("MIND_HELD_HALF").map_or(false, |v| v == "1") { self.bits as u64 / 2 } else { (self.bits as u64 / 32).max(96) };
+        let most = if std::env::var("MIND_HELD_HALF").map_or(false, |v| v == "1") { self.bits as u64 / 2 } else { (self.bits as u64 / 32).max(3 * ITEM as u64) };
         self.held_cap = ((width as u64 * self.rho as u64) >> 16).clamp(32, most) as usize;
         if (self.held.count_ones() as usize) * 2 < self.held_cap && self.rho > (1 << 10) {
             self.rho -= self.rho / 1024;
@@ -363,7 +367,7 @@ impl Column {
             None
         } else if gate {
             self.loads.1 += 1;
-            Some(Self::sparse(input.as_words(), 32, rng))
+            Some(Self::sparse(input.as_words(), ITEM, rng))
         } else {
             let novel: Vec<u64> = match self.expected.as_ref() {
                 Some(e) => input.as_words().iter().zip(e.as_words()).map(|(a, b)| a & !b).collect(),
@@ -377,7 +381,7 @@ impl Column {
                 // chosen (`commit`)
                 // the item: a fixed sample of what was unexpected (the bits with the smallest
                 // hashes), so the same content proposes the same item
-                let it = Self::minhash(&novel, 32);
+                let it = Self::minhash(&novel, ITEM);
                 // recognized: something known came unexpectedly (the item completes to a learned
                 // one), not new content; then the item is learned, so what recurs becomes known
                 self.recognized = self.auto.predict(&it, None, None).map_or(false, |p| overlap(&p, &it) * 2 >= it.count_ones() as u32);
@@ -389,7 +393,7 @@ impl Column {
                 None
             } else {
                 self.loads.0 += 1;
-                Some(Self::sparse(&novel, 32, rng))
+                Some(Self::sparse(&novel, ITEM, rng))
             }
         };
         if let Some(it) = item {

@@ -227,9 +227,10 @@ const CELL_BITS: usize = 16;
 const CELL_THETA: u32 = 10;
 /// Focused contexts: each input group's bits fall in a region of its own (one 64-bit word),
 /// `SHARE` of them; the candidate's in the last region.
-const SHARE: usize = 16;
-/// the most regions one source owns in a focused context
-const OWN_MAX: usize = 6;
+const SHARE: usize = 64 / REGION_FILL;
+/// a region (64 bits) is kept at most a quarter full: the share of its bits a source may set
+/// (denser, and a branch's 5 of 8 bits match by chance)
+const REGION_FILL: usize = 4;
 const POOL_CAP: usize = 2048;
 /// Grow mode: GPi's tonic noise per option when exploring.
 const JITTER: i32 = 3;
@@ -639,8 +640,9 @@ impl MaskStriatum {
 
     /// Focused: where each live group's bits go. A group owns regions (words) by its source (the
     /// 1024-bit block of its first bit, and which copy of that source it is when a source is
-    /// repeated), as many as hold about `SHARE` of its active bits each at its busiest so far (up
-    /// to `OWN_MAX`, taken first come from regions no source owns yet);
+    /// repeated), as many as hold about `SHARE` of its active bits each (a region a quarter full)
+    /// at its busiest so far, up to its fair share (the regions over the live groups), taken first
+    /// come from regions no source owns yet;
     /// each of its bits lands in one of them, by its own hash, so an input always lands on the
     /// same bits whatever else is present (the order is kept), and a region keeps its `SHARE`
     /// smallest-hash bits. Returns, per live group in order, the regions it owns.
@@ -648,15 +650,18 @@ impl MaskStriatum {
         let mut copies: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
         let mut owned = self.owned.borrow_mut();
         let mut out = Vec::new();
+        let live = groups.iter().filter(|g| !g.is_empty()).count().max(1);
         for g in groups.iter().filter(|g| !g.is_empty()) {
             let src = g.iter().copied().min().unwrap_or(0) / 1024;
             let copy = copies.entry(src).or_default();
             let key = mix((src as u64) << 8 | *copy);
             *copy += 1;
             // its regions: taken first come from those no source owns yet, so sources do not share
-            // regions while there are free ones (else one by hash), up to `OWN_MAX`
+            // regions while there are free ones (else one by hash), up to its fair share
             let rs = owned.entry(key).or_default();
-            let want = g.len().div_ceil(SHARE).clamp(1, OWN_MAX);
+            // (at most its fair share of the regions: the regions over the live groups)
+            let fair = (regions / live).max(1);
+            let want = g.len().div_ceil(SHARE).clamp(1, fair);
             while rs.len() < want {
                 let f = self.next_free.get();
                 if f < regions {

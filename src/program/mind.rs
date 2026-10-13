@@ -1681,8 +1681,12 @@ impl Mind {
         let cur = self.phase_now;
         let mut to = cur;
         if !self.lc_unsettled {
-            // the active assembly holds; only nonreward it did not predict can silence it
-            self.lc_nonreward += (if answers[cur] == Some(false) { ONE as i32 } else { 0 }) - self.lc_nonreward / TAU;
+            // the active assembly holds; only nonreward it did not predict can silence it, and
+            // only acts it made a prediction for count (no expectation, no error either way: an
+            // act at a cue it does not know neither adds nonreward nor dilutes it)
+            if let Some(fit) = answers[cur] {
+                self.lc_nonreward += (if fit { 0 } else { ONE as i32 }) - self.lc_nonreward / TAU;
+            }
             if self.lc_nonreward >= half {
                 self.lc_unsettled = true;
                 self.lc_nonreward = 0;

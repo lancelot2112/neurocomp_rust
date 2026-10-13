@@ -380,11 +380,16 @@ pub struct Config {
     /// the orbitofrontal state and the amygdala's value, and the striatum reads each association
     /// column's bursting cells (all that fired when none burst) instead of all that fired
     pub burst_out: bool,
+    /// layer 6 gain from the orbitofrontal cortex (`MIND_L6_GAIN=1`): the eye's thalamic relay
+    /// passes each active bit in proportion to what the orbitofrontal learner says acting with it
+    /// in view is worth, against the mean over the bits in view (a valued bit passes always, a
+    /// bit worth half the mean half the time)
+    pub l6_gain: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false }
     }
 }
 
@@ -447,6 +452,7 @@ impl Config {
             predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),
             attend_ctx: std::env::var("MIND_ATTEND_CONTEXT").map_or(false, |v| v == "1"),
             burst_out: std::env::var("MIND_BURST_OUT").map_or(false, |v| v == "1"),
+            l6_gain: std::env::var("MIND_L6_GAIN").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -559,6 +565,12 @@ pub struct Mind {
     /// acts, and how many such acts (halving when the count reaches 64: recent acts weigh most)
     attend: Vec<[[u16; 64]; 2]>,
     attend_n: Vec<[u16; 2]>,
+    /// layer 6 gain: each eye bit's worth (`Q16`, −1: not yet seen at an act), learned from the
+    /// outcomes of hand acts made with it in view (Rescorla–Wagner, an eighth a time); the hand
+    /// acts still open (steps left, outcome so far, the eye's bits at the act); the eye's bits now
+    gain_v: Vec<i32>,
+    gain_open: Vec<(u8, i32, Vec<usize>)>,
+    eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
     /// loops expected of it there
     chosen_q: Vec<(usize, i32, i32)>,
@@ -752,6 +764,9 @@ impl Mind {
             attend_open: Vec::new(),
             attend: Vec::new(),
             attend_n: Vec::new(),
+            gain_v: vec![-1; BITS],
+            gain_open: Vec::new(),
+            eye_now: Vec::new(),
             chosen_q: Vec::new(),
             p_after: 0,
             p_else: 0,
@@ -800,7 +815,12 @@ impl Mind {
             self.brain.set_unpaid(self.unpaid);
             self.ofc_area.set_unpaid(self.unpaid);
         }
-        let raw = self.inputs(s);
+        let mut raw = self.inputs(s);
+        if self.cfg.l6_gain {
+            let e = Self::slot(EYE);
+            self.eye_now = ones(&raw[e]);
+            raw[e] = self.l6_relay(&raw[e]);
+        }
         // its own voice: the sound sensed right after a command to the voice (the efference copy)
         let own = self.issued.iter().any(|(a, _)| *a == VOICE);
         // 1. learning what came: the columns, toward what the effectors' senses received (the
@@ -992,6 +1012,9 @@ impl Mind {
         }
         if self.cfg.attend_ctx {
             self.attend_step(outcome, &acts_now);
+        }
+        if self.cfg.l6_gain {
+            self.gain_step(outcome, &acts_now);
         }
         let done: Vec<(i32, usize, i32, Option<(i32, i32)>, i32)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3, w.4, w.5)).collect();
         self.act_windows.retain(|w| w.0 > 0);
@@ -1362,6 +1385,50 @@ impl Mind {
     /// The orbitofrontal area's state and what it holds, as input groups for the striatum.
     fn ofc_groups(&self) -> Vec<Vec<usize>> {
         vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
+    }
+
+    /// Layer 6 gain on the eye's thalamic relay: each active bit passes with probability its worth
+    /// over the mean worth of the bits in view (at or above the mean: always; a bit not yet seen
+    /// at an act counts as the mean). The orbitofrontal cortex sets it top-down (through layer 6
+    /// and the reticular nucleus), so it follows what pays now.
+    fn l6_relay(&mut self, x: &BitVector) -> BitVector {
+        let on = ones(x);
+        let known: Vec<i32> = on.iter().map(|&b| self.gain_v.get(b).copied().unwrap_or(-1)).filter(|&v| v >= 0).collect();
+        if known.is_empty() {
+            return x.clone();
+        }
+        let mean = (known.iter().map(|&v| v as i64).sum::<i64>() / known.len() as i64).max(1);
+        let mut out = BitVector::new(x.bit_len(), Some(0));
+        for &b in &on {
+            let v = self.gain_v.get(b).copied().unwrap_or(-1);
+            let pass = v < 0 || v as i64 >= mean || self.rng.gen_range(0..mean) < v.max(0) as i64;
+            if pass {
+                out.bit_set(b);
+            }
+        }
+        out
+    }
+
+    /// Layer 6 gain, learning: each hand act gathers the outcome of its step and the next; then
+    /// the worth of each eye bit that was in view at the act moves an eighth toward it.
+    fn gain_step(&mut self, outcome: i32, acts_now: &[(usize, Vec<u32>)]) {
+        for w in self.gain_open.iter_mut() {
+            w.1 += outcome;
+            w.0 = w.0.saturating_sub(1);
+        }
+        if acts_now.iter().any(|(a, _)| *a == HAND) {
+            self.gain_open.push((1, outcome, self.eye_now.clone()));
+        }
+        let done: Vec<(i32, Vec<usize>)> = self.gain_open.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2.clone())).collect();
+        self.gain_open.retain(|w| w.0 > 0);
+        for (got, bits) in done {
+            let got = got.clamp(0, ONE as i32);
+            for b in bits {
+                if let Some(v) = self.gain_v.get_mut(b) {
+                    *v = if *v < 0 { got } else { *v + (got - *v) / 8 };
+                }
+            }
+        }
     }
 
     /// Learned attention, one step: each open act of the hand gathers the outcome of the step it

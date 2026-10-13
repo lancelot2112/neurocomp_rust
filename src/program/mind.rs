@@ -427,7 +427,7 @@ pub struct Config {
     /// time since the last) is held as a noradrenaline-like signal, and every integrator works to
     /// its bit length (the log, as in change-point detection: to keep false alarms rarer than one
     /// a run, the evidence needed grows with the log of the run; Yu & Dayan 2005; Behrens et al.
-    /// 2007): nonreward is an opponent count (a predicted act that fits takes one off, one that
+    /// 2007): nonreward is an opponent count (a predicted act that fits and paid takes one off, one that
     /// misses adds one) that silences the active assembly at that bit length, unexplained acts
     /// recruit new cells at the same, and the silenced assembly stays adapted as long
     pub volatile: bool,
@@ -1718,7 +1718,10 @@ impl Mind {
             // act at a cue it does not know neither adds nonreward nor dilutes it)
             if let Some(fit) = answers[cur] {
                 self.lc_nonreward = if self.cfg.volatile {
-                    (self.lc_nonreward + if fit { -(ONE as i32) } else { ONE as i32 }).max(0)
+                    // the opponent is reward itself (a dopamine burst inhibits the nonreward
+                    // cells): an act that fits and paid takes one off; a fitting act that paid
+                    // nothing carries no news either way (the background keeping its average)
+                    (self.lc_nonreward + if !fit { ONE as i32 } else if got > 0 { -(ONE as i32) } else { 0 }).max(0)
                 } else {
                     self.lc_nonreward + (if fit { 0 } else { ONE as i32 }) - self.lc_nonreward / tau
                 };

@@ -1623,3 +1623,87 @@ swap (trials 401–500) and after it (trials 801–900):
 1/16 escapes more often only because its turnover keeps reshuffling the codes the no-go is built
 on. The fix belongs in the codes: the two lights must stay apart where the striatum reads them
 (the density rule), so that extinguishing one does not extinguish both. 1/16 stays the default.
+
+### Why a run stops choosing, and the routes that fix it: bursts, layer 6 gain, a phase state, exploration, the intralaminar thalamus
+
+**The lights look alike to the striatum.** Splitting the striatal context's overlap between the
+two lights by source showed that the shared bits come from sources that do not carry the light:
+the sustained ear and acts codes (0.4–0.6 shared), the efference copy, the association pair columns
+and the top column's quarters (0.3–0.65). Working memory, the amygdala and the orbitofrontal state
+share 0.0–0.1. After a swap, behaviour converges, so the action-related sources converge too, and a
+no-go learned on the old light also suppresses the new one.
+
+**Learned attention on the striatal context (`MIND_ATTEND_CONTEXT=1`; Mackintosh, chance-corrected)**
+helped instrumental conditioning (both seeds 0.83–0.94 on cue / 0.17–0.20 with no cue at trials
+401–500). It failed at a swap: the eye's discrimination between paid and unpaid acts cancels while
+old and new statistics mix, so the eye lost attention just when it was needed.
+
+**Layer 5 bursts to the striatum (`MIND_BURST_OUT=1`).** The association columns' tufts take the
+orbitofrontal state and the amygdala's value. The striatum reads their bursting cells, or all that
+fired when none burst. The association and top regions then shared 0.0–0.3 between the lights, down
+from 0.3–0.65. First learning was slower. Seed 1 reversed once, where every earlier build stalled.
+Both seeds failed the second reversal.
+
+**Layer 6 gain from the orbitofrontal cortex (`MIND_L6_GAIN=1`, with bursts).** The eye's thalamic
+relay passes each bit with probability equal to its learned worth over the mean worth in view. The
+worth is set by what hand acts made with the bit in view earned. This was the best build without
+contexts:
+
+| | seed 0 | seed 1 |
+|---|---|---|
+| first phase, trials 401–500 | 1.16 / 0.33 | 0.96 / 0.18 |
+| first reversal | by trials 601–700 (0.82 / 0.24) | by trials 701–800 (0.37 / 0.26) |
+| second reversal | clean (1.00 / 0.10 at trials 1301–1400) | completed by about trial 1300 |
+| instrumental, trials 401–500 | 0.73 / 0.18 | 0.78 / 0.14 |
+
+**Phase memory was missing.** A diagnostic for bits that code the phase whichever light is on found
+consistent phase bits only in the eye and the top column (behaviour: where the cursor rests).
+The orbitofrontal state, working memory and the amygdala carried none, so nothing held the phase.
+
+**A phase state (`MIND_PHASE=1`), arrived at in steps:**
+
+- Surprise counted on every outcome made it switch 7–10 times during first learning. Counting only
+  omissions, and settling only after a window of acts, stopped that, but then it missed the swap.
+- **Settling as Hebbian lock-in.** Each context learns its worths at 1/(2 + the outcomes learned
+  from), fast at first and then fixed, and recent payout follows at the same rate until the context
+  has locked in. A context still being learned absorbs its surprises; a settled one does not.
+- A context-wide payout rate missed swaps when the run clicked both lights. **Per cue:** each
+  cue's recent payout, over about 16 expected rewards, against its locked-in worth. A light that
+  stopped paying is seen even while the other light pays. Both seeds then switched at the swap, and
+  stayed quiet through every first phase.
+- **After the switch the run stopped choosing.** In a new context nothing was known and nothing was
+  tried. With the context code in the striatum's view it lost its general habits; without it, it
+  lost the learning tied to the light.
+
+**Exploration from uncertainty (`MIND_EXPLORE=1`).** Each eye bit's uncertainty in the context is
+its learning rate. Their mean over what is in view raises choice noise and, in the directed form,
+adds a go bonus, up to 6 units at full uncertainty (frustration's ceiling). The random form alone
+rescued seed 1's first reversal, but not seed 0's.
+
+**The intralaminar thalamus (`MIND_ILAM=1`).** When the context changes, the centromedian and
+parafascicular nuclei burst onto the cholinergic interneurons. They pause and open striatal
+plasticity until the new context's first outcome is in (Matsumoto et al. 2001; Bradfield et al.
+2013). The context code reaches the striatum by this route, and reaches the tufts and layer 6 gain
+by the matrix route. With directed exploration, this is the first build in which both seeds switch
+context at the swap and reverse quickly:
+
+| swap | seed 0 | seed 1 |
+|---|---|---|
+| first (500) | switched; 0.72 / 0.36 by trials 601–700 | switched; 0.58 / 0.31 by trials 601–700 |
+| second (1000), back to the first context | switched back; 0.68 / 0.36 by trials 1101–1200 | switched back; 0.53 / 0.36 by trials 1101–1200 |
+| third (1500) | reversed; 0.42 / 0.11 by trials 1601–1700, despite one false switch at trials 1301–1400 | failed: stalled after switching, then flipped back (0.00 / 0.10) |
+
+Instrumental conditioning (same build), trials 401–500: 0.82 / 0.36 and 0.78 / 0.22. Clicks with no
+cue run high early (0.57 at trials 201–300 on seed 0), because the go bonus applies before the
+context has locked in.
+
+**What is still missing:**
+
+- **A false switch** occurs when a chance run of unpaid trials crosses half the worth (seed 0, trials
+  1301–1400).
+- **Going back to a context is not yet enough.** When the context code returns, the previous phase's
+  habits can still dominate for a block or more.
+- **When the run stops choosing, the test starves.** Without outcomes, no context can show it fits,
+  and the state flips between known contexts.
+- **The full latent-cause model** (Gershman, Blei & Niv 2010) would score every known context against
+  recent outcomes, instead of trying the last one left.

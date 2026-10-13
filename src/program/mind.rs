@@ -1449,6 +1449,11 @@ impl Mind {
         }
     }
 
+    /// The phase state's current context.
+    pub fn phase_context(&self) -> usize {
+        self.phase_now
+    }
+
     /// The phase state's code: 32 fixed bits of `BITS` for the current context.
     fn phase_code(&self) -> Vec<usize> {
         let mut v: Vec<usize> = (0..32u64).map(|i| (crate::program::hippocampus::mix64((self.phase_now as u64) << 8 | i ^ 0xFA5E) % BITS as u64) as usize).collect();

@@ -73,7 +73,7 @@ fn main() {
     // trial before, 50 and 100 trials before
     let mut seen_at: Vec<(usize, bool, Vec<(String, Vec<usize>)>)> = Vec::new();
     let mut prev_sel: Vec<(usize, u64)> = Vec::new();
-    let drift_panels = ["eye", "top_in", "top_driven", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ofc_held", "amy_value", "ctx"];
+    let drift_panels = ["eye", "top_in", "top_driven", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ofc_held", "ofc_phase", "amy_value", "ctx"];
     // the phase diagnostic (reversal): per block, which phase it was in (A pays) and, per panel and
     // light, how often each bit was on at the light, and on how many trials
     type Freq = std::collections::HashMap<usize, u32>;
@@ -343,7 +343,7 @@ fn main() {
                     eprintln!("progress {kind:?} seed {seed} trials {trial}: drift (1/50/100 back, x other cue){line}");
                 }
                 let (used, rec, cyc, why) = mind.brain.full_l4();
-                eprintln!("progress {kind:?} seed {seed} trials {trial}: top layer 4 cells in use {used} (recruited {rec}: salient {}, recurring {}, new {}; recycled {cyc}; orbitofrontal recycled {})", why.0, why.1, why.2, mind.ofc_recycled);
+                eprintln!("progress {kind:?} seed {seed} trials {trial}: top layer 4 cells in use {used} (recruited {rec}: salient {}, recurring {}, new {}; recycled {cyc}; orbitofrontal recycled {}); phase switches {}, context {}", why.0, why.1, why.2, mind.ofc_recycled, mind.phase_switches, mind.phase_context());
             }
             a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
             if sleep_every > 0 && trial % sleep_every == 0 {

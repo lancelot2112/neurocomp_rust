@@ -38,6 +38,7 @@ use crate::bitvec::BitVector;
 use crate::fixed::ONE;
 use crate::program::amygdala::Amygdala;
 use crate::program::claustrum::Claustrum;
+use crate::program::latent::{LatentCause, Scale};
 use crate::program::ofc::{self as ofc_area, Ofc};
 use crate::program::area::fit;
 use crate::program::area::{Brain, ColumnId, Kind, MAX_PAIRS};
@@ -645,16 +646,10 @@ pub struct Mind {
     lc_uses: Vec<u32>,
     lc_new: i32,
     lc_recent: Vec<i32>,
-    /// the attractor form: the outcomes on each eye bit lately (sets a 16-act recency window);
-    /// the nonreward the active assembly has gathered; whether it has been silenced and not yet
-    /// replaced; the assembly silenced last and the acts until its adaptation wears off
-    lc_seen: Vec<u32>,
-    lc_nonreward: i32,
-    lc_unsettled: bool,
-    lc_adapted: (usize, u32),
-    /// volatility: acts since the last reset, and the usual gap between resets (0: none yet)
-    lc_since: u32,
-    lc_gap: u32,
+    /// the attractor form (its own module, driven by the eye worths per context)
+    lc: LatentCause,
+    /// the context given from outside (a diagnosis: the choice side alone, with context known)
+    context_given: Option<usize>,
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
@@ -684,6 +679,7 @@ impl Mind {
     }
 
     pub fn with_config(body: Body, seed: u64, cfg: Config) -> Self {
+        let volatile = cfg.volatile;
         let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
         b.columns = true;
         b.selforg = true;
@@ -863,12 +859,8 @@ impl Mind {
             lc_uses: vec![0],
             lc_new: 0,
             lc_recent: vec![-1; BITS],
-            lc_seen: vec![0; BITS],
-            lc_nonreward: 0,
-            lc_unsettled: false,
-            lc_adapted: (0, 0),
-            lc_since: 0,
-            lc_gap: 0,
+            lc: { let mut lc = LatentCause::new(BITS, if volatile { Scale::Volatile } else { Scale::Fixed }); lc.debug = std::env::var("MIND_DEBUG_PHASE").is_ok(); lc },
+            context_given: None,
             gain_open: Vec::new(),
             eye_now: Vec::new(),
             chosen_q: Vec::new(),
@@ -1652,114 +1644,15 @@ impl Mind {
         self.lc_uses[to] += 1;
     }
 
-    /// How a context assembly answers an act: over the cues in view whose worth it has locked in,
-    /// `Some(false)` when any of them paid lately outside a factor of two of its worth (each cue's
-    /// prediction can be broken: the background's pay held while the light's stopped must not
-    /// vouch for the light), `Some(true)` when all kept theirs, `None` when it has locked in none
-    /// of what is in view (no prediction to break).
-    fn lc_answer(&self, c: usize, bits: &[usize]) -> Option<bool> {
-        let vs = self.gain_v.get(c)?;
-        let mut answer = None;
-        for &b in bits.iter().filter(|&&b| vs[b] >= 0) {
-            let (v, n) = (vs[b], self.gain_n[c][b] as i32);
-            let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
-            if 2 + n < window {
-                continue;
-            }
-            let r = self.lc_recent[b];
-            if 2 * r >= v && r <= 2 * v {
-                answer = Some(true);
-            } else {
-                return Some(false);
-            }
-        }
-        answer
+    /// The latent-cause model as attractors (see `MindConfig::attractor` and `latent.rs`).
+    fn latent_attract(&mut self, bits: &[usize], got: i32) {
+        let to = self.lc.step(&self.gain_v, &self.gain_n, bits, got);
+        self.phase_count = self.phase_count.max(self.lc.contexts);
+        self.move_context(to);
     }
 
-    /// The latent-cause model as attractors (see `MindConfig::attractor`).
-    fn latent_attract(&mut self, bits: &[usize], got: i32) {
-        // what each cue in view paid lately: over about 16 expected rewards at it, at the best
-        // worth any assembly gives it (shared by all, so not slowed by the active one's
-        // indifference to the cue)
-        for &b in bits {
-            let v = self.gain_v.iter().map(|vs| vs[b]).max().unwrap_or(-1);
-            let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
-            let step = (2 + self.lc_seen[b].min(i32::MAX as u32 / 2) as i32).min(window);
-            self.lc_seen[b] = self.lc_seen[b].saturating_add(1);
-            let r = &mut self.lc_recent[b];
-            *r = if *r < 0 { got } else { *r + (got - *r) / step };
-        }
-        // the time scale: fixed (16 acts, a reset at half) or, with volatility, the bit length of
-        // the expected run between changes (a reset at the full count of an opponent tally)
-        self.lc_since = self.lc_since.saturating_add(1);
-        let run = self.lc_gap.max(self.lc_since);
-        let (tau, half) = if self.cfg.volatile {
-            let h = (32 - run.leading_zeros() as i32).max(2);
-            (h, h * ONE as i32)
-        } else {
-            (16, 8 * ONE as i32)
-        };
-        let n_ctx = self.lc_score.len().max(self.gain_v.len()).max(self.phase_now + 1);
-        while self.lc_score.len() < n_ctx {
-            self.lc_score.push(0);
-            self.lc_uses.push(0);
-        }
-        let answers: Vec<Option<bool>> = (0..n_ctx).map(|c| self.lc_answer(c, bits)).collect();
-        // each assembly's input drive: a leaky count of the acts it predicted (synaptic integration)
-        for c in 0..n_ctx {
-            self.lc_score[c] += (if answers[c] == Some(true) { ONE as i32 } else { 0 }) - self.lc_score[c] / tau;
-        }
-        self.lc_adapted.1 = self.lc_adapted.1.saturating_sub(1);
-        let cur = self.phase_now;
-        let mut to = cur;
-        if !self.lc_unsettled {
-            // the active assembly holds; only nonreward it did not predict can silence it, and
-            // only acts it made a prediction for count (no expectation, no error either way: an
-            // act at a cue it does not know neither adds nonreward nor dilutes it)
-            if let Some(fit) = answers[cur] {
-                self.lc_nonreward = if self.cfg.volatile {
-                    // the opponent is reward itself (a dopamine burst inhibits the nonreward
-                    // cells): an act that fits and paid takes one off; a fitting act that paid
-                    // nothing carries no news either way (the background keeping its average)
-                    (self.lc_nonreward + if !fit { ONE as i32 } else if got > 0 { -(ONE as i32) } else { 0 }).max(0)
-                } else {
-                    self.lc_nonreward + (if fit { 0 } else { ONE as i32 }) - self.lc_nonreward / tau
-                };
-            }
-            if self.lc_nonreward >= half {
-                self.lc_unsettled = true;
-                self.lc_nonreward = 0;
-                self.lc_new = 0;
-                self.lc_adapted = (cur, tau as u32);
-                // the gap just ended updates the usual gap (half old, half new)
-                self.lc_gap = if self.lc_gap == 0 { self.lc_since } else { (self.lc_gap + self.lc_since) / 2 };
-                self.lc_since = 0;
-            }
-        }
-        if self.lc_unsettled {
-            // settling: a stored assembly the outcomes now fit completes (the adapted one only
-            // once its adaptation has worn off), the one with the most input drive first
-            let free = |c: usize| c != self.lc_adapted.0 || self.lc_adapted.1 == 0;
-            let fit = (0..n_ctx).filter(|&c| answers[c] == Some(true) && free(c)).max_by_key(|&c| self.lc_score[c]);
-            self.lc_new += (if fit.is_none() { ONE as i32 } else { 0 }) - if self.cfg.volatile { 0 } else { self.lc_new / tau };
-            if let Some(c) = fit {
-                to = c;
-                self.lc_unsettled = false;
-            } else if self.lc_new >= half {
-                // nothing stored explains what happens now: new cells
-                self.phase_count = self.phase_count.max(n_ctx) + 1;
-                self.lc_score.push(0);
-                self.lc_uses.push(0);
-                to = n_ctx;
-                self.lc_unsettled = false;
-            }
-            if !self.lc_unsettled {
-                self.lc_new = 0;
-            }
-        }
-        if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("attractor: got {:.2} scale {tau} answers {:?} drive {:?} nonreward {} unsettled {} new {} -> {to}", got as f64 / ONE as f64, answers, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_nonreward / ONE as i32, self.lc_unsettled, self.lc_new / ONE as i32);
-        }
+    /// The context becomes `to` (a change opens the intralaminar pause).
+    fn move_context(&mut self, to: usize) {
         if to != self.phase_now {
             let from = self.phase_now;
             self.phase_left.retain(|&c| c != from && c != to);
@@ -1770,7 +1663,13 @@ impl Mind {
         } else {
             self.ilam_open = false;
         }
-        self.lc_uses[to] += 1;
+    }
+
+    /// Give the context from outside (a diagnosis: the choice side alone, with the context
+    /// known); it replaces the phase state's own inference from the next outcome on.
+    pub fn give_context(&mut self, c: usize) {
+        self.context_given = Some(c);
+        self.phase_count = self.phase_count.max(c + 1);
     }
 
     /// The phase state's current context.
@@ -1825,7 +1724,9 @@ impl Mind {
         self.gain_open.retain(|w| w.0 > 0);
         for (got, bits) in done {
             let got = got.clamp(0, ONE as i32);
-            if self.cfg.phase && self.cfg.attractor {
+            if let Some(c) = self.context_given {
+                self.move_context(c);
+            } else if self.cfg.phase && self.cfg.attractor {
                 self.latent_attract(&bits, got);
             } else if self.cfg.phase && self.cfg.latent {
                 self.latent_assign(&bits, got);

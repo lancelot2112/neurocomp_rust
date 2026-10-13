@@ -41,6 +41,7 @@ fn main() {
     // with the other light, trials with it)
     let mut rev = [(0usize, 0usize, 0usize, 0usize); 64];
     let mut a_pays = true;
+    let given_context = std::env::var("COND_GIVEN_CONTEXT").map_or(false, |v| v == "1");
     let mut acts = Acts::default();
     let block = 100;
     // per block, per cue (false, true): (value at the cue step, dopamine at the cue step, cue
@@ -102,6 +103,11 @@ fn main() {
         }
         if t == 0 {
             a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
+            // the choice side alone (a diagnosis): the context is given, one per phase of the
+            // reversal (`COND_GIVEN_CONTEXT=1`, with `MIND_PHASE=1`)
+            if given_context {
+                mind.give_context(if a_pays { 0 } else { 1 });
+            }
         }
         if t == 0 && world.events.len() > 1 {
             trial += 1;

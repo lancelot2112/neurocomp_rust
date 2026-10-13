@@ -114,6 +114,20 @@ pub struct Pool {
     /// winners grow with the input (k up to 4k, as divisive normalization lets more input drive
     /// more cells), so adding a thing to what is sensed adds cells rather than displacing them
     pub coverage: bool,
+    /// recruitment by need (with coverage): an uncovered part of the input gets cells only on
+    /// bits that keep coming uncovered (each bit's tag counts its uncovered occurrences, halving
+    /// every 256 steps; 3 recruit) or at once when the moment is salient (`salient`, set from
+    /// outside: a neuromodulatory burst), so passing clutter is not learned; and sleep recycles
+    /// the cells that went unused (`recycle`)
+    pub need: bool,
+    /// this step is salient (a neuromodulatory burst): uncovered input recruits at once
+    pub salient: bool,
+    tags: Vec<u8>,
+    uses: Vec<u32>,
+    born: Vec<u64>,
+    free: Vec<usize>,
+    /// cells recycled so far
+    pub recycled: u64,
 }
 
 impl Pool {
@@ -138,6 +152,13 @@ impl Pool {
             rng: seed | 1,
             recruited: 0,
             coverage: false,
+            need: false,
+            salient: false,
+            tags: Vec::new(),
+            uses: Vec::new(),
+            born: Vec::new(),
+            free: Vec::new(),
+            recycled: 0,
         }
     }
 
@@ -209,9 +230,33 @@ impl Pool {
         let mut covered: Vec<u32> = fired.iter().flat_map(|&(c, _)| self.syn[c as usize].iter().copied()).filter(|b| on.binary_search(b).is_ok()).collect();
         covered.sort_unstable();
         covered.dedup();
-        let open: Vec<u32> = on.iter().copied().filter(|b| covered.binary_search(b).is_err()).collect();
+        let mut open: Vec<u32> = on.iter().copied().filter(|b| covered.binary_search(b).is_err()).collect();
+        if self.need {
+            // by need: only the bits that keep coming uncovered, or all on a salient step
+            if self.tags.is_empty() {
+                self.tags = vec![0; self.sources * self.src_bits];
+            }
+            if self.tick % 256 == 0 {
+                for t in self.tags.iter_mut() {
+                    *t >>= 1;
+                }
+            }
+            for &b in &open {
+                let t = &mut self.tags[b as usize];
+                *t = t.saturating_add(1);
+            }
+            if !self.salient {
+                let tags = &self.tags;
+                open.retain(|&b| tags[b as usize] >= 3);
+            }
+        }
         if open.len() * 4 < on.len() || open.len() < self.theta.max(8) {
             return Vec::new();
+        }
+        if self.need {
+            for &b in &open {
+                self.tags[b as usize] = 0;
+            }
         }
         let n = open.len().min(self.k);
         let mut new = Vec::new();
@@ -267,6 +312,7 @@ impl Pool {
         let present: Vec<bool> = (0..self.sources).map(|s| on.iter().any(|&b| b as usize / self.src_bits == s)).collect();
         for &(c, _) in &fired {
             self.last[c as usize] = self.tick;
+            self.uses[c as usize] = self.uses[c as usize].saturating_add(1);
             let r = self.next();
             if r & 3 != 0 {
                 continue;
@@ -361,9 +407,16 @@ impl Pool {
 
     /// A slot for a new cell: a new one while there is room, else the stalest of 8 sampled.
     fn place(&mut self) -> usize {
+        if let Some(c) = self.free.pop() {
+            self.born[c] = self.tick;
+            self.uses[c] = 0;
+            return c;
+        }
         if self.syn.len() < self.out_bits {
             self.syn.push(Vec::new());
             self.last.push(0);
+            self.uses.push(0);
+            self.born.push(self.tick);
             return self.syn.len() - 1;
         }
         let mut best = (u64::MAX, 0usize);
@@ -377,7 +430,36 @@ impl Pool {
         for &b in &std::mem::take(&mut self.syn[c]) {
             self.index[b as usize].retain(|&x| x as usize != c);
         }
+        self.born[c] = self.tick;
+        self.uses[c] = 0;
         c
+    }
+
+    /// Sleep's recycling: cells recruited at least `age` steps ago that fired fewer than `min`
+    /// times since the last recycling lose their synapses and are free for new input; every
+    /// cell's count then halves (use is weighed over the last few sleeps). Returns how many.
+    pub fn recycle(&mut self, age: u64, min: u32) -> usize {
+        let mut n = 0;
+        for c in 0..self.syn.len() {
+            if self.syn[c].is_empty() || self.tick.saturating_sub(self.born[c]) < age {
+                continue;
+            }
+            if self.uses[c] < min {
+                for &b in &std::mem::take(&mut self.syn[c]) {
+                    self.index[b as usize].retain(|&x| x as usize != c);
+                }
+                self.free.push(c);
+                n += 1;
+            }
+            self.uses[c] /= 2;
+        }
+        self.recycled += n as u64;
+        n
+    }
+
+    /// Cells in use (recruited and not recycled).
+    pub fn in_use(&self) -> usize {
+        self.syn.len() - self.free.len()
     }
 
     fn rewire(&mut self, c: usize, i: usize, nb: u32) {
@@ -468,6 +550,9 @@ impl Area {
 }
 
 /// Areas, the pairwise association areas grown between them, and the full association area.
+/// A layer 4 cell is recycled only once it is this many steps old.
+pub const RECYCLE_AGE: u64 = 2000;
+
 pub struct Brain {
     bits: usize,
     k: usize,
@@ -505,6 +590,11 @@ pub struct Brain {
     pub generalize: bool,
     /// cells merged away by generalization so far
     pub generalized: usize,
+    /// recruitment by need in the full association column's layer 4 (`Pool::need`), and sleep
+    /// recycles its unused cells
+    pub need: bool,
+    /// cells recycled by sleep in the full column's layer 4
+    pub recycled: usize,
     /// the full association column's width (its layer 4's address space): the top area may be
     /// wider than the rest, room for its cells to grow into
     pub full_bits: usize,
@@ -533,7 +623,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, need: false, recycled: 0, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -891,7 +981,25 @@ impl Brain {
             }
         }
         self.generalized += g;
+        if self.need {
+            if let Some(l4) = self.full.as_mut().and_then(|f| f.l4.as_mut()) {
+                self.recycled += l4.recycle(RECYCLE_AGE, 1);
+            }
+        }
         t
+    }
+
+    /// A salient moment (a neuromodulatory burst): the full column's layer 4 recruits for what
+    /// it does not cover at once.
+    pub fn set_salient(&mut self, on: bool) {
+        if let Some(l4) = self.full.as_mut().and_then(|f| f.l4.as_mut()) {
+            l4.salient = on;
+        }
+    }
+
+    /// The full column's layer 4: (cells in use, recruited, recycled).
+    pub fn full_l4(&self) -> (usize, u64, u64) {
+        self.full.as_ref().and_then(|f| f.l4.as_ref()).map_or((0, 0, 0), |p| (p.in_use(), p.recruited, p.recycled))
     }
 
     /// What area `a`'s layer 4 code `code` expects of its raw input (layer 4's back-projection).
@@ -976,6 +1084,7 @@ impl Brain {
         if self.full.is_none() && self.pairs.len() >= 2 {
             let mut col = Column::granular(self.full_bits, Pool::new(MAX_PAIRS, self.bits, self.full_bits, self.k, 2, self.seed.wrapping_add(9999)), CAP);
             col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
+            col.l4.as_mut().unwrap().need = self.need;
             col.set_persistence(self.full_tau);
             col.set_recurrence(self.full_gain);
             col.superpose = self.superpose;

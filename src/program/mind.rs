@@ -323,6 +323,11 @@ pub struct Config {
     /// same thing from mostly the same input become one cell on what they share (a more general,
     /// compressed representation) (MIND_GENERALIZE=0 off)
     pub generalize: bool,
+    /// recruitment by need in the top areas' layer 4 (the full association column and the
+    /// orbitofrontal area): what they do not cover gets cells only when it keeps coming or the
+    /// moment is salient (a dopamine error or a valued cue the step before), and sleep recycles
+    /// the cells that went unused (MIND_NEED=0 off)
+    pub need: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -336,7 +341,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -385,6 +390,7 @@ impl Config {
             claustrum: on("MIND_CLAUSTRUM"),
             wide: on("MIND_WIDE"),
             generalize: on("MIND_GENERALIZE"),
+            need: on("MIND_NEED"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -504,6 +510,10 @@ pub struct Mind {
     pub report: Report,
     /// sleep's compaction so far: (merged, pruned) cortical cells
     pub compacted: (usize, usize),
+    /// the step before was salient (`Config::need`)
+    salient: bool,
+    /// cells recycled by sleep in the orbitofrontal area's layer 4
+    pub ofc_recycled: usize,
 }
 
 /// A cortical cell unfired for this many of its layer's predictions is pruned at sleep.
@@ -527,6 +537,7 @@ impl Mind {
             b.full_bits = 2 * BITS;
         }
         b.generalize = cfg.generalize && cfg.compact;
+        b.need = cfg.need && cfg.coverage;
         if cfg.recur {
             b.pair_gain = 0;
             b.full_gain = 3;
@@ -583,6 +594,7 @@ impl Mind {
         let persist = cfg.persist;
         let recur = cfg.recur;
         let coverage = cfg.coverage;
+        let need = cfg.need;
         let superpose = cfg.superpose;
         let claustrum = cfg.claustrum;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 2) * BITS } else { SLOTS.len() * BITS };
@@ -623,6 +635,7 @@ impl Mind {
             ofc_area: {
                 let mut o = Ofc::new(ofc_w, ACTIVE, 8192, seed ^ 0x0FCA);
                 o.set_coverage(coverage);
+                o.set_need(need && coverage);
                 o.col.superpose = superpose;
                 o.col.select = claustrum && recur;
                 if recur {
@@ -659,6 +672,8 @@ impl Mind {
             spontaneous: 1,
             report: Report::default(),
             compacted: (0, 0),
+            salient: false,
+            ofc_recycled: 0,
         }
     }
 
@@ -693,6 +708,10 @@ impl Mind {
     /// One step: senses in, acts out.
     pub fn step(&mut self, s: &Senses) -> Acts {
         self.report = Report::default();
+        if self.cfg.need {
+            self.brain.set_salient(self.salient);
+            self.ofc_area.set_salient(self.salient);
+        }
         let raw = self.inputs(s);
         // its own voice: the sound sensed right after a command to the voice (the efference copy)
         let own = self.issued.iter().any(|(a, _)| *a == VOICE);
@@ -963,6 +982,9 @@ impl Mind {
         self.bg.begin_groups(&all, true);
         let delta = self.bg.last_delta;
         self.report.delta = delta;
+        // a neuromodulatory burst (a dopamine error, or a cue the amygdala values): the next
+        // step's top areas recruit at once for what they do not cover
+        self.salient = delta.unsigned_abs() >= ONE / 4 || self.report.amy_predicted >= (ONE / 4) as i32;
         self.report.value = self.bg.value();
         if self.cfg.learned_pause {
             self.amy.learn_pause(delta, self.bg.pause_min * (ONE as i32 / 8));
@@ -1629,6 +1651,9 @@ impl Mind {
             let (m, p) = self.brain.compact(COMPACT_IDLE);
             self.compacted.0 += m;
             self.compacted.1 += p;
+            if self.cfg.need {
+                self.ofc_recycled += self.ofc_area.recycle();
+            }
         }
         self.last = None;
     }

@@ -117,6 +117,25 @@ impl Ofc {
         }
     }
 
+    /// Recruitment by need in the area's layer 4 (`Pool::need`).
+    pub fn set_need(&mut self, on: bool) {
+        if let Some(p) = self.col.l4.as_mut() {
+            p.need = on;
+        }
+    }
+
+    /// A salient moment: layer 4 recruits at once for what it does not cover.
+    pub fn set_salient(&mut self, on: bool) {
+        if let Some(p) = self.col.l4.as_mut() {
+            p.salient = on;
+        }
+    }
+
+    /// Sleep: recycle layer 4's unused cells (`Pool::recycle`).
+    pub fn recycle(&mut self) -> usize {
+        self.col.l4.as_mut().map_or(0, |p| p.recycle(crate::program::area::RECYCLE_AGE, 1))
+    }
+
     /// Recurrence: the column holds its own state by self-excitation (`Column::set_recurrence`);
     /// holding or splitting opens its gate (the input becomes the state).
     pub fn set_recurrence(&mut self, gain: u32) {

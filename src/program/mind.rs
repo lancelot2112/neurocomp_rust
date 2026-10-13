@@ -1159,6 +1159,7 @@ impl Mind {
         let (l4, l23) = self.brain.full.as_ref().map_or((zero(), zero()), |f| (f.code.clone(), f.activity()));
         v.push(("top_l4", ones(&l4)));
         v.push(("top_l23", ones(&l23)));
+        v.push(("top_burst", self.brain.full.as_ref().map_or(Vec::new(), |f| ones(f.unexpected()))));
         v
     }
 

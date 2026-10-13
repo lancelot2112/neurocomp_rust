@@ -514,6 +514,11 @@ impl Column {
         &self.trace
     }
 
+    /// The layer 4 bits layer 2/3's winner did not predict this step.
+    pub fn unexpected(&self) -> &BitVector {
+        &self.unexpected
+    }
+
     /// Topographic projection (`topo`): each cell's home bits, moved by its slot.
     fn project_topo(&mut self, cells: &[usize]) -> BitVector {
         let mut v = BitVector::new(self.bits, Some(0));

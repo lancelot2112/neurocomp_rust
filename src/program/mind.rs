@@ -190,6 +190,8 @@ const OFC_HELD_OFFSET: usize = 164 * BITS;
 const STRIATAL_GROUPS: usize = SLOTS.len() + MAX_PAIRS + 20;
 /// the full association column's activity, at a fixed place (its column id moves as pairs grow)
 const TOP_OFFSET: usize = 168 * BITS;
+/// the orbitofrontal phase state (which hidden context the outcomes say this is)
+const PHASE_OFFSET: usize = 166 * BITS;
 /// the orbitofrontal area's hold loop (hold the state or not)
 const OFC_HOLD_CHANNEL: usize = 300;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
@@ -385,11 +387,17 @@ pub struct Config {
     /// in view is worth, against the mean over the bits in view (a valued bit passes always, a
     /// bit worth half the mean half the time)
     pub l6_gain: bool,
+    /// a phase state in the orbitofrontal cortex from runs of outcomes (`MIND_PHASE=1`): when
+    /// outcomes surprise at twice their usual rate, the state moves to the context left most
+    /// recently (or, when every known one has been tried, to a new one); its code is a group in
+    /// the striatum's view and on the association columns' tufts, so what is learned is learned
+    /// in its context and a context coming back brings its learning back
+    pub phase: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false }
     }
 }
 
@@ -453,6 +461,7 @@ impl Config {
             attend_ctx: std::env::var("MIND_ATTEND_CONTEXT").map_or(false, |v| v == "1"),
             burst_out: std::env::var("MIND_BURST_OUT").map_or(false, |v| v == "1"),
             l6_gain: std::env::var("MIND_L6_GAIN").map_or(false, |v| v == "1"),
+            phase: std::env::var("MIND_PHASE").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -569,6 +578,16 @@ pub struct Mind {
     /// outcomes of hand acts made with it in view (Rescorla–Wagner, an eighth a time); the hand
     /// acts still open (steps left, outcome so far, the eye's bits at the act); the eye's bits now
     gain_v: Vec<i32>,
+    /// the phase state: the current context, the contexts in the order last left (most recent
+    /// first), those tried since outcomes last settled, how many there are, fast and slow
+    /// averages of surprising outcomes (`Q16`), and how many switches
+    phase_now: usize,
+    phase_left: Vec<usize>,
+    phase_tried: Vec<usize>,
+    phase_count: usize,
+    surprise_fast: i32,
+    surprise_slow: i32,
+    pub phase_switches: u32,
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
@@ -765,6 +784,13 @@ impl Mind {
             attend: Vec::new(),
             attend_n: Vec::new(),
             gain_v: vec![-1; BITS],
+            phase_now: 0,
+            phase_left: Vec::new(),
+            phase_tried: Vec::new(),
+            phase_count: 1,
+            surprise_fast: 0,
+            surprise_slow: 0,
+            phase_switches: 0,
             gain_open: Vec::new(),
             eye_now: Vec::new(),
             chosen_q: Vec::new(),
@@ -1019,6 +1045,9 @@ impl Mind {
         let done: Vec<(i32, usize, i32, Option<(i32, i32)>, i32)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3, w.4, w.5)).collect();
         self.act_windows.retain(|w| w.0 > 0);
         for (got, motor, worth, q, here) in done {
+            if self.cfg.phase && motor == HAND {
+                self.phase_step(got, here);
+            }
             self.rate_act += (got - self.rate_act) / 32;
             // separate credit per act, straight to its own loop's and gate's choices of two steps
             // back: what it brought against what each expected of it there (its q, a cell an
@@ -1257,6 +1286,9 @@ impl Mind {
         if self.cfg.ofc_column {
             groups.extend(self.ofc_groups());
         }
+        if self.cfg.phase {
+            groups.push(self.phase_code().into_iter().map(|b| b + PHASE_OFFSET).collect());
+        }
         if self.cfg.efference {
             groups.push(self.efference_now.iter().map(|&f| f as usize + EFFERENCE_OFFSET).collect());
             let g: Vec<usize> = self.ofc.value_cells().into_iter().map(|c| c + OFC_VALUE_OFFSET).collect();
@@ -1276,6 +1308,7 @@ impl Mind {
         v.push(("wm", ones(&self.wm_content())));
         v.push(("ofc_z", ones(&self.ofc_area.z())));
         v.push(("ofc_held", ones(&self.ofc_area.held_state())));
+        v.push(("ofc_phase", if self.cfg.phase { self.phase_code() } else { Vec::new() }));
         v.push(("amy_onsets", self.amy.trace_at(0).iter().map(|&f| f as usize).collect()));
         v.push(("amy_value", self.amy.value_cells().into_iter().map(|c| c % 8192).collect()));
         let (l4, l23) = self.brain.full.as_ref().map_or((zero(), zero()), |f| (f.code.clone(), f.activity()));
@@ -1385,6 +1418,43 @@ impl Mind {
     /// The orbitofrontal area's state and what it holds, as input groups for the striatum.
     fn ofc_groups(&self) -> Vec<Vec<usize>> {
         vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
+    }
+
+    /// The phase state, one hand act closed: its outcome against what the orbitofrontal value
+    /// expected of it here is surprising when they differ by a quarter or more (the salience
+    /// threshold). Surprise averaged fast (a sixteenth) and slow (a 256th); when the fast rate
+    /// is at least a quarter and twice the slow one, the context is wrong: the state moves to the
+    /// context left most recently not yet tried, else to a new one, and the fast rate starts
+    /// again from the slow one. Once surprise is back under the slow rate, the trials are over.
+    fn phase_step(&mut self, got: i32, here: i32) {
+        let surprised = if (got - here).abs() >= ONE as i32 / 4 { ONE as i32 } else { 0 };
+        self.surprise_fast += (surprised - self.surprise_fast) / 16;
+        self.surprise_slow += (surprised - self.surprise_slow) / 256;
+        if self.surprise_fast <= self.surprise_slow {
+            self.phase_tried.clear();
+        }
+        if self.surprise_fast >= ONE as i32 / 4 && self.surprise_fast >= 2 * self.surprise_slow {
+            let from = self.phase_now;
+            self.phase_tried.push(from);
+            let next = self.phase_left.iter().copied().find(|c| !self.phase_tried.contains(c));
+            let to = next.unwrap_or_else(|| {
+                self.phase_count += 1;
+                self.phase_count - 1
+            });
+            self.phase_left.retain(|&c| c != from && c != to);
+            self.phase_left.insert(0, from);
+            self.phase_now = to;
+            self.surprise_fast = self.surprise_slow;
+            self.phase_switches += 1;
+        }
+    }
+
+    /// The phase state's code: 32 fixed bits of `BITS` for the current context.
+    fn phase_code(&self) -> Vec<usize> {
+        let mut v: Vec<usize> = (0..32u64).map(|i| (crate::program::hippocampus::mix64((self.phase_now as u64) << 8 | i ^ 0xFA5E) % BITS as u64) as usize).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// Layer 6 gain on the eye's thalamic relay: each active bit passes with probability its worth
@@ -1760,9 +1830,14 @@ impl Mind {
         // value on the association columns' tufts (`burst_out`): the orbitofrontal state and the
         // amygdala's value cells, each at a fixed hashed bit, so a cell bursts where its input
         // and what is valued now agree
-        let value = if self.cfg.burst_out {
+        let value = if self.cfg.burst_out || self.cfg.phase {
             let mut v = BitVector::new(BITS, Some(0));
-            let feats = ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).chain(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET));
+            if self.cfg.phase {
+                for b in self.phase_code() {
+                    v.bit_set(b);
+                }
+            }
+            let feats = ones(&if self.cfg.burst_out { self.ofc_area.z() } else { BitVector::new(BITS, Some(0)) }).into_iter().map(|b| b + OFC_Z_OFFSET).chain(self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET));
             for f in feats {
                 v.bit_set((crate::program::hippocampus::mix64(f as u64 ^ 0x7A1E) % BITS as u64) as usize);
             }

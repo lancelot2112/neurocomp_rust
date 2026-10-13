@@ -828,6 +828,8 @@ pub struct Brain {
     pub topo: bool,
     /// and unpredicted input bursts (`Column::burst`)
     pub burst: bool,
+    /// and each active cell sends one bit (`Column::sparse_out`)
+    pub sparse_out: bool,
     /// adaptation in the association columns' layer 4 (`Pool::adapt`)
     pub adapt: bool,
     /// local inhibition in the association columns' layer 4 (`Pool::local`)
@@ -860,7 +862,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, need: false, recycled: 0, topo: false, burst: false, adapt: false, local: false, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, need: false, recycled: 0, topo: false, burst: false, sparse_out: false, adapt: false, local: false, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -874,6 +876,7 @@ impl Brain {
             c.superpose = self.superpose;
             c.topo = self.topo;
             c.burst = self.burst;
+            c.sparse_out = self.sparse_out;
             c
         });
         self.areas.push(Area { name: name.to_string(), kind, l4, motor, code: BitVector::new(self.bits, Some(0)), col, expect: None, effect_error: None });
@@ -1316,6 +1319,7 @@ impl Brain {
                         col.superpose = self.superpose;
                         col.topo = self.topo;
                         col.burst = self.burst;
+                        col.sparse_out = self.sparse_out;
                         col.l4.as_mut().unwrap().adapt = self.adapt;
                         col.l4.as_mut().unwrap().local = self.local;
                         col.l4.as_mut().unwrap().need = self.need;
@@ -1341,6 +1345,7 @@ impl Brain {
             col.l4.as_mut().unwrap().need = self.need;
             col.topo = self.topo;
             col.burst = self.burst;
+            col.sparse_out = self.sparse_out;
             col.l4.as_mut().unwrap().adapt = self.adapt;
             col.l4.as_mut().unwrap().local = self.local;
             col.set_persistence(self.full_tau);

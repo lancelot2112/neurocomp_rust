@@ -336,8 +336,12 @@ pub struct Config {
     pub keep_order: bool,
     /// with `keep_order`, input a column's layer 2/3 did not predict bursts: every slot of each
     /// unpredicted layer 4 bit fires, so what came unexpected weighs more in what the column
-    /// sends up (`Column::burst`) (MIND_BURST=0 off)
+    /// sends up (`Column::burst`) (MIND_BURST=1 on; off by default: a sparse output has no room for four copies of a bit)
     pub burst: bool,
+    /// with `keep_order`, each active layer 2/3 cell sends one bit (fixed by its home and slot),
+    /// up to a thirty-second of the area: a sparse code goes up rather than every active cell's
+    /// whole home code (`Column::sparse_out`) (MIND_SPARSE_OUT=0 off)
+    pub sparse_out: bool,
     /// adaptation in the association columns' and the orbitofrontal area's layer 4: a cell that
     /// has fired several steps in a row loses ground in the competition for the winners' slots,
     /// so a new input (a light coming on in a familiar scene) wins slots from what has been there
@@ -368,7 +372,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -419,7 +423,8 @@ impl Config {
             generalize: on("MIND_GENERALIZE"),
             need: on("MIND_NEED"),
             keep_order: on("MIND_KEEP_ORDER"),
-            burst: on("MIND_BURST"),
+            burst: std::env::var("MIND_BURST").map_or(false, |v| v == "1"),
+            sparse_out: on("MIND_SPARSE_OUT"),
             adapt: on("MIND_ADAPT"),
             bounded: on("MIND_BOUNDED"),
             local: on("MIND_LOCAL"),
@@ -573,6 +578,7 @@ impl Mind {
         b.need = cfg.need && cfg.coverage;
         b.topo = cfg.keep_order;
         b.burst = cfg.keep_order && cfg.burst;
+        b.sparse_out = cfg.keep_order && cfg.sparse_out;
         b.adapt = cfg.adapt;
         b.local = cfg.local;
         if cfg.recur {
@@ -637,6 +643,7 @@ impl Mind {
         let need = cfg.need;
         let keep_order = cfg.keep_order;
         let adapt = cfg.adapt;
+        let sparse_out = cfg.sparse_out;
         let local = cfg.local;
         let burst = cfg.keep_order && cfg.burst;
         let superpose = cfg.superpose;
@@ -682,6 +689,7 @@ impl Mind {
                 o.set_need(need && coverage);
                 o.col.topo = keep_order;
                 o.col.burst = burst;
+                o.col.sparse_out = keep_order && sparse_out;
                 o.set_adapt(adapt);
                 o.set_local(local);
                 o.col.superpose = superpose;

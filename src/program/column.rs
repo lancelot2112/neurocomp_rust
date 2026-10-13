@@ -229,6 +229,10 @@ pub struct Column {
     /// slot (as an unpredicted minicolumn bursts, every cell in it firing), so what came
     /// unexpected takes a large share of the output rather than its share of the input
     pub burst: bool,
+    /// sparse output (with `topo`): each active layer 2/3 cell sends one bit, fixed by its home
+    /// and slot, up to a thirty-second of the area (rather than its whole home code), so what
+    /// the column sends up is a sparse code (MIND_SPARSE_OUT=0: the home's bits)
+    pub sparse_out: bool,
     /// the winner's own prediction at the step before (no superposition), and this step's
     /// layer 4 bits it missed
     strict: Option<BitVector>,
@@ -252,7 +256,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, strict: None, unexpected: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, sparse_out: false, strict: None, unexpected: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -546,7 +550,17 @@ impl Column {
                 *taken |= 1u64 << slot;
                 self.homes.insert(c, (generation, key, slot, code.clone()));
             }
-            let (_, _, slot, home) = &self.homes[&c];
+            let (_, key, slot, home) = &self.homes[&c];
+            if self.sparse_out {
+                // one bit a cell, fixed by its home and slot: an active cell is one bit of
+                // output, so the area's code is as sparse as its active cells (and capped)
+                if v.count_ones() < self.bits / 32 {
+                    let mut h = key.wrapping_mul(0xD6E8_FEB8_6659_FD93) ^ (*slot as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                    h ^= h >> 29;
+                    v.bit_set((h % self.bits as u64) as usize);
+                }
+                continue;
+            }
             for &b in home {
                 let o = if *slot == 0 {
                     b as usize
@@ -558,7 +572,7 @@ impl Column {
                 v.bit_set(o);
             }
         }
-        if self.burst {
+        if self.burst && !self.sparse_out {
             // an unpredicted bit bursts: every slot of it fires
             for b in (0..self.bits).filter(|&b| self.unexpected.bit_get(b)) {
                 v.bit_set(b);

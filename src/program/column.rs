@@ -26,7 +26,9 @@
 //!   switch from recurrent completion to feedforward encoding, Hasselmo) joins what is held as
 //!   an item of at most 32 bits; when the column's loop opens the gate (`refresh`: the basal
 //!   ganglia and thalamus) the driven code replaces what is held (an update); at most 256 bits
-//!   are held (`held_cap`, 256: about eight items).
+//!   are held: a share of the area's effective width (the cells its layer 4 has recruited),
+//!   which grows when the area is asked to hold what it had just let go and shrinks slowly while
+//!   it holds well under its allowance.
 //!   Each step a random sixteenth drops out (noise), and an autoassociative map, which learns
 //!   every item held (or proposed), restores each learned item still mostly present;
 //!   what nothing restores fades. A held bit is restored only for `life` steps after it was
@@ -193,8 +195,17 @@ pub struct Column {
     /// steps a held bit is restored by completion before adaptation lets it go (the area's
     /// persistence)
     pub life: u16,
-    /// the most bits the held population keeps (superposed items, 32 bits each at most)
+    /// the most bits the held population keeps (superposed items, 32 bits each at most): its
+    /// share `rho` (`Q16`) of the area's effective width (the cells its layer 4 has recruited),
+    /// at least one item; `rho` grows when the area is asked to hold what it had just let go,
+    /// and shrinks slowly while it holds well under its allowance
     pub held_cap: usize,
+    pub rho: u32,
+    /// when each bit was last squeezed out of the held population (the step), and the step
+    clock: u32,
+    evicted_at: Vec<u32>,
+    /// (times grown, times shrunk)
+    pub resized: (u64, u64),
     /// (loads on surprise, loads by the gate) for diagnosis
     pub loads: (u64, u64),
 }
@@ -212,7 +223,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, loads: (0, 0) }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0) }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -240,6 +251,17 @@ impl Column {
         let n_in = input.count_ones() as u32;
         let gate = std::mem::take(&mut self.gate);
         self.proposal = None;
+        // the allowance: a share of the area's effective width (at least one item, at most half
+        // the vector); it shrinks slowly while well under used
+        self.clock = self.clock.wrapping_add(1);
+        let width = self.l4.as_ref().map_or(self.bits, |p| p.cells().max(32));
+        self.held_cap = ((width as u64 * self.rho as u64) >> 16).clamp(32, self.bits as u64 / 2) as usize;
+        if (self.held.count_ones() as usize) * 2 < self.held_cap && self.rho > (1 << 10) {
+            self.rho -= self.rho / 1024;
+            if self.clock % 1024 == 0 {
+                self.resized.1 += 1;
+            }
+        }
         self.surprise = 0;
         // maintained: each held bit ages; one past the area's persistence (`life`) adapts and
         // goes at random (half a step), and is not restored. The rest lose a random sixteenth
@@ -285,7 +307,13 @@ impl Column {
             }
             // the held population keeps at most `HELD` bits after completion too
             if held.count_ones() as usize > self.held_cap {
-                held = Self::sparse(held.as_words(), self.held_cap, rng);
+                let kept = Self::sparse(held.as_words(), self.held_cap, rng);
+                for b in 0..self.bits {
+                    if held.bit_get(b) && !kept.bit_get(b) {
+                        self.evicted_at[b] = self.clock;
+                    }
+                }
+                held = kept;
             }
             self.held = held;
         }
@@ -349,8 +377,22 @@ impl Column {
                 self.age[b] = 0;
             }
         }
+        // asked to hold what was just let go (most of the item squeezed out within its life):
+        // the allowance grows
+        let back = (0..self.bits).filter(|&b| it.bit_get(b) && self.evicted_at[b] > 0 && self.clock.wrapping_sub(self.evicted_at[b]) <= self.life as u32).count();
+        if back * 2 >= it.count_ones() as usize && it.count_ones() > 0 && self.rho < (1 << 15) {
+            self.rho += self.rho / 16;
+            self.resized.0 += 1;
+        }
         let others: Vec<u64> = self.held.as_words().iter().zip(it.as_words()).map(|(h, i)| h & !i).collect();
         let keep = Self::sparse(&others, self.held_cap.saturating_sub(it.count_ones() as usize), rng);
+        for (w, (o, k)) in others.iter().zip(keep.as_words()).enumerate() {
+            let mut gone = o & !k;
+            while gone != 0 {
+                self.evicted_at[w * 64 + gone.trailing_zeros() as usize] = self.clock;
+                gone &= gone - 1;
+            }
+        }
         self.held = BitVector::from_words(keep.as_words().iter().zip(it.as_words()).map(|(a, b)| a | b).collect());
     }
 

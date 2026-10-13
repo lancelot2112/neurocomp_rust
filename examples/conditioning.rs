@@ -275,6 +275,11 @@ fn main() {
         let full = mind.brain.loads_of(ColumnId::Assoc(mind.brain.pairs.len()));
         let o = mind.ofc_area.col.loads;
         println!("claustrum: {} of {} proposals held; held loads (surprise, gate): full association {:?}, orbitofrontal {:?}", mind.claustrum.stats.1, mind.claustrum.stats.0, full, o);
+        let n = mind.brain.pairs.len();
+        if let Some(f) = mind.brain.full.as_ref() {
+            println!("held allowance: full association {} bits (share {:.3}, grown {} times), orbitofrontal {} bits (share {:.3}, grown {} times); layer 4 widths {} and {}", f.held_cap, f.rho as f64 / 65536.0, f.resized.0, mind.ofc_area.col.held_cap, mind.ofc_area.col.rho as f64 / 65536.0, mind.ofc_area.col.resized.0, f.l4.as_ref().map_or(0, |p| p.cells()), mind.ofc_area.col.l4.as_ref().map_or(0, |p| p.cells()));
+        }
+        let _ = n;
     }
     let o = &mind.ofc_area;
     println!("orbitofrontal area: cells (layer 2/3, outcome) {:?}; outcomes expected right {} of {}; holds {}; splits {}", o.cells(), o.stats.1, o.stats.0, o.stats.2, o.stats.3);

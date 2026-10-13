@@ -128,6 +128,13 @@ pub struct Pool {
     free: Vec<usize>,
     /// cells recycled so far
     pub recycled: u64,
+    /// adaptation: a cell that has fired several steps in a row loses ground in the competition
+    /// for the winners' slots (its drive counted down by an eighth a step it has fired, up to a
+    /// half), so what came new wins slots from what has been there all along; firing is not
+    /// affected, only who wins when more fire than may
+    pub adapt: bool,
+    /// per cell, the steps it has fired in a row (up to 4)
+    run: Vec<u8>,
     /// cells recruited by coverage on a salient step, by coverage of recurring input, and for
     /// input not covered at all
     pub why: (u64, u64, u64),
@@ -163,6 +170,8 @@ impl Pool {
             free: Vec::new(),
             recycled: 0,
             why: (0, 0, 0),
+            adapt: false,
+            run: Vec::new(),
         }
     }
 
@@ -215,6 +224,35 @@ impl Pool {
         let mut f: Vec<(u32, usize)> = count.into_iter().filter(|&(_, n)| n >= self.theta).collect();
         f.sort_unstable_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
         f.truncate(self.winners(on.len()));
+        f
+    }
+
+    /// As `fire`, with adaptation: the ranking by drive less an eighth a step fired in a row.
+    fn fire_adapted(&mut self, on: &[u32]) -> Vec<(u32, usize)> {
+        let mut count: HashMap<u32, usize> = HashMap::new();
+        for &b in on {
+            for &c in &self.index[b as usize] {
+                *count.entry(c).or_default() += 1;
+            }
+        }
+        let run = &self.run;
+        let eff = |c: u32, n: usize| -> usize {
+            let r = run.get(c as usize).copied().unwrap_or(0) as usize;
+            n * 8 - n * r.min(4)
+        };
+        let mut f: Vec<(u32, usize)> = count.into_iter().filter(|&(_, n)| n >= self.theta).collect();
+        f.sort_unstable_by(|a, b| eff(b.0, b.1).cmp(&eff(a.0, a.1)).then(a.0.cmp(&b.0)));
+        f.truncate(self.winners(on.len()));
+        if self.run.len() < self.syn.len() {
+            self.run.resize(self.syn.len(), 0);
+        }
+        let mut won = vec![false; self.run.len()];
+        for &(c, _) in &f {
+            won[c as usize] = true;
+        }
+        for (c, r) in self.run.iter_mut().enumerate() {
+            *r = if won[c] { (*r + 1).min(4) } else { 0 };
+        }
         f
     }
 
@@ -319,7 +357,7 @@ impl Pool {
     pub fn learn(&mut self, input: &[(usize, &BitVector)]) -> BitVector {
         self.tick += 1;
         let on = self.active(input);
-        let fired = self.fire(&on);
+        let fired = if self.adapt { self.fire_adapted(&on) } else { self.fire(&on) };
         // the sources present: a synapse is moved away only if its own source was active (an
         // absent sense is no evidence against it, so a pair's cell keeps both halves when one
         // comes alone)
@@ -614,6 +652,8 @@ pub struct Brain {
     pub topo: bool,
     /// and unpredicted input bursts (`Column::burst`)
     pub burst: bool,
+    /// adaptation in the association columns' layer 4 (`Pool::adapt`)
+    pub adapt: bool,
     /// the full association column's width (its layer 4's address space): the top area may be
     /// wider than the rest, room for its cells to grow into
     pub full_bits: usize,
@@ -642,7 +682,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, need: false, recycled: 0, topo: false, burst: false, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, need: false, recycled: 0, topo: false, burst: false, adapt: false, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -1088,6 +1128,7 @@ impl Brain {
                         col.superpose = self.superpose;
                         col.topo = self.topo;
                         col.burst = self.burst;
+                        col.l4.as_mut().unwrap().adapt = self.adapt;
                         col.set_persistence(self.pair_tau);
                         col.set_recurrence(self.pair_gain);
                         self.pairs.push((key, col));
@@ -1110,6 +1151,7 @@ impl Brain {
             col.l4.as_mut().unwrap().need = self.need;
             col.topo = self.topo;
             col.burst = self.burst;
+            col.l4.as_mut().unwrap().adapt = self.adapt;
             col.set_persistence(self.full_tau);
             col.set_recurrence(self.full_gain);
             col.superpose = self.superpose;

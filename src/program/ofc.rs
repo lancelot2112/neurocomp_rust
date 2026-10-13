@@ -124,6 +124,13 @@ impl Ofc {
         }
     }
 
+    /// Adaptation in the area's layer 4 (`Pool::adapt`).
+    pub fn set_adapt(&mut self, on: bool) {
+        if let Some(p) = self.col.l4.as_mut() {
+            p.adapt = on;
+        }
+    }
+
     /// A salient moment: layer 4 recruits at once for what it does not cover.
     pub fn set_salient(&mut self, on: bool) {
         if let Some(p) = self.col.l4.as_mut() {

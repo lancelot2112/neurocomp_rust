@@ -39,8 +39,10 @@
 //! the least-used cells form a new assembly. Learning is Hebbian: the active assembly learns an
 //! input that drives it (within the one-bit allowance of what it expects); an input that
 //! inhibits it does not fire it and is not learned, so it does not come to expect what is taking
-//! it down; it fires while held down, and that weakens its synapses onto the assembly
-//! (anti-Hebbian, long-term depression), so the assembly comes to reject what contradicts it.
+//! it down. Anti-Hebbian: a rival assembly the input drives (it matched and would fire) but the
+//! active one holds down weakens its synapses from that input (long-term depression), until the
+//! input no longer favours it: what comes in every context stops driving the rivals, what is
+//! theirs alone is kept (pattern separation).
 //!
 //! All integer: counts, bit lengths, compares.
 
@@ -176,8 +178,8 @@ impl ContextCircuit {
         }
     }
 
-    fn unlearn(&mut self, on: &[usize]) {
-        for &i in &self.active {
+    fn unlearn(&mut self, cells: &[usize], on: &[usize]) {
+        for &i in cells {
             for &b in on {
                 let w = &mut self.inp[i * self.bits + b];
                 if *w > 0 {
@@ -225,6 +227,8 @@ impl ContextCircuit {
             self.sst = (self.sst - net - 1).max(0);
             self.rival.resize(self.contexts, 0);
             let mut winner: Option<(i32, usize)> = None;
+            // the rivals this input drives (they matched it and would fire)
+            let mut matched: Vec<usize> = Vec::new();
             for l in 0..self.contexts {
                 if l == self.now {
                     self.rival[l] = 0;
@@ -234,7 +238,11 @@ impl ContextCircuit {
                 if cells.is_empty() {
                     continue;
                 }
-                self.rival[l] = (self.rival[l] + self.net(&cells, &on) - net - 1).max(0);
+                let drive = self.net(&cells, &on);
+                if drive > 0 {
+                    matched.push(l);
+                }
+                self.rival[l] = (self.rival[l] + drive - net - 1).max(0);
                 if strength > 0 && self.rival[l] >= strength && winner.map_or(true, |w| self.rival[l] > w.0) {
                     winner = Some((self.rival[l], l));
                 }
@@ -247,16 +255,21 @@ impl ContextCircuit {
                 self.learn(&all);
             } else if strength > 0 && self.sst >= strength {
                 self.silence(strength);
-            } else if net >= -1 {
-                // Hebbian: an input that drives the assembly (within the allowance of what it
-                // expects) strengthens its synapses (a young assembly, expecting little, learns
-                // what comes)
-                self.learn(&all);
             } else {
-                // anti-Hebbian: an input that fires while it inhibits the assembly (presynaptic
-                // on, postsynaptic held down) weakens its synapses onto it (long-term depression),
-                // so the assembly comes to reject what contradicts it
-                self.unlearn(&all);
+                if net >= -1 {
+                    // Hebbian: an input that drives the assembly (within the allowance of what it
+                    // expects) strengthens its synapses (a young assembly, expecting little,
+                    // learns what comes)
+                    self.learn(&all);
+                }
+                // anti-Hebbian: a rival the input drove, held down by the active assembly (it
+                // matched and would have fired, and was inhibited), weakens its synapses from
+                // that input (long-term depression): what comes in every context stops driving
+                // the rivals, what is theirs alone is kept (pattern separation)
+                for l in matched {
+                    let cells = self.cells_of(l);
+                    self.unlearn(&cells, &all);
+                }
             }
         }
         if self.active.is_empty() {

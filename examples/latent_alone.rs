@@ -19,7 +19,9 @@
 
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
+use neurocomp::program::area::Pool;
 use neurocomp::program::context_circuit::ContextCircuit;
+use neurocomp::program::separation::Separator;
 use neurocomp::program::latent::{LatentCause, Scale};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -72,6 +74,15 @@ fn main() {
             v
         };
         let cue = [sparse(16), sparse(16)];
+        // (`LATENT_L4=1`: the circuit reads layer 4's code: a pool over two sources, the light
+        // and what followed (paid or not, the same code whichever light), recruiting conjunction
+        // cells as new inputs need them)
+        let l4_on = std::env::var("LATENT_L4").is_ok();
+        let outcome = [sparse(16), sparse(16)];
+        let mut l4 = Pool::new(2, 1024, 1024, 32, 2, seed);
+        // (`LATENT_SEP=1`: the codes pass through pattern separation first)
+        let sep_on = std::env::var("LATENT_SEP").is_ok();
+        let mut sep = Separator::new(1024, 16, 1024, 32, seed);
         let codes: Vec<BitVector> = (0..4)
             .map(|i| {
                 if shared {
@@ -85,6 +96,14 @@ fn main() {
                 }
             })
             .collect();
+        // (layer 4 develops first: the separator settles on the inputs the world can give, in
+        // random order, before the task and the circuit begin)
+        if sep_on {
+            for _ in 0..2000 {
+                let i = rng.gen_range(0..4usize);
+                sep.code(&codes[i], true);
+            }
+        }
         let mut worth: Vec<Vec<i32>> = vec![vec![-1; BITS]];
         let mut learned: Vec<Vec<u16>> = vec![vec![0; BITS]];
         // which context each kind of phase (A pays / B pays) last settled on
@@ -110,7 +129,17 @@ fn main() {
                 let bits = [light, BACKGROUND];
                 let before = if circuit { cc.resets } else { lc.resets };
                 if circuit {
-                    cc.step(&codes[light * 2 + (got > 0) as usize]);
+                    if l4_on {
+                        let code = l4.learn(&[(0, &cue[light]), (1, &outcome[(got > 0) as usize])]);
+                        cc.step(&code);
+                    } else if sep_on {
+                        // (the critical period closed: layer 4 codes, it no longer learns;
+                        // LATENT_SEP_OPEN=1 keeps it learning)
+                        let code = sep.code(&codes[light * 2 + (got > 0) as usize], std::env::var("LATENT_SEP_OPEN").is_ok());
+                        cc.step(&code);
+                    } else {
+                        cc.step(&codes[light * 2 + (got > 0) as usize]);
+                    }
                 } else {
                     lc.step(&worth, &learned, &bits, got);
                 }

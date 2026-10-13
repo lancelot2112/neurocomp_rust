@@ -1652,19 +1652,28 @@ impl Mind {
         self.lc_uses[to] += 1;
     }
 
-    /// How a context assembly answers an act: `Some(true)` when its best locked-in cue in view
-    /// paid lately within a factor of two of its worth, `Some(false)` when outside it, `None` when
-    /// it knows nothing in view or that cue is still being learned (no prediction to break).
+    /// How a context assembly answers an act: over the cues in view whose worth it has locked in,
+    /// `Some(false)` when any of them paid lately outside a factor of two of its worth (each cue's
+    /// prediction can be broken: the background's pay held while the light's stopped must not
+    /// vouch for the light), `Some(true)` when all kept theirs, `None` when it has locked in none
+    /// of what is in view (no prediction to break).
     fn lc_answer(&self, c: usize, bits: &[usize]) -> Option<bool> {
         let vs = self.gain_v.get(c)?;
-        let b = bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b])?;
-        let (v, n) = (vs[b], self.gain_n[c][b] as i32);
-        let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
-        if 2 + n < window {
-            return None;
+        let mut answer = None;
+        for &b in bits.iter().filter(|&&b| vs[b] >= 0) {
+            let (v, n) = (vs[b], self.gain_n[c][b] as i32);
+            let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
+            if 2 + n < window {
+                continue;
+            }
+            let r = self.lc_recent[b];
+            if 2 * r >= v && r <= 2 * v {
+                answer = Some(true);
+            } else {
+                return Some(false);
+            }
         }
-        let r = self.lc_recent[b];
-        Some(2 * r >= v && r <= 2 * v)
+        answer
     }
 
     /// The latent-cause model as attractors (see `MindConfig::attractor`).

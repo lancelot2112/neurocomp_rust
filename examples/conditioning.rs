@@ -134,10 +134,23 @@ fn main() {
                                 }
                             }
                         }
+                        // and against the other cue's code at the latest trial before (cue vs none)
+                        let mut cross = (0.0f64, 0usize);
+                        for (i, (_, cue, p)) in seen_at.iter().enumerate().filter(|(_, x)| x.0 + block > trial && x.0 < trial) {
+                            let Some(now) = p.iter().find(|x| x.0 == name).map(|x| { let mut v = x.1.clone(); v.sort_unstable(); v }) else { continue };
+                            if let Some((_, _, q)) = seen_at[..i].iter().rev().find(|x| x.1 != *cue) {
+                                if let Some(old) = q.iter().find(|x| x.0 == name) {
+                                    let mut o = old.1.clone();
+                                    o.sort_unstable();
+                                    cross.0 += sim(&now, &o);
+                                    cross.1 += 1;
+                                }
+                            }
+                        }
                         let f = |a: (f64, usize)| if a.1 == 0 { "-".to_string() } else { format!("{:.2}", a.0 / a.1 as f64) };
-                        line += &format!(" {name} {}/{}/{}", f(acc[0]), f(acc[1]), f(acc[2]));
+                        line += &format!(" {name} {}/{}/{} x{}", f(acc[0]), f(acc[1]), f(acc[2]), f(cross));
                     }
-                    eprintln!("progress {kind:?} seed {seed} trials {trial}: drift (1/50/100 back){line}");
+                    eprintln!("progress {kind:?} seed {seed} trials {trial}: drift (1/50/100 back, x other cue){line}");
                 }
                 let (used, rec, cyc, why) = mind.brain.full_l4();
                 eprintln!("progress {kind:?} seed {seed} trials {trial}: top layer 4 cells in use {used} (recruited {rec}: salient {}, recurring {}, new {}; recycled {cyc}; orbitofrontal recycled {})", why.0, why.1, why.2, mind.ofc_recycled);

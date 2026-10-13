@@ -133,8 +133,9 @@ pub struct Pool {
     /// half), so what came new wins slots from what has been there all along; firing is not
     /// affected, only who wins when more fire than may
     pub adapt: bool,
-    /// fixed fields (with `need`): winners do not tighten toward the input; a cell keeps the
-    /// field it was recruited with (MIND_FIXED_FIELDS)
+    /// fixed fields: winners do not tighten toward the input; a cell keeps the field it was
+    /// recruited with, in every layer 4, so what a cell means does not drift under the areas that
+    /// read it (MIND_FIXED_FIELDS=0: off)
     pub fixed: bool,
     /// local inhibition: winners compete within their source (a cell belongs to the source most
     /// of its synapses are on), each source's winners normalized by its own active bits (k to 4k,
@@ -380,6 +381,16 @@ impl Pool {
             }
         }
         let salient = self.salient;
+        // by need, cells for what came new are built on what came new: if enough of the
+        // uncovered input has just come on (an onset), the new cells sample only that, so a cell
+        // for the light is not half a cell for the scene it came on in
+        if self.need && self.fixed && !self.last_on.is_empty() {
+            let last = &self.last_on;
+            let fresh: Vec<u32> = open.iter().copied().filter(|b| last.binary_search(b).is_err()).collect();
+            if fresh.len() >= self.theta.max(8) {
+                open = fresh;
+            }
+        }
         let n = open.len().min(self.k);
         let mut new = Vec::new();
         for _ in 0..n {
@@ -448,9 +459,10 @@ impl Pool {
         } else {
             Vec::new()
         };
-        // (by need with `fixed` fields, cells keep the field they were recruited with: new input
-        // gets new cells by coverage, and sleep recycles what goes unused)
-        let tighten = !(self.need && self.fixed);
+        // (with `fixed` fields, cells keep the field they were recruited with: new input gets new
+        // cells by coverage, and sleep recycles what goes unused; a field that drifts drifts what
+        // every area above reads from it)
+        let tighten = !self.fixed;
         for &(c, _) in &fired {
             self.last[c as usize] = self.tick;
             self.uses[c as usize] = self.uses[c as usize].saturating_add(1);

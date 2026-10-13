@@ -145,6 +145,13 @@ impl Ofc {
         }
     }
 
+    /// How far the payoff has fallen below its long-run rate (a fraction of 65536).
+    pub fn set_unpaid(&mut self, f: u32) {
+        if let Some(p) = self.col.l4.as_mut() {
+            p.unpaid = f;
+        }
+    }
+
     /// Sleep: recycle layer 4's unused cells (`Pool::recycle`).
     pub fn recycle(&mut self) -> usize {
         self.col.l4.as_mut().map_or(0, |p| p.recycle(1))

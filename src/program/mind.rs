@@ -535,6 +535,8 @@ pub struct Mind {
     held_tag: [u32; 2],
     held_loads: [u64; 2],
     rate_slow: i32,
+    /// how far the payoff has fallen below its long-run rate (a fraction of `ONE`): tonic noradrenaline
+    unpaid: u32,
     /// what an act usually brings (`Q16`), and the acts whose outcome window is still open
     /// (steps left, outcome so far)
     rate_act: i32,
@@ -727,6 +729,7 @@ impl Mind {
             held_tag: [0; 2],
             held_loads: [0; 2],
             rate_slow: 0,
+            unpaid: 0,
             rate_act: 0,
             act_windows: Vec::new(),
             chosen_q: Vec::new(),
@@ -774,6 +777,8 @@ impl Mind {
         if self.cfg.need {
             self.brain.set_salient(self.salient);
             self.ofc_area.set_salient(self.salient);
+            self.brain.set_unpaid(self.unpaid);
+            self.ofc_area.set_unpaid(self.unpaid);
         }
         let raw = self.inputs(s);
         // its own voice: the sound sensed right after a command to the voice (the efference copy)
@@ -1067,7 +1072,18 @@ impl Mind {
         self.report.frustration = self.frustration;
         self.rate_fast += (outcome - self.rate_fast) / 16;
         self.rate_slow += (outcome - self.rate_slow) / 256;
-        let tonic = if self.cfg.tonic {
+        // how far the payoff fell below its long-run rate, as a fraction of it
+        self.unpaid = if self.rate_slow > 0 {
+            (((self.rate_slow - self.rate_fast).max(0) as i64 * ONE as i64 / self.rate_slow as i64) as u32).min(ONE as u32)
+        } else {
+            0
+        };
+        let tonic = if self.cfg.tonic && crate::program::area::share_by_uncertainty() {
+            // exploration in proportion to the fall (none paid lately: the striatum's own jitter again)
+            let falling = (self.unpaid as i64 * 3 / ONE as i64) as i32;
+            let barren = (self.rate_fast < ONE as i32 / 64) as i32;
+            falling + barren
+        } else if self.cfg.tonic {
             let falling = ((self.rate_slow - self.rate_fast) * 64 / ONE as i32).clamp(0, 2);
             let barren = (self.rate_fast < ONE as i32 / 64) as i32;
             falling + barren

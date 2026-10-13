@@ -228,6 +228,8 @@ const CELL_THETA: u32 = 10;
 /// Focused contexts: each input group's bits fall in a region of its own (one 64-bit word),
 /// `SHARE` of them; the candidate's in the last region.
 const SHARE: usize = 16;
+/// the most regions one source owns in a focused context
+const OWN_MAX: usize = 6;
 const POOL_CAP: usize = 2048;
 /// Grow mode: GPi's tonic noise per option when exploring.
 const JITTER: i32 = 3;
@@ -483,7 +485,9 @@ pub struct MaskStriatum {
     /// per input source (focused), how many regions it owns: enough for about `SHARE` of its
     /// active bits each at its busiest so far (up to 32); it only grows, so where a bit lands
     /// does not move
-    owned: std::cell::RefCell<std::collections::HashMap<u64, usize>>,
+    owned: std::cell::RefCell<std::collections::HashMap<u64, Vec<usize>>>,
+    /// the next region not yet owned by any source
+    next_free: std::cell::Cell<usize>,
 }
 
 fn mix(x: u64) -> u64 {
@@ -550,6 +554,7 @@ impl MaskStriatum {
             last_q: 0,
             alpha: (256, Vec::new()),
             owned: Default::default(),
+            next_free: Default::default(),
         }
     }
 
@@ -629,7 +634,8 @@ impl MaskStriatum {
 
     /// Focused: where each live group's bits go. A group owns regions (words) by its source (the
     /// 1024-bit block of its first bit, and which copy of that source it is when a source is
-    /// repeated), as many as hold about `SHARE` of its active bits each at its busiest so far;
+    /// repeated), as many as hold about `SHARE` of its active bits each at its busiest so far (up
+    /// to `OWN_MAX`, taken first come from regions no source owns yet);
     /// each of its bits lands in one of them, by its own hash, so an input always lands on the
     /// same bits whatever else is present (the order is kept), and a region keeps its `SHARE`
     /// smallest-hash bits. Returns, per live group in order, the regions it owns.
@@ -642,10 +648,21 @@ impl MaskStriatum {
             let copy = copies.entry(src).or_default();
             let key = mix((src as u64) << 8 | *copy);
             *copy += 1;
-            let n = owned.entry(key).or_insert(1);
-            *n = (*n).max(g.len().div_ceil(SHARE)).min(32);
-            let n = *n;
-            let rs: Vec<usize> = (0..n).map(|r| (mix(key ^ (r as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) % regions as u64) as usize).collect();
+            // its regions: taken first come from those no source owns yet, so sources do not share
+            // regions while there are free ones (else one by hash), up to `OWN_MAX`
+            let rs = owned.entry(key).or_default();
+            let want = g.len().div_ceil(SHARE).clamp(1, OWN_MAX);
+            while rs.len() < want {
+                let f = self.next_free.get();
+                if f < regions {
+                    rs.push(f);
+                    self.next_free.set(f + 1);
+                } else {
+                    rs.push((mix(key ^ (rs.len() as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) % regions as u64) as usize);
+                }
+            }
+            let rs = rs.clone();
+            let n = rs.len();
             if let Some(c) = c.as_deref_mut() {
                 let salt = 0x5EED ^ key;
                 let mut per: Vec<Vec<u64>> = vec![Vec::new(); n];
@@ -672,7 +689,7 @@ impl MaskStriatum {
 
     /// Focused: regions owned by all sources together (counting overlaps).
     pub fn owned_total(&self) -> usize {
-        self.owned.borrow().values().sum()
+        self.owned.borrow().values().map(|v| v.len()).sum()
     }
 
     /// Focused: the number of regions before the candidate's.

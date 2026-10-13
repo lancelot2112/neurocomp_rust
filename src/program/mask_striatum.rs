@@ -493,6 +493,8 @@ pub struct MaskStriatum {
     pub fold: bool,
     /// the next region not yet owned by any source
     next_free: std::cell::Cell<usize>,
+    /// focused: which source (input id / 1024) each region was taken for (a diagnostic)
+    labels: std::cell::RefCell<std::collections::HashMap<usize, usize>>,
 }
 
 fn mix(x: u64) -> u64 {
@@ -560,6 +562,7 @@ impl MaskStriatum {
             alpha: (256, Vec::new()),
             owned: Default::default(),
             next_free: Default::default(),
+            labels: Default::default(),
             fold: std::env::var("MIND_STRIATAL_FOLD").map_or(true, |v| v != "0"),
         }
     }
@@ -666,6 +669,7 @@ impl MaskStriatum {
                 let f = self.next_free.get();
                 if f < regions {
                     rs.push(f);
+                    self.labels.borrow_mut().insert(f, src);
                     self.next_free.set(f + 1);
                 } else {
                     rs.push((mix(key ^ (rs.len() as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) % regions as u64) as usize);
@@ -702,6 +706,11 @@ impl MaskStriatum {
     fn context_focused(&self, groups: &[Vec<usize>], c: &mut [u64]) {
         let regions = c.len() - 1;
         self.place_groups(groups, regions, Some(c));
+    }
+
+    /// Focused: the source (input id / 1024) region `r` was first taken for.
+    pub fn region_source(&self, r: usize) -> Option<usize> {
+        self.labels.borrow().get(&r).copied()
     }
 
     /// Focused: regions owned by all sources together (counting overlaps).

@@ -1247,6 +1247,11 @@ impl Mind {
         (self.bg.owned_total(), self.bg.regions())
     }
 
+    /// The source (striatal input id / 1024) the striatal context region `r` serves.
+    pub fn striatal_source(&self, r: usize) -> Option<usize> {
+        self.bg.region_source(r)
+    }
+
     pub fn hand_view(&self) -> (Option<(Vec<usize>, Vec<Vec<usize>>, Vec<Vec<usize>>)>, (usize, usize)) {
         let (l, _) = motor_channels(HAND);
         (self.bg.choice_view(l), self.bg.pool_sizes(l))

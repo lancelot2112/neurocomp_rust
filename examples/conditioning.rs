@@ -201,6 +201,29 @@ fn main() {
                         let sel = freq[1].iter().filter(|&(b, &f)| f as f64 / n[1].max(1) as f64 - freq[0].get(b).copied().unwrap_or(0) as f64 / n[0].max(1) as f64 >= 0.4).count();
                         line += &format!(" sel_{name} {sel}");
                     }
+                    // the striatal context's overlap between the two lights, by the source of its
+                    // regions: (shared bits, bits on) summed over pairs of consecutive A/B trials
+                    {
+                        let mut by: std::collections::BTreeMap<usize, (usize, usize)> = Default::default();
+                        let recent: Vec<&(usize, bool, Vec<(String, Vec<usize>)>)> = seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial).collect();
+                        for w in recent.windows(2) {
+                            if w[0].1 == w[1].1 {
+                                continue;
+                            }
+                            let get = |p: &Vec<(String, Vec<usize>)>| p.iter().find(|x| x.0 == "ctx").map_or(Vec::new(), |x| x.1.clone());
+                            let (a, b) = (get(&w[0].2), get(&w[1].2));
+                            for &x in a.iter().chain(b.iter()) {
+                                by.entry(mind.striatal_source(x / 64).unwrap_or(9999)).or_default().1 += 1;
+                            }
+                            for &x in a.iter().filter(|x| b.contains(x)) {
+                                by.entry(mind.striatal_source(x / 64).unwrap_or(9999)).or_default().0 += 2;
+                            }
+                        }
+                        line += " | ctx overlap by source:";
+                        for (src, (sh, on)) in by.iter().filter(|(_, v)| v.1 > 0) {
+                            line += &format!(" {src}:{:.2}({on})", *sh as f64 / *on as f64);
+                        }
+                    }
                     let mut sz = [(0usize, 0usize, 0usize); 2];
                     for (_, cue, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {
                         let n = |k: &str| p.iter().find(|x| x.0 == k).map_or(0, |x| x.1.len());

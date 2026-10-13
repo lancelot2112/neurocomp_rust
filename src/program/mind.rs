@@ -1584,12 +1584,14 @@ impl Mind {
         // of those that explain this act, the most evidence (excitability breaking ties)
         let challenger = fitting.iter().copied().max_by_key(|&c| (self.lc_score[c], bitlen(self.lc_uses[c] as i32)));
         // the active assembly holds by its own recurrent excitation: it yields only on an act it
-        // fails to explain, and only to one that explains it (or to a new one)
+        // fails to explain, and only to one that explains it (or to a new one); it also inhibits
+        // its rivals, so a rival takes over only with twice its evidence (a shift and a compare),
+        // and two near-equal assemblies do not trade control on every noisy act
         let to = if cur_fits {
             cur
-        } else if let Some(c) = challenger.filter(|&c| self.lc_score[c] > self.lc_score[cur]) {
+        } else if let Some(c) = challenger.filter(|&c| self.lc_score[c] > 2 * self.lc_score[cur]) {
             c
-        } else if self.lc_new > self.lc_score[best] {
+        } else if self.lc_new > 2 * self.lc_score[best] {
             // no known assembly explains what happens lately: recruit a new one
             self.phase_count = self.phase_count.max(n_ctx) + 1;
             self.lc_score.push(self.lc_new);

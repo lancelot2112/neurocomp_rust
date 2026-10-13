@@ -577,7 +577,10 @@ pub struct Mind {
     /// layer 6 gain: each eye bit's worth (`Q16`, −1: not yet seen at an act), learned from the
     /// outcomes of hand acts made with it in view (Rescorla–Wagner, an eighth a time); the hand
     /// acts still open (steps left, outcome so far, the eye's bits at the act); the eye's bits now
-    gain_v: Vec<i32>,
+    gain_v: Vec<Vec<i32>>,
+    /// how many outcomes each (context, eye bit) worth has learned from: its learning rate is
+    /// 1/(2 + that), so it learns fast at first and then locks in (noise no longer moves it)
+    gain_n: Vec<Vec<u16>>,
     /// the phase state: the current context, the contexts in the order last left (most recent
     /// first), those tried since outcomes last settled, how many there are, fast and slow
     /// averages of surprising outcomes (`Q16`), and how many switches
@@ -585,11 +588,6 @@ pub struct Mind {
     phase_left: Vec<usize>,
     phase_tried: Vec<usize>,
     phase_count: usize,
-    /// the contexts whose outcomes have settled (surprise once under the threshold in them):
-    /// only a settled context can be found wrong (one still being learned is not)
-    phase_settled: Vec<usize>,
-    /// hand acts closed in the current context (it can settle once the fast average spans them)
-    phase_acts: u32,
     surprise_fast: i32,
     surprise_slow: i32,
     pub phase_switches: u32,
@@ -788,13 +786,12 @@ impl Mind {
             attend_open: Vec::new(),
             attend: Vec::new(),
             attend_n: Vec::new(),
-            gain_v: vec![-1; BITS],
+            gain_v: vec![vec![-1; BITS]],
+            gain_n: vec![vec![0; BITS]],
             phase_now: 0,
             phase_left: Vec::new(),
             phase_tried: Vec::new(),
             phase_count: 1,
-            phase_settled: Vec::new(),
-            phase_acts: 0,
             surprise_fast: 0,
             surprise_slow: 0,
             phase_switches: 0,
@@ -849,10 +846,12 @@ impl Mind {
             self.ofc_area.set_unpaid(self.unpaid);
         }
         let mut raw = self.inputs(s);
-        if self.cfg.l6_gain {
+        if self.cfg.l6_gain || self.cfg.phase {
             let e = Self::slot(EYE);
             self.eye_now = ones(&raw[e]);
-            raw[e] = self.l6_relay(&raw[e]);
+            if self.cfg.l6_gain {
+                raw[e] = self.l6_relay(&raw[e]);
+            }
         }
         // its own voice: the sound sensed right after a command to the voice (the efference copy)
         let own = self.issued.iter().any(|(a, _)| *a == VOICE);
@@ -1046,15 +1045,12 @@ impl Mind {
         if self.cfg.attend_ctx {
             self.attend_step(outcome, &acts_now);
         }
-        if self.cfg.l6_gain {
+        if self.cfg.l6_gain || self.cfg.phase {
             self.gain_step(outcome, &acts_now);
         }
         let done: Vec<(i32, usize, i32, Option<(i32, i32)>, i32)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3, w.4, w.5)).collect();
         self.act_windows.retain(|w| w.0 > 0);
         for (got, motor, worth, q, here) in done {
-            if self.cfg.phase && motor == HAND {
-                self.phase_step(got, here);
-            }
             self.rate_act += (got - self.rate_act) / 32;
             // separate credit per act, straight to its own loop's and gate's choices of two steps
             // back: what it brought against what each expected of it there (its q, a cell an
@@ -1428,10 +1424,11 @@ impl Mind {
     }
 
     /// The phase state, one hand act closed: its outcome is surprising when it fell short of what
-    /// the orbitofrontal value expected of it here by a quarter or more (the salience threshold:
-    /// an omission, frustration's signal). Surprise averaged fast (a sixteenth) and slow (a 256th); in a context that has
-    /// settled (its surprise once under a quarter), when the fast rate is at least a quarter and
-    /// twice the slow one, the context is wrong: the state moves to the
+    /// the current context expected of it by a quarter or more (the salience threshold: an
+    /// omission, frustration's signal). The context's expectations are Hebbian worths that learn
+    /// fast and then lock in, so a context still being learned absorbs its surprises and a
+    /// settled one does not. Surprise averaged fast (a sixteenth) and slow (a 256th); when the
+    /// fast rate is at least a quarter and twice the slow one, the context is wrong: the state moves to the
     /// context left most recently not yet tried, else to a new one, and the fast rate starts
     /// again from the slow one. Once surprise is back under the slow rate, the trials are over.
     fn phase_step(&mut self, got: i32, here: i32) {
@@ -1439,20 +1436,14 @@ impl Mind {
         // learning, not a sign the context changed)
         let surprised = if here - got >= ONE as i32 / 4 { ONE as i32 } else { 0 };
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("phase: here {:.3} got {:.3} fast {:.3} slow {:.3} context {} settled {}", here as f64 / ONE as f64, got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, self.surprise_slow as f64 / ONE as f64, self.phase_now, self.phase_settled.contains(&self.phase_now));
+            eprintln!("phase: here {:.3} got {:.3} fast {:.3} slow {:.3} context {} settled {}", here as f64 / ONE as f64, got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, self.surprise_slow as f64 / ONE as f64, self.phase_now, true);
         }
         self.surprise_fast += (surprised - self.surprise_fast) / 16;
         self.surprise_slow += (surprised - self.surprise_slow) / 256;
         if self.surprise_fast <= self.surprise_slow {
             self.phase_tried.clear();
         }
-        self.phase_acts += 1;
-        // settled: a whole fast window (16 acts) in this context, with surprise under a quarter
-        if self.phase_acts >= 16 && self.surprise_fast < ONE as i32 / 4 && !self.phase_settled.contains(&self.phase_now) {
-            self.phase_settled.push(self.phase_now);
-        }
-        let settled = self.phase_settled.contains(&self.phase_now);
-        if settled && self.surprise_fast >= ONE as i32 / 4 && self.surprise_fast >= 2 * self.surprise_slow {
+        if self.surprise_fast >= ONE as i32 / 4 && self.surprise_fast >= 2 * self.surprise_slow {
             let from = self.phase_now;
             self.phase_tried.push(from);
             let next = self.phase_left.iter().copied().find(|c| !self.phase_tried.contains(c));
@@ -1464,7 +1455,6 @@ impl Mind {
             self.phase_left.insert(0, from);
             self.phase_now = to;
             self.surprise_fast = self.surprise_slow;
-            self.phase_acts = 0;
             self.phase_switches += 1;
         }
     }
@@ -1488,14 +1478,15 @@ impl Mind {
     /// and the reticular nucleus), so it follows what pays now.
     fn l6_relay(&mut self, x: &BitVector) -> BitVector {
         let on = ones(x);
-        let known: Vec<i32> = on.iter().map(|&b| self.gain_v.get(b).copied().unwrap_or(-1)).filter(|&v| v >= 0).collect();
+        let ctx = self.phase_now.min(self.gain_v.len() - 1);
+        let known: Vec<i32> = on.iter().map(|&b| self.gain_v[ctx].get(b).copied().unwrap_or(-1)).filter(|&v| v >= 0).collect();
         if known.is_empty() {
             return x.clone();
         }
         let mean = (known.iter().map(|&v| v as i64).sum::<i64>() / known.len() as i64).max(1);
         let mut out = BitVector::new(x.bit_len(), Some(0));
         for &b in &on {
-            let v = self.gain_v.get(b).copied().unwrap_or(-1);
+            let v = self.gain_v[ctx].get(b).copied().unwrap_or(-1);
             let pass = v < 0 || v as i64 >= mean || self.rng.gen_range(0..mean) < v.max(0) as i64;
             if pass {
                 out.bit_set(b);
@@ -1504,8 +1495,10 @@ impl Mind {
         out
     }
 
-    /// Layer 6 gain, learning: each hand act gathers the outcome of its step and the next; then
-    /// the worth of each eye bit that was in view at the act moves an eighth toward it.
+    /// Layer 6 gain, learning: each hand act gathers the outcome of its step and the next; then,
+    /// in the current context, the worth of each eye bit that was in view at the act moves
+    /// toward it at 1/(2 + the outcomes it has learned from) (Hebbian, locking in), and the
+    /// phase state weighs the outcome against what the context expected.
     fn gain_step(&mut self, outcome: i32, acts_now: &[(usize, Vec<u32>)]) {
         for w in self.gain_open.iter_mut() {
             w.1 += outcome;
@@ -1518,9 +1511,25 @@ impl Mind {
         self.gain_open.retain(|w| w.0 > 0);
         for (got, bits) in done {
             let got = got.clamp(0, ONE as i32);
-            for b in bits {
-                if let Some(v) = self.gain_v.get_mut(b) {
-                    *v = if *v < 0 { got } else { *v + (got - *v) / 8 };
+            let ctx = self.phase_now;
+            while self.gain_v.len() <= ctx {
+                self.gain_v.push(vec![-1; BITS]);
+                self.gain_n.push(vec![0; BITS]);
+            }
+            // what this context expected of the act: its worth over the bits in view it knows
+            let known: Vec<i32> = bits.iter().map(|&b| self.gain_v[ctx][b]).filter(|&v| v >= 0).collect();
+            let expected = (!known.is_empty()).then(|| (known.iter().map(|&v| v as i64).sum::<i64>() / known.len() as i64) as i32);
+            // (without contexts, one worth must follow every change: an eighth, not locking in)
+            let lock = self.cfg.phase;
+            for &b in &bits {
+                let (v, n) = (&mut self.gain_v[ctx][b], &mut self.gain_n[ctx][b]);
+                let rate = if lock { 2 + *n as i32 } else { 8 };
+                *v = if *v < 0 { got } else { *v + (got - *v) / rate };
+                *n = n.saturating_add(1);
+            }
+            if self.cfg.phase {
+                if let Some(e) = expected {
+                    self.phase_step(got, e);
                 }
             }
         }

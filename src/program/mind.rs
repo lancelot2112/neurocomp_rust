@@ -585,6 +585,9 @@ pub struct Mind {
     phase_left: Vec<usize>,
     phase_tried: Vec<usize>,
     phase_count: usize,
+    /// the contexts whose outcomes have settled (surprise once under the threshold in them):
+    /// only a settled context can be found wrong (one still being learned is not)
+    phase_settled: Vec<usize>,
     surprise_fast: i32,
     surprise_slow: i32,
     pub phase_switches: u32,
@@ -788,6 +791,7 @@ impl Mind {
             phase_left: Vec::new(),
             phase_tried: Vec::new(),
             phase_count: 1,
+            phase_settled: Vec::new(),
             surprise_fast: 0,
             surprise_slow: 0,
             phase_switches: 0,
@@ -1422,8 +1426,9 @@ impl Mind {
 
     /// The phase state, one hand act closed: its outcome against what the orbitofrontal value
     /// expected of it here is surprising when they differ by a quarter or more (the salience
-    /// threshold). Surprise averaged fast (a sixteenth) and slow (a 256th); when the fast rate
-    /// is at least a quarter and twice the slow one, the context is wrong: the state moves to the
+    /// threshold). Surprise averaged fast (a sixteenth) and slow (a 256th); in a context that has
+    /// settled (its surprise once under a quarter), when the fast rate is at least a quarter and
+    /// twice the slow one, the context is wrong: the state moves to the
     /// context left most recently not yet tried, else to a new one, and the fast rate starts
     /// again from the slow one. Once surprise is back under the slow rate, the trials are over.
     fn phase_step(&mut self, got: i32, here: i32) {
@@ -1433,7 +1438,11 @@ impl Mind {
         if self.surprise_fast <= self.surprise_slow {
             self.phase_tried.clear();
         }
-        if self.surprise_fast >= ONE as i32 / 4 && self.surprise_fast >= 2 * self.surprise_slow {
+        if self.surprise_fast < ONE as i32 / 4 && !self.phase_settled.contains(&self.phase_now) {
+            self.phase_settled.push(self.phase_now);
+        }
+        let settled = self.phase_settled.contains(&self.phase_now);
+        if settled && self.surprise_fast >= ONE as i32 / 4 && self.surprise_fast >= 2 * self.surprise_slow {
             let from = self.phase_now;
             self.phase_tried.push(from);
             let next = self.phase_left.iter().copied().find(|c| !self.phase_tried.contains(c));

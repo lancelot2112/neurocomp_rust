@@ -125,6 +125,8 @@ pub struct BitCells {
     last_win: Option<usize>,
     /// (bursts won, spikes won, nothing fired, commitments, freed)
     pub stats: [u64; 5],
+    /// per cell, how many times it has been freed (a reused cell is a new cell)
+    gens: Vec<u32>,
 }
 
 impl BitCells {
@@ -150,6 +152,7 @@ impl BitCells {
             cached: None,
             last_win: None,
             stats: [0; 5],
+            gens: Vec::new(),
         }
     }
 
@@ -656,7 +659,16 @@ impl BitCells {
         merged
     }
 
+    /// How many times cell `c` has been freed: a cell whose count changed is a different cell.
+    pub fn generation(&self, c: usize) -> u32 {
+        self.gens.get(c).copied().unwrap_or(0)
+    }
+
     fn free(&mut self, c: usize) {
+        if self.gens.len() <= c {
+            self.gens.resize(c + 1, 0);
+        }
+        self.gens[c] += 1;
         for apical in [false, true] {
             let segs = if apical { std::mem::take(&mut self.cells[c].apical) } else { std::mem::take(&mut self.cells[c].basal) };
             for s in segs {

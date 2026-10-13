@@ -140,6 +140,11 @@ impl Map {
         self.cells.last_fired()
     }
 
+    /// How many times cell `c` has been freed (a reused cell is a new cell).
+    pub fn generation(&self, c: usize) -> u32 {
+        self.cells.generation(c)
+    }
+
     pub fn committed(&self) -> usize {
         self.cells.committed()
     }
@@ -213,6 +218,17 @@ pub struct Column {
     pub resized: (u64, u64),
     /// (loads on surprise, loads by the gate) for diagnosis
     pub loads: (u64, u64),
+    /// topographic output (keep the order): layer 2/3's activity is sent up in layer 4's own
+    /// coordinates. Each cell has a home, the layer 4 code it first fired for, and a slot there
+    /// (the lowest free: 0 for the first cell for that input, 1, 2, … for cells for the same
+    /// input in other contexts); slot 0 sends the home's own bits, a later slot the same bits
+    /// moved by a fixed hash. A freed and reused cell takes a home afresh, so an output bit keeps
+    /// its meaning when the cell behind it changes, rather than the hash of a cell's index
+    pub topo: bool,
+    /// per cell: (generation, home key, slot, home bits)
+    homes: std::collections::HashMap<usize, (u32, u64, u8, Vec<u32>)>,
+    /// per home key, the slots taken (a bit per slot)
+    slots: std::collections::HashMap<u64, u64>,
 }
 
 impl Column {
@@ -228,7 +244,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0) }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, homes: Default::default(), slots: Default::default() }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -490,6 +506,48 @@ impl Column {
         &self.trace
     }
 
+    /// Topographic projection (`topo`): each cell's home bits, moved by its slot.
+    fn project_topo(&mut self, cells: &[usize]) -> BitVector {
+        let mut v = BitVector::new(self.bits, Some(0));
+        let code: Vec<u32> = {
+            let mut c: Vec<u32> = (0..self.bits).filter(|&b| self.code.bit_get(b)).map(|b| b as u32).collect();
+            c.truncate(64);
+            c
+        };
+        for &c in cells {
+            let generation = self.l23.generation(c);
+            let fresh = self.homes.get(&c).map_or(true, |h| h.0 != generation);
+            if fresh {
+                if code.is_empty() {
+                    continue;
+                }
+                if let Some((_, key, slot, _)) = self.homes.remove(&c) {
+                    if let Some(t) = self.slots.get_mut(&key) {
+                        *t &= !(1u64 << slot);
+                    }
+                }
+                // the home's key: a min-hash of its bits (the same input, the same key)
+                let key = code.iter().map(|&b| (b as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)).min().unwrap_or(0);
+                let taken = self.slots.entry(key).or_default();
+                let slot = (!*taken).trailing_zeros().min(63) as u8;
+                *taken |= 1u64 << slot;
+                self.homes.insert(c, (generation, key, slot, code.clone()));
+            }
+            let (_, _, slot, home) = &self.homes[&c];
+            for &b in home {
+                let o = if *slot == 0 {
+                    b as usize
+                } else {
+                    let mut h = (b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ (*slot as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+                    h ^= h >> 31;
+                    (h % self.bits as u64) as usize
+                };
+                v.bit_set(o);
+            }
+        }
+        v
+    }
+
     fn project(&self, cells: &[usize]) -> BitVector {
         let mut v = BitVector::new(self.bits, Some(0));
         for &c in cells {
@@ -554,7 +612,8 @@ impl Column {
                     }
                 }
             }
-            self.rec = self.project(&self.l23.last_fired());
+            let fired = self.l23.last_fired();
+            self.rec = if self.topo { self.project_topo(&fired) } else { self.project(&fired) };
             self.last = Some((self.code.clone(), c));
             // the trace: what fired stays on, fading
             if self.tau > 0 {

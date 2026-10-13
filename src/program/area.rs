@@ -610,6 +610,8 @@ pub struct Brain {
     pub need: bool,
     /// cells recycled by sleep in the full column's layer 4
     pub recycled: usize,
+    /// every column's layer 2/3 output is topographic (`Column::topo`)
+    pub topo: bool,
     /// the full association column's width (its layer 4's address space): the top area may be
     /// wider than the rest, room for its cells to grow into
     pub full_bits: usize,
@@ -638,7 +640,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, need: false, recycled: 0, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, need: false, recycled: 0, topo: false, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -650,6 +652,7 @@ impl Brain {
         let col = (self.columns && kind != Kind::Motor).then(|| {
             let mut c = Column::agranular(self.bits, CAP);
             c.superpose = self.superpose;
+            c.topo = self.topo;
             c
         });
         self.areas.push(Area { name: name.to_string(), kind, l4, motor, code: BitVector::new(self.bits, Some(0)), col, expect: None, effect_error: None });
@@ -1080,6 +1083,7 @@ impl Brain {
                         let mut col = Column::granular(self.bits, Pool::new(2, self.bits, self.bits, self.k, 2, seed), CAP);
                         col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
                         col.superpose = self.superpose;
+                        col.topo = self.topo;
                         col.set_persistence(self.pair_tau);
                         col.set_recurrence(self.pair_gain);
                         self.pairs.push((key, col));
@@ -1100,6 +1104,7 @@ impl Brain {
             let mut col = Column::granular(self.full_bits, Pool::new(MAX_PAIRS, self.bits, self.full_bits, self.k, 2, self.seed.wrapping_add(9999)), CAP);
             col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
             col.l4.as_mut().unwrap().need = self.need;
+            col.topo = self.topo;
             col.set_persistence(self.full_tau);
             col.set_recurrence(self.full_gain);
             col.superpose = self.superpose;

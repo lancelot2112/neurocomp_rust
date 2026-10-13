@@ -751,8 +751,8 @@ pub struct Brain {
     pub generalize: bool,
     /// cells merged away by generalization so far
     pub generalized: usize,
-    /// recruitment by need in the full association column's layer 4 (`Pool::need`), and sleep
-    /// recycles its unused cells
+    /// recruitment by need in the association columns' layer 4 (the pairs' and the full one's,
+    /// `Pool::need`), and sleep recycles their unused cells
     pub need: bool,
     /// cells recycled by sleep in the full column's layer 4
     pub recycled: usize,
@@ -1156,6 +1156,11 @@ impl Brain {
             if let Some(l4) = self.full.as_mut().and_then(|f| f.l4.as_mut()) {
                 self.recycled += l4.recycle(RECYCLE_AGE, 1);
             }
+            for p in self.pairs.iter_mut() {
+                if let Some(l4) = p.1.l4.as_mut() {
+                    self.recycled += l4.recycle(RECYCLE_AGE, 1);
+                }
+            }
         }
         t
     }
@@ -1165,6 +1170,11 @@ impl Brain {
     pub fn set_salient(&mut self, on: bool) {
         if let Some(l4) = self.full.as_mut().and_then(|f| f.l4.as_mut()) {
             l4.salient = on;
+        }
+        for p in self.pairs.iter_mut() {
+            if let Some(l4) = p.1.l4.as_mut() {
+                l4.salient = on;
+            }
         }
     }
 
@@ -1240,6 +1250,7 @@ impl Brain {
                         col.burst = self.burst;
                         col.l4.as_mut().unwrap().adapt = self.adapt;
                         col.l4.as_mut().unwrap().local = self.local;
+                        col.l4.as_mut().unwrap().need = self.need;
                         col.set_persistence(self.pair_tau);
                         col.set_recurrence(self.pair_gain);
                         self.pairs.push((key, col));

@@ -323,8 +323,8 @@ pub struct Config {
     /// same thing from mostly the same input become one cell on what they share (a more general,
     /// compressed representation) (MIND_GENERALIZE=0 off)
     pub generalize: bool,
-    /// recruitment by need in the top areas' layer 4 (the full association column and the
-    /// orbitofrontal area): what they do not cover gets cells only when it keeps coming or the
+    /// recruitment by need in the association areas' layer 4 (the pairs, the full association
+    /// column) and the orbitofrontal area's: what they do not cover gets cells only when it keeps coming or the
     /// moment is salient (a dopamine error the step before), and sleep recycles
     /// the cells that went unused (MIND_NEED=0 off)
     pub need: bool,

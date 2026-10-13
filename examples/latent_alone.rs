@@ -17,6 +17,7 @@
 //! inhibition, `context_circuit.rs`), `LATENT_SCALE=fixed|volatile`, `LATENT_POLICY=random|greedy`, `LATENT_P` (0..1),
 //! `LATENT_PERIOD`, `LATENT_PHASES`, `LATENT_SEEDS`, `LATENT_DEBUG=1`.
 
+use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::context_circuit::ContextCircuit;
 use neurocomp::program::latent::{LatentCause, Scale};
@@ -56,8 +57,34 @@ fn main() {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut lc = LatentCause::new(BITS, scale);
         lc.debug = debug;
-        let mut cc = ContextCircuit::new(256, 8, 4);
+        let mut cc = ContextCircuit::new(256, 8, 1024);
         cc.debug = debug;
+        // the circuit's input: layer 4's code of what came together (the light shown and what
+        // followed), a random sparse code per conjunction, as layer 4 recruits one for each
+        // (`LATENT_SHARED=1`: a conjunction's code shares half its bits with the other outcome
+        // at the same light, as layer 4's codes of inputs in common overlap)
+        let shared = std::env::var("LATENT_SHARED").is_ok();
+        let mut sparse = |k: usize| {
+            let mut v = BitVector::new(1024, Some(0));
+            while (v.count_ones() as usize) < k {
+                v.bit_set(rng.gen_range(0..1024));
+            }
+            v
+        };
+        let cue = [sparse(16), sparse(16)];
+        let codes: Vec<BitVector> = (0..4)
+            .map(|i| {
+                if shared {
+                    let mut v = sparse(16);
+                    for (w, c) in v.as_words_mut().iter_mut().zip(cue[i / 2].as_words()) {
+                        *w |= c;
+                    }
+                    v
+                } else {
+                    sparse(32)
+                }
+            })
+            .collect();
         let mut worth: Vec<Vec<i32>> = vec![vec![-1; BITS]];
         let mut learned: Vec<Vec<u16>> = vec![vec![0; BITS]];
         // which context each kind of phase (A pays / B pays) last settled on
@@ -83,7 +110,7 @@ fn main() {
                 let bits = [light, BACKGROUND];
                 let before = if circuit { cc.resets } else { lc.resets };
                 if circuit {
-                    cc.step(light * 2 + (got > 0) as usize);
+                    cc.step(&codes[light * 2 + (got > 0) as usize]);
                 } else {
                     lc.step(&worth, &learned, &bits, got);
                 }

@@ -219,6 +219,20 @@ fn main() {
                                 ctx_bits.1 += 1;
                             }
                         }
+                        // density: each panel's bits on over its width, averaged over this block
+                        let widths = [("eye", 2048.0), ("top_driven", 4096.0), ("top_l23", 4096.0), ("wm", 4096.0), ("ofc_z", 4096.0), ("ctx", 16384.0)];
+                        let mut dens = String::new();
+                        for (name, w) in widths {
+                            let mut a = (0usize, 0usize);
+                            for (_, _, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {
+                                if let Some(x) = p.iter().find(|x| x.0 == name) {
+                                    a.0 += x.1.len();
+                                    a.1 += 1;
+                                }
+                            }
+                            dens += &format!(" {name} {:.1}%", 100.0 * a.0 as f64 / a.1.max(1) as f64 / w);
+                        }
+                        line += &format!(" | density{dens}");
                         let (owned, regions) = mind.striatal_regions();
                         line += &format!(" | ctx bits {:.0}, regions owned {owned} of {regions}", ctx_bits.0 as f64 / ctx_bits.1.max(1) as f64);
                     }

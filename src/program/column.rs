@@ -229,9 +229,9 @@ pub struct Column {
     /// slot (as an unpredicted minicolumn bursts, every cell in it firing), so what came
     /// unexpected takes a large share of the output rather than its share of the input
     pub burst: bool,
-    /// sparse output (with `topo`): each active layer 2/3 cell sends one bit, fixed by its home
-    /// and slot, up to a thirty-second of the area (rather than its whole home code), so what
-    /// the column sends up is a sparse code (MIND_SPARSE_OUT=0: the home's bits)
+    /// sparse output (with `topo`): what the column sends up, its active cells' home bits, stops
+    /// at a thirty-second of the area, so it is no denser than a sparse layer 4 code
+    /// (MIND_SPARSE_OUT=0: uncapped)
     pub sparse_out: bool,
     /// the winner's own prediction at the step before (no superposition), and this step's
     /// layer 4 bits it missed
@@ -551,17 +551,13 @@ impl Column {
                 self.homes.insert(c, (generation, key, slot, code.clone()));
             }
             let (_, key, slot, home) = &self.homes[&c];
-            if self.sparse_out {
-                // one bit a cell, fixed by its home and slot: an active cell is one bit of
-                // output, so the area's code is as sparse as its active cells (and capped)
-                if v.count_ones() < self.bits / 32 {
-                    let mut h = key.wrapping_mul(0xD6E8_FEB8_6659_FD93) ^ (*slot as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-                    h ^= h >> 29;
-                    v.bit_set((h % self.bits as u64) as usize);
-                }
-                continue;
-            }
+            let _ = key;
             for &b in home {
+                // sparse output: the home's bits (a sparse layer 4 code) up to a thirty-second of
+                // the area, so what the column sends up is as sparse as its input
+                if self.sparse_out && v.count_ones() >= self.bits / 32 {
+                    break;
+                }
                 let o = if *slot == 0 {
                     b as usize
                 } else {

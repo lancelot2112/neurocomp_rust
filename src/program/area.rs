@@ -142,6 +142,9 @@ pub struct Pool {
     /// recruited with, in every layer 4, so what a cell means does not drift under the areas that
     /// read it (MIND_FIXED_FIELDS=0: off)
     pub fixed: bool,
+    /// the sparsity ratio (`target`): no more than a thirty-second of the area active, sources
+    /// sharing it by their share of the input (MIND_RATIO=0: off)
+    pub ratio: bool,
     /// local inhibition: winners compete within their source (a cell belongs to the source most
     /// of its synapses are on), each source's winners normalized by its own active bits (k to 4k,
     /// as `winners` does for the whole input), so many inputs keep their cells side by side
@@ -191,6 +194,7 @@ impl Pool {
             inv: Vec::new(),
             fixed: std::env::var("MIND_FIXED_FIELDS").map_or(true, |v| v != "0"),
             local: false,
+            ratio: std::env::var("MIND_RATIO").map_or(true, |v| v != "0"),
             run: Vec::new(),
             last_on: Vec::new(),
         };
@@ -312,7 +316,7 @@ impl Pool {
         let mut taken = vec![0usize; self.sources];
         f.retain(|&(c, _)| {
             let s = self.home(c as usize).min(self.sources - 1);
-            let quota = if active[s] == 0 { 0 } else { self.winners(active[s]) };
+            let quota = self.quota(active[s], on.len());
             if taken[s] < quota {
                 taken[s] += 1;
                 true
@@ -342,10 +346,31 @@ impl Pool {
 
     /// How many cells may win: `k`, or with coverage as many as the input has bits (up to 4k).
     fn winners(&self, active: usize) -> usize {
-        if self.coverage {
-            active.clamp(self.k, 4 * self.k)
+        let w = if self.coverage { active.clamp(self.k, 4 * self.k) } else { self.k };
+        if self.ratio {
+            w.min(self.target())
         } else {
-            self.k
+            w
+        }
+    }
+
+    /// The sparsity ratio: the most cells that may be active, a thirty-second of the area (at
+    /// least `k`), whatever the input; a code denser than this blurs in whatever reads it.
+    fn target(&self) -> usize {
+        (self.out_bits / 32).max(self.k)
+    }
+
+    /// With local inhibition, a source's share of the winners: by its share of the input's
+    /// active bits, of the area's target (at least one), or by its own input as `winners` does
+    /// without the ratio.
+    fn quota(&self, active_s: usize, total: usize) -> usize {
+        if active_s == 0 {
+            return 0;
+        }
+        if self.ratio {
+            (self.target() * active_s).div_ceil(total.max(1)).max(1)
+        } else {
+            self.winners(active_s)
         }
     }
 
@@ -369,7 +394,7 @@ impl Pool {
             for &(c, _) in fired {
                 won[self.home(c as usize).min(self.sources - 1)] += 1;
             }
-            let full: Vec<bool> = (0..self.sources).map(|s| active[s] > 0 && won[s] >= self.winners(active[s])).collect();
+            let full: Vec<bool> = (0..self.sources).map(|s| active[s] > 0 && won[s] >= self.quota(active[s], on.len())).collect();
             if self.need {
                 let last = &self.last_on;
                 let src = self.src_bits;

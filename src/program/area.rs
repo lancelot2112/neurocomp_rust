@@ -718,6 +718,9 @@ impl Pool {
             }
         }
         .max(1);
+        if std::env::var("MIND_DEBUG_SURPRISE").is_ok() {
+            eprintln!("surprise: tick {} steps {} salient {} idle {} in_use {}", self.tick, self.tick.saturating_sub(self.slept_at), self.surprised, idle.len(), self.in_use());
+        }
         self.surprised = 0;
         let mut n = 0;
         for &(_, _, c) in idle.iter().take(share) {

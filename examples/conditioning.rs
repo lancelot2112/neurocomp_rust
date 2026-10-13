@@ -89,6 +89,18 @@ fn main() {
         }
         if t == 0 && world.events.len() > 1 {
             trial += 1;
+            // progress, as each block ends: clicks per trial in the window (cue / none), or the
+            // amygdala's prediction (CS+ / CS-)
+            if trial % block == 0 {
+                let b = trial / block - 1;
+                let (no, yes) = (stats[b][0], stats[b][1]);
+                let r = |a: usize, n: usize| a as f64 / n.max(1) as f64;
+                match kind {
+                    Conditioning::Pavlov => eprintln!("progress {kind:?} seed {seed} trials {trial}: amygdala CS+ {:+.2} CS- {:+.2}", amy[b][1] as f64 / yes.6.max(1) as f64 / 65536.0, amy[b][0] as f64 / no.6.max(1) as f64 / 65536.0),
+                    Conditioning::Reversal => eprintln!("progress {kind:?} seed {seed} trials {trial}: paying light {:.2}, the other {:.2}", r(rev[b].0, rev[b].1), r(rev[b].2, rev[b].3)),
+                    _ => eprintln!("progress {kind:?} seed {seed} trials {trial}: clicks cue {:.2} none {:.2}", r(yes.5, yes.6), r(no.5, no.6)),
+                }
+            }
             a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
             if sleep_every > 0 && trial % sleep_every == 0 {
                 mind.sleep(3);

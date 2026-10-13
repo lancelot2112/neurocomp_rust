@@ -462,6 +462,10 @@ pub struct MaskStriatum {
     /// prefrontal gates, whose choice to hold pays only when what is held is used later
     pub long_channels: Vec<usize>,
     pub long_window: usize,
+    /// channels whose release needs more (their extra brake): gates whose default is closed,
+    /// as the output nucleus holds the thalamus under tonic inhibition, so opening is the
+    /// exception, mostly where it has paid
+    pub brakes: Vec<(usize, i32)>,
     /// the q (go minus no-go cells) of the candidate released last, without the noise
     pub last_q: i32,
     /// the learning rate the next choices carry (Pearce–Hall associability of their cues); the
@@ -528,6 +532,7 @@ impl MaskStriatum {
             window: WINDOW,
             long_channels: Vec::new(),
             long_window: WINDOW,
+            brakes: Vec::new(),
             last_q: 0,
             alpha: (256, Vec::new()),
         }
@@ -1054,7 +1059,14 @@ impl MaskStriatum {
         let c = self.view.as_ref().map_or_else(|| self.c.clone(), |v| v.1.clone());
         let mut q: Vec<i32> = (1..n).map(|a| self.q(channel, a, &c, &keep)).collect();
         self.jitter(&mut q, explore);
-        match self.release(&q) {
+        let extra = self.brakes.iter().find(|b| b.0 == channel).map_or(0, |b| b.1);
+        let released = {
+            self.release += extra;
+            let r = self.release(&q);
+            self.release -= extra;
+            r
+        };
+        match released {
             Some(i) => {
                 if let Some(st) = self.recent.last_mut() {
                     st.choices.push((channel, i + 1, c, self.alpha.clone()));

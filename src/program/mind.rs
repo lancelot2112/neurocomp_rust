@@ -553,6 +553,8 @@ impl Mind {
         if cfg.recur {
             bg.long_channels = (0..=MAX_PAIRS).map(|i| loop_channel(ColumnId::Assoc(i)) + 1).chain([OFC_HOLD_CHANNEL]).collect();
             bg.long_window = 8;
+            // and their default is closed: opening (an update) needs more than the motor loops
+            bg.brakes = bg.long_channels.iter().map(|&c| (c, 2)).collect();
         }
         if cfg.nogo_symmetric {
             bg.nogo_channels = [VOICE, HAND].iter().map(|&m| motor_channels(m).1).collect();

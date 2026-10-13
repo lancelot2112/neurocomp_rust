@@ -25,8 +25,8 @@
 //!   overlap): what layer 2/3 did not expect of the input (graded surprise: acetylcholine's
 //!   switch from recurrent completion to feedforward encoding, Hasselmo) joins what is held as
 //!   an item of at most 32 bits; when the column's loop opens the gate (`refresh`: the basal
-//!   ganglia and thalamus) the driven code replaces what is held (an update); at most 128 bits
-//!   are held (about four items).
+//!   ganglia and thalamus) the driven code replaces what is held (an update); at most 256 bits
+//!   are held (`held_cap`, 256: about eight items).
 //!   Each step a random sixteenth drops out (noise), and an autoassociative map, which learns
 //!   every item held (or proposed), restores each learned item still mostly present;
 //!   what nothing restores fades. A held bit is restored only for `life` steps after it was
@@ -193,6 +193,8 @@ pub struct Column {
     /// steps a held bit is restored by completion before adaptation lets it go (the area's
     /// persistence)
     pub life: u16,
+    /// the most bits the held population keeps (superposed items, 32 bits each at most)
+    pub held_cap: usize,
     /// (loads on surprise, loads by the gate) for diagnosis
     pub loads: (u64, u64),
 }
@@ -210,7 +212,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, loads: (0, 0) }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, loads: (0, 0) }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -282,8 +284,8 @@ impl Column {
                 *w |= y;
             }
             // the held population keeps at most `HELD` bits after completion too
-            if held.count_ones() > 128 {
-                held = Self::sparse(held.as_words(), 128, rng);
+            if held.count_ones() as usize > self.held_cap {
+                held = Self::sparse(held.as_words(), self.held_cap, rng);
             }
             self.held = held;
         }
@@ -348,7 +350,7 @@ impl Column {
             }
         }
         let others: Vec<u64> = self.held.as_words().iter().zip(it.as_words()).map(|(h, i)| h & !i).collect();
-        let keep = Self::sparse(&others, 128usize.saturating_sub(it.count_ones() as usize), rng);
+        let keep = Self::sparse(&others, self.held_cap.saturating_sub(it.count_ones() as usize), rng);
         self.held = BitVector::from_words(keep.as_words().iter().zip(it.as_words()).map(|(a, b)| a | b).collect());
     }
 

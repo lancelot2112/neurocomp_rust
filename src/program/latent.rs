@@ -194,7 +194,7 @@ impl LatentCause {
         if self.debug {
             eprintln!(
                 "attractor: got {:.2} scale {tau} answers {:?} drive {:?} nonreward {} unsettled {} new {} -> {to}",
-                got as f64 / ONE as f64,
+                got as f64 / ONE as f64, // float: debug print
                 answers,
                 self.score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(),
                 self.nonreward / ONE as i32,

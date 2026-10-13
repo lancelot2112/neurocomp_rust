@@ -1510,7 +1510,7 @@ impl Mind {
         let ctx = self.phase_now;
         let (v, r) = (self.gain_v[ctx][b], self.gain_r[ctx][b]);
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("phase: cue {b} worth {:.3} recent {:.3} acts {} context {ctx}", v as f64 / ONE as f64, r as f64 / ONE as f64, self.gain_n[ctx][b]);
+            eprintln!("phase: cue {b} worth {:.3} recent {:.3} acts {} context {ctx}", v as f64 / ONE as f64, r as f64 / ONE as f64, self.gain_n[ctx][b]); // float: debug print
         }
         if 2 * r >= v {
             self.phase_tried.clear();
@@ -1629,7 +1629,7 @@ impl Mind {
             cur
         };
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("latent: got {:.2} evidence {:?} new {} uses {:?} -> {to}", got as f64 / ONE as f64, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_new / ONE as i32, self.lc_uses);
+            eprintln!("latent: got {:.2} evidence {:?} new {} uses {:?} -> {to}", got as f64 / ONE as f64, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_new / ONE as i32, self.lc_uses); // float: debug print
         }
         if to != self.phase_now {
             let from = self.phase_now;
@@ -1816,16 +1816,20 @@ impl Mind {
             return None;
         }
         let t = &self.attend[r];
-        let (n0, n1) = (n[0] as f64, n[1] as f64);
-        let (mut signal, mut var) = (0.0f64, 0.0f64);
+        // in integers over the common denominator N²(n₀n₁)², N = n₀ + n₁: with a, b a bit's
+        // counts before unpaid and paid acts, (r₁ − r₀)² is (b·n₀ − a·n₁)²·N² over it, and
+        // p(1−p)(1/n₀ + 1/n₁) is (a+b)(N−a−b)·N·n₀n₁; the variance p(1−p) is (a+b)(N−a−b)(n₀n₁)²
+        let (n0, n1) = (n[0] as i128, n[1] as i128);
+        let big = n0 + n1;
+        let (mut signal, mut var) = (0i128, 0i128);
         for b in 0..64 {
-            let (r0, r1) = (t[0][b] as f64 / n0, t[1][b] as f64 / n1);
-            let p = (t[0][b] as f64 + t[1][b] as f64) / (n0 + n1);
-            let v = p * (1.0 - p);
-            signal += (r1 - r0).powi(2) - v * (1.0 / n0 + 1.0 / n1);
-            var += v;
+            let (x0, x1) = (t[0][b] as i128, t[1][b] as i128);
+            let pq = (x0 + x1) * (big - x0 - x1);
+            let d = x1 * n0 - x0 * n1;
+            signal += d * d * big * big - pq * big * n0 * n1;
+            var += pq * n0 * n0 * n1 * n1;
         }
-        Some(if var <= 0.0 { 0 } else { ((signal / var).clamp(0.0, 1.0) * 65536.0) as u64 })
+        Some(if var <= 0 { 0 } else { (signal.max(0) * 65536 / var).min(65536) as u64 })
     }
 
     /// A motor choice's learning rate from its cues' associability: a gain from the trace's

@@ -588,6 +588,8 @@ pub struct Mind {
     /// the contexts whose outcomes have settled (surprise once under the threshold in them):
     /// only a settled context can be found wrong (one still being learned is not)
     phase_settled: Vec<usize>,
+    /// hand acts closed in the current context (it can settle once the fast average spans them)
+    phase_acts: u32,
     surprise_fast: i32,
     surprise_slow: i32,
     pub phase_switches: u32,
@@ -792,6 +794,7 @@ impl Mind {
             phase_tried: Vec::new(),
             phase_count: 1,
             phase_settled: Vec::new(),
+            phase_acts: 0,
             surprise_fast: 0,
             surprise_slow: 0,
             phase_switches: 0,
@@ -1438,7 +1441,9 @@ impl Mind {
         if self.surprise_fast <= self.surprise_slow {
             self.phase_tried.clear();
         }
-        if self.surprise_fast < ONE as i32 / 4 && !self.phase_settled.contains(&self.phase_now) {
+        self.phase_acts += 1;
+        // settled: a whole fast window (16 acts) in this context, with surprise under a quarter
+        if self.phase_acts >= 16 && self.surprise_fast < ONE as i32 / 4 && !self.phase_settled.contains(&self.phase_now) {
             self.phase_settled.push(self.phase_now);
         }
         let settled = self.phase_settled.contains(&self.phase_now);
@@ -1454,6 +1459,7 @@ impl Mind {
             self.phase_left.insert(0, from);
             self.phase_now = to;
             self.surprise_fast = self.surprise_slow;
+            self.phase_acts = 0;
             self.phase_switches += 1;
         }
     }

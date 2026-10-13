@@ -73,7 +73,11 @@ fn main() {
     // trial before, 50 and 100 trials before
     let mut seen_at: Vec<(usize, bool, Vec<(String, Vec<usize>)>)> = Vec::new();
     let mut prev_sel: Vec<(usize, u64)> = Vec::new();
-    let drift_panels = ["eye", "top_in", "top_driven", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ctx"];
+    let drift_panels = ["eye", "top_in", "top_driven", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ofc_held", "amy_value", "ctx"];
+    // the phase diagnostic (reversal): per block, which phase it was in (A pays) and, per panel and
+    // light, how often each bit was on at the light, and on how many trials
+    type Freq = std::collections::HashMap<usize, u32>;
+    let mut phase_blocks: Vec<(bool, Vec<([Freq; 2], [u32; 2])>)> = Vec::new();
     while !world.done() {
         let senses = world.step(&acts);
         {
@@ -236,6 +240,68 @@ fn main() {
                             line += " | attention by source:";
                             for (src, (d, n)) in &att {
                                 line += &format!(" {src}:{:.2}", *d as f64 / *n as f64 / 65536.0);
+                            }
+                        }
+                    }
+                    // phase: bits that code which phase it is (which light pays), whichever light is
+                    // on. Against the latest block of the other phase, per light: bits on at least 0.4
+                    // more often now (raw); the same against the block a phase earlier of this phase
+                    // (control: drift alone); and bits on in both blocks of this phase and at least
+                    // 0.4 less in the other phase between them, or the reverse (consistent: a phase code)
+                    if matches!(kind, Conditioning::Reversal) {
+                        let phase_a = ((trial - block) / world.reversal_period.max(1)) % 2 == 0;
+                        let mut per: Vec<([Freq; 2], [u32; 2])> = Vec::new();
+                        for name in drift_panels {
+                            let mut f: [Freq; 2] = [Freq::new(), Freq::new()];
+                            let mut n = [0u32; 2];
+                            for (_, cue, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {
+                                n[*cue as usize] += 1;
+                                if let Some(x) = p.iter().find(|x| x.0 == name) {
+                                    for &b in &x.1 {
+                                        *f[*cue as usize].entry(b).or_default() += 1;
+                                    }
+                                }
+                            }
+                            per.push((f, n));
+                        }
+                        phase_blocks.push((phase_a, per));
+                        let now = phase_blocks.len() - 1;
+                        let other = (0..now).rev().find(|&i| phase_blocks[i].0 != phase_a);
+                        let earlier = other.and_then(|o| (0..o).rev().find(|&i| phase_blocks[i].0 == phase_a));
+                        let control = now.checked_sub(1).filter(|&i| phase_blocks[i].0 == phase_a);
+                        if let Some(o) = other {
+                            line += " | phase bits (raw/control/consistent):";
+                            for (k, name) in drift_panels.iter().enumerate() {
+                                let rate = |i: usize, l: usize, b: usize| -> f64 {
+                                    let (f, n) = &phase_blocks[i].1[k];
+                                    f[l].get(&b).copied().unwrap_or(0) as f64 / n[l].max(1) as f64
+                                };
+                                let bits = |i: usize, l: usize| -> Vec<usize> { phase_blocks[i].1[k].0[l].keys().copied().collect() };
+                                let differ = |a: usize, b: usize| -> usize {
+                                    (0..2).map(|l| {
+                                        let mut all = bits(a, l);
+                                        all.extend(bits(b, l));
+                                        all.sort_unstable();
+                                        all.dedup();
+                                        all.iter().filter(|&&x| (rate(a, l, x) - rate(b, l, x)).abs() >= 0.4).count()
+                                    }).sum::<usize>() / 2
+                                };
+                                let raw = differ(now, o);
+                                let ctrl = control.map_or("-".to_string(), |c| differ(now, c).to_string());
+                                let cons = earlier.map_or("-".to_string(), |e| {
+                                    ((0..2).map(|l| {
+                                        let mut all = bits(now, l);
+                                        all.extend(bits(o, l));
+                                        all.extend(bits(e, l));
+                                        all.sort_unstable();
+                                        all.dedup();
+                                        all.iter().filter(|&&x| {
+                                            let (a, b, c) = (rate(now, l, x), rate(o, l, x), rate(e, l, x));
+                                            (a - b >= 0.4 && c - b >= 0.4) || (b - a >= 0.4 && b - c >= 0.4)
+                                        }).count()
+                                    }).sum::<usize>() / 2).to_string()
+                                });
+                                line += &format!(" {name} {raw}/{ctrl}/{cons}");
                             }
                         }
                     }

@@ -1408,24 +1408,27 @@ impl Mind {
         }
     }
 
-    /// Learned attention: region `r`'s discrimination (`Q16`), how differently its bits sit before
-    /// paid and unpaid acts (the summed difference of their rates over their summed rates); None
-    /// until it has been seen before both.
+    /// Learned attention: region `r`'s discrimination (`Q16`), corrected for chance: the squared
+    /// differences of its bits' rates before paid and unpaid acts, less what sampling alone gives
+    /// at those counts (p(1−p)(1/n₀+1/n₁) a bit), over the bits' summed variance p(1−p): zero when
+    /// the region's bits do not depend on the outcome, however few the acts. None until seen
+    /// before both.
     fn attend_of(&self, r: usize) -> Option<u64> {
         let n = self.attend_n.get(r)?;
-        if n[0] == 0 || n[1] == 0 {
+        if n[0] < 2 || n[1] < 2 {
             return None;
         }
         let t = &self.attend[r];
-        let (mut diff, mut sum) = (0u64, 0u64);
+        let (n0, n1) = (n[0] as f64, n[1] as f64);
+        let (mut signal, mut var) = (0.0f64, 0.0f64);
         for b in 0..64 {
-            // rates in 1/(n0·n1) units: c0·n1 and c1·n0
-            let a = t[0][b] as u64 * n[1] as u64;
-            let c = t[1][b] as u64 * n[0] as u64;
-            diff += a.abs_diff(c);
-            sum += a + c;
+            let (r0, r1) = (t[0][b] as f64 / n0, t[1][b] as f64 / n1);
+            let p = (t[0][b] as f64 + t[1][b] as f64) / (n0 + n1);
+            let v = p * (1.0 - p);
+            signal += (r1 - r0).powi(2) - v * (1.0 / n0 + 1.0 / n1);
+            var += v;
         }
-        Some(if sum == 0 { 0 } else { diff * 65536 / sum })
+        Some(if var <= 0.0 { 0 } else { ((signal / var).clamp(0.0, 1.0) * 65536.0) as u64 })
     }
 
     fn choice_alpha(&self, groups: &[Vec<usize>]) -> (u32, Vec<u16>) {

@@ -1404,3 +1404,96 @@ distractors (Atlan et al. 2018). So:
 - It lets one item per step load, above a threshold that adapts to keep loads occasional. Others
   are suppressed.
 - The gate still loads deliberately.
+
+### Selective loading, wide areas, then the density of a code where it is read
+
+This round ran from the claustrum selector to a single finding: **what matters is how dense a
+code is in the region its reader samples.** Every earlier fade of the light traced back to a
+code too dense at the striatum.
+
+**The claustrum selector (`MIND_CLAUSTRUM`).** Each column with a held population proposes its
+surprise item (a min-hash of 32 bits). An item is recognized if it completes to a learned one,
+checked before learning. Salience is the surprise times the cues' associability, and only for
+recognized items. One item a step may load, above 1.5× the running mean and a refractory bar.
+- Fixes along the way: the threshold was first too strict, then too lax; recognition was checked
+  after learning; the autoassociative map learned whole driven codes and bloated.
+- Result: held states became sparse (35–43 bits), but the light was still not told apart,
+  because the gates loaded on about 40% of steps.
+
+**The gate fix.** Gates are closed by default: an extra release brake of 2 on gate channels, and
+a gate load now replaces what is held rather than adding to it.
+
+**A sparsity allowance instead of a hard cap.** The held allowance is a share ρ of the area's
+layer 4 cells, clamped to 32..bits/2. ρ grows when an evicted item is proposed again within its
+lifetime, and shrinks slowly when under-used.
+
+**Wide top areas (`MIND_WIDE`) and sleep generalization (`MIND_GENERALIZE`).** The full
+association column and the orbitofrontal area are 4096 bits wide. During sleep, cells with equal
+outputs and at least 3/4 shared basal synapses merge onto the synapses they share.
+- Both wide layer 4s filled all 4096 cells within 200 trials: coverage recruits for anything
+  new, so width did not grow by need.
+
+**Recruitment by need and recycling (`MIND_NEED`).** Uncovered input gets cells only on bits that
+keep coming uncovered (a per-bit tag, 3 occurrences, halving every 256 steps), or at once on a
+salient step (a dopamine error the step before). Sleep frees cells unused since the last sleep.
+- First version: the top layer 4 still filled. Salience fired on every valued cue, and coverage
+  kept recruiting past the winners' cap. After fixing both, growth halved.
+- Representations were measured for drift: each panel's overlap with the same cue's code 1, 50
+  and 100 trials back. Without need, top layer 2/3 kept 0.05 of its code after 50 trials; with
+  need, 0.23–0.51.
+
+**The fade was traced step by step.** Each fix below removed one cause; each exposed the next.
+
+| Step | What was wrong | Fix |
+|---|---|---|
+| Keep the order (`MIND_KEEP_ORDER`) | layer 2/3 output was a hash of the cell's index, so a reused cell changed what its bits meant | each cell sends from a fixed home (the layer 4 code it first fired for) and slot |
+| Bounded striatum (`MIND_BOUNDED`) | every dip recruited new no-go cells, however far no-go already led | recruit only while the act's go-minus-no-go count falls short (Rescorla–Wagner's asymptote, in popcounts); stopped the 400-trial fade on all three seeds |
+| Light-selective bits measured per level | at the striatum, layer 2/3 and layer 4, the overlap measure hid what mattered | the eye had 31 light-selective bits, the top input about 200, the top layer 4 1–39, the striatal context 0 |
+| Local inhibition (`MIND_LOCAL`) | all inputs competed for one winner cap | each source gets its own quota |
+| Quarter rule | the light's recurring bits were under a quarter of a busy input, so never got cells | by need, enough recurring bits for a cell recruit |
+| Eviction | a full layer 4 evicted the least recently used cell; the light's cells fire every few trials | evict only cells unused for the recycling age |
+| Smearing | light cells came to fire without the light (101 of 107 in a block) | fixed fields in every layer 4 (`MIND_FIXED_FIELDS`), including the senses, whose tightening drifted everything above |
+| Region scramble | the striatum placed each input group by its position in the list, so any silent group moved all later ones | place by source (an early, real bug) |
+
+**Dense codes everywhere.** The senses' layer 4 codes, the amygdala's onsets and working memory
+were runs of 32 neighbouring bits: layer 4 numbered new cells in order. `MIND_SCATTER` gives each
+cell a fixed random output bit.
+
+**Then the striatum, which never received the light the cortex now carried.**
+- The hand loop now reads the top column (`MIND_TOP_VIEW`) at a fixed offset; the column's id
+  moved as pairs grew. Its associability weights had been assigned by list position after the
+  regions moved to source keys, and now follow the striatum's own placement.
+- Its context is wider (`MIND_WIDE_STRIATUM`: 16384 bits, 255 regions). Sources asked for 929
+  regions at first and collided; regions are now owned first come, without overlap, at most 6 a
+  source.
+- Keeping each region's 16 smallest-hash bits made the light come and go with whatever else was
+  active, so every active bit now sets its own fixed place (`MIND_STRIATAL_FOLD`).
+- Still, the light's bits reached the striatum for 100 trials and then vanished. The context had
+  1000–1500 of its 16384 bits on, and a busy source's regions were about half full.
+
+**The cause: the top column's output was not sparse.** With keep-order each active cell sent its
+whole home code, and bursting four copies of every unexpected bit: about a quarter of its 4096
+bits. **Sparse output (`MIND_SPARSE_OUT`): each active cell sends one bit, up to 1/32 of the
+area; bursting is off by default.**
+
+| | instrumental, trials 401–500 (seeds 0 / 1 / 2) | reversal, seed 0 |
+|---|---|---|
+| dense top output (fixed projection) | the light's striatal bits gone by trial 200–300 | A 0.18 / B 0.10 by trial 200 |
+| **sparse top output** | **0.95/0.20, 0.91/0.19, 0.78/0.39** | **reverses twice:** A 0.82/0.36, then B 0.98/0.44, then A 0.63/0.26; the third reversal fails late |
+
+- The striatal context fell to 120–230 bits on (about 1%), and its light-selective bits held at
+  40–85 through trial 500.
+- The top column itself now passes almost no light (0–2 selective bits; few of its layer 2/3
+  cells fire). The light reaches the striatum through the eye's sustained code, the amygdala and
+  working memory, which the dense top column had drowned.
+
+**Why density is decisive.** A striatal branch fires when 5 of its 8 bits in a region are on.
+If a region's density is p, the chance it fires on unrelated input is about 36% at p = 0.5, 3% at
+0.25, 0.04% at 0.1, and about 10⁻⁶ at 0.03. Above about a quarter, everything matches everything:
+no-go learned without the light fires with it too. The same holds in the cortex: layer 4 at
+1.5% kept cues apart, the top layer 4 at 8–15% blurred them.
+
+**The rule:** a code's density in its reader's region must stay well under the reader's
+threshold fraction, at about 3% or below. Next: report every area's density, hold each area's
+active fraction near a target (the sparsity ratio) rather than letting it grow with its input,
+and rebuild the top column's layer 4 under that rule so it carries the light again, sparsely.

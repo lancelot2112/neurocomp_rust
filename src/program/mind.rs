@@ -184,6 +184,10 @@ const SUSTAINED_OFFSET: usize = 150 * BITS;
 /// the orbitofrontal area's state Z, and what it holds
 const OFC_Z_OFFSET: usize = 162 * BITS;
 const OFC_HELD_OFFSET: usize = 164 * BITS;
+/// the most input groups a loop's view has: a column per sense and pair, and the others (working
+/// memory, recall, the amygdala and its copies, the orbitofrontal groups and copies, the top
+/// column's quarters, the efference copy)
+const STRIATAL_GROUPS: usize = SLOTS.len() + MAX_PAIRS + 20;
 /// the full association column's activity, at a fixed place (its column id moves as pairs grow)
 const TOP_OFFSET: usize = 168 * BITS;
 /// the orbitofrontal area's hold loop (hold the state or not)
@@ -605,9 +609,12 @@ impl Mind {
         cb.set_rates(2, 0);
         cb.set_cross_frames(true);
         // with focused cells each input group has a region (a 64-bit word) of its own: 63 of them
-        // the focused striatum's context: 256 regions with a wide view (MIND_WIDE_STRIATUM=0: 64)
+        // the focused striatum's context: wide (MIND_WIDE_STRIATUM=0: 64 regions)
         let wide_striatum = std::env::var("MIND_WIDE_STRIATUM").map_or(true, |v| v != "0");
-        let mut bg = MaskStriatum::new(if cfg.focused { if wide_striatum { 16384 } else { 4096 } } else { 2048 }, 64, seed.wrapping_add(31));
+        // (regions in proportion to the input groups a loop can have: 6 for each, so every group
+        // can own its fair share, plus the candidate's)
+        let regions = if wide_striatum { STRIATAL_GROUPS * 6 + 1 } else { 64 };
+        let mut bg = MaskStriatum::new(if cfg.focused { regions * 64 } else { 2048 }, 64, seed.wrapping_add(31));
         bg.hold = false;
         bg.sticky = true;
         bg.conj = true;

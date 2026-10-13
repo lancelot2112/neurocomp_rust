@@ -147,7 +147,7 @@ impl Ofc {
 
     /// Sleep: recycle layer 4's unused cells (`Pool::recycle`).
     pub fn recycle(&mut self) -> usize {
-        self.col.l4.as_mut().map_or(0, |p| p.recycle(crate::program::area::RECYCLE_AGE, 1))
+        self.col.l4.as_mut().map_or(0, |p| p.recycle(1))
     }
 
     /// Recurrence: the column holds its own state by self-excitation (`Column::set_recurrence`);

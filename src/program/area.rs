@@ -115,8 +115,8 @@ pub struct Pool {
     /// more cells), so adding a thing to what is sensed adds cells rather than displacing them
     pub coverage: bool,
     /// recruitment by need (with coverage): an uncovered part of the input gets cells only on
-    /// bits that keep coming uncovered (each bit's tag counts its uncovered occurrences, halving
-    /// every 256 steps; 3 recruit) or at once when the moment is salient (`salient`, set from
+    /// bits that keep coming uncovered (each bit's tag counts its uncovered occurrences since the
+    /// last sleep; a sixty-fourth of the steps recruits) or at once when the moment is salient (`salient`, set from
     /// outside: a neuromodulatory burst), so passing clutter is not learned; and sleep recycles
     /// the cells that went unused (`recycle`)
     pub need: bool,
@@ -155,6 +155,8 @@ pub struct Pool {
     run: Vec<u8>,
     /// the input's active bits at the step before (for onsets)
     last_on: Vec<u32>,
+    /// the step of the last sleep (recycling): ages and recurrence are counted in sleep periods
+    slept_at: u64,
     /// cells recruited by coverage on a salient step, by coverage of recurring input, and for
     /// input not covered at all
     pub why: (u64, u64, u64),
@@ -198,6 +200,7 @@ impl Pool {
             ratio: std::env::var("MIND_RATIO").map_or(false, |v| v == "1"),
             run: Vec::new(),
             last_on: Vec::new(),
+            slept_at: 0,
         };
         pool.scatter()
     }
@@ -418,18 +421,17 @@ impl Pool {
             if self.tags.is_empty() {
                 self.tags = vec![0; self.sources * self.src_bits];
             }
-            if self.tick % 256 == 0 {
-                for t in self.tags.iter_mut() {
-                    *t >>= 1;
-                }
-            }
             for &b in &open {
                 let t = &mut self.tags[b as usize];
                 *t = t.saturating_add(1);
             }
             if !self.salient {
+                // a bit that has come uncovered on at least a sixty-fourth of the steps since
+                // the last sleep (at least twice): the light on a share of the trials passes,
+                // a clutter bit that comes now and then does not
+                let need = ((self.tick.saturating_sub(self.slept_at)) / 64).clamp(2, 255) as u8;
                 let tags = &self.tags;
-                open.retain(|&b| tags[b as usize] >= 3);
+                open.retain(|&b| tags[b as usize] >= need);
             }
         }
         // a quarter of the input uncovered (by need, where only what keeps coming uncovered
@@ -634,7 +636,7 @@ impl Pool {
 
     /// A slot for a new cell: a new one while there is room, else the stalest of 8 sampled.
     /// A cell for new input: a free one, a new one while the pool has room, else (of 8 sampled)
-    /// the one unused longest; by need only if that one has gone unused `RECYCLE_AGE` steps (a
+    /// the one unused longest; by need only if that one has gone unused since before the last sleep (a
     /// cell for something that comes now and then is not evicted for what comes every step;
     /// the input waits for sleep to free room). None: no room.
     fn place(&mut self) -> Option<usize> {
@@ -644,7 +646,7 @@ impl Pool {
                 let c = (self.next() as usize) % self.syn.len();
                 oldest = oldest.min(self.last[c]);
             }
-            if self.tick.saturating_sub(oldest) < RECYCLE_AGE {
+            if oldest >= self.slept_at {
                 return None;
             }
         }
@@ -680,13 +682,14 @@ impl Pool {
         c
     }
 
-    /// Sleep's recycling: cells recruited at least `age` steps ago that fired fewer than `min`
-    /// times since the last recycling lose their synapses and are free for new input; every
-    /// cell's count then halves (use is weighed over the last few sleeps). Returns how many.
-    pub fn recycle(&mut self, age: u64, min: u32) -> usize {
+    /// Sleep's recycling: cells recruited before the last sleep that fired fewer than `min` times
+    /// since it lose their synapses and are free for new input; every cell's count then halves
+    /// (use is weighed over the last few sleeps). Returns how many.
+    pub fn recycle(&mut self, min: u32) -> usize {
         let mut n = 0;
         for c in 0..self.syn.len() {
-            if self.syn[c].is_empty() || self.tick.saturating_sub(self.born[c]) < age {
+            // a cell recruited since the last sleep has not had a sleep period to be used yet
+            if self.syn[c].is_empty() || self.born[c] >= self.slept_at {
                 continue;
             }
             if self.uses[c] < min {
@@ -699,6 +702,11 @@ impl Pool {
             self.uses[c] /= 2;
         }
         self.recycled += n as u64;
+        // a new sleep period: recurrence is counted afresh
+        self.slept_at = self.tick;
+        for t in self.tags.iter_mut() {
+            *t = 0;
+        }
         n
     }
 
@@ -805,8 +813,6 @@ impl Area {
 }
 
 /// Areas, the pairwise association areas grown between them, and the full association area.
-/// A layer 4 cell is recycled only once it is this many steps old.
-pub const RECYCLE_AGE: u64 = 2000;
 
 pub struct Brain {
     bits: usize,
@@ -1251,11 +1257,11 @@ impl Brain {
         self.generalized += g;
         if self.need {
             if let Some(l4) = self.full.as_mut().and_then(|f| f.l4.as_mut()) {
-                self.recycled += l4.recycle(RECYCLE_AGE, 1);
+                self.recycled += l4.recycle(1);
             }
             for p in self.pairs.iter_mut() {
                 if let Some(l4) = p.1.l4.as_mut() {
-                    self.recycled += l4.recycle(RECYCLE_AGE, 1);
+                    self.recycled += l4.recycle(1);
                 }
             }
         }

@@ -131,6 +131,13 @@ impl Ofc {
         }
     }
 
+    /// Local inhibition in the area's layer 4 (`Pool::local`).
+    pub fn set_local(&mut self, on: bool) {
+        if let Some(p) = self.col.l4.as_mut() {
+            p.local = on;
+        }
+    }
+
     /// A salient moment: layer 4 recruits at once for what it does not cover.
     pub fn set_salient(&mut self, on: bool) {
         if let Some(p) = self.col.l4.as_mut() {

@@ -486,6 +486,10 @@ pub struct MaskStriatum {
     /// active bits each at its busiest so far (up to 32); it only grows, so where a bit lands
     /// does not move
     owned: std::cell::RefCell<std::collections::HashMap<u64, Vec<usize>>>,
+    /// focused: every active bit of a source sets its fixed place in the source's regions (a
+    /// projection), rather than each region keeping its `SHARE` smallest-hash bits (a sample
+    /// that depends on whatever else is active) (MIND_STRIATAL_FOLD=0: sample)
+    pub fold: bool,
     /// the next region not yet owned by any source
     next_free: std::cell::Cell<usize>,
 }
@@ -555,6 +559,7 @@ impl MaskStriatum {
             alpha: (256, Vec::new()),
             owned: Default::default(),
             next_free: Default::default(),
+            fold: std::env::var("MIND_STRIATAL_FOLD").map_or(true, |v| v != "0"),
         }
     }
 
@@ -671,6 +676,13 @@ impl MaskStriatum {
                     per[(h >> 40) as usize % n].push(h);
                 }
                 for (r, mut h) in per.into_iter().enumerate() {
+                    if self.fold {
+                        // every active bit sets its own fixed place: a projection, not a sample
+                        for &x in &h {
+                            c[rs[r]] |= 1 << (x % 64);
+                        }
+                        continue;
+                    }
                     h.sort_unstable();
                     for &x in h.iter().take(SHARE) {
                         c[rs[r]] |= 1 << (x % 64);

@@ -441,6 +441,9 @@ pub struct MaskStriatum {
     /// the cholinergic interneurons pause now (a learned response to a cue), opening actor
     /// plasticity for the dopamine that closes this step whatever its size
     pub pause_open: bool,
+    /// directed exploration: a bonus on every candidate's score while exploring (set from
+    /// outside from how uncertain what is in view is: try what is not yet known)
+    pub explore_bonus: i32,
     /// holding back is a choice too: a candidate the loop withheld is recorded, and the dopamine
     /// that follows trains its no-go cells only (a dip potentiates them, a burst depresses them)
     pub learn_nogo: bool,
@@ -547,6 +550,7 @@ impl MaskStriatum {
             swaps: 0,
             pauses: 0,
             pause_open: false,
+            explore_bonus: 0,
             learn_nogo: false,
             nogo_channels: Vec::new(),
             nogo_symmetric: false,
@@ -802,6 +806,16 @@ impl MaskStriatum {
         }
         let (g, o) = &self.actors[channel][a];
         g.overlap(x, k0) - o.overlap(x, k1)
+    }
+
+    /// Directed exploration: while exploring, every candidate gains `explore_bonus` (acting on
+    /// what is uncertain is worth trying; a known context gives none).
+    fn bonus(&self, q: &mut [i32], explore: bool) {
+        if explore && self.explore_bonus > 0 {
+            for x in q.iter_mut() {
+                *x += self.explore_bonus;
+            }
+        }
     }
 
     /// Grow mode, exploring: GPi's tonic firing is noisy (±`JITTER` per option), so options
@@ -1164,6 +1178,7 @@ impl MaskStriatum {
         let c = self.view.as_ref().map_or_else(|| self.c.clone(), |v| v.1.clone());
         let mut q: Vec<i32> = (1..n).map(|a| self.q(channel, a, &c, &keep)).collect();
         self.jitter(&mut q, explore);
+        self.bonus(&mut q, explore);
         let extra = self.brakes.iter().find(|b| b.0 == channel).map_or(0, |b| b.1);
         let released = {
             self.release += extra;
@@ -1194,6 +1209,7 @@ impl MaskStriatum {
         let xs: Vec<Vec<u64>> = candidates.iter().map(|c| self.candidate_context(c)).collect();
         let mut q: Vec<i32> = xs.iter().map(|x| self.q(channel, 1, x, &keep)).collect();
         self.jitter(&mut q, explore);
+        self.bonus(&mut q, explore);
         let Some(i) = self.release(&q) else {
             // nothing released: with `learn_nogo`, the best candidate held back is recorded
             if self.learn_nogo && (self.nogo_channels.is_empty() || self.nogo_channels.contains(&channel)) {

@@ -400,11 +400,18 @@ pub struct Config {
     /// learned from)), up to frustration's widest; none in a context well learned (noradrenaline's
     /// tonic mode after a change: Aston-Jones & Cohen; Yu & Dayan)
     pub explore: bool,
+    /// the intralaminar thalamus (centromedian/parafascicular) to the striatum (`MIND_ILAM=1`,
+    /// with the phase state): when the context changes, it bursts on the cholinergic interneurons,
+    /// which pause and open striatal plasticity until the new context's first outcome is in
+    /// (Matsumoto et al. 2001; Bradfield et al. 2013: new learning kept apart from old); the
+    /// context's code reaches the striatum by this route, and the cortex's layer 1 tufts (layers
+    /// 2/3 and 5) and layer 6 gain by the matrix route
+    pub ilam: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false }
     }
 }
 
@@ -470,6 +477,7 @@ impl Config {
             l6_gain: std::env::var("MIND_L6_GAIN").map_or(false, |v| v == "1"),
             phase: std::env::var("MIND_PHASE").map_or(false, |v| v == "1"),
             explore: std::env::var("MIND_EXPLORE").map_or(false, |v| v == "1"),
+            ilam: std::env::var("MIND_ILAM").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -599,6 +607,9 @@ pub struct Mind {
     /// lately, against its locked-in worth
     gain_r: Vec<Vec<i32>>,
     pub phase_switches: u32,
+    /// the intralaminar burst: the cholinergic interneurons pause until the new context's first
+    /// outcome is in
+    ilam_open: bool,
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
@@ -802,6 +813,7 @@ impl Mind {
             phase_count: 1,
             gain_r: vec![vec![-1; BITS]],
             phase_switches: 0,
+            ilam_open: false,
             gain_open: Vec::new(),
             eye_now: Vec::new(),
             chosen_q: Vec::new(),
@@ -1182,8 +1194,14 @@ impl Mind {
         let varied = if self.cfg.frustration { (self.frustration / (ONE as i32 / 8)).clamp(0, 6) } else { 0 };
         let unsure = if self.cfg.explore { self.uncertainty() * 6 / ONE as i32 } else { 0 };
         self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2) + tonic + varied + unsure;
+        // directed: the same uncertainty as a bonus for acting (try what is not yet known here)
+        self.bg.explore_bonus = unsure;
+        if self.cfg.ilam && self.ilam_open {
+            self.bg.pause_open = true;
+        }
         let acts = self.choose(&ids);
         self.bg.extra_noise = 0;
+        self.bg.explore_bonus = 0;
         self.bg.set_view(None);
         self.prev_in = raw;
         self.last = Some(st);
@@ -1440,6 +1458,8 @@ impl Mind {
     /// start at its worths (it is assumed to fit until shown otherwise). A cue paying half or more
     /// of its worth again ends the trying.
     fn phase_check(&mut self, b: usize) {
+        // an outcome in this context is in: the intralaminar burst is over
+        self.ilam_open = false;
         let ctx = self.phase_now;
         let (v, r) = (self.gain_v[ctx][b], self.gain_r[ctx][b]);
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
@@ -1463,6 +1483,8 @@ impl Mind {
                 rs.copy_from_slice(vs);
             }
             self.phase_switches += 1;
+            self.ilam_open = true;
+            return;
         }
     }
 

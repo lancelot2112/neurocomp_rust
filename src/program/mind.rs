@@ -341,6 +341,10 @@ pub struct Config {
     /// so a new input (a light coming on in a familiar scene) wins slots from what has been there
     /// all along (`Pool::adapt`) (MIND_ADAPT=0 off)
     pub adapt: bool,
+    /// bounded striatal learning (`MaskStriatum::bounded`): an act's go or no-go cells are
+    /// recruited only while its summed prediction in the context (go less no-go firing) does not
+    /// already say what came (Rescorla–Wagner's asymptote) (MIND_BOUNDED=0 off)
+    pub bounded: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -354,7 +358,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: true, adapt: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: true, adapt: true, bounded: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -407,6 +411,7 @@ impl Config {
             keep_order: on("MIND_KEEP_ORDER"),
             burst: on("MIND_BURST"),
             adapt: on("MIND_ADAPT"),
+            bounded: on("MIND_BOUNDED"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -590,6 +595,7 @@ impl Mind {
         bg.grow = true;
         bg.learn_nogo = cfg.nogo;
         bg.nogo_symmetric = cfg.nogo_symmetric;
+        bg.bounded = cfg.bounded;
         bg.balance = cfg.balance;
         bg.focused = cfg.focused;
         bg.window = cfg.window;

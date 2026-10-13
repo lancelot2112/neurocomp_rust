@@ -50,6 +50,8 @@ const MARGIN: i32 = 1;
 const HOLD: i32 = 2;
 const POP: i32 = 32;
 const DA_BASE: i32 = 8;
+/// the asymptote of `bounded` learning, in cells (the release brake and its conflict hold)
+const BOUND: i32 = RELEASE + HOLD;
 
 #[derive(Clone)]
 struct Mask {
@@ -444,6 +446,13 @@ pub struct MaskStriatum {
     /// symmetric no-go plasticity: a dip strengthens the no-go cells that fired, or (none fired)
     /// recruits new ones; a burst removes as many of those that fired
     pub nogo_symmetric: bool,
+    /// bounded (Rescorla–Wagner's asymptote, in popcounts): an act's summed prediction in a
+    /// context is its go cells firing less its no-go cells firing; a dip recruits no-go cells
+    /// only while no-go does not already lead there by `BOUND`, a burst go cells only while go
+    /// does not; cells that fired still tighten. So repeated dips in a context where the act is
+    /// already held back add nothing, and no-go learned on the scene cannot pile up past what
+    /// holds it back there, leaving the cue's go cells able to outvote it
+    pub bounded: bool,
     /// homeostasis: after learning, a channel's go and no-go pools are kept within twice each
     /// other (plus a margin): the stalest cells of the larger go (synaptic scaling)
     pub balance: bool,
@@ -526,6 +535,7 @@ impl MaskStriatum {
             learn_nogo: false,
             nogo_channels: Vec::new(),
             nogo_symmetric: false,
+            bounded: false,
             balance: false,
             view: None,
             focused: false,
@@ -902,7 +912,9 @@ impl MaskStriatum {
                             Self::toward(&mut nogo.cells[i].0, x, self.focused, false, &mut self.rng);
                             nogo.cells[i].1 = self.clock;
                         }
-                        for _ in 0..bits {
+                        let held = self.bounded && fired.len() as i32 - self.pools[*ch][1].0.count(x, None) >= BOUND;
+                        let nogo = &mut self.pools[*ch][1].1;
+                        for _ in 0..if held { 0 } else { bits } {
                             nogo.add(x, self.focused, &[], self.clock, &mut self.rng);
                         }
                     } else {
@@ -919,8 +931,15 @@ impl MaskStriatum {
                 }
                 let stick = self.sticky && delta > 0;
                 if self.grow {
-                    let n = Self::scaled(bits, lr.0, &mut self.rng);
+                    let mut n = Self::scaled(bits, lr.0, &mut self.rng);
                     let pair = &mut self.pools[*ch][*a];
+                    if self.bounded {
+                        // the summed prediction already says what came: recruit nothing more
+                        let lead = pair.0.count(x, None) - pair.1.count(x, None);
+                        if (delta > 0 && lead >= BOUND) || (delta < 0 && -lead >= BOUND) {
+                            n = 0;
+                        }
+                    }
                     let (more, fewer) = if delta > 0 { (&mut pair.0, &mut pair.1) } else { (&mut pair.1, &mut pair.0) };
                     // a dip moves the go cells that fired away (go LTD) and loosens their habits
                     self.swaps += Self::grow_learn(more, fewer, x, n, stick, delta < 0 && self.sticky, self.focused, &lr.1, self.clock, &mut self.rng);

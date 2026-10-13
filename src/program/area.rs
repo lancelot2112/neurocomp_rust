@@ -364,7 +364,10 @@ impl Pool {
                 open.retain(|&b| tags[b as usize] >= 3);
             }
         }
-        if open.len() * 4 < on.len() || open.len() < self.theta.max(8) {
+        // a quarter of the input uncovered (by need, where only what keeps coming uncovered
+        // counts, enough bits for a cell to fire on are reason enough: a recurring part of the
+        // input, the light in a busy scene, is not too small to get cells)
+        if (!self.need && open.len() * 4 < on.len()) || open.len() < self.theta.max(8) {
             return Vec::new();
         }
         if self.need {

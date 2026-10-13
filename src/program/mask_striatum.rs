@@ -623,10 +623,12 @@ impl MaskStriatum {
     }
 
     /// Focused: each live group's `SHARE` smallest-hash bits in a region (word) of its own, the
-    /// regions before the last (the candidate's), in turn.
+    /// regions before the last (the candidate's), in turn. A group's region and hash are fixed
+    /// by its place among all the groups, so an empty group does not move the others (the
+    /// order is kept: the same input lands on the same bits whatever else is silent).
     fn context_focused(&self, groups: &[Vec<usize>], c: &mut [u64]) {
         let regions = c.len() - 1;
-        for (gi, g) in groups.iter().filter(|g| !g.is_empty()).enumerate() {
+        for (gi, g) in groups.iter().enumerate().filter(|(_, g)| !g.is_empty()) {
             let salt = 0x5EED ^ (gi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
             let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ salt)).collect();
             h.sort_unstable();

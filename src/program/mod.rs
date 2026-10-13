@@ -86,5 +86,6 @@ pub mod ofc;
 pub mod column;
 pub mod claustrum;
 pub mod latent;
+pub mod context_circuit;
 pub use striatum::Striatum;
 pub use mask_striatum::MaskStriatum;

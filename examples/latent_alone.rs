@@ -13,10 +13,12 @@
 //! (back on the context that phase had before, a new one, or a wrong old one), and silencings
 //! beyond the first in a phase (false alarms).
 //!
-//! `LATENT_SCALE=fixed|volatile`, `LATENT_POLICY=random|greedy`, `LATENT_P` (0..1),
+//! `LATENT_MODEL=attractor|circuit` (the rate-test attractor, or the recurrent assembly stopped by
+//! inhibition, `context_circuit.rs`), `LATENT_SCALE=fixed|volatile`, `LATENT_POLICY=random|greedy`, `LATENT_P` (0..1),
 //! `LATENT_PERIOD`, `LATENT_PHASES`, `LATENT_SEEDS`, `LATENT_DEBUG=1`.
 
 use neurocomp::fixed::ONE;
+use neurocomp::program::context_circuit::ContextCircuit;
 use neurocomp::program::latent::{LatentCause, Scale};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -46,6 +48,7 @@ fn main() {
     let phases: usize = env("LATENT_PHASES", 8);
     let seeds: u64 = env("LATENT_SEEDS", 20);
     let debug = std::env::var("LATENT_DEBUG").is_ok();
+    let circuit = std::env::var("LATENT_MODEL").map_or(false, |v| v == "circuit");
     // per phase index: the outcome of the swap into it
     let mut per: Vec<Swap> = vec![Swap::default(); phases];
     let mut first_phase_false = 0u32;
@@ -53,17 +56,19 @@ fn main() {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut lc = LatentCause::new(BITS, scale);
         lc.debug = debug;
+        let mut cc = ContextCircuit::new(256, 8, 4);
+        cc.debug = debug;
         let mut worth: Vec<Vec<i32>> = vec![vec![-1; BITS]];
         let mut learned: Vec<Vec<u16>> = vec![vec![0; BITS]];
         // which context each kind of phase (A pays / B pays) last settled on
         let mut home: [Option<usize>; 2] = [None, None];
         for ph in 0..phases {
             let kind = ph % 2;
-            let resets_before = lc.resets;
+            let resets_before = if circuit { cc.resets } else { lc.resets };
             let mut detected: Option<u32> = None;
             for t in 0..period {
                 let light = rng.gen_range(0..2usize);
-                let ctx = lc.now;
+                let ctx = if circuit { cc.now } else { lc.now };
                 let act = if greedy {
                     let v = worth.get(ctx).map_or(-1, |w| w[light]);
                     let share = if v < 0 { 0.5 } else { (v as f64 / ONE as f64).max(0.1) };
@@ -76,13 +81,17 @@ fn main() {
                 }
                 let got = if light == kind && rng.gen_bool(p) { ONE as i32 } else { 0 };
                 let bits = [light, BACKGROUND];
-                let before = lc.resets;
-                lc.step(&worth, &learned, &bits, got);
-                if lc.resets > before && detected.is_none() {
+                let before = if circuit { cc.resets } else { lc.resets };
+                if circuit {
+                    cc.step(light * 2 + (got > 0) as usize);
+                } else {
+                    lc.step(&worth, &learned, &bits, got);
+                }
+                if (if circuit { cc.resets } else { lc.resets }) > before && detected.is_none() {
                     detected = Some(t);
                 }
                 // the active context learns the outcome (locking in)
-                let c = lc.now;
+                let c = if circuit { cc.now } else { lc.now };
                 while worth.len() <= c {
                     worth.push(vec![-1; BITS]);
                     learned.push(vec![0; BITS]);
@@ -93,7 +102,8 @@ fn main() {
                     *n = n.saturating_add(1);
                 }
             }
-            let resets = lc.resets - resets_before;
+            let resets = if circuit { cc.resets } else { lc.resets } - resets_before;
+            let (now, contexts) = if circuit { (cc.now, cc.contexts) } else { (lc.now, lc.contexts) };
             let s = &mut per[ph];
             if ph == 0 {
                 first_phase_false += resets;
@@ -105,18 +115,18 @@ fn main() {
                 s.false_alarms += resets.saturating_sub(1);
                 if detected.is_some() {
                     match home[kind] {
-                        Some(h) if h == lc.now => s.back += 1,
-                        _ if home[1 - kind] == Some(lc.now) || (home[kind].is_some() && home[kind] != Some(lc.now) && lc.now < lc.contexts - 1) => s.wrong += 1,
+                        Some(h) if h == now => s.back += 1,
+                        _ if home[1 - kind] == Some(now) || (home[kind].is_some() && home[kind] != Some(now) && now < contexts - 1) => s.wrong += 1,
                         _ => s.new += 1,
                     }
                 }
             }
-            home[kind] = Some(lc.now);
+            home[kind] = Some(now);
         }
     }
     println!(
-        "latent alone: scale {:?}, policy {}, pay {p}, period {period}, {seeds} seeds; false silencings in the first phase {first_phase_false}",
-        scale,
+        "latent alone: {}, policy {}, pay {p}, period {period}, {seeds} seeds; false silencings in the first phase {first_phase_false}",
+        if circuit { "circuit".to_string() } else { format!("attractor {scale:?}") },
         if greedy { "greedy" } else { "random" }
     );
     println!("swap  detected  median-trials  missed  back  new  wrong  false-alarms");

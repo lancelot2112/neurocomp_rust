@@ -229,9 +229,9 @@ pub struct Column {
     /// slot (as an unpredicted minicolumn bursts, every cell in it firing), so what came
     /// unexpected takes a large share of the output rather than its share of the input
     pub burst: bool,
-    /// sparse output (with `topo`): an active cell sends only those of its home bits active in
-    /// layer 4 now, so what the column sends up is no denser than its sparse layer 4 code
-    /// (MIND_SPARSE_OUT=0: the whole home)
+    /// sparse output (with `topo`): the column sends its active minicolumns (the layer 4 code,
+    /// sparse by the ratio), and a cell in a context slot adds its slot's bits for its home bits
+    /// active now; no whole homes (MIND_SPARSE_OUT=0: whole homes)
     pub sparse_out: bool,
     /// the winner's own prediction at the step before (no superposition), and this step's
     /// layer 4 bits it missed
@@ -553,9 +553,9 @@ impl Column {
             let (_, key, slot, home) = &self.homes[&c];
             let _ = key;
             for &b in home {
-                // sparse output: of the home's bits, those active in layer 4 now, so what the
-                // column sends up is no denser than its (sparse) layer 4 code and is current
-                if self.sparse_out && !self.code.bit_get(b as usize) {
+                // sparse output: the active minicolumns are sent below (the layer 4 code); a cell
+                // adds only its context slot's bits, for its home bits active now
+                if self.sparse_out && (*slot == 0 || !self.code.bit_get(b as usize)) {
                     continue;
                 }
                 let o = if *slot == 0 {
@@ -566,6 +566,13 @@ impl Column {
                     (h % self.bits as u64) as usize
                 };
                 v.bit_set(o);
+            }
+        }
+        if self.sparse_out {
+            // every active minicolumn has an active cell (the one that predicted it, or all of
+            // them when none did): the area sends its active minicolumns, its sparse layer 4 code
+            for (w, y) in v.as_words_mut().iter_mut().zip(self.code.as_words()) {
+                *w |= y;
             }
         }
         if self.burst && !self.sparse_out {

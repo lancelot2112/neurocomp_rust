@@ -571,8 +571,9 @@ impl Column {
         if self.sparse_out {
             // every active minicolumn has an active cell (the one that predicted it, or all of
             // them when none did): the area sends its active minicolumns, its sparse layer 4 code
-            for (w, y) in v.as_words_mut().iter_mut().zip(self.code.as_words()) {
-                *w |= y;
+            // (driven only: what the area holds goes up as working memory on its own)
+            for ((w, y), h) in v.as_words_mut().iter_mut().zip(self.code.as_words()).zip(self.held.as_words()) {
+                *w |= y & !h;
             }
         }
         if self.burst && !self.sparse_out {

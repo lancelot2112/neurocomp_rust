@@ -72,7 +72,7 @@ fn main() {
     // cue, the panels); at each block's end, each panel's overlap with the same cue's code the
     // trial before, 50 and 100 trials before
     let mut seen_at: Vec<(usize, bool, Vec<(String, Vec<usize>)>)> = Vec::new();
-    let mut prev_sel: Vec<usize> = Vec::new();
+    let mut prev_sel: Vec<(usize, u64)> = Vec::new();
     let drift_panels = ["eye", "top_in", "top_driven", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ctx"];
     while !world.done() {
         let senses = world.step(&acts);
@@ -168,16 +168,21 @@ fn main() {
                         }
                         let on_cue = |b: &usize| freq[1].get(b).copied().unwrap_or(0) * 2 >= n[1].max(1);
                         let on_none = |b: &usize| freq[0].get(b).copied().unwrap_or(0) * 10 > n[0];
-                        let (mut kept, mut smeared, mut silent) = (0, 0, 0);
-                        for b in &prev_sel {
+                        let (mut kept, mut smeared, mut silent, mut replaced) = (0, 0, 0, 0);
+                        let born = |b: usize| mind.brain.full.as_ref().and_then(|f| f.l4.as_ref()).map_or(0, |p| p.born_at(b));
+                        for (b, at) in &prev_sel {
+                            if born(*b) != *at {
+                                replaced += 1;
+                                continue;
+                            }
                             match (on_cue(b), on_none(b)) {
                                 (true, false) => kept += 1,
                                 (_, true) => smeared += 1,
                                 (false, false) => silent += 1,
                             }
                         }
-                        line += &format!(" fate {}: kept {kept} smeared {smeared} silent {silent}", prev_sel.len());
-                        prev_sel = freq[1].keys().copied().filter(|b| on_cue(b) && !on_none(b)).collect();
+                        line += &format!(" fate {}: kept {kept} smeared {smeared} silent {silent} replaced {replaced}", prev_sel.len());
+                        prev_sel = freq[1].keys().copied().filter(|b| on_cue(b) && !on_none(b)).map(|b| (b, born(b))).collect();
                     }
                     // selective bits: on in at least half the cue trials and at most a tenth of the
                     // others, per panel, over this block

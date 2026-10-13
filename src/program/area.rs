@@ -640,6 +640,11 @@ impl Pool {
         &self.last_on
     }
 
+    /// When cell `c` was last recruited (its birth step; a reused index is a new cell).
+    pub fn born_at(&self, c: usize) -> u64 {
+        self.born.get(c).copied().unwrap_or(0)
+    }
+
     /// Cells in use (recruited and not recycled).
     pub fn in_use(&self) -> usize {
         self.syn.len() - self.free.len()

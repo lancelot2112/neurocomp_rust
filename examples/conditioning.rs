@@ -223,6 +223,21 @@ fn main() {
                         for (src, (sh, on)) in by.iter().filter(|(_, v)| v.1 > 0) {
                             line += &format!(" {src}:{:.2}({on})", *sh as f64 / *on as f64);
                         }
+                        // learned attention: each source's mean discrimination over its regions
+                        let mut att: std::collections::BTreeMap<usize, (u64, u64)> = Default::default();
+                        for r in 0..mind.striatal_regions().1 {
+                            if let (Some(src), Some(d)) = (mind.striatal_source(r), mind.attention_of(r)) {
+                                let e = att.entry(src).or_default();
+                                e.0 += d;
+                                e.1 += 1;
+                            }
+                        }
+                        if !att.is_empty() {
+                            line += " | attention by source:";
+                            for (src, (d, n)) in &att {
+                                line += &format!(" {src}:{:.2}", *d as f64 / *n as f64 / 65536.0);
+                            }
+                        }
                     }
                     let mut sz = [(0usize, 0usize, 0usize); 2];
                     for (_, cue, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {

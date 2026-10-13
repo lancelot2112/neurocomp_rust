@@ -372,11 +372,15 @@ pub struct Config {
     /// predictive transmission: each sense passes up only what its column did not predict
     /// (MIND_PREDICTIVE=1 on; default off)
     pub predictive: bool,
+    /// learned attention on the striatal context (Mackintosh): each region's associability is how
+    /// differently its bits sit before paid and before unpaid acts of the hand, against the mean
+    /// of the regions; new striatal cells sample regions in proportion to it
+    pub attend_ctx: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false }
     }
 }
 
@@ -437,6 +441,7 @@ impl Config {
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
             predictive: std::env::var("MIND_PREDICTIVE").map_or(false, |v| v == "1"),
+            attend_ctx: std::env::var("MIND_ATTEND_CONTEXT").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -542,6 +547,13 @@ pub struct Mind {
     rate_act: i32,
     /// (steps left, outcome so far, motor area, the act's usual worth when done)
     act_windows: Vec<(u8, i32, usize, i32, Option<(i32, i32)>, i32)>,
+    /// learned attention: the hand loop's context at each act, until its outcome (steps left,
+    /// outcome so far, the context's bits)
+    attend_open: Vec<(u8, i32, Vec<usize>)>,
+    /// per context region: how often each of its 64 bits was on before unpaid [0] and paid [1]
+    /// acts, and how many such acts (halving when the count reaches 64: recent acts weigh most)
+    attend: Vec<[[u16; 64]; 2]>,
+    attend_n: Vec<[u16; 2]>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
     /// loops expected of it there
     chosen_q: Vec<(usize, i32, i32)>,
@@ -732,6 +744,9 @@ impl Mind {
             unpaid: 0,
             rate_act: 0,
             act_windows: Vec::new(),
+            attend_open: Vec::new(),
+            attend: Vec::new(),
+            attend_n: Vec::new(),
             chosen_q: Vec::new(),
             p_after: 0,
             p_else: 0,
@@ -969,6 +984,9 @@ impl Mind {
             // this act, here, should bring
             let here = self.ofc.cue_value().max(0);
             self.act_windows.push((1, outcome, *a, worth, q, here));
+        }
+        if self.cfg.attend_ctx {
+            self.attend_step(outcome, &acts_now);
         }
         let done: Vec<(i32, usize, i32, Option<(i32, i32)>, i32)> = self.act_windows.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2, w.3, w.4, w.5)).collect();
         self.act_windows.retain(|w| w.0 > 0);
@@ -1247,6 +1265,11 @@ impl Mind {
         (self.bg.owned_total(), self.bg.regions())
     }
 
+    /// Learned attention: region `r`'s discrimination between paid and unpaid acts (`Q16`).
+    pub fn attention_of(&self, r: usize) -> Option<u64> {
+        self.attend_of(r)
+    }
+
     /// The source (striatal input id / 1024) the striatal context region `r` serves.
     pub fn striatal_source(&self, r: usize) -> Option<usize> {
         self.bg.region_source(r)
@@ -1340,6 +1363,71 @@ impl Mind {
     /// striatum's focused context (one per live input group, in order) from the mean
     /// associability of the group's features where they are features (the senses' sustained
     /// codes, the amygdala's attended trace), else a middling weight.
+    /// Learned attention, one step: each open act of the hand gathers the outcome of the step it
+    /// is sensed in and the next; when it closes, its context's bits count toward paid or unpaid
+    /// in their regions. A hand act now opens with the hand loop's last context.
+    fn attend_step(&mut self, outcome: i32, acts_now: &[(usize, Vec<u32>)]) {
+        for w in self.attend_open.iter_mut() {
+            w.1 += outcome;
+            w.0 = w.0.saturating_sub(1);
+        }
+        if acts_now.iter().any(|(a, _)| *a == HAND) {
+            if let Some((x, _, _)) = self.hand_view().0 {
+                self.attend_open.push((1, outcome, x));
+            }
+        }
+        let done: Vec<(i32, Vec<usize>)> = self.attend_open.iter().filter(|w| w.0 == 0).map(|w| (w.1, w.2.clone())).collect();
+        self.attend_open.retain(|w| w.0 > 0);
+        for (got, x) in done {
+            let o = (got > 0) as usize;
+            let regions = self.bg.regions() + 1;
+            if self.attend.len() < regions {
+                self.attend.resize(regions, [[0; 64]; 2]);
+                self.attend_n.resize(regions, [0; 2]);
+            }
+            let mut seen = vec![false; regions];
+            for &b in &x {
+                let r = b / 64;
+                if r < regions {
+                    self.attend[r][o][b % 64] += 1;
+                    seen[r] = true;
+                }
+            }
+            for (r, on) in seen.into_iter().enumerate() {
+                if !on {
+                    continue;
+                }
+                self.attend_n[r][o] += 1;
+                if self.attend_n[r][o] >= 64 {
+                    self.attend_n[r][o] /= 2;
+                    for c in self.attend[r][o].iter_mut() {
+                        *c /= 2;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Learned attention: region `r`'s discrimination (`Q16`), how differently its bits sit before
+    /// paid and unpaid acts (the summed difference of their rates over their summed rates); None
+    /// until it has been seen before both.
+    fn attend_of(&self, r: usize) -> Option<u64> {
+        let n = self.attend_n.get(r)?;
+        if n[0] == 0 || n[1] == 0 {
+            return None;
+        }
+        let t = &self.attend[r];
+        let (mut diff, mut sum) = (0u64, 0u64);
+        for b in 0..64 {
+            // rates in 1/(n0·n1) units: c0·n1 and c1·n0
+            let a = t[0][b] as u64 * n[1] as u64;
+            let c = t[1][b] as u64 * n[0] as u64;
+            diff += a.abs_diff(c);
+            sum += a + c;
+        }
+        Some(if sum == 0 { 0 } else { diff * 65536 / sum })
+    }
+
     fn choice_alpha(&self, groups: &[Vec<usize>]) -> (u32, Vec<u16>) {
         let gain = 64 + 2 * self.amy.alpha_now();
         let regions = self.bg.regions();
@@ -1376,6 +1464,20 @@ impl Mind {
             let rs = placed.get(gi).cloned().unwrap_or_else(|| vec![gi % regions]);
             for r in rs {
                 w[r] = w[r].max(8 + a as u16);
+            }
+        }
+        // learned attention: each region's weight scaled by its discrimination against the mean
+        // of the regions measured (a region not yet measured keeps its weight)
+        if self.cfg.attend_ctx {
+            let d: Vec<Option<u64>> = (0..regions).map(|r| self.attend_of(r)).collect();
+            let known: Vec<u64> = d.iter().flatten().copied().collect();
+            if !known.is_empty() {
+                let mean = (known.iter().sum::<u64>() / known.len() as u64).max(1);
+                for (r, x) in w.iter_mut().enumerate() {
+                    if let Some(dr) = d[r] {
+                        *x = ((*x as u64 * dr / mean).clamp(1, u16::MAX as u64)) as u16;
+                    }
+                }
             }
         }
         (gain, w)

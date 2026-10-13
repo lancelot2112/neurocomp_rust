@@ -623,16 +623,22 @@ impl MaskStriatum {
     }
 
     /// Focused: each live group's `SHARE` smallest-hash bits in a region (word) of its own, the
-    /// regions before the last (the candidate's), in turn. A group's region and hash are fixed
-    /// by its place among all the groups, so an empty group does not move the others (the
-    /// order is kept: the same input lands on the same bits whatever else is silent).
+    /// regions before the last (the candidate's). A group's region and hash follow where its
+    /// bits come from (the 1024-bit block of its first bit, and which copy of that source it is
+    /// when a source is repeated), not its place in the list: an input lands on the same bits
+    /// whatever else is present or silent (the order is kept).
     fn context_focused(&self, groups: &[Vec<usize>], c: &mut [u64]) {
         let regions = c.len() - 1;
-        for (gi, g) in groups.iter().enumerate().filter(|(_, g)| !g.is_empty()) {
-            let salt = 0x5EED ^ (gi as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut copies: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
+        for g in groups.iter().filter(|g| !g.is_empty()) {
+            let src = g.iter().copied().min().unwrap_or(0) / 1024;
+            let copy = copies.entry(src).or_default();
+            let key = mix((src as u64) << 8 | *copy);
+            *copy += 1;
+            let salt = 0x5EED ^ key;
             let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ salt)).collect();
             h.sort_unstable();
-            let w = gi % regions;
+            let w = (key % regions as u64) as usize;
             for &x in h.iter().take(SHARE) {
                 c[w] |= 1 << (x % 64);
             }

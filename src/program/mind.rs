@@ -184,6 +184,8 @@ const SUSTAINED_OFFSET: usize = 150 * BITS;
 /// the orbitofrontal area's state Z, and what it holds
 const OFC_Z_OFFSET: usize = 162 * BITS;
 const OFC_HELD_OFFSET: usize = 164 * BITS;
+/// the full association column's activity, at a fixed place (its column id moves as pairs grow)
+const TOP_OFFSET: usize = 168 * BITS;
 /// the orbitofrontal area's hold loop (hold the state or not)
 const OFC_HOLD_CHANNEL: usize = 300;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
@@ -350,6 +352,9 @@ pub struct Config {
     /// inputs keep cells side by side in a wide code rather than the busiest crowding the rest
     /// out (`Pool::local`) (MIND_LOCAL=0 off)
     pub local: bool,
+    /// the hand loop reads the top of the association hierarchy (the full association column's
+    /// layer 2/3), a region per 1024 bits of its width (MIND_TOP_VIEW=0 off)
+    pub top_view: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -363,7 +368,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: true, adapt: true, bounded: true, local: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -418,6 +423,7 @@ impl Config {
             adapt: on("MIND_ADAPT"),
             bounded: on("MIND_BOUNDED"),
             local: on("MIND_LOCAL"),
+            top_view: on("MIND_TOP_VIEW"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -1152,6 +1158,18 @@ impl Mind {
             let g: Vec<usize> = self.amy.value_cells().into_iter().map(|c| c + AMY_VALUE_OFFSET).collect();
             for _ in 0..amy_gain {
                 groups.push(g.clone());
+            }
+        }
+        // the top of the association hierarchy (the full association column's layer 2/3, where a
+        // cue among everything else is coded), as the dorsal striatum receives association
+        // cortex: a 1024-bit group per quarter of its width, so a wide area takes regions in
+        // proportion to its width
+        if self.cfg.top_view {
+            if let Some(f) = self.brain.full.as_ref() {
+                let act = ones(&f.activity());
+                for q in 0..act.iter().map(|&b| b / 1024 + 1).max().unwrap_or(0) {
+                    groups.push(act.iter().filter(|&&b| b / 1024 == q).map(|&b| b + TOP_OFFSET).collect());
+                }
             }
         }
         // the act just done (motor cortex's collaterals to the dorsal striatum: the efference

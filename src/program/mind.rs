@@ -599,7 +599,9 @@ impl Mind {
         cb.set_rates(2, 0);
         cb.set_cross_frames(true);
         // with focused cells each input group has a region (a 64-bit word) of its own: 63 of them
-        let mut bg = MaskStriatum::new(if cfg.focused { 4096 } else { 2048 }, 64, seed.wrapping_add(31));
+        // the focused striatum's context: 256 regions with a wide view (MIND_WIDE_STRIATUM=0: 64)
+        let wide_striatum = std::env::var("MIND_WIDE_STRIATUM").map_or(true, |v| v != "0");
+        let mut bg = MaskStriatum::new(if cfg.focused { if wide_striatum { 16384 } else { 4096 } } else { 2048 }, 64, seed.wrapping_add(31));
         bg.hold = false;
         bg.sticky = true;
         bg.conj = true;
@@ -1299,8 +1301,10 @@ impl Mind {
     /// codes, the amygdala's attended trace), else a middling weight.
     fn choice_alpha(&self, groups: &[Vec<usize>]) -> (u32, Vec<u16>) {
         let gain = 64 + 2 * self.amy.alpha_now();
-        let regions = if self.cfg.focused { 4096 / 64 - 1 } else { 2048 / 64 - 1 };
+        let regions = self.bg.regions();
         let mut w = vec![0u16; regions];
+        // each group's regions, as the striatum places it
+        let placed = if self.cfg.focused { self.bg.place_groups(groups, regions, None) } else { Vec::new() };
         for (gi, g) in groups.iter().filter(|g| !g.is_empty()).enumerate() {
             let feats: Vec<usize> = g
                 .iter()
@@ -1328,8 +1332,10 @@ impl Mind {
                 _ if feats.is_empty() => 32,
                 _ => feats.iter().map(|&f| self.amy.alpha_of(f) as u32).sum::<u32>() / feats.len() as u32,
             };
-            let r = gi % regions;
-            w[r] = w[r].max(8 + a as u16);
+            let rs = placed.get(gi).cloned().unwrap_or_else(|| vec![gi % regions]);
+            for r in rs {
+                w[r] = w[r].max(8 + a as u16);
+            }
         }
         (gain, w)
     }

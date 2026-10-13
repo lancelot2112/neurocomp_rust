@@ -480,6 +480,10 @@ pub struct MaskStriatum {
     /// the learning rate the next choices carry (Pearce–Hall associability of their cues); the
     /// default `(256, [])` is 1× with every region alike
     pub alpha: Lr,
+    /// per input source (focused), how many regions it owns: enough for about `SHARE` of its
+    /// active bits each at its busiest so far (up to 32); it only grows, so where a bit lands
+    /// does not move
+    owned: std::cell::RefCell<std::collections::HashMap<u64, usize>>,
 }
 
 fn mix(x: u64) -> u64 {
@@ -545,6 +549,7 @@ impl MaskStriatum {
             brakes: Vec::new(),
             last_q: 0,
             alpha: (256, Vec::new()),
+            owned: Default::default(),
         }
     }
 
@@ -622,27 +627,52 @@ impl MaskStriatum {
         c
     }
 
-    /// Focused: each live group's `SHARE` smallest-hash bits in a region (word) of its own, the
-    /// regions before the last (the candidate's). A group's region and hash follow where its
-    /// bits come from (the 1024-bit block of its first bit, and which copy of that source it is
-    /// when a source is repeated), not its place in the list: an input lands on the same bits
-    /// whatever else is present or silent (the order is kept).
-    fn context_focused(&self, groups: &[Vec<usize>], c: &mut [u64]) {
-        let regions = c.len() - 1;
+    /// Focused: where each live group's bits go. A group owns regions (words) by its source (the
+    /// 1024-bit block of its first bit, and which copy of that source it is when a source is
+    /// repeated), as many as hold about `SHARE` of its active bits each at its busiest so far;
+    /// each of its bits lands in one of them, by its own hash, so an input always lands on the
+    /// same bits whatever else is present (the order is kept), and a region keeps its `SHARE`
+    /// smallest-hash bits. Returns, per live group in order, the regions it owns.
+    pub fn place_groups(&self, groups: &[Vec<usize>], regions: usize, mut c: Option<&mut [u64]>) -> Vec<Vec<usize>> {
         let mut copies: std::collections::HashMap<usize, u64> = std::collections::HashMap::new();
+        let mut owned = self.owned.borrow_mut();
+        let mut out = Vec::new();
         for g in groups.iter().filter(|g| !g.is_empty()) {
             let src = g.iter().copied().min().unwrap_or(0) / 1024;
             let copy = copies.entry(src).or_default();
             let key = mix((src as u64) << 8 | *copy);
             *copy += 1;
-            let salt = 0x5EED ^ key;
-            let mut h: Vec<u64> = g.iter().map(|&b| mix(b as u64 ^ salt)).collect();
-            h.sort_unstable();
-            let w = (key % regions as u64) as usize;
-            for &x in h.iter().take(SHARE) {
-                c[w] |= 1 << (x % 64);
+            let n = owned.entry(key).or_insert(1);
+            *n = (*n).max(g.len().div_ceil(SHARE)).min(32);
+            let n = *n;
+            let rs: Vec<usize> = (0..n).map(|r| (mix(key ^ (r as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)) % regions as u64) as usize).collect();
+            if let Some(c) = c.as_deref_mut() {
+                let salt = 0x5EED ^ key;
+                let mut per: Vec<Vec<u64>> = vec![Vec::new(); n];
+                for &b in g {
+                    let h = mix(b as u64 ^ salt);
+                    per[(h >> 40) as usize % n].push(h);
+                }
+                for (r, mut h) in per.into_iter().enumerate() {
+                    h.sort_unstable();
+                    for &x in h.iter().take(SHARE) {
+                        c[rs[r]] |= 1 << (x % 64);
+                    }
+                }
             }
+            out.push(rs);
         }
+        out
+    }
+
+    fn context_focused(&self, groups: &[Vec<usize>], c: &mut [u64]) {
+        let regions = c.len() - 1;
+        self.place_groups(groups, regions, Some(c));
+    }
+
+    /// Focused: the number of regions before the candidate's.
+    pub fn regions(&self) -> usize {
+        self.d / 64 - 1
     }
 
     fn context(&self, groups: &[Vec<usize>]) -> Vec<u64> {

@@ -582,12 +582,15 @@ pub struct Mind {
     /// 1/(2 + that), so it learns fast at first and then locks in (noise no longer moves it)
     gain_n: Vec<Vec<u16>>,
     /// the phase state: the current context, the contexts in the order last left (most recent
-    /// first), those tried since outcomes last fitted, how many there are, the recent payout and
-    /// recent expectation of the hand's acts (`Q16`), and how many switches
+    /// first), those tried since outcomes last fitted, how many there are, the recent payout of
+    /// the hand's acts and the current context's rate (`Q16`), and how many switches
     phase_now: usize,
     phase_left: Vec<usize>,
     phase_tried: Vec<usize>,
     phase_count: usize,
+    /// each context's locked-in payout rate for the hand's acts (`Q16`, −1: none yet) and how
+    /// many acts it has learned from (its rate moves at 1/(2 + that))
+    phase_rate: Vec<(i32, u32)>,
     surprise_fast: i32,
     surprise_slow: i32,
     pub phase_switches: u32,
@@ -792,6 +795,7 @@ impl Mind {
             phase_left: Vec::new(),
             phase_tried: Vec::new(),
             phase_count: 1,
+            phase_rate: vec![(-1, 0)],
             surprise_fast: 0,
             surprise_slow: 0,
             phase_switches: 0,
@@ -1423,24 +1427,31 @@ impl Mind {
         vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
     }
 
-    /// The phase state, one hand act closed: what it paid and what the current context expected
-    /// of it (its best locked-in worth in view) are averaged fast (a sixteenth). When the context
-    /// expects something (a quarter or more) and recent payout falls below half of it, the
-    /// context is wrong: the state moves to the context left most recently not yet tried, else to
-    /// a new one (whose worths start unknown, so it learns before it can be found wrong). Once
-    /// payout is back at half or more of what is expected, the trying is over.
-    fn phase_step(&mut self, got: i32, here: i32) {
-        // recent payout and recent expectation (fast averages, a sixteenth each)
-        self.surprise_fast += (got - self.surprise_fast) / 16;
-        self.surprise_slow += (here - self.surprise_slow) / 16;
-        if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("phase: here {:.3} got {:.3} paid {:.3} expected {:.3} context {}", here as f64 / ONE as f64, got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, self.surprise_slow as f64 / ONE as f64, self.phase_now);
+    /// The phase state, one hand act closed: what it paid, against what acts pay in the current
+    /// context. Each context learns its payout rate Hebbian-style, at 1/(2 + the acts it has
+    /// learned from): fast at first, then locked in, so noise does not move it. Recent payout is
+    /// averaged fast (a sixteenth), starting from the context's own rate when it is entered (or
+    /// from the first outcome in a new one). When the context pays something (a quarter or more)
+    /// and recent payout falls below half of it, the context is wrong: the state moves to the
+    /// context left most recently not yet tried, else to a new one. Once recent payout is back at
+    /// half or more, the trying is over.
+    fn phase_step(&mut self, got: i32) {
+        let ctx = self.phase_now;
+        while self.phase_rate.len() <= ctx {
+            self.phase_rate.push((-1, 0));
         }
-        // the context fits again: what it expected is being paid (at least half)
-        if 2 * self.surprise_fast >= self.surprise_slow {
+        let (rate, n) = self.phase_rate[ctx];
+        self.surprise_fast = if rate < 0 && n == 0 { got } else { self.surprise_fast + (got - self.surprise_fast) / 16 };
+        let new_rate = if rate < 0 { got } else { rate + (got - rate) / (2 + n as i32) };
+        self.phase_rate[ctx] = (new_rate, n + 1);
+        self.surprise_slow = new_rate;
+        if std::env::var("MIND_DEBUG_PHASE").is_ok() {
+            eprintln!("phase: got {:.3} recent {:.3} context rate {:.3} acts {} context {}", got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, new_rate as f64 / ONE as f64, n + 1, ctx);
+        }
+        if 2 * self.surprise_fast >= new_rate {
             self.phase_tried.clear();
         }
-        if self.surprise_slow >= ONE as i32 / 4 && 2 * self.surprise_fast < self.surprise_slow {
+        if new_rate >= ONE as i32 / 4 && 2 * self.surprise_fast < new_rate {
             let from = self.phase_now;
             self.phase_tried.push(from);
             let next = self.phase_left.iter().copied().find(|c| !self.phase_tried.contains(c));
@@ -1451,8 +1462,8 @@ impl Mind {
             self.phase_left.retain(|&c| c != from && c != to);
             self.phase_left.insert(0, from);
             self.phase_now = to;
-            self.surprise_fast = 0;
-            self.surprise_slow = 0;
+            // the context entered is assumed to fit: recent payout starts at its own rate
+            self.surprise_fast = self.phase_rate.get(to).map_or(0, |r| r.0.max(0));
             self.phase_switches += 1;
         }
     }
@@ -1526,9 +1537,8 @@ impl Mind {
                 *n = n.saturating_add(1);
             }
             if self.cfg.phase {
-                if let Some(e) = expected {
-                    self.phase_step(got, e);
-                }
+                let _ = expected;
+                self.phase_step(got);
             }
         }
     }

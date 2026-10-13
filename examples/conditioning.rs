@@ -13,6 +13,7 @@
 //! MIND_CONTINGENCY, MIND_IMAGINE_VALUE, MIND_OWN, MIND_RESPONSE: 0 turns one off).
 
 use neurocomp::program::mind::{Config, Mind};
+use std::collections::HashMap;
 use neurocomp::program::world::{Acts, Conditioning, World, CLICK};
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -149,6 +150,22 @@ fn main() {
                         }
                         let f = |a: (f64, usize)| if a.1 == 0 { "-".to_string() } else { format!("{:.2}", a.0 / a.1 as f64) };
                         line += &format!(" {name} {}/{}/{} x{}", f(acc[0]), f(acc[1]), f(acc[2]), f(cross));
+                    }
+                    // selective bits: on in at least half the cue trials and at most a tenth of the
+                    // others, per panel, over this block
+                    for name in ["eye", "top_in", "top_driven", "top_l23", "ctx"] {
+                        let mut freq: [HashMap<usize, usize>; 2] = [HashMap::new(), HashMap::new()];
+                        let mut n = [0usize; 2];
+                        for (_, cue, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {
+                            n[*cue as usize] += 1;
+                            if let Some(x) = p.iter().find(|x| x.0 == name) {
+                                for &b in &x.1 {
+                                    *freq[*cue as usize].entry(b).or_default() += 1;
+                                }
+                            }
+                        }
+                        let sel = freq[1].iter().filter(|&(b, &f)| f * 2 >= n[1].max(1) && freq[0].get(b).copied().unwrap_or(0) * 10 <= n[0]).count();
+                        line += &format!(" sel_{name} {sel}");
                     }
                     let mut sz = [(0usize, 0usize, 0usize); 2];
                     for (_, cue, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {

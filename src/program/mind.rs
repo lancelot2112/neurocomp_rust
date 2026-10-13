@@ -1430,9 +1430,9 @@ impl Mind {
     /// The phase state, one hand act closed: what it paid, against what acts pay in the current
     /// context. Each context learns its payout rate Hebbian-style, at 1/(2 + the acts it has
     /// learned from): fast at first, then locked in, so noise does not move it. Recent payout is
-    /// averaged fast (a sixteenth), starting from the context's own rate when it is entered (or
-    /// from the first outcome in a new one). When the context pays something (a quarter or more)
-    /// and recent payout falls below half of it, the context is wrong: the state moves to the
+    /// averaged over about 16 expected rewards (16 over the context's rate, in acts), starting from
+    /// the context's own rate when it is entered (or from the first outcome in a new one). When
+    /// recent payout falls below half of the context's rate, the context is wrong: the state moves to the
     /// context left most recently not yet tried, else to a new one. Once recent payout is back at
     /// half or more, the trying is over.
     fn phase_step(&mut self, got: i32) {
@@ -1444,7 +1444,10 @@ impl Mind {
         // recent payout moves at a sixteenth, or as fast as the context's own rate while that is
         // faster: until the context has locked in past the recent window the two agree, so only
         // a settled context can be found wrong
-        let step = (2 + n as i32).min(16);
+        // (the window spans about 16 expected rewards: 16 over the context's rate, so rare rewards
+        // are averaged over as many acts as frequent ones need)
+        let window = if rate > 0 { (16 * ONE as i64 / rate as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
+        let step = (2 + n as i32).min(window);
         self.surprise_fast = if rate < 0 && n == 0 { got } else { self.surprise_fast + (got - self.surprise_fast) / step };
         let new_rate = if rate < 0 { got } else { rate + (got - rate) / (2 + n as i32) };
         self.phase_rate[ctx] = (new_rate, n + 1);
@@ -1455,7 +1458,7 @@ impl Mind {
         if 2 * self.surprise_fast >= new_rate {
             self.phase_tried.clear();
         }
-        if new_rate >= ONE as i32 / 4 && 2 * self.surprise_fast < new_rate {
+        if new_rate > 0 && 2 * self.surprise_fast < new_rate {
             let from = self.phase_now;
             self.phase_tried.push(from);
             let next = self.phase_left.iter().copied().find(|c| !self.phase_tried.contains(c));

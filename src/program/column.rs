@@ -144,6 +144,11 @@ impl Map {
         self.cells.committed()
     }
 
+    /// Sleep's generalization of this layer (see `BitCells::generalize`): cells merged away.
+    pub fn generalize(&mut self) -> usize {
+        self.cells.generalize(3, 4, 8)
+    }
+
     /// Sleep's compaction of this layer (see `BitCells::compact`): (merged, pruned).
     pub fn compact(&mut self, idle: u64) -> (usize, usize) {
         self.cells.compact(idle)

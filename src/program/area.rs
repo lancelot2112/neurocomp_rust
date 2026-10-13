@@ -500,7 +500,28 @@ pub struct Brain {
     pub superpose: bool,
     /// a selector decides what the full association column holds (`Column::select`)
     pub select: bool,
+    /// sleep also generalizes (`Map::generalize`): near-duplicate cells become one cell on
+    /// their shared synapses
+    pub generalize: bool,
+    /// cells merged away by generalization so far
+    pub generalized: usize,
+    /// the full association column's width (its layer 4's address space): the top area may be
+    /// wider than the rest, room for its cells to grow into
+    pub full_bits: usize,
     rng: StdRng,
+}
+
+/// `v` at `bits` wide: zero-extended, or folded (wider words ORed onto the narrower).
+pub fn fit(v: &BitVector, bits: usize) -> BitVector {
+    if v.bit_len() == bits {
+        return v.clone();
+    }
+    let mut out = BitVector::new(bits, Some(0));
+    let n = out.as_words().len();
+    for (w, y) in v.as_words().iter().enumerate() {
+        out.as_words_mut()[w % n] |= y;
+    }
+    out
 }
 
 /// Cells a column's layers may grow to.
@@ -512,7 +533,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, generalize: false, generalized: 0, full_bits: bits, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -652,6 +673,15 @@ impl Brain {
         self.column_ref(id).map_or((0, 0), |c| c.loads)
     }
 
+    /// Association column `i`'s width (the full one may be wider).
+    pub fn width_of(&self, i: usize) -> usize {
+        if i == self.pairs.len() && self.full.is_some() {
+            self.full_bits
+        } else {
+            self.bits
+        }
+    }
+
     /// A column's held population (empty if it has none).
     pub fn held_of(&self, id: ColumnId) -> BitVector {
         self.column_ref(id).map_or_else(|| BitVector::new(self.bits, Some(0)), |c| c.held().clone())
@@ -728,6 +758,7 @@ impl Brain {
                     *w |= y;
                 }
             }
+            let tuft = &fit(tuft, x.bit_len());
             col.sense_code(&x, Some(tuft), learn, &mut rng);
             let exp = col.expected.clone().unwrap_or_else(|| BitVector::new(x.bit_len(), Some(0)));
             let goal = col.l5.predict_full(&x, Some(tuft), Some(&exp));
@@ -742,7 +773,8 @@ impl Brain {
     pub fn learn_goal(&mut self, i: usize, input: &BitVector, tuft: &BitVector, exp: &BitVector, target: &BitVector) {
         let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
         if let Some(col) = self.assoc_columns().into_iter().nth(i) {
-            col.l5.learn(input, Some(tuft), Some(exp), target, &mut rng);
+            let tuft = fit(tuft, input.bit_len());
+            col.l5.learn(input, Some(&tuft), Some(exp), target, &mut rng);
         }
         self.rng = rng;
     }
@@ -765,8 +797,10 @@ impl Brain {
         let mut act = BitVector::new(self.bits, Some(0));
         let mut fired = Vec::new();
         for (i, col) in self.assoc_columns().into_iter().enumerate() {
-            for (w, y) in act.as_words_mut().iter_mut().zip(col.activity().as_words()) {
-                *w |= y;
+            // (a wider column's activity folded in)
+            let n = act.as_words().len();
+            for (w, y) in col.activity().as_words().iter().enumerate() {
+                act.as_words_mut()[w % n] |= y;
             }
             fired.extend(col.l5.last_fired().into_iter().map(|c| c * 64 + i));
         }
@@ -845,12 +879,18 @@ impl Brain {
             cols.push(f);
         }
         let mut t = (0, 0);
+        let mut g = 0;
+        let generalize = self.generalize;
         for c in cols {
             for (m, p) in [c.l23.compact(idle), c.l5.compact(idle)] {
                 t.0 += m;
                 t.1 += p;
             }
+            if generalize {
+                g += c.l23.generalize() + c.l5.generalize();
+            }
         }
+        self.generalized += g;
         t
     }
 
@@ -934,7 +974,7 @@ impl Brain {
             pair_codes.push(Self::code_of(col, &input, learn, columns, &mut self.rng));
         }
         if self.full.is_none() && self.pairs.len() >= 2 {
-            let mut col = Column::granular(self.bits, Pool::new(MAX_PAIRS, self.bits, self.bits, self.k, 2, self.seed.wrapping_add(9999)), CAP);
+            let mut col = Column::granular(self.full_bits, Pool::new(MAX_PAIRS, self.bits, self.full_bits, self.k, 2, self.seed.wrapping_add(9999)), CAP);
             col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
             col.set_persistence(self.full_tau);
             col.set_recurrence(self.full_gain);

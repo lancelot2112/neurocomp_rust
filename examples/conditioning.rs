@@ -107,11 +107,12 @@ fn main() {
                 if trial % block == 0 {
                     let (n, h) = mind.brain.sense_hits();
                     println!(
-                        "  sleep at trial {trial}: cortical cells {}, sensory predictions right {:.1}%; compacted so far {} merged, {} pruned; hippocampal rows {}, consolidated {}",
+                        "  sleep at trial {trial}: cortical cells {}, sensory predictions right {:.1}%; compacted so far {} merged, {} pruned, {} generalized; hippocampal rows {}, consolidated {}",
                         mind.brain.cortical_cells(),
                         100.0 * h as f64 / n.max(1) as f64,
                         mind.compacted.0,
                         mind.compacted.1,
+                        mind.brain.generalized,
                         mind.hc.mem.rows(),
                         mind.hc.consolidated
                     );

@@ -39,6 +39,7 @@ use crate::fixed::ONE;
 use crate::program::amygdala::Amygdala;
 use crate::program::claustrum::Claustrum;
 use crate::program::ofc::{self as ofc_area, Ofc};
+use crate::program::area::fit;
 use crate::program::area::{Brain, ColumnId, Kind, MAX_PAIRS};
 use crate::program::cerebellar_circuit::CerebellarCircuit;
 use crate::program::index_hc::IndexHc;
@@ -173,7 +174,7 @@ fn column_offset(id: ColumnId) -> usize {
         ColumnId::Assoc(i) => (8 + i) * BITS,
     }
 }
-const WM_OFFSET: usize = 40 * BITS;
+const WM_OFFSET: usize = 60 * BITS;
 const RECALL_OFFSET: usize = 41 * BITS;
 const AMY_OFFSET: usize = 80 * BITS;
 const AMY_VALUE_OFFSET: usize = 120 * BITS;
@@ -181,8 +182,8 @@ const EFFERENCE_OFFSET: usize = 130 * BITS;
 const OFC_VALUE_OFFSET: usize = 140 * BITS;
 const SUSTAINED_OFFSET: usize = 150 * BITS;
 /// the orbitofrontal area's state Z, and what it holds
-const OFC_Z_OFFSET: usize = 160 * BITS;
-const OFC_HELD_OFFSET: usize = 161 * BITS;
+const OFC_Z_OFFSET: usize = 162 * BITS;
+const OFC_HELD_OFFSET: usize = 164 * BITS;
 /// the orbitofrontal area's hold loop (hold the state or not)
 const OFC_HOLD_CHANNEL: usize = 300;
 /// the value of an imagined outcome, as the motor gate sees it (16 bits for good, 16 for bad)
@@ -314,6 +315,14 @@ pub struct Config {
     /// something known that came unexpectedly and stands out, weighed by the cues'
     /// associability (MIND_CLAUSTRUM=0: every surprise is held)
     pub claustrum: bool,
+    /// the top areas (the full association column and the orbitofrontal area) twice as wide as
+    /// the rest (4096 bits): room for their layer 4 to recruit cells as they learn to tell more
+    /// apart (MIND_WIDE=0 off)
+    pub wide: bool,
+    /// sleep generalizes as well as compacts: in every cortical layer, cells that predict the
+    /// same thing from mostly the same input become one cell on what they share (a more general,
+    /// compressed representation) (MIND_GENERALIZE=0 off)
+    pub generalize: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -327,7 +336,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -374,6 +383,8 @@ impl Config {
             recur: on("MIND_RECUR"),
             superpose: on("MIND_SUPERPOSE"),
             claustrum: on("MIND_CLAUSTRUM"),
+            wide: on("MIND_WIDE"),
+            generalize: on("MIND_GENERALIZE"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -512,6 +523,10 @@ impl Mind {
         b.assoc_coverage = cfg.coverage;
         b.superpose = cfg.superpose;
         b.select = cfg.claustrum && cfg.recur;
+        if cfg.wide {
+            b.full_bits = 2 * BITS;
+        }
+        b.generalize = cfg.generalize && cfg.compact;
         if cfg.recur {
             b.pair_gain = 0;
             b.full_gain = 3;
@@ -564,12 +579,13 @@ impl Mind {
         let elemental = cfg.elemental;
         let focused = cfg.focused;
         let value_z = cfg.ofc_column && cfg.ofc_value_z;
+        let ofc_w = if cfg.wide { 2 * BITS } else { BITS };
         let persist = cfg.persist;
         let recur = cfg.recur;
         let coverage = cfg.coverage;
         let superpose = cfg.superpose;
         let claustrum = cfg.claustrum;
-        let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
+        let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 2) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
             cfg,
@@ -593,7 +609,7 @@ impl Mind {
                 // on Z: the area's state (BITS features) then the acts; else the senses' cues
                 // then the acts
                 let z = value_z;
-                let first = if z { BITS } else { SLOTS.len() * BITS };
+                let first = if z { ofc_w } else { SLOTS.len() * BITS };
                 let mut o = Amygdala::new(first + 2 * BITS, seed ^ 0x0FC);
                 o.gated = attend_gate && !z;
                 o.elemental = z;
@@ -605,7 +621,7 @@ impl Mind {
                 }
             },
             ofc_area: {
-                let mut o = Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA);
+                let mut o = Ofc::new(ofc_w, ACTIVE, 8192, seed ^ 0x0FCA);
                 o.set_coverage(coverage);
                 o.col.superpose = superpose;
                 o.col.select = claustrum && recur;
@@ -663,7 +679,8 @@ impl Mind {
     /// association-level index's input.
     fn assoc_state(&self, codes: &[BitVector]) -> BitVector {
         let n = self.brain.pairs.len();
-        let mut v = BitVector::new((MAX_PAIRS + 1) * BITS, Some(0));
+        // (the full column's slot is followed by a spare, for a wider top area)
+        let mut v = BitVector::new((MAX_PAIRS + 2) * BITS, Some(0));
         for (i, c) in self.brain.assoc_inputs(codes).iter().enumerate() {
             let slot = assoc_slot(i, n);
             for b in ones(c) {
@@ -1145,7 +1162,8 @@ impl Mind {
             return f.to_vec();
         }
         let from = (SLOTS.len() * BITS) as u32;
-        f.iter().map(|&x| x - from + BITS as u32).collect()
+        let w = self.ofc_area.bits() as u32;
+        f.iter().map(|&x| x - from + w).collect()
     }
 
     /// The orbitofrontal area's step: its four inputs from this step's codes (by area), the acts
@@ -1155,10 +1173,10 @@ impl Mind {
         // the cues: the full association area's code, else the pairs' merged
         let mut cues = zero();
         match (self.brain.full.is_some(), assoc.last()) {
-            (true, Some(f)) if f.count_ones() > 0 => cues = f.clone(),
+            (true, Some(f)) if f.count_ones() > 0 => cues = fit(f, BITS),
             _ => {
                 for c in &assoc {
-                    cues = or(&cues, c);
+                    cues = or(&cues, &fit(c, BITS));
                 }
             }
         }
@@ -1170,8 +1188,8 @@ impl Mind {
         }
         let outcome = codes[AFFECT].clone();
         let mut context = zero();
-        for x in ones(recall).into_iter().filter(|&x| x / BITS == MAX_PAIRS) {
-            context.bit_set(x % BITS);
+        for x in ones(recall).into_iter().filter(|&x| x >= MAX_PAIRS * BITS) {
+            context.bit_set((x - MAX_PAIRS * BITS) % BITS);
         }
         let mut inputs: [BitVector; 4] = [zero(), zero(), zero(), zero()];
         inputs[ofc_area::CUES] = cues;
@@ -1212,9 +1230,9 @@ impl Mind {
                 .collect();
             // a held population's region: the salience it was loaded with
             let first = g.first().copied().unwrap_or(0);
-            let held = if (WM_OFFSET..WM_OFFSET + BITS).contains(&first) {
+            let held = if (WM_OFFSET..WM_OFFSET + 2 * BITS).contains(&first) {
                 Some(self.held_tag[0])
-            } else if (OFC_HELD_OFFSET..OFC_HELD_OFFSET + BITS).contains(&first) {
+            } else if (OFC_HELD_OFFSET..OFC_HELD_OFFSET + 2 * BITS).contains(&first) {
                 Some(self.held_tag[1])
             } else {
                 None
@@ -1427,7 +1445,7 @@ impl Mind {
     /// or in the senses directly.
     fn cortex(&mut self, raw: &[BitVector], recall: &BitVector, td: Vec<(usize, BitVector)>) -> Step {
         let hc_assoc = self.cfg.hc_assoc;
-        let pfc = self.wm_content();
+        let pfc = fit(&self.wm_content(), BITS);
         let b = &mut self.brain;
         let mut ff: Vec<BitVector> = SLOTS.iter().enumerate().map(|(k, &a)| b.encode(a, &raw[k], true)).collect();
         let ear = &raw[Self::slot(EAR)];
@@ -1455,9 +1473,10 @@ impl Mind {
             let cols = n + b.full.is_some() as usize;
             for i in 0..cols {
                 let slot = assoc_slot(i, n);
-                let mut cells = zero();
-                for x in ones(recall).into_iter().filter(|&x| x / BITS == slot) {
-                    cells.bit_set(x % BITS);
+                let width = b.width_of(i);
+                let mut cells = BitVector::new(width, Some(0));
+                for x in ones(recall).into_iter().filter(|&x| x >= slot * BITS && x < slot * BITS + width) {
+                    cells.bit_set(x - slot * BITS);
                 }
                 if cells.count_ones() == 0 {
                     continue;
@@ -1568,7 +1587,7 @@ impl Mind {
     /// row follows what it completes now.
     pub fn sleep(&mut self, chains: usize) {
         let mut rng = StdRng::seed_from_u64(self.rng.next_u64());
-        let bits = if self.cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
+        let bits = if self.cfg.hc_assoc { (MAX_PAIRS + 2) * BITS } else { SLOTS.len() * BITS };
         let mut hc = std::mem::replace(&mut self.hc, IndexHc::new(bits, 0));
         hc.consolidate = self.cfg.consolidate;
         // consolidation: each replayed row is presented to the cortex, and the cortex's goals
@@ -1623,9 +1642,10 @@ impl Mind {
         let mut code = zero();
         for i in 0..cols {
             let slot = assoc_slot(i, n);
-            let mut cells = zero();
-            for x in ones(frame).into_iter().filter(|&x| x / BITS == slot) {
-                cells.bit_set(x % BITS);
+            let width = self.brain.width_of(i);
+            let mut cells = BitVector::new(width, Some(0));
+            for x in ones(frame).into_iter().filter(|&x| x >= slot * BITS && x < slot * BITS + width) {
+                cells.bit_set(x - slot * BITS);
             }
             if cells.count_ones() == 0 {
                 continue;

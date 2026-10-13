@@ -591,6 +591,71 @@ impl BitCells {
         segs.binary_search_by_key(&(bit / 64), |s| s.w).map_or(false, |i| segs[i].present() >> (bit % 64) & 1 == 1)
     }
 
+    /// Sleep's generalization: cells that predict the same thing (equal outputs) from mostly the
+    /// same input (their basal synapses overlapping by `num`/`den` or more of the smaller set)
+    /// become one cell keeping only the synapses they share: a more general cell, firing on the
+    /// core the variants have in common (sleep keeps what is shared and strong, and lets the
+    /// specific go: Tononi & Cirelli). Each merge must leave the cell at least `min` synapses.
+    /// Returns how many cells were merged away.
+    pub fn generalize(&mut self, num: u32, den: u32, min: u32) -> usize {
+        let mut groups: std::collections::HashMap<Vec<u32>, Vec<usize>> = std::collections::HashMap::new();
+        for (c, cell) in self.cells.iter().enumerate() {
+            if cell.out.is_empty() {
+                continue;
+            }
+            let mut out = cell.out.clone();
+            out.sort_unstable();
+            groups.entry(out).or_default().push(c);
+        }
+        let present = |cell: &Cell| -> std::collections::HashMap<u32, u64> { cell.basal.iter().map(|s| (s.w, s.present())).filter(|x| x.1 != 0).collect() };
+        let mut merged = 0;
+        for (_, cs) in groups {
+            if cs.len() < 2 {
+                continue;
+            }
+            let mut alive: Vec<usize> = cs;
+            let mut i = 0;
+            while i < alive.len() {
+                let a = alive[i];
+                let mut j = i + 1;
+                while j < alive.len() {
+                    let b = alive[j];
+                    let (pa, pb) = (present(&self.cells[a]), present(&self.cells[b]));
+                    let na: u32 = pa.values().map(|x| x.count_ones()).sum();
+                    let nb: u32 = pb.values().map(|x| x.count_ones()).sum();
+                    let shared: u32 = pa.iter().map(|(w, x)| (x & pb.get(w).copied().unwrap_or(0)).count_ones()).sum();
+                    if shared >= min && shared * den >= na.min(nb) * num {
+                        // a keeps only the synapses both have
+                        let segs = self.cells[a].basal.clone();
+                        for s in segs {
+                            let keep = pb.get(&s.w).copied().unwrap_or(0);
+                            let after = Seg { w: s.w, active: s.active & keep, silent: s.silent & keep, sticky: s.sticky & keep, tag: s.tag & keep };
+                            if after.active != s.active || after.silent != s.silent {
+                                self.update_tables(a, false, s, after);
+                            }
+                            if let Some(x) = self.cells[a].basal.iter_mut().find(|x| x.w == s.w) {
+                                *x = after;
+                            }
+                        }
+                        self.cells[a].basal.retain(|x| x.present() != 0);
+                        // the merged cell carries the better record of the two
+                        let (wb, tb) = (self.cells[b].worth, self.cells[b].trace);
+                        let ca = &mut self.cells[a];
+                        ca.worth = ca.worth.max(wb);
+                        ca.trace = ca.trace.max(tb);
+                        self.free(b);
+                        alive.swap_remove(j);
+                        merged += 1;
+                    } else {
+                        j += 1;
+                    }
+                }
+                i += 1;
+            }
+        }
+        merged
+    }
+
     fn free(&mut self, c: usize) {
         for apical in [false, true] {
             let segs = if apical { std::mem::take(&mut self.cells[c].apical) } else { std::mem::take(&mut self.cells[c].basal) };

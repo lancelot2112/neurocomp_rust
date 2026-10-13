@@ -133,6 +133,9 @@ pub struct Pool {
     /// half), so what came new wins slots from what has been there all along; firing is not
     /// affected, only who wins when more fire than may
     pub adapt: bool,
+    /// fixed fields (with `need`): winners do not tighten toward the input; a cell keeps the
+    /// field it was recruited with (MIND_FIXED_FIELDS)
+    pub fixed: bool,
     /// local inhibition: winners compete within their source (a cell belongs to the source most
     /// of its synapses are on), each source's winners normalized by its own active bits (k to 4k,
     /// as `winners` does for the whole input), so many inputs keep their cells side by side
@@ -178,6 +181,7 @@ impl Pool {
             recycled: 0,
             why: (0, 0, 0),
             adapt: false,
+            fixed: std::env::var("MIND_FIXED_FIELDS").map_or(true, |v| v != "0"),
             local: false,
             run: Vec::new(),
             last_on: Vec::new(),
@@ -444,9 +448,15 @@ impl Pool {
         } else {
             Vec::new()
         };
+        // (by need with `fixed` fields, cells keep the field they were recruited with: new input
+        // gets new cells by coverage, and sleep recycles what goes unused)
+        let tighten = !(self.need && self.fixed);
         for &(c, _) in &fired {
             self.last[c as usize] = self.tick;
             self.uses[c as usize] = self.uses[c as usize].saturating_add(1);
+            if !tighten {
+                continue;
+            }
             let r = self.next();
             if r & 3 != 0 {
                 continue;

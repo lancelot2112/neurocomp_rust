@@ -1441,7 +1441,11 @@ impl Mind {
             self.phase_rate.push((-1, 0));
         }
         let (rate, n) = self.phase_rate[ctx];
-        self.surprise_fast = if rate < 0 && n == 0 { got } else { self.surprise_fast + (got - self.surprise_fast) / 16 };
+        // recent payout moves at a sixteenth, or as fast as the context's own rate while that is
+        // faster: until the context has locked in past the recent window the two agree, so only
+        // a settled context can be found wrong
+        let step = (2 + n as i32).min(16);
+        self.surprise_fast = if rate < 0 && n == 0 { got } else { self.surprise_fast + (got - self.surprise_fast) / step };
         let new_rate = if rate < 0 { got } else { rate + (got - rate) / (2 + n as i32) };
         self.phase_rate[ctx] = (new_rate, n + 1);
         self.surprise_slow = new_rate;

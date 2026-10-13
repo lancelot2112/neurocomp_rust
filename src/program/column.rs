@@ -174,6 +174,14 @@ pub struct Column {
     auto: Map,
     gain: u32,
     gate: bool,
+    /// a selector decides what is held (the claustrum): a surprise is proposed (`proposal`) and
+    /// held only when chosen (`commit`); else it is held at once
+    pub select: bool,
+    proposal: Option<BitVector>,
+    /// how many of the input's bits were unexpected, when a proposal was made
+    pub surprise: u32,
+    /// whether the proposal is something known (it completes to a learned pattern)
+    pub recognized: bool,
     /// superposed expectation: layer 2/3 expects every next input its context supports (the
     /// union of the cells that burst, or of all that fired when none did, up to four), not only
     /// its winner's, so an alternative it has seen follow is not a surprise
@@ -201,7 +209,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, loads: (0, 0) }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, loads: (0, 0) }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -228,6 +236,8 @@ impl Column {
         }
         let n_in = input.count_ones() as u32;
         let gate = std::mem::take(&mut self.gate);
+        self.proposal = None;
+        self.surprise = 0;
         if learn && n_in > 0 {
             self.auto.learn(input, None, None, input, rng);
         }
@@ -290,26 +300,83 @@ impl Column {
                 None => input.as_words().to_vec(),
             };
             let n_novel: u32 = novel.iter().map(|w| w.count_ones()).sum();
-            (n_novel >= 4).then(|| {
+            if n_novel < 4 {
+                None
+            } else if self.select {
+                // with a selector (the claustrum), the surprise is only proposed; it is held if
+                // chosen (`commit`)
+                // the item: a fixed sample of what was unexpected (the bits with the smallest
+                // hashes), so the same content proposes the same item
+                let it = Self::minhash(&novel, 32);
+                // recognized: something known came unexpectedly (the item completes to a learned
+                // one), not new content; then the item is learned, so what recurs becomes known
+                self.recognized = self.auto.predict(&it, None, None).map_or(false, |p| overlap(&p, &it) * 2 >= it.count_ones() as u32);
+                if learn {
+                    self.auto.learn(&it, None, None, &it, rng);
+                }
+                self.proposal = Some(it);
+                self.surprise = n_novel;
+                None
+            } else {
                 self.loads.0 += 1;
-                Self::sparse(&novel, 32, rng)
-            })
+                Some(Self::sparse(&novel, 32, rng))
+            }
         };
         if let Some(it) = item {
-            // the map learns the item as it is held: what is held often becomes an attractor
-            if learn {
-                self.auto.learn(&it, None, None, &it, rng);
-            }
-            for b in 0..self.bits {
-                if it.bit_get(b) {
-                    self.age[b] = 0;
-                }
-            }
-            let others: Vec<u64> = self.held.as_words().iter().zip(it.as_words()).map(|(h, i)| h & !i).collect();
-            let keep = Self::sparse(&others, 128usize.saturating_sub(it.count_ones() as usize), rng);
-            self.held = BitVector::from_words(keep.as_words().iter().zip(it.as_words()).map(|(a, b)| a | b).collect());
+            self.load(it, learn, rng);
         }
         BitVector::from_words(input.as_words().iter().zip(self.held.as_words()).map(|(a, b)| a | b).collect())
+    }
+
+    /// An item joins what is held (superposed): the map learns it (what is held often becomes an
+    /// attractor), its bits are new, and the held population keeps at most `HELD` bits.
+    fn load<R: rand::Rng + ?Sized>(&mut self, it: BitVector, learn: bool, rng: &mut R) {
+        if learn {
+            self.auto.learn(&it, None, None, &it, rng);
+        }
+        for b in 0..self.bits {
+            if it.bit_get(b) {
+                self.age[b] = 0;
+            }
+        }
+        let others: Vec<u64> = self.held.as_words().iter().zip(it.as_words()).map(|(h, i)| h & !i).collect();
+        let keep = Self::sparse(&others, 128usize.saturating_sub(it.count_ones() as usize), rng);
+        self.held = BitVector::from_words(keep.as_words().iter().zip(it.as_words()).map(|(a, b)| a | b).collect());
+    }
+
+    /// With a selector: this step's surprise item, proposed for holding (its size is its
+    /// surprise).
+    pub fn proposal(&self) -> Option<&BitVector> {
+        self.proposal.as_ref()
+    }
+
+    /// The selector chose this column's proposal: it is held now.
+    pub fn commit<R: rand::Rng + ?Sized>(&mut self, learn: bool, rng: &mut R) {
+        if let Some(it) = self.proposal.take() {
+            self.loads.0 += 1;
+            self.load(it, learn, rng);
+        }
+    }
+
+    /// The `k` bits of `words` with the smallest hashes (the same bits give the same sample).
+    fn minhash(words: &[u64], k: usize) -> BitVector {
+        let mut on: Vec<(u64, usize)> = Vec::new();
+        for (w, &x) in words.iter().enumerate() {
+            let mut x = x;
+            while x != 0 {
+                let b = w * 64 + x.trailing_zeros() as usize;
+                let mut h = (b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                h ^= h >> 29;
+                on.push((h, b));
+                x &= x - 1;
+            }
+        }
+        on.sort_unstable();
+        let mut v = BitVector::from_words(vec![0; words.len()]);
+        for &(_, b) in on.iter().take(k) {
+            v.bit_set(b);
+        }
+        v
     }
 
     /// At most `k` of the bits of `words`, chosen at random.

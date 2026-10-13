@@ -37,6 +37,7 @@ use rand::{Rng, RngCore, SeedableRng};
 use crate::bitvec::BitVector;
 use crate::fixed::ONE;
 use crate::program::amygdala::Amygdala;
+use crate::program::claustrum::Claustrum;
 use crate::program::ofc::{self as ofc_area, Ofc};
 use crate::program::area::{Brain, ColumnId, Kind, MAX_PAIRS};
 use crate::program::cerebellar_circuit::CerebellarCircuit;
@@ -308,6 +309,11 @@ pub struct Config {
     /// input its context supports, so a surprise is something not expected at all
     /// (MIND_SUPERPOSE=0 off)
     pub superpose: bool,
+    /// a claustrum-like selector decides what the cortex holds: the full association column and
+    /// the orbitofrontal area propose what surprised them, and one item a step at most is held,
+    /// something known that came unexpectedly and stands out, weighed by the cues'
+    /// associability (MIND_CLAUSTRUM=0: every surprise is held)
+    pub claustrum: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -321,7 +327,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -367,6 +373,7 @@ impl Config {
             persist: std::env::var("MIND_PERSIST").map_or(false, |v| v == "1"),
             recur: on("MIND_RECUR"),
             superpose: on("MIND_SUPERPOSE"),
+            claustrum: on("MIND_CLAUSTRUM"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -436,6 +443,8 @@ pub struct Mind {
     pub ofc: Amygdala,
     /// the orbitofrontal cortex as an area (its state Z, what it holds, its outcome expectation)
     pub ofc_area: Ofc,
+    /// the claustrum-like selector of what the cortex holds
+    pub claustrum: Claustrum,
     /// the efference copy of the act sensed this step (features), for the motor loops' view
     efference_now: Vec<u32>,
     /// each motor area, its primitives (the genome's pattern generators), and the sensing area
@@ -502,6 +511,7 @@ impl Mind {
         // code as it changes the senses')
         b.assoc_coverage = cfg.coverage;
         b.superpose = cfg.superpose;
+        b.select = cfg.claustrum && cfg.recur;
         if cfg.recur {
             b.pair_gain = 0;
             b.full_gain = 3;
@@ -556,6 +566,7 @@ impl Mind {
         let recur = cfg.recur;
         let coverage = cfg.coverage;
         let superpose = cfg.superpose;
+        let claustrum = cfg.claustrum;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 1) * BITS } else { SLOTS.len() * BITS };
         Self {
             rng: StdRng::seed_from_u64(seed ^ 0x313D),
@@ -595,6 +606,7 @@ impl Mind {
                 let mut o = Ofc::new(BITS, ACTIVE, 8192, seed ^ 0x0FCA);
                 o.set_coverage(coverage);
                 o.col.superpose = superpose;
+                o.col.select = claustrum && recur;
                 if recur {
                     o.set_recurrence(3);
                 } else if persist {
@@ -602,6 +614,7 @@ impl Mind {
                 }
                 o
             },
+            claustrum: Claustrum::new(),
             efference_now: Vec::new(),
             motors: vec![(VOICE, body.voice, EAR), (HAND, body.hand, HAND)],
             pons: zero(),
@@ -763,6 +776,23 @@ impl Mind {
                     feats.extend(self.ofc_act(f));
                 }
                 self.ofc.onsets(feats);
+            }
+        }
+        // the claustrum: of what surprised the full association column and the orbitofrontal area,
+        // one item at most is held, something known that came unexpectedly, weighed by the cues'
+        // associability, if it stands out
+        if self.cfg.claustrum && self.cfg.recur {
+            let full = ColumnId::Assoc(self.brain.pairs.len());
+            let a = 16 + self.amy.alpha_now();
+            let sal = |p: Option<(u32, bool)>| p.map_or(0, |(n, known)| if known { n * a / 16 } else { 0 });
+            let offers = [sal(if self.brain.full.is_some() { self.brain.proposal_of(full) } else { None }), sal(self.ofc_area.col.proposal().map(|_| (self.ofc_area.col.surprise, self.ofc_area.col.recognized)))];
+            match self.claustrum.choose(&offers) {
+                Some(0) => self.brain.commit(full),
+                Some(_) => {
+                    let mut rng = StdRng::seed_from_u64(self.rng.next_u64());
+                    self.ofc_area.col.commit(true, &mut rng);
+                }
+                None => {}
             }
         }
         // the held populations' salience: a held state loaded now is tagged with the cues'

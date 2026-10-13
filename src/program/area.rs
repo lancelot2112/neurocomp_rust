@@ -498,6 +498,8 @@ pub struct Brain {
     pub assoc_coverage: bool,
     /// superposed expectation (`Column::superpose`) in every column
     pub superpose: bool,
+    /// a selector decides what the full association column holds (`Column::select`)
+    pub select: bool,
     rng: StdRng,
 }
 
@@ -510,7 +512,7 @@ pub const MAX_PAIRS: usize = 16;
 impl Brain {
     /// Areas of `bits` cells each, `k` active.
     pub fn new(bits: usize, k: usize, seed: u64) -> Self {
-        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
+        Self { bits, k, areas: Vec::new(), pairs: Vec::new(), together: HashMap::new(), pair_after: 8, full: None, seed, columns: false, selforg: false, pair_tau: 0, full_tau: 0, pair_gain: 0, full_gain: 0, assoc_coverage: false, superpose: false, select: false, rng: StdRng::seed_from_u64(seed ^ 0xC01) }
     }
 
     /// Attach a device: its own area (with a layer 4 if it senses, motor models if it acts).
@@ -629,6 +631,20 @@ impl Brain {
         if let Some(c) = self.column_mut(id) {
             c.refresh(replace);
         }
+    }
+
+    /// A column's proposal for holding this step: (how much was unexpected, recognized), if any.
+    pub fn proposal_of(&self, id: ColumnId) -> Option<(u32, bool)> {
+        self.column_ref(id).and_then(|c| c.proposal().map(|_| (c.surprise, c.recognized)))
+    }
+
+    /// The selector chose a column's proposal: it is held now.
+    pub fn commit(&mut self, id: ColumnId) {
+        let mut rng = std::mem::replace(&mut self.rng, StdRng::seed_from_u64(0));
+        if let Some(c) = self.column_mut(id) {
+            c.commit(true, &mut rng);
+        }
+        self.rng = rng;
     }
 
     /// A column's held population's loads so far (on surprise, by the gate).

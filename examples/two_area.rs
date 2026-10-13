@@ -10,10 +10,16 @@
 //!   to this trial's cue (as the upper area coded it at the cue step) than to the other cue? And
 //!   how much of the cue is left in the lower area's code (it should be none)?
 //!
-//! TRIALS (400), GAP (4), DISTRACT (1), SILENT (0), SEED (0).
+//! - **Clutter** (`CLUTTER`, bits): every step a few random input bits come and go, as small
+//!   surprises do in a real world. With `SELECT=1` a claustrum-like selector lets one surprise a
+//!   step be held, the one that stands out: how much of the input was unexpected, for something
+//!   known (the item completes to a learned pattern); new content is learned, not held.
+//!
+//! TRIALS (400), GAP (4), DISTRACT (1), SILENT (0), CLUTTER (0), SELECT (0), SEED (0).
 
 use neurocomp::bitvec::BitVector;
 use neurocomp::program::area::Pool;
+use neurocomp::program::claustrum::Claustrum;
 use neurocomp::program::column::Column;
 use rand::rngs::StdRng;
 use rand::seq::SliceRandom;
@@ -54,6 +60,10 @@ fn main() {
     // every part of the input gets cells (as the mind's senses have): a cue joining a familiar
     // scene changes the code; COVER=0: off
     let cover = env("COVER", 1) == 1;
+    let clutter: usize = env("CLUTTER", 0);
+    let select = env("SELECT", 0) == 1;
+    upper.select = select;
+    let mut claustrum = Claustrum::new();
     lower.l4.as_mut().unwrap().coverage = cover;
     upper.l4.as_mut().unwrap().coverage = cover;
     println!("two areas: {trials} trials, gap {gap}, distractor {distract}, silent gap {silent_gap}");
@@ -68,8 +78,21 @@ fn main() {
         let which = (rand::Rng::gen_range(&mut rng, 0..2)) as usize;
         let cue = if which == 0 { &a } else { &b };
         let mut step = |x: &BitVector, lower: &mut Column, upper: &mut Column, rng: &mut StdRng| -> (BitVector, BitVector) {
-            let l = if x.count_ones() > 0 { lower.sense(&[(0, x)], None, true, rng) } else { lower.sense_code(&silent, None, true, rng) };
+            // clutter: a few random bits, new every step
+            let mut x = x.clone();
+            for _ in 0..clutter {
+                x.bit_set(rand::Rng::gen_range(rng, 0..BITS));
+            }
+            let l = if x.count_ones() > 0 { lower.sense(&[(0, &x)], None, true, rng) } else { lower.sense_code(&silent, None, true, rng) };
             let u = upper.sense(&[(0, &l)], None, true, rng);
+            if select {
+                // salience: how much was unexpected, for something known (new content is learned,
+                // not held)
+                let s = if upper.proposal().is_some() && upper.recognized { upper.surprise } else { 0 };
+                if claustrum.choose(&[s]).is_some() {
+                    upper.commit(true, rng);
+                }
+            }
             (l, u)
         };
         let mut l_scene = BitVector::new(BITS, Some(0));
@@ -115,5 +138,5 @@ fn main() {
             s.4 as f64 / n
         );
     }
-    println!("upper area loads: {} on surprise, {} by the gate", upper.loads.0, upper.loads.1);
+    println!("upper area loads: {} on surprise, {} by the gate; the selector let {} of {} through", upper.loads.0, upper.loads.1, claustrum.stats.1, claustrum.stats.0);
 }

@@ -84,5 +84,6 @@ pub mod mind;
 pub mod amygdala;
 pub mod ofc;
 pub mod column;
+pub mod claustrum;
 pub use striatum::Striatum;
 pub use mask_striatum::MaskStriatum;

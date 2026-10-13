@@ -407,11 +407,19 @@ pub struct Config {
     /// context's code reaches the striatum by this route, and the cortex's layer 1 tufts (layers
     /// 2/3 and 5) and layer 6 gain by the matrix route
     pub ilam: bool,
+    /// the latent-cause model (`MIND_LATENT=1`, instead of the phase state's own switching; with
+    /// `MIND_PHASE=1`): every known context and a new one are scored on each hand act by how well
+    /// they predicted its outcome (each context's locked-in worth of the cue in view, Laplace-
+    /// smoothed by how many outcomes it has learned from; a new one at even odds), the scores
+    /// fading at a sixteenth; the posterior adds a Chinese-restaurant prior (log of the acts each
+    /// context has explained; a new one log 1); the act is assigned to the most probable and is
+    /// learned there (Gershman, Blei & Niv 2010)
+    pub latent: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false, latent: false }
     }
 }
 
@@ -478,6 +486,7 @@ impl Config {
             phase: std::env::var("MIND_PHASE").map_or(false, |v| v == "1"),
             explore: std::env::var("MIND_EXPLORE").map_or(false, |v| v == "1"),
             ilam: std::env::var("MIND_ILAM").map_or(false, |v| v == "1"),
+            latent: std::env::var("MIND_LATENT").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -610,6 +619,11 @@ pub struct Mind {
     /// the intralaminar burst: the cholinergic interneurons pause until the new context's first
     /// outcome is in
     ilam_open: bool,
+    /// the latent-cause model: per context, its fading log-likelihood of recent outcomes and the
+    /// acts it has explained; the same score for a cause not yet seen
+    lc_score: Vec<f64>,
+    lc_uses: Vec<u32>,
+    lc_new: f64,
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
@@ -814,6 +828,9 @@ impl Mind {
             gain_r: vec![vec![-1; BITS]],
             phase_switches: 0,
             ilam_open: false,
+            lc_score: vec![0.0],
+            lc_uses: vec![0],
+            lc_new: 0.0,
             gain_open: Vec::new(),
             eye_now: Vec::new(),
             chosen_q: Vec::new(),
@@ -1501,6 +1518,62 @@ impl Mind {
         (sum / self.eye_now.len() as i64) as i32
     }
 
+    /// The latent-cause model, one hand act closed (made with `bits` in view, paying `got`):
+    /// each known context predicts it from its own locked-in worth of the best cue in view it
+    /// knows (Laplace-smoothed: (worth·n + 1)/(n + 2) for a cue learned from n outcomes; even odds
+    /// where it knows none), a new cause at even odds. Each score fades at a sixteenth and adds the
+    /// log-likelihood; the posterior adds the log of the acts each has explained (a new cause: log
+    /// 1, the Chinese-restaurant prior with concentration 1). The act goes to the most probable:
+    /// a known context is entered (or kept), or a new one created.
+    fn latent_assign(&mut self, bits: &[usize], got: i32) {
+        let paid = got * 2 >= ONE as i32;
+        let ll = |p1: f64| if paid { p1.ln() } else { (1.0 - p1).ln() };
+        let n_ctx = self.lc_score.len();
+        for c in 0..n_ctx {
+            let p1 = match self.gain_v.get(c) {
+                Some(vs) => {
+                    let best = bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b]);
+                    match best {
+                        Some(b) => {
+                            let n = self.gain_n[c][b] as f64;
+                            (vs[b] as f64 / ONE as f64 * n + 1.0) / (n + 2.0)
+                        }
+                        None => 0.5,
+                    }
+                }
+                None => 0.5,
+            };
+            self.lc_score[c] = self.lc_score[c] * 15.0 / 16.0 + ll(p1);
+        }
+        self.lc_new = self.lc_new * 15.0 / 16.0 + ll(0.5);
+        let post = |c: usize| self.lc_score[c] + (self.lc_uses[c].max(1) as f64).ln();
+        let (best, best_post) = (0..n_ctx).map(|c| (c, post(c))).fold((0, f64::NEG_INFINITY), |a, x| if x.1 > a.1 { x } else { a });
+        let to = if self.lc_new > best_post {
+            // a new cause explains the recent outcomes better than any known one
+            self.phase_count = self.phase_count.max(n_ctx) + 1;
+            self.lc_score.push(self.lc_new);
+            self.lc_uses.push(0);
+            self.lc_new = 0.0;
+            n_ctx
+        } else {
+            best
+        };
+        if std::env::var("MIND_DEBUG_PHASE").is_ok() {
+            eprintln!("latent: paid {paid} scores {:?} new {:.2} uses {:?} -> {to}", self.lc_score.iter().map(|x| (x * 100.0).round() / 100.0).collect::<Vec<_>>(), self.lc_new, self.lc_uses);
+        }
+        if to != self.phase_now {
+            let from = self.phase_now;
+            self.phase_left.retain(|&c| c != from && c != to);
+            self.phase_left.insert(0, from);
+            self.phase_now = to;
+            self.phase_switches += 1;
+            self.ilam_open = true;
+        } else {
+            self.ilam_open = false;
+        }
+        self.lc_uses[to] += 1;
+    }
+
     /// The phase state's current context.
     pub fn phase_context(&self) -> usize {
         self.phase_now
@@ -1553,6 +1626,9 @@ impl Mind {
         self.gain_open.retain(|w| w.0 > 0);
         for (got, bits) in done {
             let got = got.clamp(0, ONE as i32);
+            if self.cfg.phase && self.cfg.latent {
+                self.latent_assign(&bits, got);
+            }
             let ctx = self.phase_now;
             while self.gain_v.len() <= ctx {
                 self.gain_v.push(vec![-1; BITS]);
@@ -1574,7 +1650,7 @@ impl Mind {
                 *v = if *v < 0 { got } else { *v + (got - *v) / rate };
                 *n = n.saturating_add(1);
             }
-            if self.cfg.phase {
+            if self.cfg.phase && !self.cfg.latent {
                 if let Some(b) = cue {
                     self.phase_check(b);
                 }

@@ -45,11 +45,22 @@
 //!   against input); silent, the next surprise is loaded and completed by the autoassociative
 //!   map, so the state comes back if what broke the last one has broken one before.
 //!
+//! - **Held as an assembly** (`set_assembly`): layer 4's code is separated first (competing
+//!   cells with counting synapses, Hebbian for winners, anti-Hebbian for cells that matched and
+//!   were held down, a homeostatic threshold; `separation.rs`), its plasticity closing as its
+//!   experience doubles (a critical period); layer 2/3's held population is an assembly that
+//!   sustains itself by recurrence and falls silent when inhibition (from inputs it did not
+//!   learn, and from rival assemblies the input drives more) reaches its recurrent strength
+//!   (`context_circuit.rs`). What is held is the active assembly's cells; which assembly is
+//!   active is the area's context.
+//!
 //! Both layers learn the same way: a confirmed prediction strengthens the cells that made it;
 //! where nothing predicted the target, a cell is grown for the moment (its tuft on the
 //! context, silent synapses on the input, the target as its output).
 
 use crate::bitvec::BitVector;
+use crate::program::context_circuit::ContextCircuit;
+use crate::program::separation::Separator;
 use crate::program::area::Pool;
 use crate::program::bitcells::BitCells;
 
@@ -252,6 +263,9 @@ pub struct Column {
     pub releases: u64,
     /// the last prediction's winner record (right, missed lately), if a cell fired
     record: Option<(u32, u32)>,
+    /// held as an assembly (`set_assembly`): the separator, the recurrent assembly population,
+    /// and the inputs the separator has seen
+    assembly: Option<Box<(Separator, ContextCircuit, u64)>>,
     /// topographic output (keep the order): layer 2/3's activity is sent up in layer 4's own
     /// coordinates. Each cell has a home, the layer 4 code it first fired for, and a slot there
     /// (the lowest free: 0 for the first cell for that input, 1, 2, … for cells for the same
@@ -295,7 +309,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), hold_until_wrong: false, inhib: 0, held_for: 0, adapted_for: 0, adapted: BitVector::new(bits, Some(0)), releases: 0, record: None, topo: false, burst: false, sparse_out: false, minicolumns: std::env::var("MIND_SPARSE_OUT").map_or(false, |v| v == "column"), strict: None, unexpected: BitVector::new(bits, Some(0)), bursting: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), hold_until_wrong: false, inhib: 0, held_for: 0, adapted_for: 0, adapted: BitVector::new(bits, Some(0)), releases: 0, record: None, assembly: None, topo: false, burst: false, sparse_out: false, minicolumns: std::env::var("MIND_SPARSE_OUT").map_or(false, |v| v == "column"), strict: None, unexpected: BitVector::new(bits, Some(0)), bursting: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -306,6 +320,44 @@ impl Column {
     /// A held population (`gain` 2 or more; 0: none).
     pub fn set_recurrence(&mut self, gain: u32) {
         self.gain = gain;
+    }
+
+    /// Held as an assembly (see the module notes): a separator of `cells` cells (`k` firing) on
+    /// layer 4's code, and a population of `assembly_cells` (`assembly_k` active) holding.
+    pub fn set_assembly(&mut self, cells: usize, k: usize, assembly_cells: usize, assembly_k: usize, seed: u64) {
+        let sep = Separator::new(cells, k, self.bits, 32, seed);
+        let circuit = ContextCircuit::new(assembly_cells, assembly_k, cells);
+        self.assembly = Some(Box::new((sep, circuit, 0)));
+    }
+
+    /// With an assembly: the one active (the area's context), and whether one is.
+    pub fn assembly_context(&self) -> Option<(usize, bool)> {
+        self.assembly.as_ref().map(|a| (a.1.now, !a.1.unsettled()))
+    }
+
+    /// With an assembly: the input separated and held; the held state is the active assembly's
+    /// cells (spread over the column's bits). The code is the input and what is held.
+    fn hold_assembly(&mut self, input: &BitVector, learn: bool) -> BitVector {
+        let bits = self.bits;
+        let a = self.assembly.as_mut().unwrap();
+        // the separator's plasticity closes as its experience doubles: it learns every input
+        // for its first 2048, then every 2nd, 4th, ... (a critical period)
+        a.2 += 1;
+        let t = a.2;
+        let every = 1u64 << (64 - (t / 2048).leading_zeros()).min(20);
+        let plastic = learn && t % every == 0;
+        let sep = a.0.code(input, plastic);
+        if sep.count_ones() > 0 {
+            a.1.step(&sep);
+        }
+        let mut held = BitVector::new(bits, Some(0));
+        for &c in a.1.active() {
+            let mut h = (c as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            h ^= h >> 29;
+            held.bit_set((h % bits as u64) as usize);
+        }
+        self.held = held;
+        BitVector::from_words(input.as_words().iter().zip(self.held.as_words()).map(|(a, b)| a | b).collect())
     }
 
     /// What the held population holds.
@@ -723,7 +775,7 @@ impl Column {
     /// As `sense`, for a code already made (layer 4 bypassed: its code, or an input that is
     /// itself sparse).
     pub fn sense_code<R: rand::Rng + ?Sized>(&mut self, code: &BitVector, ctx: Option<&BitVector>, learn: bool, rng: &mut R) -> BitVector {
-        let code = if self.gain > 0 { self.recur(code, learn, rng) } else { code.clone() };
+        let code = if self.assembly.is_some() { self.hold_assembly(code, learn) } else if self.gain > 0 { self.recur(code, learn, rng) } else { code.clone() };
         let code = &code;
         self.code = code.clone();
         // what the winner did not predict (nothing predicted: all of it)

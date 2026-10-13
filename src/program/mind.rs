@@ -1427,15 +1427,17 @@ impl Mind {
         vec![ones(&self.ofc_area.z()).into_iter().map(|b| b + OFC_Z_OFFSET).collect(), ones(&self.ofc_area.held_state()).into_iter().map(|b| b + OFC_HELD_OFFSET).collect()]
     }
 
-    /// The phase state, one hand act closed: its outcome against what the orbitofrontal value
-    /// expected of it here is surprising when they differ by a quarter or more (the salience
-    /// threshold). Surprise averaged fast (a sixteenth) and slow (a 256th); in a context that has
+    /// The phase state, one hand act closed: its outcome is surprising when it fell short of what
+    /// the orbitofrontal value expected of it here by a quarter or more (the salience threshold:
+    /// an omission, frustration's signal). Surprise averaged fast (a sixteenth) and slow (a 256th); in a context that has
     /// settled (its surprise once under a quarter), when the fast rate is at least a quarter and
     /// twice the slow one, the context is wrong: the state moves to the
     /// context left most recently not yet tried, else to a new one, and the fast rate starts
     /// again from the slow one. Once surprise is back under the slow rate, the trials are over.
     fn phase_step(&mut self, got: i32, here: i32) {
-        let surprised = if (got - here).abs() >= ONE as i32 / 4 { ONE as i32 } else { 0 };
+        // an omission: what was expected here did not come (a reward that comes unexpectedly is
+        // learning, not a sign the context changed)
+        let surprised = if here - got >= ONE as i32 / 4 { ONE as i32 } else { 0 };
         self.surprise_fast += (surprised - self.surprise_fast) / 16;
         self.surprise_slow += (surprised - self.surprise_slow) / 256;
         if self.surprise_fast <= self.surprise_slow {

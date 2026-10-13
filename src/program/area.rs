@@ -157,6 +157,8 @@ pub struct Pool {
     last_on: Vec<u32>,
     /// the step of the last sleep (recycling): ages and recurrence are counted in sleep periods
     slept_at: u64,
+    /// learning steps since the last sleep that were salient (surprise: a neuromodulatory burst)
+    surprised: u64,
     /// the steps of the recent sleeps (the last `AGE_SLEEPS`): a cell's age is counted in them
     sleeps: Vec<u64>,
     /// cells recruited by coverage on a salient step, by coverage of recurring input, and for
@@ -203,6 +205,7 @@ impl Pool {
             run: Vec::new(),
             last_on: Vec::new(),
             slept_at: 0,
+            surprised: 0,
             sleeps: Vec::new(),
         };
         pool.scatter()
@@ -511,6 +514,9 @@ impl Pool {
     /// sampled, the one unused longest.
     pub fn learn(&mut self, input: &[(usize, &BitVector)]) -> BitVector {
         self.tick += 1;
+        if self.salient {
+            self.surprised += 1;
+        }
         let on = self.active(input);
         let fired = if self.adapt { self.fire_adapted(&on) } else { self.fire(&on) };
         // the sources present: a synapse is moved away only if its own source was active (an
@@ -701,7 +707,18 @@ impl Pool {
             }
         }
         idle.sort_unstable();
-        let share = (self.in_use() / recycle_share()).max(1);
+        let share = match recycle_share() {
+            Some(n) => self.in_use() / n,
+            // driven by surprise: the share of the steps since the last sleep that were salient
+            // (a world that keeps matching expectation keeps its codes; after a change, the
+            // surprises free room for what is new)
+            None => {
+                let steps = self.tick.saturating_sub(self.slept_at).max(1);
+                (self.in_use() as u64 * self.surprised / steps) as usize
+            }
+        }
+        .max(1);
+        self.surprised = 0;
         let mut n = 0;
         for &(_, _, c) in idle.iter().take(share) {
             for &b in &std::mem::take(&mut self.syn[c]) {
@@ -920,9 +937,14 @@ pub const MAX_PAIRS: usize = 16;
 /// have passed since it was recruited, or last used.
 pub const AGE_SLEEPS: usize = 1;
 
-/// Sleep frees at most this share (a 1/n) of the cells in use (`MIND_RECYCLE_SHARE`, default 16; 1: all idle ones).
-fn recycle_share() -> usize {
-    std::env::var("MIND_RECYCLE_SHARE").ok().and_then(|v| v.parse().ok()).unwrap_or(16).max(1)
+/// Sleep frees at most this share (a 1/n) of the cells in use (`MIND_RECYCLE_SHARE`, default 16;
+/// 1: all idle ones); `surprise`: the share of the steps since the last sleep that were salient.
+fn recycle_share() -> Option<usize> {
+    match std::env::var("MIND_RECYCLE_SHARE").as_deref() {
+        Ok("surprise") => None,
+        Ok(v) => Some(v.parse().unwrap_or(16).max(1)),
+        Err(_) => Some(16),
+    }
 }
 
 impl Brain {

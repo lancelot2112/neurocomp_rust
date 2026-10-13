@@ -1516,3 +1516,69 @@ layer 4 at a thirty-second of its area made every code sparse (senses 2–3%, to
 - The default keeps the top column's output at one bit per active cell, and the striatum
   takes the light from the senses, the amygdala and working memory. The ratio and the
   minicolumn output (`MIND_SPARSE_OUT=column`) stay available.
+
+### Limits as ratios, and how much sleep forgets
+
+**The held population, capped.** In the third reversal, the orbitofrontal held population reached
+49% of its area: a dense code, which every striatal reader matched. Its allowance is now at most a
+thirty-second of the area's bits, with a floor of three items (96 bits); `MIND_HELD_HALF=1`
+restores the old cap of half the area. With the cap ("the held-population build"), the first and
+second reversals hold on seed 0, and the third still fails.
+
+**Every fixed limit as a ratio.** Fixed numbers break when an area's size or input changes, so
+the limits were restated as shares of something the system has:
+
+- **First batch, kept:** the held allowance, the striatum's regions as a fair share of the
+  groups that are live, and a region filled to a quarter. These were level with or better than
+  the held-population build.
+- **Second batch, mixed:** ages counted in sleeps, not steps; recurrence for recruitment by need
+  as a share of the steps since the last sleep; and the striatum sized by input groups.
+  Counting a cell's age as **one** sleep, then **four**, both trailed. With four, clicks with
+  no cue and choices of the other light ran high.
+
+**Sleep frees a subset (`MIND_RECYCLE_SHARE`, default 16).** Clearing every idle cell at each
+sleep wipes a code that only went quiet for a while. Now each sleep frees at most a 1/n share of
+the cells in use, the least used idle cells first, and a cell is eligible after one sleep.
+
+Reversals made within each 500-trial phase (the lights swap every 500 trials; trials to switch):
+
+| swap | 1/16, seed 0 | 1/16, seed 1 | 1/64, seed 0 | 1/64, seed 1 |
+|---|---|---|---|---|
+| first (500) | yes, ~150 | yes, only at trials 901–1000 | yes, ~150 | **no**: never tried the new light |
+| second (1000)* | yes, ~150 | at once | yes, ~250 | at once, 1.00/0.31 |
+| third (1500) | yes, ~150, held (0.89/0.42) | leaned right, but chose rarely (0.25/0.12), then slipped | late (0.76/0.48 at trials 1801–1900) | no (0.27/0.51 at trials 1801–1900) |
+
+\* After the second swap, the light that pays is the one learned first: its code survives, and
+the runs only had to return to it (savings).
+
+- The held-population build reversed only once on seed 0, and never on seed 1. **1/16 is the only
+  build that reversed on both seeds**, and on seed 0 it made all three reversals.
+- On instrumental conditioning, 1/64 kept the cleanest preference within a phase (seed 1:
+  0.81/0.21, then 0.43/0.07 at trials 401–500, where 1/16 lost the cue: 0.31/0.41).
+- **Turnover is a trade:** recycling makes room for what is new, and it erodes what is
+  learned. Less turnover means more persistence, and at 1/64 the old code stays and nothing new
+  is tried. More turnover means faster switching, and a fading choice rate once the codes the
+  striatum learned on are recycled under it. The full top layer 4 (4096 of 4096 cells in use)
+  recycled about 500 cells per 100 trials at 1/16, and the orbitofrontal area about as many.
+
+**How the brain sets the rate.** It is not fixed:
+
+- **Sleep downscales synapses in proportion** (the synaptic homeostasis hypothesis, Tononi and
+  Cirelli): a ratio, not a cap. Synapses that fall below threshold are pruned; strong or tagged
+  ones survive (synaptic tagging and capture).
+- **Spine turnover follows novelty:** new learning and enriched surroundings raise the
+  formation and loss of dendritic spines (Xu et al. 2009; Yang et al. 2009). A stable world
+  turns over little.
+- **Unexpected uncertainty, signalled by noradrenaline**, drives a network reset when the rules
+  change (Yu and Dayan 2005; Bouret and Sara 2005). Expected uncertainty, signalled by
+  acetylcholine, does not. Hippocampal neurogenesis likewise rises with novelty and clears old
+  memories (Akers et al. 2014).
+- **Reversal specifically** needs the orbitofrontal cortex and noradrenaline; without them,
+  animals perseverate, which is what seed 1 does at 1/64.
+
+So the rate of forgetting should be **driven by surprise**: low while the world matches
+expectation, high after a change.
+
+**Surprise-driven recycling (`MIND_RECYCLE_SHARE=surprise`).** Each sleep frees the share of
+the cells in use that matches the share of learning steps since the last sleep that were salient
+(|δ| ≥ ¼, the same signal that recruits at once). Results to follow.

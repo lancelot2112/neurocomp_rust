@@ -116,7 +116,7 @@ pub struct Pool {
     pub coverage: bool,
     /// recruitment by need (with coverage): an uncovered part of the input gets cells only on
     /// bits that keep coming uncovered (each bit's tag counts its uncovered occurrences since the
-    /// last sleep; a sixty-fourth of the steps recruits) or at once when the moment is salient (`salient`, set from
+    /// last sleep, halving at each; a hundred-and-twenty-eighth of the steps recruits) or at once when the moment is salient (`salient`, set from
     /// outside: a neuromodulatory burst), so passing clutter is not learned; and sleep recycles
     /// the cells that went unused (`recycle`)
     pub need: bool,
@@ -426,10 +426,11 @@ impl Pool {
                 *t = t.saturating_add(1);
             }
             if !self.salient {
-                // a bit that has come uncovered on at least a sixty-fourth of the steps since
-                // the last sleep (at least twice): the light on a share of the trials passes,
-                // a clutter bit that comes now and then does not
-                let need = ((self.tick.saturating_sub(self.slept_at)) / 64).clamp(2, 255) as u8;
+                // a bit that has come uncovered on at least a hundred-and-twenty-eighth of the
+                // steps since the last sleep (at least twice; what came before carries over at
+                // half): the light on a share of the trials passes, a clutter bit that comes now
+                // and then does not
+                let need = ((self.tick.saturating_sub(self.slept_at)) / 128).clamp(2, 255) as u8;
                 let tags = &self.tags;
                 open.retain(|&b| tags[b as usize] >= need);
             }
@@ -702,10 +703,10 @@ impl Pool {
             self.uses[c] /= 2;
         }
         self.recycled += n as u64;
-        // a new sleep period: recurrence is counted afresh
+        // a new sleep period: recurrence so far carries over at half
         self.slept_at = self.tick;
         for t in self.tags.iter_mut() {
-            *t = 0;
+            *t >>= 1;
         }
         n
     }

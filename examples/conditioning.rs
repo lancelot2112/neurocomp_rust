@@ -184,8 +184,8 @@ fn main() {
                         line += &format!(" fate {}: kept {kept} smeared {smeared} silent {silent} replaced {replaced}", prev_sel.len());
                         prev_sel = freq[1].keys().copied().filter(|b| on_cue(b) && !on_none(b)).map(|b| (b, born(b))).collect();
                     }
-                    // selective bits: on in at least half the cue trials and at most a tenth of the
-                    // others, per panel, over this block
+                    // selective bits: on at least 0.4 more often on cue trials than on the others, per
+                    // panel, over this block
                     for name in ["eye", "top_in", "top_driven", "top_l23", "ctx"] {
                         let mut freq: [HashMap<usize, usize>; 2] = [HashMap::new(), HashMap::new()];
                         let mut n = [0usize; 2];
@@ -197,7 +197,8 @@ fn main() {
                                 }
                             }
                         }
-                        let sel = freq[1].iter().filter(|&(b, &f)| f * 2 >= n[1].max(1) && freq[0].get(b).copied().unwrap_or(0) * 10 <= n[0]).count();
+                        // on clearly more often with the cue: P(on | cue) less P(on | none) at least 0.4
+                        let sel = freq[1].iter().filter(|&(b, &f)| f as f64 / n[1].max(1) as f64 - freq[0].get(b).copied().unwrap_or(0) as f64 / n[0].max(1) as f64 >= 0.4).count();
                         line += &format!(" sel_{name} {sel}");
                     }
                     let mut sz = [(0usize, 0usize, 0usize); 2];

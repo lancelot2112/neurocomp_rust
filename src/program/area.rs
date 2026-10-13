@@ -133,6 +133,11 @@ pub struct Pool {
     /// half), so what came new wins slots from what has been there all along; firing is not
     /// affected, only who wins when more fire than may
     pub adapt: bool,
+    /// scattered placement: cell `c` sends its output on bit `perm[c]` (a permutation drawn once),
+    /// so the cells a new input recruits together are spread over the area rather than a run
+    /// of neighbouring bits (MIND_SCATTER=0: in recruitment order)
+    perm: Vec<u32>,
+    inv: Vec<u32>,
     /// fixed fields: winners do not tighten toward the input; a cell keeps the field it was
     /// recruited with, in every layer 4, so what a cell means does not drift under the areas that
     /// read it (MIND_FIXED_FIELDS=0: off)
@@ -156,7 +161,7 @@ impl Pool {
         let sample = 16;
         // a conjunction cell fires on one of its sources fully (completion from either part)
         let theta = if min_sources >= 2 { sample / 2 } else { sample * 5 / 8 };
-        Self {
+        let pool = Self {
             src_bits,
             sources,
             out_bits,
@@ -182,11 +187,43 @@ impl Pool {
             recycled: 0,
             why: (0, 0, 0),
             adapt: false,
+            perm: Vec::new(),
+            inv: Vec::new(),
             fixed: std::env::var("MIND_FIXED_FIELDS").map_or(true, |v| v != "0"),
             local: false,
             run: Vec::new(),
             last_on: Vec::new(),
+        };
+        pool.scatter()
+    }
+
+    /// Draw the scattered placement (`perm`), unless MIND_SCATTER=0.
+    fn scatter(mut self) -> Self {
+        if std::env::var("MIND_SCATTER").map_or(true, |v| v != "0") {
+            let n = self.out_bits;
+            let mut p: Vec<u32> = (0..n as u32).collect();
+            for i in (1..n).rev() {
+                let j = (self.next() as usize) % (i + 1);
+                p.swap(i, j);
+            }
+            let mut inv = vec![0u32; n];
+            for (c, &b) in p.iter().enumerate() {
+                inv[b as usize] = c as u32;
+            }
+            self.perm = p;
+            self.inv = inv;
         }
+        self
+    }
+
+    /// The output bit of cell `c`.
+    fn out_of(&self, c: usize) -> usize {
+        self.perm.get(c).map_or(c, |&b| b as usize)
+    }
+
+    /// The cell behind output bit `b`.
+    pub fn cell_of(&self, b: usize) -> usize {
+        self.inv.get(b).map_or(b, |&c| c as usize)
     }
 
     /// An uncovered input recruits only on its `n`-th occurrence (default 1).
@@ -424,7 +461,7 @@ impl Pool {
     fn code(&self, fired: &[(u32, usize)]) -> BitVector {
         let mut out = BitVector::new(self.out_bits, Some(0));
         for &(c, _) in fired {
-            out.bit_set(c as usize);
+            out.bit_set(self.out_of(c as usize));
         }
         out
     }
@@ -488,7 +525,7 @@ impl Pool {
         let mut code = self.code(&fired);
         if self.coverage && fired.len() * 2 >= self.k {
             for c in self.cover(&on, &fired) {
-                code.bit_set(c);
+                code.bit_set(self.out_of(c));
             }
         }
         if self.adapt || self.local {
@@ -530,7 +567,7 @@ impl Pool {
                     self.last[c] = self.tick;
                     self.recruited += 1;
                     self.why.2 += 1;
-                    code.bit_set(c);
+                    code.bit_set(self.out_of(c));
                 }
             }
         }
@@ -544,8 +581,12 @@ impl Pool {
     pub fn backproject(&self, code: &BitVector, source: usize) -> BitVector {
         let mut votes: HashMap<u32, u32> = HashMap::new();
         let mut cells = 0;
-        for c in 0..self.syn.len().min(code.bit_len()) {
-            if !code.bit_get(c) {
+        for b in 0..code.bit_len().min(self.out_bits) {
+            if !code.bit_get(b) {
+                continue;
+            }
+            let c = self.cell_of(b);
+            if c >= self.syn.len() {
                 continue;
             }
             cells += 1;
@@ -640,9 +681,9 @@ impl Pool {
         &self.last_on
     }
 
-    /// When cell `c` was last recruited (its birth step; a reused index is a new cell).
-    pub fn born_at(&self, c: usize) -> u64 {
-        self.born.get(c).copied().unwrap_or(0)
+    /// When the cell behind output bit `b` was last recruited (its birth step; a reused index is a new cell).
+    pub fn born_at(&self, b: usize) -> u64 {
+        self.born.get(self.cell_of(b)).copied().unwrap_or(0)
     }
 
     /// Cells in use (recruited and not recycled).

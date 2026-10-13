@@ -71,7 +71,7 @@ fn main() {
     // cue, the panels); at each block's end, each panel's overlap with the same cue's code the
     // trial before, 50 and 100 trials before
     let mut seen_at: Vec<(usize, bool, Vec<(String, Vec<usize>)>)> = Vec::new();
-    let drift_panels = ["eye", "top_in", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ctx"];
+    let drift_panels = ["eye", "top_in", "top_driven", "top_l4", "top_l23", "top_burst", "wm", "ofc_z", "ctx"];
     while !world.done() {
         let senses = world.step(&acts);
         {
@@ -154,12 +154,12 @@ fn main() {
                     for (_, cue, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {
                         let n = |k: &str| p.iter().find(|x| x.0 == k).map_or(0, |x| x.1.len());
                         let s = &mut sz[*cue as usize];
-                        s.0 += n("top_in");
+                        s.0 += n("top_driven");
                         s.1 += n("top_l4");
                         s.2 += 1;
                     }
                     let r = |s: (usize, usize, usize)| format!("{:.0}/{:.0}", s.0 as f64 / s.2.max(1) as f64, s.1 as f64 / s.2.max(1) as f64);
-                    line += &format!(" | in/l4 bits: cue {} none {}", r(sz[1]), r(sz[0]));
+                    line += &format!(" | driven/l4 bits: cue {} none {}", r(sz[1]), r(sz[0]));
                     eprintln!("progress {kind:?} seed {seed} trials {trial}: drift (1/50/100 back, x other cue){line}");
                 }
                 let (used, rec, cyc, why) = mind.brain.full_l4();

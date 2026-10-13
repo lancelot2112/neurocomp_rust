@@ -1168,6 +1168,7 @@ impl Mind {
         let (l4, l23) = self.brain.full.as_ref().map_or((zero(), zero()), |f| (f.code.clone(), f.activity()));
         v.push(("top_l4", ones(&l4)));
         v.push(("top_l23", ones(&l23)));
+        v.push(("top_driven", self.brain.full.as_ref().map_or(Vec::new(), |f| ones(&BitVector::from_words(f.code.as_words().iter().zip(f.held().as_words()).map(|(a, b)| a & !b).collect())))));
         v.push(("top_in", self.brain.full.as_ref().and_then(|f| f.l4.as_ref()).map_or(Vec::new(), |p| p.last_input().iter().map(|&b| b as usize).collect())));
         v.push(("top_burst", self.brain.full.as_ref().map_or(Vec::new(), |f| ones(f.unexpected()))));
         v

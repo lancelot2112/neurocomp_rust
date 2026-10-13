@@ -1533,9 +1533,9 @@ impl Mind {
     ///   the evidence for a new cause counts the acts no known assembly fits;
     /// - its excitability is the bit length of the acts it has explained (a logarithm of use: the
     ///   prior of the Chinese restaurant, as intrinsic plasticity);
-    /// - lateral inhibition lets one through: the most evidence plus excitability (an act of
-    ///   evidence against an octave of use); a new assembly is recruited when the evidence that
-    ///   none fits beats every known one. The act is learned in the winner.
+    /// - lateral inhibition lets one through: the most evidence, excitability breaking ties; a new
+    ///   assembly is recruited when the evidence that none fits beats the best known one's. The
+    ///   act is learned in the winner.
     fn latent_assign(&mut self, bits: &[usize], got: i32) {
         let cur = self.phase_now;
         // the shared recent payout, at the active assembly's pace while it is still learning
@@ -1558,9 +1558,11 @@ impl Mind {
             self.lc_score[c] += (if fits { ONE as i32 } else { 0 }) - self.lc_score[c] / 16;
         }
         self.lc_new += (if any { 0 } else { ONE as i32 }) - self.lc_new / 16;
-        let strength = |c: usize| self.lc_score[c] + bitlen(self.lc_uses[c] as i32) * ONE as i32;
-        let (best, best_s) = (0..n_ctx).map(|c| (c, strength(c))).fold((0, i32::MIN), |a, x| if x.1 > a.1 { x } else { a });
-        let to = if self.lc_new > best_s {
+        // among known assemblies, evidence first and excitability (the bit length of use) to break
+        // ties; a new one is recruited on evidence alone: when more recent acts went unexplained
+        // than the best assembly explained
+        let (best, _) = (0..n_ctx).map(|c| (c, (self.lc_score[c], bitlen(self.lc_uses[c] as i32)))).fold((0, (i32::MIN, 0)), |a, x| if x.1 > a.1 { x } else { a });
+        let to = if self.lc_new > self.lc_score[best] {
             // no known assembly explains what happens lately: recruit a new one
             self.phase_count = self.phase_count.max(n_ctx) + 1;
             self.lc_score.push(self.lc_new);

@@ -422,11 +422,20 @@ pub struct Config {
     /// for 16 acts), and if none fits while unexplained acts integrate past the same half, new
     /// cells are recruited
     pub attractor: bool,
+    /// the attractor's time scale set by volatility (`MIND_LATENT=3`), not a fixed 16 acts: the
+    /// expected run between context changes (the longer of the usual gap between resets and the
+    /// time since the last) is held as a noradrenaline-like signal, and every integrator works to
+    /// its bit length (the log, as in change-point detection: to keep false alarms rarer than one
+    /// a run, the evidence needed grows with the log of the run; Yu & Dayan 2005; Behrens et al.
+    /// 2007): nonreward is an opponent count (a predicted act that fits takes one off, one that
+    /// misses adds one) that silences the active assembly at that bit length, unexplained acts
+    /// recruit new cells at the same, and the silenced assembly stays adapted as long
+    pub volatile: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false, latent: false, attractor: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false, latent: false, attractor: false, volatile: false }
     }
 }
 
@@ -493,8 +502,9 @@ impl Config {
             phase: std::env::var("MIND_PHASE").map_or(false, |v| v == "1"),
             explore: std::env::var("MIND_EXPLORE").map_or(false, |v| v == "1"),
             ilam: std::env::var("MIND_ILAM").map_or(false, |v| v == "1"),
-            latent: std::env::var("MIND_LATENT").map_or(false, |v| v == "1" || v == "2"),
-            attractor: std::env::var("MIND_LATENT").map_or(false, |v| v == "2"),
+            latent: std::env::var("MIND_LATENT").map_or(false, |v| v == "1" || v == "2" || v == "3"),
+            attractor: std::env::var("MIND_LATENT").map_or(false, |v| v == "2" || v == "3"),
+            volatile: std::env::var("MIND_LATENT").map_or(false, |v| v == "3"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -642,6 +652,9 @@ pub struct Mind {
     lc_nonreward: i32,
     lc_unsettled: bool,
     lc_adapted: (usize, u32),
+    /// volatility: acts since the last reset, and the usual gap between resets (0: none yet)
+    lc_since: u32,
+    lc_gap: u32,
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
@@ -854,6 +867,8 @@ impl Mind {
             lc_nonreward: 0,
             lc_unsettled: false,
             lc_adapted: (0, 0),
+            lc_since: 0,
+            lc_gap: 0,
             gain_open: Vec::new(),
             eye_now: Vec::new(),
             chosen_q: Vec::new(),
@@ -1665,8 +1680,16 @@ impl Mind {
             let r = &mut self.lc_recent[b];
             *r = if *r < 0 { got } else { *r + (got - *r) / step };
         }
-        const TAU: i32 = 16;
-        let half = TAU / 2 * ONE as i32;
+        // the time scale: fixed (16 acts, a reset at half) or, with volatility, the bit length of
+        // the expected run between changes (a reset at the full count of an opponent tally)
+        self.lc_since = self.lc_since.saturating_add(1);
+        let run = self.lc_gap.max(self.lc_since);
+        let (tau, half) = if self.cfg.volatile {
+            let h = (32 - run.leading_zeros() as i32).max(2);
+            (h, h * ONE as i32)
+        } else {
+            (16, 8 * ONE as i32)
+        };
         let n_ctx = self.lc_score.len().max(self.gain_v.len()).max(self.phase_now + 1);
         while self.lc_score.len() < n_ctx {
             self.lc_score.push(0);
@@ -1675,7 +1698,7 @@ impl Mind {
         let answers: Vec<Option<bool>> = (0..n_ctx).map(|c| self.lc_answer(c, bits)).collect();
         // each assembly's input drive: a leaky count of the acts it predicted (synaptic integration)
         for c in 0..n_ctx {
-            self.lc_score[c] += (if answers[c] == Some(true) { ONE as i32 } else { 0 }) - self.lc_score[c] / TAU;
+            self.lc_score[c] += (if answers[c] == Some(true) { ONE as i32 } else { 0 }) - self.lc_score[c] / tau;
         }
         self.lc_adapted.1 = self.lc_adapted.1.saturating_sub(1);
         let cur = self.phase_now;
@@ -1685,13 +1708,20 @@ impl Mind {
             // only acts it made a prediction for count (no expectation, no error either way: an
             // act at a cue it does not know neither adds nonreward nor dilutes it)
             if let Some(fit) = answers[cur] {
-                self.lc_nonreward += (if fit { 0 } else { ONE as i32 }) - self.lc_nonreward / TAU;
+                self.lc_nonreward = if self.cfg.volatile {
+                    (self.lc_nonreward + if fit { -(ONE as i32) } else { ONE as i32 }).max(0)
+                } else {
+                    self.lc_nonreward + (if fit { 0 } else { ONE as i32 }) - self.lc_nonreward / tau
+                };
             }
             if self.lc_nonreward >= half {
                 self.lc_unsettled = true;
                 self.lc_nonreward = 0;
                 self.lc_new = 0;
-                self.lc_adapted = (cur, TAU as u32);
+                self.lc_adapted = (cur, tau as u32);
+                // the gap just ended updates the usual gap (half old, half new)
+                self.lc_gap = if self.lc_gap == 0 { self.lc_since } else { (self.lc_gap + self.lc_since) / 2 };
+                self.lc_since = 0;
             }
         }
         if self.lc_unsettled {
@@ -1699,7 +1729,7 @@ impl Mind {
             // once its adaptation has worn off), the one with the most input drive first
             let free = |c: usize| c != self.lc_adapted.0 || self.lc_adapted.1 == 0;
             let fit = (0..n_ctx).filter(|&c| answers[c] == Some(true) && free(c)).max_by_key(|&c| self.lc_score[c]);
-            self.lc_new += (if fit.is_none() { ONE as i32 } else { 0 }) - self.lc_new / TAU;
+            self.lc_new += (if fit.is_none() { ONE as i32 } else { 0 }) - if self.cfg.volatile { 0 } else { self.lc_new / tau };
             if let Some(c) = fit {
                 to = c;
                 self.lc_unsettled = false;
@@ -1716,7 +1746,7 @@ impl Mind {
             }
         }
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("attractor: got {:.2} answers {:?} drive {:?} nonreward {} unsettled {} new {} -> {to}", got as f64 / ONE as f64, answers, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_nonreward / ONE as i32, self.lc_unsettled, self.lc_new / ONE as i32);
+            eprintln!("attractor: got {:.2} scale {tau} answers {:?} drive {:?} nonreward {} unsettled {} new {} -> {to}", got as f64 / ONE as f64, answers, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_nonreward / ONE as i32, self.lc_unsettled, self.lc_new / ONE as i32);
         }
         if to != self.phase_now {
             let from = self.phase_now;

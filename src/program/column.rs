@@ -286,11 +286,14 @@ impl Column {
         let n_in = input.count_ones() as u32;
         let gate = std::mem::take(&mut self.gate);
         self.proposal = None;
-        // the allowance: a share of the area's effective width (at least one item, at most half
-        // the vector); it shrinks slowly while well under used
+        // the allowance: a share of the area's effective width (at least one item, at most a
+        // thirty-second of the vector or three items); it shrinks slowly while well under used
         self.clock = self.clock.wrapping_add(1);
         let width = self.l4.as_ref().map_or(self.bits, |p| p.cells().max(32));
-        self.held_cap = ((width as u64 * self.rho as u64) >> 16).clamp(32, self.bits as u64 / 2) as usize;
+        // (at most a thirty-second of the area: a held population denser than that saturates
+        // whatever reads it, as the orbitofrontal hold did at half its area)
+        let most = if std::env::var("MIND_HELD_HALF").map_or(false, |v| v == "1") { self.bits as u64 / 2 } else { (self.bits as u64 / 32).max(96) };
+        self.held_cap = ((width as u64 * self.rho as u64) >> 16).clamp(32, most) as usize;
         if (self.held.count_ones() as usize) * 2 < self.held_cap && self.rho > (1 << 10) {
             self.rho -= self.rho / 1024;
             if self.clock % 1024 == 0 {

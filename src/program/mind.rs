@@ -325,7 +325,7 @@ pub struct Config {
     pub generalize: bool,
     /// recruitment by need in the top areas' layer 4 (the full association column and the
     /// orbitofrontal area): what they do not cover gets cells only when it keeps coming or the
-    /// moment is salient (a dopamine error or a valued cue the step before), and sleep recycles
+    /// moment is salient (a dopamine error the step before), and sleep recycles
     /// the cells that went unused (MIND_NEED=0 off)
     pub need: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
@@ -982,9 +982,9 @@ impl Mind {
         self.bg.begin_groups(&all, true);
         let delta = self.bg.last_delta;
         self.report.delta = delta;
-        // a neuromodulatory burst (a dopamine error, or a cue the amygdala values): the next
-        // step's top areas recruit at once for what they do not cover
-        self.salient = delta.unsigned_abs() >= ONE / 4 || self.report.amy_predicted >= (ONE / 4) as i32;
+        // a neuromodulatory burst (a dopamine error, phasic, not a value held): the next step's top
+        // areas recruit at once for what they do not cover
+        self.salient = delta.unsigned_abs() >= ONE / 4;
         self.report.value = self.bg.value();
         if self.cfg.learned_pause {
             self.amy.learn_pause(delta, self.bg.pause_min * (ONE as i32 / 8));

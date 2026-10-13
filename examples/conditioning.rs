@@ -100,8 +100,8 @@ fn main() {
                     Conditioning::Reversal => eprintln!("progress {kind:?} seed {seed} trials {trial}: paying light {:.2}, the other {:.2}", r(rev[b].0, rev[b].1), r(rev[b].2, rev[b].3)),
                     _ => eprintln!("progress {kind:?} seed {seed} trials {trial}: clicks cue {:.2} none {:.2}", r(yes.5, yes.6), r(no.5, no.6)),
                 }
-                let (used, rec, cyc) = mind.brain.full_l4();
-                eprintln!("progress {kind:?} seed {seed} trials {trial}: top layer 4 cells in use {used} (recruited {rec}, recycled {cyc}; orbitofrontal recycled {})", mind.ofc_recycled);
+                let (used, rec, cyc, why) = mind.brain.full_l4();
+                eprintln!("progress {kind:?} seed {seed} trials {trial}: top layer 4 cells in use {used} (recruited {rec}: salient {}, recurring {}, new {}; recycled {cyc}; orbitofrontal recycled {})", why.0, why.1, why.2, mind.ofc_recycled);
             }
             a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
             if sleep_every > 0 && trial % sleep_every == 0 {

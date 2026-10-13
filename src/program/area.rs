@@ -128,6 +128,9 @@ pub struct Pool {
     free: Vec<usize>,
     /// cells recycled so far
     pub recycled: u64,
+    /// cells recruited by coverage on a salient step, by coverage of recurring input, and for
+    /// input not covered at all
+    pub why: (u64, u64, u64),
 }
 
 impl Pool {
@@ -159,6 +162,7 @@ impl Pool {
             born: Vec::new(),
             free: Vec::new(),
             recycled: 0,
+            why: (0, 0, 0),
         }
     }
 
@@ -231,6 +235,10 @@ impl Pool {
         covered.sort_unstable();
         covered.dedup();
         let mut open: Vec<u32> = on.iter().copied().filter(|b| covered.binary_search(b).is_err()).collect();
+        // by need, a code already as wide as normalization lets it be recruits nothing more
+        if self.need && fired.len() >= self.winners(on.len()) {
+            return Vec::new();
+        }
         if self.need {
             // by need: only the bits that keep coming uncovered, or all on a salient step
             if self.tags.is_empty() {
@@ -258,6 +266,7 @@ impl Pool {
                 self.tags[b as usize] = 0;
             }
         }
+        let salient = self.salient;
         let n = open.len().min(self.k);
         let mut new = Vec::new();
         for _ in 0..n {
@@ -278,6 +287,11 @@ impl Pool {
             self.syn[c] = s;
             self.last[c] = self.tick;
             self.recruited += 1;
+            if salient {
+                self.why.0 += 1;
+            } else {
+                self.why.1 += 1;
+            }
             new.push(c);
         }
         new
@@ -370,6 +384,7 @@ impl Pool {
                     self.syn[c] = s;
                     self.last[c] = self.tick;
                     self.recruited += 1;
+                    self.why.2 += 1;
                     code.bit_set(c);
                 }
             }
@@ -997,9 +1012,9 @@ impl Brain {
         }
     }
 
-    /// The full column's layer 4: (cells in use, recruited, recycled).
-    pub fn full_l4(&self) -> (usize, u64, u64) {
-        self.full.as_ref().and_then(|f| f.l4.as_ref()).map_or((0, 0, 0), |p| (p.in_use(), p.recruited, p.recycled))
+    /// The full column's layer 4: (cells in use, recruited, recycled, recruited why).
+    pub fn full_l4(&self) -> (usize, u64, u64, (u64, u64, u64)) {
+        self.full.as_ref().and_then(|f| f.l4.as_ref()).map_or((0, 0, 0, (0, 0, 0)), |p| (p.in_use(), p.recruited, p.recycled, p.why))
     }
 
     /// What area `a`'s layer 4 code `code` expects of its raw input (layer 4's back-projection).

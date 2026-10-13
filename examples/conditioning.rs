@@ -211,6 +211,17 @@ fn main() {
                     }
                     let r = |s: (usize, usize, usize)| format!("{:.0}/{:.0}", s.0 as f64 / s.2.max(1) as f64, s.1 as f64 / s.2.max(1) as f64);
                     line += &format!(" | driven/l4 bits: cue {} none {}", r(sz[1]), r(sz[0]));
+                    {
+                        let mut ctx_bits = (0usize, 0usize);
+                        for (_, _, p) in seen_at.iter().filter(|x| x.0 + block > trial && x.0 < trial) {
+                            if let Some(x) = p.iter().find(|x| x.0 == "ctx") {
+                                ctx_bits.0 += x.1.len();
+                                ctx_bits.1 += 1;
+                            }
+                        }
+                        let (owned, regions) = mind.striatal_regions();
+                        line += &format!(" | ctx bits {:.0}, regions owned {owned} of {regions}", ctx_bits.0 as f64 / ctx_bits.1.max(1) as f64);
+                    }
                     eprintln!("progress {kind:?} seed {seed} trials {trial}: drift (1/50/100 back, x other cue){line}");
                 }
                 let (used, rec, cyc, why) = mind.brain.full_l4();

@@ -670,6 +670,11 @@ impl MaskStriatum {
         self.place_groups(groups, regions, Some(c));
     }
 
+    /// Focused: regions owned by all sources together (counting overlaps).
+    pub fn owned_total(&self) -> usize {
+        self.owned.borrow().values().sum()
+    }
+
     /// Focused: the number of regions before the candidate's.
     pub fn regions(&self) -> usize {
         self.d / 64 - 1

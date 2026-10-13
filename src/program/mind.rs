@@ -1211,6 +1211,11 @@ impl Mind {
 
     /// For a viewer: the hand loop's latest choice (its context, and the masks of the go and
     /// no-go cells that fired there), and its pools' sizes.
+    /// The striatum's regions owned by all sources together, and how many there are.
+    pub fn striatal_regions(&self) -> (usize, usize) {
+        (self.bg.owned_total(), self.bg.regions())
+    }
+
     pub fn hand_view(&self) -> (Option<(Vec<usize>, Vec<Vec<usize>>, Vec<Vec<usize>>)>, (usize, usize)) {
         let (l, _) = motor_channels(HAND);
         (self.bg.choice_view(l), self.bg.pool_sizes(l))

@@ -135,6 +135,8 @@ pub struct Pool {
     pub adapt: bool,
     /// per cell, the steps it has fired in a row (up to 4)
     run: Vec<u8>,
+    /// the input's active bits at the step before (for onsets)
+    last_on: Vec<u32>,
     /// cells recruited by coverage on a salient step, by coverage of recurring input, and for
     /// input not covered at all
     pub why: (u64, u64, u64),
@@ -172,6 +174,7 @@ impl Pool {
             why: (0, 0, 0),
             adapt: false,
             run: Vec::new(),
+            last_on: Vec::new(),
         }
     }
 
@@ -273,9 +276,14 @@ impl Pool {
         covered.sort_unstable();
         covered.dedup();
         let mut open: Vec<u32> = on.iter().copied().filter(|b| covered.binary_search(b).is_err()).collect();
-        // by need, a code already as wide as normalization lets it be recruits nothing more
+        // by need, a code already as wide as normalization lets it be recruits nothing more for
+        // what has been there; with adaptation, what came new this step (an onset) still may
         if self.need && fired.len() >= self.winners(on.len()) {
-            return Vec::new();
+            if !self.adapt {
+                return Vec::new();
+            }
+            let last = &self.last_on;
+            open.retain(|b| last.binary_search(b).is_err());
         }
         if self.need {
             // by need: only the bits that keep coming uncovered, or all on a salient step
@@ -386,6 +394,9 @@ impl Pool {
             for c in self.cover(&on, &fired) {
                 code.bit_set(c);
             }
+        }
+        if self.adapt {
+            self.last_on = on.clone();
         }
         let srcs: Vec<usize> = {
             let mut v: Vec<usize> = on.iter().map(|&b| b as usize / self.src_bits).collect();
@@ -508,6 +519,11 @@ impl Pool {
         }
         self.recycled += n as u64;
         n
+    }
+
+    /// The input's active bits at the latest learning step (kept with adaptation).
+    pub fn last_input(&self) -> &[u32] {
+        &self.last_on
     }
 
     /// Cells in use (recruited and not recycled).

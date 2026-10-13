@@ -1438,6 +1438,9 @@ impl Mind {
         // an omission: what was expected here did not come (a reward that comes unexpectedly is
         // learning, not a sign the context changed)
         let surprised = if here - got >= ONE as i32 / 4 { ONE as i32 } else { 0 };
+        if std::env::var("MIND_DEBUG_PHASE").is_ok() {
+            eprintln!("phase: here {:.3} got {:.3} fast {:.3} slow {:.3} context {} settled {}", here as f64 / ONE as f64, got as f64 / ONE as f64, self.surprise_fast as f64 / ONE as f64, self.surprise_slow as f64 / ONE as f64, self.phase_now, self.phase_settled.contains(&self.phase_now));
+        }
         self.surprise_fast += (surprised - self.surprise_fast) / 16;
         self.surprise_slow += (surprised - self.surprise_slow) / 256;
         if self.surprise_fast <= self.surprise_slow {

@@ -229,10 +229,12 @@ pub struct Column {
     /// slot (as an unpredicted minicolumn bursts, every cell in it firing), so what came
     /// unexpected takes a large share of the output rather than its share of the input
     pub burst: bool,
-    /// sparse output (with `topo`): the column sends its active minicolumns (the layer 4 code,
-    /// sparse by the ratio), and a cell in a context slot adds its slot's bits for its home bits
-    /// active now; no whole homes (MIND_SPARSE_OUT=0: whole homes)
+    /// sparse output (with `topo`): each active layer 2/3 cell sends one bit, fixed by its home
+    /// and slot, up to a thirty-second of the area (MIND_SPARSE_OUT=0: whole homes); with
+    /// `minicolumns` (MIND_SPARSE_OUT=column) the column sends its driven layer 4 code instead,
+    /// and a cell in a context slot adds its slot's bits
     pub sparse_out: bool,
+    pub minicolumns: bool,
     /// the winner's own prediction at the step before (no superposition), and this step's
     /// layer 4 bits it missed
     strict: Option<BitVector>,
@@ -256,7 +258,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, sparse_out: false, strict: None, unexpected: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, sparse_out: false, minicolumns: std::env::var("MIND_SPARSE_OUT").map_or(false, |v| v == "column"), strict: None, unexpected: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -551,9 +553,18 @@ impl Column {
                 self.homes.insert(c, (generation, key, slot, code.clone()));
             }
             let (_, key, slot, home) = &self.homes[&c];
-            let _ = key;
+            if self.sparse_out && !self.minicolumns {
+                // one bit a cell, fixed by its home and slot: an active cell is one bit of
+                // output, so the area's code is as sparse as its active cells (and capped)
+                if v.count_ones() < self.bits / 32 {
+                    let mut h = key.wrapping_mul(0xD6E8_FEB8_6659_FD93) ^ (*slot as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+                    h ^= h >> 29;
+                    v.bit_set((h % self.bits as u64) as usize);
+                }
+                continue;
+            }
             for &b in home {
-                // sparse output: the active minicolumns are sent below (the layer 4 code); a cell
+                // minicolumns: the active minicolumns are sent below (the layer 4 code); a cell
                 // adds only its context slot's bits, for its home bits active now
                 if self.sparse_out && (*slot == 0 || !self.code.bit_get(b as usize)) {
                     continue;
@@ -568,7 +579,7 @@ impl Column {
                 v.bit_set(o);
             }
         }
-        if self.sparse_out {
+        if self.sparse_out && self.minicolumns {
             // every active minicolumn has an active cell (the one that predicted it, or all of
             // them when none did): the area sends its active minicolumns, its sparse layer 4 code
             // (driven only: what the area holds goes up as working memory on its own)

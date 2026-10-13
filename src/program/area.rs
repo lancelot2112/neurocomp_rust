@@ -143,7 +143,8 @@ pub struct Pool {
     /// read it (MIND_FIXED_FIELDS=0: off)
     pub fixed: bool,
     /// the sparsity ratio (`target`): no more than a thirty-second of the area active, sources
-    /// sharing it by their share of the input (MIND_RATIO=0: off)
+    /// sharing it by their share of the input (MIND_RATIO=1 on; off by default: holding every
+    /// layer 4 at 3% cost behaviour in the probes, where only a sparse top output helped)
     pub ratio: bool,
     /// local inhibition: winners compete within their source (a cell belongs to the source most
     /// of its synapses are on), each source's winners normalized by its own active bits (k to 4k,
@@ -194,7 +195,7 @@ impl Pool {
             inv: Vec::new(),
             fixed: std::env::var("MIND_FIXED_FIELDS").map_or(true, |v| v != "0"),
             local: false,
-            ratio: std::env::var("MIND_RATIO").map_or(true, |v| v != "0"),
+            ratio: std::env::var("MIND_RATIO").map_or(false, |v| v == "1"),
             run: Vec::new(),
             last_on: Vec::new(),
         };

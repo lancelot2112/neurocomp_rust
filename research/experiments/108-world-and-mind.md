@@ -1497,3 +1497,22 @@ no-go learned without the light fires with it too. The same holds in the cortex:
 threshold fraction, at about 3% or below. Next: report every area's density, hold each area's
 active fraction near a target (the sparsity ratio) rather than letting it grow with its input,
 and rebuild the top column's layer 4 under that rule so it carries the light again, sparsely.
+
+**The sparsity ratio everywhere did not help (`MIND_RATIO=1`, off by default).** Holding every
+layer 4 at a thirty-second of its area made every code sparse (senses 2–3%, top layer 4 about
+3%, the striatal context 2–4%), but behaviour fell behind the sparse top output alone, by trial
+300 on most runs:
+
+| | instrumental, trials 201–300 (seeds 0 / 1 / 2) | reversal, seed 0, trials 201–300 |
+|---|---|---|
+| sparse top output only (the default) | 0.79/0.27, 0.86/0.43, 0.86/0.34 | 0.83/0.21 |
+| ratio, minicolumn output | 0.19/0.15, 0.37/0.08, 0.69/0.34 | 0.35/0.10 |
+| ratio, driven minicolumns only | 0.78/0.18, 0.13/0.10, 0.00/0.05 | 0.17/0.05 |
+
+- With the ratio, the top column passed the light on: 25–76 light-selective bits in its layer
+  2/3, where the default passes almost none.
+- But top layer 2/3 crept to 5–8% (its context-slot bits), and the striatum's light bits went
+  from 30–80 at trial 200 to 0 at trial 300.
+- The default keeps the top column's output at one bit per active cell, and the striatum
+  takes the light from the senses, the amygdala and working memory. The ratio and the
+  minicolumn output (`MIND_SPARSE_OUT=column`) stay available.

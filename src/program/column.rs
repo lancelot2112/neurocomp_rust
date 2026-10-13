@@ -229,9 +229,9 @@ pub struct Column {
     /// slot (as an unpredicted minicolumn bursts, every cell in it firing), so what came
     /// unexpected takes a large share of the output rather than its share of the input
     pub burst: bool,
-    /// sparse output (with `topo`): what the column sends up, its active cells' home bits, stops
-    /// at a thirty-second of the area, so it is no denser than a sparse layer 4 code
-    /// (MIND_SPARSE_OUT=0: uncapped)
+    /// sparse output (with `topo`): an active cell sends only those of its home bits active in
+    /// layer 4 now, so what the column sends up is no denser than its sparse layer 4 code
+    /// (MIND_SPARSE_OUT=0: the whole home)
     pub sparse_out: bool,
     /// the winner's own prediction at the step before (no superposition), and this step's
     /// layer 4 bits it missed
@@ -553,10 +553,10 @@ impl Column {
             let (_, key, slot, home) = &self.homes[&c];
             let _ = key;
             for &b in home {
-                // sparse output: the home's bits (a sparse layer 4 code) up to a thirty-second of
-                // the area, so what the column sends up is as sparse as its input
-                if self.sparse_out && v.count_ones() >= self.bits / 32 {
-                    break;
+                // sparse output: of the home's bits, those active in layer 4 now, so what the
+                // column sends up is no denser than its (sparse) layer 4 code and is current
+                if self.sparse_out && !self.code.bit_get(b as usize) {
+                    continue;
                 }
                 let o = if *slot == 0 {
                     b as usize

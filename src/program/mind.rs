@@ -407,13 +407,12 @@ pub struct Config {
     /// context's code reaches the striatum by this route, and the cortex's layer 1 tufts (layers
     /// 2/3 and 5) and layer 6 gain by the matrix route
     pub ilam: bool,
-    /// the latent-cause model (`MIND_LATENT=1`, instead of the phase state's own switching; with
-    /// `MIND_PHASE=1`): every known context and a new one are scored on each hand act by how well
-    /// they predicted its outcome (each context's locked-in worth of the cue in view, Laplace-
-    /// smoothed by how many outcomes it has learned from; a new one at even odds), the scores
-    /// fading at a sixteenth; the posterior adds a Chinese-restaurant prior (log of the acts each
-    /// context has explained; a new one log 1); the act is assigned to the most probable and is
-    /// learned there (Gershman, Blei & Niv 2010)
+    /// the latent-cause model as competing cell assemblies (`MIND_LATENT=1`, instead of the phase
+    /// state's own switching; with `MIND_PHASE=1`), in integers and bit counts: each context
+    /// assembly gathers evidence (a leaky count) of the acts it fits (its locked-in worth of the
+    /// cue in view within an octave of what the cue paid lately), has an excitability that grows
+    /// as the log of its use, and inhibition lets the strongest through; a new assembly is recruited
+    /// when no known one has fitted lately (Gershman, Blei & Niv 2010, as a circuit)
     pub latent: bool,
 }
 
@@ -619,11 +618,14 @@ pub struct Mind {
     /// the intralaminar burst: the cholinergic interneurons pause until the new context's first
     /// outcome is in
     ilam_open: bool,
-    /// the latent-cause model: per context, its fading log-likelihood of recent outcomes and the
-    /// acts it has explained; the same score for a cause not yet seen
-    lc_score: Vec<f64>,
+    /// the latent-cause model as cell assemblies: per context assembly, its evidence (a leaky count,
+    /// `Q16` a fitting act) and the acts it has explained; the evidence that no known assembly fits
+    /// (recruits a new one); what clicks at each eye bit paid lately (shared: every assembly sees
+    /// the same outcomes)
+    lc_score: Vec<i32>,
     lc_uses: Vec<u32>,
-    lc_new: f64,
+    lc_new: i32,
+    lc_recent: Vec<i32>,
     gain_open: Vec<(u8, i32, Vec<usize>)>,
     eye_now: Vec<usize>,
     /// per motor area, the loop's and gate's q (cells) for the act released last: what the
@@ -828,9 +830,10 @@ impl Mind {
             gain_r: vec![vec![-1; BITS]],
             phase_switches: 0,
             ilam_open: false,
-            lc_score: vec![0.0],
+            lc_score: vec![0],
             lc_uses: vec![0],
-            lc_new: 0.0,
+            lc_new: 0,
+            lc_recent: vec![-1; BITS],
             gain_open: Vec::new(),
             eye_now: Vec::new(),
             chosen_q: Vec::new(),
@@ -1518,48 +1521,57 @@ impl Mind {
         (sum / self.eye_now.len() as i64) as i32
     }
 
-    /// The latent-cause model, one hand act closed (made with `bits` in view, paying `got`):
-    /// each known context predicts it from its own locked-in worth of the best cue in view it
-    /// knows (Laplace-smoothed: (worth·n + 1)/(n + 2) for a cue learned from n outcomes; even odds
-    /// where it knows none), a new cause at even odds. Each score fades at a sixteenth and adds the
-    /// log-likelihood; the posterior adds the log of the acts each has explained (a new cause: log
-    /// 1, the Chinese-restaurant prior with concentration 1). The act goes to the most probable:
-    /// a known context is entered (or kept), or a new one created.
+    /// The latent-cause model as competing cell assemblies, one hand act closed (made with `bits`
+    /// in view, paying `got`), in integers and bit counts:
+    /// - what clicks at each bit in view paid lately is shared by all assemblies (every one sees
+    ///   the outcomes), averaged as fast as the active assembly's worth while that is learning, else
+    ///   over about 16 expected rewards;
+    /// - an assembly fits the act when, for its own best-worth cue in view, the recent payout and
+    ///   its locked-in worth lie within an octave of each other (their bit lengths, a logarithmic
+    ///   code, differ by at most one: Weber's ratio rule for rates);
+    /// - each assembly's evidence is a leaky count (fading a sixteenth an act) of the acts it fits;
+    ///   the evidence for a new cause counts the acts no known assembly fits;
+    /// - its excitability is the bit length of the acts it has explained (a logarithm of use: the
+    ///   prior of the Chinese restaurant, as intrinsic plasticity);
+    /// - lateral inhibition lets one through: the most evidence plus excitability (an act of
+    ///   evidence against an octave of use); a new assembly is recruited when the evidence that
+    ///   none fits beats every known one. The act is learned in the winner.
     fn latent_assign(&mut self, bits: &[usize], got: i32) {
-        let paid = got * 2 >= ONE as i32;
-        let ll = |p1: f64| if paid { p1.ln() } else { (1.0 - p1).ln() };
-        let n_ctx = self.lc_score.len();
-        for c in 0..n_ctx {
-            let p1 = match self.gain_v.get(c) {
-                Some(vs) => {
-                    let best = bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b]);
-                    match best {
-                        Some(b) => {
-                            let n = self.gain_n[c][b] as f64;
-                            (vs[b] as f64 / ONE as f64 * n + 1.0) / (n + 2.0)
-                        }
-                        None => 0.5,
-                    }
-                }
-                None => 0.5,
-            };
-            self.lc_score[c] = self.lc_score[c] * 15.0 / 16.0 + ll(p1);
+        let cur = self.phase_now;
+        // the shared recent payout, at the active assembly's pace while it is still learning
+        for &b in bits {
+            let (v, n) = (self.gain_v.get(cur).map_or(-1, |vs| vs[b]), self.gain_n.get(cur).map_or(0, |ns| ns[b]));
+            let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
+            let step = (2 + n as i32).min(window);
+            let r = &mut self.lc_recent[b];
+            *r = if *r < 0 { got } else { *r + (got - *r) / step };
         }
-        self.lc_new = self.lc_new * 15.0 / 16.0 + ll(0.5);
-        let post = |c: usize| self.lc_score[c] + (self.lc_uses[c].max(1) as f64).ln();
-        let (best, best_post) = (0..n_ctx).map(|c| (c, post(c))).fold((0, f64::NEG_INFINITY), |a, x| if x.1 > a.1 { x } else { a });
-        let to = if self.lc_new > best_post {
-            // a new cause explains the recent outcomes better than any known one
+        let bitlen = |x: i32| 32 - (x.max(0) as u32).leading_zeros() as i32;
+        let n_ctx = self.lc_score.len();
+        let mut any = false;
+        for c in 0..n_ctx {
+            // (an assembly that knows none of what is in view is not contradicted: it fits)
+            let fits = self.gain_v.get(c).is_none_or(|vs| {
+                bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b]).is_none_or(|b| (bitlen(self.lc_recent[b]) - bitlen(vs[b])).abs() <= 1)
+            });
+            any |= fits;
+            self.lc_score[c] += (if fits { ONE as i32 } else { 0 }) - self.lc_score[c] / 16;
+        }
+        self.lc_new += (if any { 0 } else { ONE as i32 }) - self.lc_new / 16;
+        let strength = |c: usize| self.lc_score[c] + bitlen(self.lc_uses[c] as i32) * ONE as i32;
+        let (best, best_s) = (0..n_ctx).map(|c| (c, strength(c))).fold((0, i32::MIN), |a, x| if x.1 > a.1 { x } else { a });
+        let to = if self.lc_new > best_s {
+            // no known assembly explains what happens lately: recruit a new one
             self.phase_count = self.phase_count.max(n_ctx) + 1;
             self.lc_score.push(self.lc_new);
             self.lc_uses.push(0);
-            self.lc_new = 0.0;
+            self.lc_new = 0;
             n_ctx
         } else {
             best
         };
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
-            eprintln!("latent: paid {paid} scores {:?} new {:.2} uses {:?} -> {to}", self.lc_score.iter().map(|x| (x * 100.0).round() / 100.0).collect::<Vec<_>>(), self.lc_new, self.lc_uses);
+            eprintln!("latent: got {:.2} evidence {:?} new {} uses {:?} -> {to}", got as f64 / ONE as f64, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_new / ONE as i32, self.lc_uses);
         }
         if to != self.phase_now {
             let from = self.phase_now;

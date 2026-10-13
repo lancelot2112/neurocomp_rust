@@ -258,7 +258,12 @@ fn main() {
     }
     println!("amygdala cells (appetitive, aversive, pause, baseline): {:?}; orbitofrontal {:?}; what an act usually brings {:+.3}", mind.amy.cells(), mind.ofc.cells(), mind.report.rate_act as f64 / 65536.0);
     println!("frustration per block: {}", frus.iter().filter(|x| x.1 > 0).map(|x| format!("{:.3}", x.0 as f64 / x.1 as f64 / 65536.0)).collect::<Vec<_>>().join(" "));
-    println!("claustrum: {} of {} proposals held", mind.claustrum.stats.1, mind.claustrum.stats.0);
+    {
+        use neurocomp::program::area::ColumnId;
+        let full = mind.brain.loads_of(ColumnId::Assoc(mind.brain.pairs.len()));
+        let o = mind.ofc_area.col.loads;
+        println!("claustrum: {} of {} proposals held; held loads (surprise, gate): full association {:?}, orbitofrontal {:?}", mind.claustrum.stats.1, mind.claustrum.stats.0, full, o);
+    }
     let o = &mind.ofc_area;
     println!("orbitofrontal area: cells (layer 2/3, outcome) {:?}; outcomes expected right {} of {}; holds {}; splits {}", o.cells(), o.stats.1, o.stats.0, o.stats.2, o.stats.3);
     println!("cholinergic pauses: {pauses} steps; amygdala updates {}; per step: onsets {:.1}, attended {:.1}, acts {:.2}, tonic noise {:.2}", mind.amy.stats.0, sizes.1 as f64 / sizes.0 as f64, sizes.2 as f64 / sizes.0 as f64, sizes.3 as f64 / sizes.0 as f64, tonic_sum as f64 / sizes.0 as f64);

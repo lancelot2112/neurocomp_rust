@@ -938,6 +938,8 @@ impl Brain {
             col.l4.as_mut().unwrap().coverage = self.assoc_coverage;
             col.set_persistence(self.full_tau);
             col.set_recurrence(self.full_gain);
+            col.superpose = self.superpose;
+            col.select = self.select;
             self.full = Some(col);
         }
         // the highest level active: the full area when it has a code, else the pairwise codes

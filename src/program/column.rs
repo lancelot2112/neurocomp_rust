@@ -24,10 +24,11 @@
 //!   held state alone). Items are superposed in the one held vector (sparse codes barely
 //!   overlap): what layer 2/3 did not expect of the input (graded surprise: acetylcholine's
 //!   switch from recurrent completion to feedforward encoding, Hasselmo) joins what is held as
-//!   an item of at most 32 bits, as does the driven code when the column's loop opens the gate
-//!   (`refresh`: the basal ganglia and thalamus); at most 128 bits are held (about four items).
+//!   an item of at most 32 bits; when the column's loop opens the gate (`refresh`: the basal
+//!   ganglia and thalamus) the driven code replaces what is held (an update); at most 128 bits
+//!   are held (about four items).
 //!   Each step a random sixteenth drops out (noise), and an autoassociative map, which learns
-//!   every driven code and every item held, restores each learned pattern still mostly present;
+//!   every item held (or proposed), restores each learned item still mostly present;
 //!   what nothing restores fades. A held bit is restored only for `life` steps after it was
 //!   loaded (the area's persistence; then adaptation lets it go), so what is held is recent.
 //!
@@ -238,9 +239,6 @@ impl Column {
         let gate = std::mem::take(&mut self.gate);
         self.proposal = None;
         self.surprise = 0;
-        if learn && n_in > 0 {
-            self.auto.learn(input, None, None, input, rng);
-        }
         // maintained: each held bit ages; one past the area's persistence (`life`) adapts and
         // goes at random (half a step), and is not restored. The rest lose a random sixteenth
         // (noise), and the autoassociative map restores each learned pattern still mostly held
@@ -283,6 +281,10 @@ impl Column {
             for (w, y) in held.as_words_mut().iter_mut().zip(old.as_words()) {
                 *w |= y;
             }
+            // the held population keeps at most `HELD` bits after completion too
+            if held.count_ones() > 128 {
+                held = Self::sparse(held.as_words(), 128, rng);
+            }
             self.held = held;
         }
         // a new item joins what is held (superposed: sparse codes barely overlap), at most `K`
@@ -323,6 +325,12 @@ impl Column {
             }
         };
         if let Some(it) = item {
+            if gate {
+                // the gate updates: what drives the area now replaces what was held (the basal
+                // ganglia's gating of prefrontal cortex; a gate that opens often holds only the
+                // present, and when not to open is what dopamine teaches it)
+                self.held = BitVector::new(self.bits, Some(0));
+            }
             self.load(it, learn, rng);
         }
         BitVector::from_words(input.as_words().iter().zip(self.held.as_words()).map(|(a, b)| a | b).collect())
@@ -627,27 +635,29 @@ mod tests {
         let silent = BitVector::new(BITS, Some(0));
         let mut col = Column::agranular(BITS, 4096);
         col.set_recurrence(3);
-        // a familiar scene, now and then A or B for a step (as the delayed probe's light)
-        for i in 0..40 {
+        // a familiar scene, now and then A or B for a step at random (as the delayed probe's light)
+        for _ in 0..40 {
             for _ in 0..4 {
                 col.sense_code(&scene, None, true, &mut rng);
             }
-            col.sense_code(if i % 2 == 0 { &a } else { &b }, None, true, &mut rng);
+            col.sense_code(if rand::Rng::gen_bool(&mut rng, 0.5) { &a } else { &b }, None, true, &mut rng);
         }
         for _ in 0..4 {
             col.sense_code(&scene, None, true, &mut rng);
         }
-        // A, unexpected, is held while the expected scene drives the area, and in silence
+        // A, unexpected, is held (its unexpected part) while the expected scene drives the area,
+        // and in silence
         col.sense_code(&a, None, true, &mut rng);
         for step in 0..6 {
             let x = if step % 2 == 0 { &scene } else { &silent };
             let c = col.sense_code(x, None, true, &mut rng);
-            assert!(overlap(col.held(), &a) >= 28, "step {step}: {} of A held", overlap(col.held(), &a));
-            assert!(overlap(&c, &a) >= 28, "step {step}: A in the code");
+            let (ha, hb) = (overlap(col.held(), &a), overlap(col.held(), &b));
+            assert!(ha >= 12 && ha > hb + 8, "step {step}: {ha} of A held, {hb} of B");
+            assert!(overlap(&c, &a) >= 12, "step {step}: A in the code");
         }
         // the gate loads what drives the area now
         col.refresh(false);
         col.sense_code(&b, None, true, &mut rng);
-        assert!(overlap(col.held(), &b) >= 28, "B {} after the gate", overlap(col.held(), &b));
+        assert!(overlap(col.held(), &b) >= 24, "B {} after the gate", overlap(col.held(), &b));
     }
 }

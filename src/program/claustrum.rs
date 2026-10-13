@@ -8,11 +8,15 @@
 //! it (`Column::proposal`), each proposal has a salience (how much surprised it, weighted by how
 //! associable the cues are), and the selector lets the most salient through, if it stands out
 //! from what is usual (half again the running mean of the best salience over every step, a
-//! step with no surprise counting 0), the others not. Called every step.
+//! step with no surprise counting 0) and clears a bar that rises toward each item let through and
+//! relaxes over about 32 steps (refractory: soon after a load, only something as salient), the
+//! others not. Called every step.
 
 pub struct Claustrum {
     /// the usual best salience a step (running mean over every step, ×16)
     mean: u64,
+    /// the bar an item must clear (×16): raised toward each item let through, relaxing
+    bar: u64,
     /// (steps with a proposal, items let through)
     pub stats: (u64, u64),
 }
@@ -25,7 +29,7 @@ impl Default for Claustrum {
 
 impl Claustrum {
     pub fn new() -> Self {
-        Self { mean: 0, stats: (0, 0) }
+        Self { mean: 0, bar: 0, stats: (0, 0) }
     }
 
     /// The proposals' saliences this step (0: none; call every step): which one, if any, is let
@@ -33,8 +37,12 @@ impl Claustrum {
     pub fn choose(&mut self, salience: &[u32]) -> Option<usize> {
         let (best, s) = salience.iter().enumerate().max_by_key(|x| *x.1).map(|(i, &s)| (i, s)).unwrap_or((0, 0));
         let s16 = s as u64 * 16;
-        let pass = s > 0 && s16 * 2 >= self.mean * 3;
+        let pass = s > 0 && s16 * 2 >= self.mean * 3 && s16 >= self.bar;
         self.mean = self.mean - self.mean / 32 + s16 / 32;
+        self.bar -= self.bar / 32;
+        if pass {
+            self.bar += (s16 - self.bar.min(s16)) / 2;
+        }
         if s == 0 {
             return None;
         }

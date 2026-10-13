@@ -1581,4 +1581,45 @@ expectation, high after a change.
 
 **Surprise-driven recycling (`MIND_RECYCLE_SHARE=surprise`).** Each sleep frees the share of
 the cells in use that matches the share of learning steps since the last sleep that were salient
-(|δ| ≥ ¼, the same signal that recruits at once). Results to follow.
+(|δ| ≥ ¼, the same signal that recruits at once).
+
+- **Strong within a phase:** best or level on instrumental, and it held the cue on seed 1
+  (0.89/0.25 at trials 401–500, where 1/16 fell to 0.31/0.41).
+- **Late or no reversal:** seed 0 reversed only at trials 901–1000 and again late after the third
+  swap. Seed 1 never made the first reversal, and was stuck after the third (0.24/0.74).
+- **Why:** only 1–3.5% of steps are salient, and these are mostly the surprises of learning,
+  not of change. After a swap, the run makes a few unpaid choices and then stops choosing, so
+  nothing surprises it. Recycling fell to 33 cells per 100 trials just when it was needed.
+
+**Uncertainty-driven recycling (`MIND_RECYCLE_SHARE=uncertainty`).** Noradrenaline's two signals:
+the salient share weighed against its usual level (r·r/usual), plus how far the payoff fell below
+its long-run rate (averaged since the last sleep). Exploration rises in proportion to the same
+fall. It did no better than 1/16:
+
+- The payoff fall never settles near zero. The fast rate swings around the slow one, and only
+  the drops are counted, so it averaged 20–35% in stable phases and each sleep freed about a third
+  of the pool (1,400–1,600 of 4,096 cells): constant heavy turnover, not a response to change.
+- Seed 0 reversed after each swap, but weakly (0.64/0.55 at trials 1801–1900). Seed 1 never made
+  the first reversal and was stuck after the third (0.08/0.43 at trials 1801–1900).
+
+**Why a run stops choosing.** No recycling rule (1/16, 1/64, surprise, uncertainty) rescues
+seed 1, because recycling is not the cause. Seed 1 under surprise-only recycling, before the first
+swap (trials 401–500) and after it (trials 801–900):
+
+| | before the swap | after it |
+|---|---|---|
+| dopamine bursts per 100 trials | 53 | 15 |
+| hand gate, go/no-go cells | 373/379 | 416/433 |
+| overlap of the two lights' codes, top layer 4 | 0.45 | 0.53 |
+| same, top layer 2/3 | 0.55 | 0.74 |
+
+1. **Unpaid clicks teach no-go.** After the swap, clicks on the old light get nothing, and the
+   no-go cells for clicking in this context grow faster than the go cells.
+2. **The no-go spreads to the new light.** The two lights' codes overlap by half or more, and
+   they converge over training. The no-go learned on one light suppresses clicks on the other.
+3. **Not choosing means no learning.** With no clicks on the new light, its go side never grows.
+   The exploration noise (±3, plus up to 3) is small next to the go/no-go gap.
+
+1/16 escapes more often only because its turnover keeps reshuffling the codes the no-go is built
+on. The fix belongs in the codes: the two lights must stay apart where the striatum reads them
+(the density rule), so that extinguishing one does not extinguish both. 1/16 stays the default.

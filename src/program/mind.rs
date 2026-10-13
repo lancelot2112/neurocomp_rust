@@ -1534,9 +1534,9 @@ impl Mind {
     /// - its excitability is the bit length of the acts it has explained (a logarithm of use: the
     ///   prior of the Chinese restaurant, as intrinsic plasticity);
     /// - the active assembly holds (its own recurrent excitation) while it explains the act; on an
-    ///   act it fails to explain, lateral inhibition lets one through: the most evidence,
-    ///   excitability breaking ties, or a new assembly when the evidence that none fits beats the
-    ///   best known one's. The act is learned in the winner.
+    ///   act it fails to explain, it yields to the assembly with the most evidence among those that
+    ///   do explain it (excitability breaking ties), or, when none does, to a new assembly once the
+    ///   evidence that none fits beats the best known one's. The act is learned in the winner.
     fn latent_assign(&mut self, bits: &[usize], got: i32) {
         let cur = self.phase_now;
         // the shared recent payout, at the active assembly's pace while it is still learning
@@ -1551,6 +1551,7 @@ impl Mind {
         let n_ctx = self.lc_score.len();
         let mut any = false;
         let mut cur_fits = true;
+        let mut fitting: Vec<usize> = Vec::new();
         for c in 0..n_ctx {
             // it fits unless its best cue in view has locked in (its rate 1/(2 + n) slower than
             // the recent window, 16 expected rewards) and paid lately less than half its worth
@@ -1564,6 +1565,9 @@ impl Mind {
                 })
             });
             any |= fits;
+            if fits {
+                fitting.push(c);
+            }
             if c == cur {
                 cur_fits = fits;
             }
@@ -1574,10 +1578,14 @@ impl Mind {
         // ties; a new one is recruited on evidence alone: when more recent acts went unexplained
         // than the best assembly explained
         let (best, _) = (0..n_ctx).map(|c| (c, (self.lc_score[c], bitlen(self.lc_uses[c] as i32)))).fold((0, (i32::MIN, 0)), |a, x| if x.1 > a.1 { x } else { a });
+        // of those that explain this act, the most evidence (excitability breaking ties)
+        let challenger = fitting.iter().copied().max_by_key(|&c| (self.lc_score[c], bitlen(self.lc_uses[c] as i32)));
         // the active assembly holds by its own recurrent excitation: it yields only on an act it
-        // fails to explain
+        // fails to explain, and only to one that explains it (or to a new one)
         let to = if cur_fits {
             cur
+        } else if let Some(c) = challenger {
+            c
         } else if self.lc_new > self.lc_score[best] {
             // no known assembly explains what happens lately: recruit a new one
             self.phase_count = self.phase_count.max(n_ctx) + 1;
@@ -1586,7 +1594,7 @@ impl Mind {
             self.lc_new = 0;
             n_ctx
         } else {
-            best
+            cur
         };
         if std::env::var("MIND_DEBUG_PHASE").is_ok() {
             eprintln!("latent: got {:.2} evidence {:?} new {} uses {:?} -> {to}", got as f64 / ONE as f64, self.lc_score.iter().map(|x| x / ONE as i32).collect::<Vec<_>>(), self.lc_new / ONE as i32, self.lc_uses);

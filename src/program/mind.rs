@@ -394,11 +394,17 @@ pub struct Config {
     /// context's code is a group in the striatum's view alongside the others, on the association
     /// columns' tufts, and sets the eye's layer 6 gain (each context its own worths)
     pub phase: bool,
+    /// uncertainty-driven exploration (`MIND_EXPLORE=1`, with the phase state or layer 6 gain):
+    /// the striatum's choice noise rises with how unlearned the current context is for what is
+    /// in view (each eye bit's uncertainty is its learning rate, 2/(2 + the outcomes it has
+    /// learned from)), up to frustration's widest; none in a context well learned (noradrenaline's
+    /// tonic mode after a change: Aston-Jones & Cohen; Yu & Dayan)
+    pub explore: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false }
     }
 }
 
@@ -463,6 +469,7 @@ impl Config {
             burst_out: std::env::var("MIND_BURST_OUT").map_or(false, |v| v == "1"),
             l6_gain: std::env::var("MIND_L6_GAIN").map_or(false, |v| v == "1"),
             phase: std::env::var("MIND_PHASE").map_or(false, |v| v == "1"),
+            explore: std::env::var("MIND_EXPLORE").map_or(false, |v| v == "1"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -1173,7 +1180,8 @@ impl Mind {
         // curiosity: where the cortex's goals are getting better, choices loosen a little
         // frustration widens the choices (extinction-induced variability)
         let varied = if self.cfg.frustration { (self.frustration / (ONE as i32 / 8)).clamp(0, 6) } else { 0 };
-        self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2) + tonic + varied;
+        let unsure = if self.cfg.explore { self.uncertainty() * 6 / ONE as i32 } else { 0 };
+        self.bg.extra_noise = self.brain.goal_progress().clamp(0, 2) + tonic + varied + unsure;
         let acts = self.choose(&ids);
         self.bg.extra_noise = 0;
         self.bg.set_view(None);
@@ -1456,6 +1464,19 @@ impl Mind {
             }
             self.phase_switches += 1;
         }
+    }
+
+    /// How unlearned the current context is for what is in view (`Q16`): the mean, over the eye's
+    /// bits now, of each bit's learning rate in the context, 2/(2 + the outcomes it has learned
+    /// from) (1 for a bit never learned from).
+    fn uncertainty(&self) -> i32 {
+        if self.eye_now.is_empty() {
+            return 0;
+        }
+        // a context not yet learned in at all is wholly uncertain
+        let Some(ns) = self.gain_n.get(self.phase_now) else { return ONE as i32 };
+        let sum: i64 = self.eye_now.iter().map(|&b| 2 * ONE as i64 / (2 + ns.get(b).copied().unwrap_or(0) as i64)).sum();
+        (sum / self.eye_now.len() as i64) as i32
     }
 
     /// The phase state's current context.

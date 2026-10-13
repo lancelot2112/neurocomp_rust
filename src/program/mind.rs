@@ -1527,16 +1527,17 @@ impl Mind {
     ///   the outcomes), averaged as fast as the active assembly's worth while that is learning, else
     ///   over about 16 expected rewards;
     /// - an assembly fits the act unless, for its own best-worth cue in view, the cue has locked in
-    ///   and paid lately less than half its worth (a ratio rule for rates, as Weber's law; a cue
-    ///   still being learned cannot contradict its assembly);
+    ///   and paid lately less than half or more than twice its worth (a ratio rule for rates, as
+    ///   Weber's law; a cue still being learned cannot contradict its assembly);
     /// - each assembly's evidence is a leaky count (fading a sixteenth an act) of the acts it fits;
     ///   the evidence for a new cause counts the acts no known assembly fits;
     /// - its excitability is the bit length of the acts it has explained (a logarithm of use: the
     ///   prior of the Chinese restaurant, as intrinsic plasticity);
     /// - the active assembly holds (its own recurrent excitation) while it explains the act; on an
     ///   act it fails to explain, it yields to the assembly with the most evidence among those that
-    ///   do explain it (excitability breaking ties), or, when none does, to a new assembly once the
-    ///   evidence that none fits beats the best known one's. The act is learned in the winner.
+    ///   do explain it (excitability breaking ties) if that one has gathered more evidence than it,
+    ///   or, when none can, to a new assembly once the evidence that none fits beats the best known
+    ///   one's. The act is learned in the winner.
     fn latent_assign(&mut self, bits: &[usize], got: i32) {
         let cur = self.phase_now;
         // the shared recent payout, at the active assembly's pace while it is still learning
@@ -1554,14 +1555,16 @@ impl Mind {
         let mut fitting: Vec<usize> = Vec::new();
         for c in 0..n_ctx {
             // it fits unless its best cue in view has locked in (its rate 1/(2 + n) slower than
-            // the recent window, 16 expected rewards) and paid lately less than half its worth
-            // (a shift and a compare); an assembly that knows none of what is in view, or whose cue
+            // the recent window, 16 expected rewards) and paid lately less than half or more than
+            // twice its worth (shifts and compares: an outcome the context did not predict counts
+            // against it either way); an assembly that knows none of what is in view, or whose cue
             // is still being learned, is not contradicted
             let fits = self.gain_v.get(c).is_none_or(|vs| {
                 bits.iter().copied().filter(|&b| vs[b] >= 0).max_by_key(|&b| vs[b]).is_none_or(|b| {
                     let (v, n) = (vs[b], self.gain_n[c][b] as i32);
                     let window = if v > 0 { (16 * ONE as i64 / v as i64).clamp(16, i32::MAX as i64) as i32 } else { 16 };
-                    2 + n < window || 2 * self.lc_recent[b] >= v
+                    let r = self.lc_recent[b];
+                    2 + n < window || (2 * r >= v && r <= 2 * v)
                 })
             });
             any |= fits;
@@ -1584,7 +1587,7 @@ impl Mind {
         // fails to explain, and only to one that explains it (or to a new one)
         let to = if cur_fits {
             cur
-        } else if let Some(c) = challenger {
+        } else if let Some(c) = challenger.filter(|&c| self.lc_score[c] > self.lc_score[cur]) {
             c
         } else if self.lc_new > self.lc_score[best] {
             // no known assembly explains what happens lately: recruit a new one

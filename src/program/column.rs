@@ -225,6 +225,14 @@ pub struct Column {
     /// moved by a fixed hash. A freed and reused cell takes a home afresh, so an output bit keeps
     /// its meaning when the cell behind it changes, rather than the hash of a cell's index
     pub topo: bool,
+    /// bursting (with `topo`): the layer 4 bits layer 2/3's winner did not predict fire in every
+    /// slot (as an unpredicted minicolumn bursts, every cell in it firing), so what came
+    /// unexpected takes a large share of the output rather than its share of the input
+    pub burst: bool,
+    /// the winner's own prediction at the step before (no superposition), and this step's
+    /// layer 4 bits it missed
+    strict: Option<BitVector>,
+    unexpected: BitVector,
     /// per cell: (generation, home key, slot, home bits)
     homes: std::collections::HashMap<usize, (u32, u64, u8, Vec<u32>)>,
     /// per home key, the slots taken (a bit per slot)
@@ -244,7 +252,7 @@ impl Column {
 
     fn make(bits: usize, l4: Option<Pool>, cap: usize) -> Self {
         let z = BitVector::new(bits, Some(0));
-        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, homes: Default::default(), slots: Default::default() }
+        Self { bits, l4, l23: Map::new(bits, cap), l5: Map::new(bits, cap), rec: z.clone(), code: z.clone(), expected: None, last: None, hits: (0, 0), last_hit: 0, trace: z, tau: 0, auto: Map::new(bits, cap), gain: 0, gate: false, select: false, proposal: None, surprise: 0, recognized: false, superpose: false, held: BitVector::new(bits, Some(0)), age: vec![0; bits], life: 8, held_cap: 256, rho: 1 << 13, clock: 0, evicted_at: vec![0; bits], resized: (0, 0), loads: (0, 0), topo: false, burst: false, strict: None, unexpected: BitVector::new(bits, Some(0)), homes: Default::default(), slots: Default::default() }
     }
 
     /// Persistence: each bit of the trace clears with probability 2^-`tau` a step (0: none).
@@ -545,6 +553,17 @@ impl Column {
                 v.bit_set(o);
             }
         }
+        if self.burst {
+            // an unpredicted bit bursts: every slot of it fires
+            for b in (0..self.bits).filter(|&b| self.unexpected.bit_get(b)) {
+                v.bit_set(b);
+                for slot in 1..4u64 {
+                    let mut h = (b as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ slot.wrapping_mul(0xC2B2_AE3D_27D4_EB4F);
+                    h ^= h >> 31;
+                    v.bit_set((h % self.bits as u64) as usize);
+                }
+            }
+        }
         v
     }
 
@@ -578,6 +597,11 @@ impl Column {
         let code = if self.gain > 0 { self.recur(code, learn, rng) } else { code.clone() };
         let code = &code;
         self.code = code.clone();
+        // what the winner did not predict (nothing predicted: all of it)
+        self.unexpected = match self.strict.as_ref() {
+            Some(e) => BitVector::from_words(self.code.as_words().iter().zip(e.as_words()).map(|(x, y)| x & !y).collect()),
+            None => self.code.clone(),
+        };
         self.last_hit = self.expected.as_ref().map_or(0, |e| overlap(e, &self.code));
         if self.code.count_ones() > 0 {
             if let Some(e) = self.expected.as_ref() {
@@ -601,6 +625,7 @@ impl Column {
                 }
             }
             self.expected = self.l23.predict(&self.code, Some(&c), None);
+            self.strict = self.expected.clone();
             if self.superpose {
                 if let Some(e) = self.expected.as_mut() {
                     let props = self.l23.proposals();
@@ -625,6 +650,7 @@ impl Column {
             }
         } else {
             self.expected = None;
+            self.strict = None;
             self.last = None;
             if self.tau > 0 {
                 self.decay(rng);

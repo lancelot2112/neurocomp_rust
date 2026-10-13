@@ -332,6 +332,10 @@ pub struct Config {
     /// each cell at a fixed home and slot, so an output bit keeps its meaning when the cell
     /// behind it is freed and reused (`Column::topo`) (MIND_KEEP_ORDER=0 off)
     pub keep_order: bool,
+    /// with `keep_order`, input a column's layer 2/3 did not predict bursts: every slot of each
+    /// unpredicted layer 4 bit fires, so what came unexpected weighs more in what the column
+    /// sends up (`Column::burst`) (MIND_BURST=0 off)
+    pub burst: bool,
     /// sleep compacts the cortical layers (duplicates merged, stale or wrong cells pruned)
     /// (MIND_COMPACT=0 off)
     pub compact: bool,
@@ -345,7 +349,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, compact: true, consolidate: true, predictive: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: true, compact: true, consolidate: true, predictive: false }
     }
 }
 
@@ -396,6 +400,7 @@ impl Config {
             generalize: on("MIND_GENERALIZE"),
             need: on("MIND_NEED"),
             keep_order: on("MIND_KEEP_ORDER"),
+            burst: on("MIND_BURST"),
             window: std::env::var("MIND_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(2),
             compact: on("MIND_COMPACT"),
             consolidate: on("MIND_CONSOLIDATE"),
@@ -544,6 +549,7 @@ impl Mind {
         b.generalize = cfg.generalize && cfg.compact;
         b.need = cfg.need && cfg.coverage;
         b.topo = cfg.keep_order;
+        b.burst = cfg.keep_order && cfg.burst;
         if cfg.recur {
             b.pair_gain = 0;
             b.full_gain = 3;
@@ -602,6 +608,7 @@ impl Mind {
         let coverage = cfg.coverage;
         let need = cfg.need;
         let keep_order = cfg.keep_order;
+        let burst = cfg.keep_order && cfg.burst;
         let superpose = cfg.superpose;
         let claustrum = cfg.claustrum;
         let hc_bits = if cfg.hc_assoc { (MAX_PAIRS + 2) * BITS } else { SLOTS.len() * BITS };
@@ -644,6 +651,7 @@ impl Mind {
                 o.set_coverage(coverage);
                 o.set_need(need && coverage);
                 o.col.topo = keep_order;
+                o.col.burst = burst;
                 o.col.superpose = superpose;
                 o.col.select = claustrum && recur;
                 if recur {

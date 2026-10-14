@@ -34,7 +34,7 @@ fn task(name: &str, trials: usize) -> Task {
     }
 }
 
-fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize) {
+fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize, describe: impl Fn(&G) -> String) {
     let trials: usize = env("CUR_TRIALS", 400);
     let lives: u64 = env("CUR_LIVES", 16);
     let held_n: u64 = env("CUR_HELD", 16);
@@ -68,6 +68,7 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize) {
     }
     let (_, o, w) = check(&population[0], original);
     println!("final best: held out on the original {o}/1024 pooled, {w}/1024 worst phase");
+    print!("{}", describe(&population[0]));
 }
 
 fn main() {
@@ -83,21 +84,21 @@ fn main() {
                 let n: usize = env("CUR_CHANNELS", 0);
                 println!("(naked: an empty string, {n} empty channels)");
                 let tokens = (0..n).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3, hold: false }).collect();
-                return run(TagGenome { tokens, next_id: 1 }, |g| g.tokens.len());
+                return run(TagGenome { tokens, next_id: 1 }, |g| g.tokens.len(), |g| g.describe());
             }
-            run(if bare { TagGenome::bare_seed() } else { TagGenome::context_seed() }, |g| g.tokens.len());
+            run(if bare { TagGenome::bare_seed() } else { TagGenome::context_seed() }, |g| g.tokens.len(), |g| g.describe());
         }
         "stack" => {
             println!("curriculum, stack genome from an empty program");
-            run(Genome { code: vec![] }, |g| g.code.len());
+            run(Genome { code: vec![] }, |g| g.code.len(), |_| String::new());
         }
         _ => {
             println!("curriculum, edge genome from {}", if bare { "a bare start" } else { "the context circuit" });
             if naked {
                 println!("(naked: no edges)");
-                return run(GeneGenome { edges: vec![], next_id: 2 }, |g| g.edges.len());
+                return run(GeneGenome { edges: vec![], next_id: 2 }, |g| g.edges.len(), |_| String::new());
             }
-            run(if bare { GeneGenome::act_seed(8) } else { GeneGenome::context_seed(8) }, |g| g.edges.len());
+            run(if bare { GeneGenome::act_seed(8) } else { GeneGenome::context_seed(8) }, |g| g.edges.len(), |_| String::new());
         }
     }
 }

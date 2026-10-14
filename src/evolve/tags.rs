@@ -172,6 +172,42 @@ impl TagGenome {
         self.tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p) } else { None })
     }
 
+    /// The genome as text, one token a line: each channel with its width, and each population
+    /// with the channels its tags resolve to (S the senses, A the act, Cn the n-th channel) and
+    /// its properties.
+    pub fn describe(&self) -> String {
+        let ch = Channels::of(&self.tokens);
+        let last = ch.list.len() - 1;
+        let name = |i: usize| if i == 0 { "S".to_string() } else if i == last { "A".to_string() } else { format!("C{i}") };
+        let mut out = String::new();
+        let mut c = 0;
+        for t in &self.tokens {
+            match t {
+                Token::Channel { tag, width, hold } => {
+                    c += 1;
+                    out += &format!("C{c} channel {tag:08b}  {} bits{}\n", 64usize << (*width).min(MAX_WIDTH), if *hold { "  holds" } else { "" });
+                }
+                Token::Pop(p) => {
+                    let (a, b) = (ch.resolve(p.from, false), ch.resolve(p.to, true));
+                    out += &format!(
+                        "   {} -> {} {} {:?} lag {}{} field {}w@{} -> {}w@{}{}{}{}{}{}{}{}\n",
+                        name(a), name(b), if p.wire { "wire" } else { "kernels" }, p.op, p.lag,
+                        if p.span > 1 { format!(" span {}", p.span) } else { String::new() },
+                        1usize << p.field.min(MAX_WIDTH), p.at, 1usize << p.spread.min(MAX_WIDTH), p.place,
+                        if p.wire { String::new() } else { format!(" n{} in{} out{} q{}/4", p.count, p.fan_in, p.fan_out, p.quarters) },
+                        if p.tonic > 0 { format!(" tonic 1/{}", 1u32 << p.tonic) } else { String::new() },
+                        if p.share { " share" } else { "" },
+                        if p.grow { format!(" grow(syn {}, out {}-{}{}{})", p.birth_syn, p.out_min, p.out_max, if p.new_code { ", new" } else { "" }, if p.repeat { format!(", repeat {}", p.repeat_lag) } else { String::new() }) } else { String::new() },
+                        p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false)))),
+                        if p.sparse { " sparse" } else { "" },
+                        if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() },
+                    );
+                }
+            }
+        }
+        out
+    }
+
     /// The runtime graph: one node per channel (senses first, act last), one edge per population.
     pub fn graph(&self) -> Graph<NodeSpec, EdgeSpec, Directed> {
         let ch = Channels::of(&self.tokens);

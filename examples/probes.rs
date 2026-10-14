@@ -17,7 +17,8 @@
 //!
 //! `PRB_POP` (32), `PRB_ELITE` (8), `PRB_GENS` (100), `PRB_LIVES` (16 training worlds),
 //! `PRB_HELD` (16), `PRB_TRIALS` (200 a lifetime), `PRB_CHANNELS` (4), `PRB_EVERY` (10),
-//! `PRB_SEED` (7), `PRB_SHOW` (0), `PRB_THRIFT` (0: one more case prefers less work per step).
+//! `PRB_SEED` (7), `PRB_SHOW` (0), `PRB_THRIFT` (0; 1: one case per world prefers less work per
+//! step), `PRB_GAP` (0; n: 0 to n empty steps between trials).
 
 use neurocomp::evolve::tags::{TagGenome, Token};
 use neurocomp::evolve::{evolve_lexicase, probe_all, probe_means, Physics};
@@ -44,17 +45,19 @@ fn main() {
     let show = env("PRB_SHOW", 0u8) == 1;
     // (`PRB_THRIFT=1`: one more lexicase case prefers less work per step)
     let thrift = env("PRB_THRIFT", 0u8) == 1;
+    // (`PRB_GAP=n`: 0 to n empty steps between trials, so a light's time cannot be counted)
+    let gap: usize = env("PRB_GAP", 0);
     let train: Vec<u64> = (0..lives).collect();
     let held: Vec<u64> = (10_000..10_000 + held_n).collect();
     let tokens = (0..channels).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3, hold: false }).collect();
     let start = TagGenome { tokens, next_id: 1 };
-    println!("probes: tag genome from a naked start ({channels} empty channels); pop {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials a lifetime");
+    println!("probes: tag genome from a naked start ({channels} empty channels); pop {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials a lifetime, gaps 0-{gap}, thrift {thrift}");
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     println!("{:>4}  {:>5}  {:<35}  {:<35}  {:<35}  {:>13}", "gen", "size", "best, training", "best, held out", "population mean", "work: best pop");
     println!("{:>4}  {:>5}  {names}  {names}  {names}", "", "");
-    let last = evolve_lexicase(vec![start; pop], trials, Physics::Varied, &train, elite, gens, seed, thrift, |g, r| {
+    let last = evolve_lexicase(vec![start; pop], trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, |g, r| {
         if g % every == 0 || g + 1 == gens {
-            let h = probe_all(vec![r.best.clone()], trials, Physics::Varied, &held);
+            let h = probe_all(vec![r.best.clone()], trials, Physics::Varied, &held, gap);
             let hm = probe_means(&h[0].probes);
             println!("{g:>4}  {:>5}  {}  {}  {}  {:>6} {:>6}", r.best.tokens.len(), row(&r.best_means), row(&hm), row(&r.pop_means), r.best_work, r.pop_work);
             if show {
@@ -62,7 +65,7 @@ fn main() {
             }
         }
     });
-    let h = probe_all(vec![last[0].clone()], trials, Physics::Varied, &held);
+    let h = probe_all(vec![last[0].clone()], trials, Physics::Varied, &held, gap);
     println!("final best, held out: {}  work {}", row(&probe_means(&h[0].probes)), h[0].work);
     print!("{}", last[0].describe());
 }

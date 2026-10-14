@@ -209,17 +209,19 @@ pub enum Physics {
 /// One lifetime: the genome's network lives in a world with seed `seed`; returns the world's
 /// events.
 pub fn live<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> Vec<world::Event> {
-    live_work(g, task, physics, seed).0
+    live_work(g, task, physics, seed, 0).0
 }
 
 /// As `live`, also returning the network's work over the lifetime (kernels matched plus words
-/// wires and noise wrote; see `RuntimeNetwork::work`).
-pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> (Vec<world::Event>, u64) {
+/// wires and noise wrote; see `RuntimeNetwork::work`); with `gap` > 0, conditioning trials are
+/// separated by 0 to `gap` empty steps (see `World::gap_max`).
+pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, gap: usize) -> (Vec<world::Event>, u64) {
     let p = match physics {
         Physics::Fixed(p) => p,
         Physics::Varied => seed.wrapping_mul(0xA24B_AED4_963E_E407),
     };
     let mut w = World::with_physics(p, seed, 8);
+    w.gap_max = gap;
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
@@ -370,25 +372,28 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
 }
 
 /// The probes of one genome in one world seed: a serial-reversal lifetime and a delayed one,
-/// `trials` trials each (see `observe::probes`), and its work per step over both.
-pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64) -> ([i32; 5], u64) {
+/// `trials` trials each (see `observe::probes`), with gaps of 0 to `gap` steps between trials,
+/// and its work per step over both.
+pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize) -> ([i32; 5], u64) {
     let period = (trials / 4).max(1);
-    let (rev, w1) = live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed);
-    let (del, w2) = live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A);
+    let (rev, w1) = live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap);
+    let (del, w2) = live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap);
     let steps = (rev.len() + del.len()).max(1) as u64;
     (observe::probes(&rev, period, &del), (w1 + w2) / steps)
 }
 
-/// What probing a genome found: its probes in each seed and its mean work per step.
+/// What probing a genome found: its probes and work per step in each seed, and its mean work
+/// per step.
 pub struct Probed<G> {
     pub probes: Vec<[i32; 5]>,
+    pub works: Vec<u64>,
     pub work: u64,
     pub genome: G,
 }
 
 /// Each genome's probes in each seed, spread over the machine's cores (a genome whose network
 /// panics scores worst on every probe).
-pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64]) -> Vec<Probed<G>> {
+pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize) -> Vec<Probed<G>> {
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).max(1);
     let chunk = population.len().div_ceil(threads).max(1);
     let mut out = Vec::with_capacity(population.len());
@@ -396,10 +401,10 @@ pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physi
         let handles: Vec<_> = population
             .chunks(chunk)
             .map(|part| sc.spawn(move || part.iter().map(|g| {
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores(g, trials, physics, s)).collect::<Vec<_>>()))
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores(g, trials, physics, s, gap)).collect::<Vec<_>>()))
                     .unwrap_or_else(|_| vec![([-1024; 5], u64::MAX / 2); seeds.len()]);
                 let work = r.iter().map(|x| x.1).sum::<u64>() / seeds.len().max(1) as u64;
-                Probed { probes: r.into_iter().map(|x| x.0).collect(), work, genome: g.clone() }
+                Probed { probes: r.iter().map(|x| x.0).collect(), works: r.iter().map(|x| x.1).collect(), work, genome: g.clone() }
             }).collect::<Vec<_>>()))
             .collect();
         for h in handles {
@@ -431,27 +436,28 @@ pub struct ProbeGeneration<G> {
 }
 
 /// Evolution on the probes by epsilon-lexicase selection: every (seed, probe) pair is a case,
-/// and, with `thrift`, one more case prefers less work per step (kernels matched plus words
-/// wired): a genome is cheaper by pausing or shedding populations, so among genomes that do
-/// equally well the cheaper is kept. Each parent is chosen by taking the cases in a random order
+/// and, with `thrift`, one more case per seed prefers less work per step in that world (kernels
+/// matched plus words wired): a genome is cheaper by pausing or shedding populations, so among
+/// genomes that do equally well the cheaper is kept (a sixth of the cases: enough to stop
+/// bloat, not enough to win over every capacity). Each parent is chosen by taking the cases in a random order
 /// and keeping, case by case, the genomes within epsilon (the case's median absolute deviation
 /// over the population) of the best, until one is left. A genome best at anything (one probe, a
 /// few worlds) can be chosen, so evolution can climb one capacity at a time instead of needing
 /// all of them at once. The `elite` survivors are lexicase choices too; the rest are their
 /// mutated (a quarter recombined) children. Returns the final population, highest summed probe
 /// means first.
-pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], elite: usize, generations: usize, seed: u64, thrift: bool, mut report: impl FnMut(usize, &ProbeGeneration<G>)) -> Vec<G> {
+pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, elite: usize, generations: usize, seed: u64, thrift: bool, mut report: impl FnMut(usize, &ProbeGeneration<G>)) -> Vec<G> {
     let mut rng = StdRng::seed_from_u64(seed ^ 0x1E81);
     let pop = start.len();
     let mut population = start;
     let mut last: Vec<G> = population.clone();
     for generation in 0..generations {
-        let scored = probe_all(population.drain(..).collect(), trials, physics, seeds);
+        let scored = probe_all(population.drain(..).collect(), trials, physics, seeds, gap);
         let n = scored.len();
-        // the cases: one per (seed, probe), then the thrift case (less work is better)
-        let ncases = seeds.len() * 5 + thrift as usize;
+        // the cases: one per (seed, probe), then one thrift case per seed (less work is better)
+        let ncases = seeds.len() * 5 + if thrift { seeds.len() } else { 0 };
         let value = |g: usize, c: usize| -> i64 {
-            if c < seeds.len() * 5 { scored[g].probes[c / 5][c % 5] as i64 } else { -(scored[g].work as i64) }
+            if c < seeds.len() * 5 { scored[g].probes[c / 5][c % 5] as i64 } else { -(scored[g].works[c - seeds.len() * 5].min(i64::MAX as u64 / 2) as i64) }
         };
         // epsilon per case: the median absolute deviation over the population
         let eps: Vec<i64> = (0..ncases).map(|c| {

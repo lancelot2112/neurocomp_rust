@@ -156,6 +156,8 @@ enum Scene {
     Sequence(std::collections::VecDeque<usize>),
     /// steps left, a caregiver there
     Echo(usize, bool),
+    /// a gap between conditioning trials: (kind, trials left after it, steps left in the gap)
+    Gap(Conditioning, usize, usize),
 }
 
 /// The world.
@@ -173,6 +175,10 @@ pub struct World {
     hand: Effector,
     cond_total: usize,
     pub reversal_period: usize,
+    /// conditioning: after each trial, a gap of 0 to `gap_max` steps (drawn each time) with
+    /// nothing shown, so when the next light comes cannot be counted from the last; 0 (the
+    /// default): trials follow each other directly
+    pub gap_max: usize,
     scene: Scene,
     stroke_next: bool,
     present: bool,
@@ -234,6 +240,7 @@ impl World {
             hand: Effector::new(MOVES, &mut r(0x40B5)),
             cond_total: 0,
             reversal_period: 500,
+            gap_max: 0,
             scene: Scene::Idle,
             stroke_next: false,
             present: false,
@@ -341,12 +348,29 @@ impl World {
                 }
                 if t + 1 < TRIAL {
                     Scene::Conditioning(kind, left, t + 1, cue, stroked)
+                } else if left > 1 && self.gap_max > 0 {
+                    let g = self.rng.gen_range(0..=self.gap_max);
+                    if g == 0 {
+                        let cue = self.rng.gen_bool(0.5);
+                        Scene::Conditioning(kind, left - 1, 0, cue, false)
+                    } else {
+                        Scene::Gap(kind, left - 1, g)
+                    }
                 } else if left > 1 {
                     let cue = self.rng.gen_bool(0.5);
                     Scene::Conditioning(kind, left - 1, 0, cue, false)
                 } else {
                     self.present = false;
                     Scene::Idle
+                }
+            }
+            Scene::Gap(kind, left, g) => {
+                ev.scene = SceneKind::Conditioning(kind);
+                if g > 1 {
+                    Scene::Gap(kind, left, g - 1)
+                } else {
+                    let cue = self.rng.gen_bool(0.5);
+                    Scene::Conditioning(kind, left, 0, cue, false)
                 }
             }
             Scene::Sequence(mut q) => {

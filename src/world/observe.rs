@@ -295,6 +295,31 @@ mod tests {
     }
 
     #[test]
+    fn gaps_between_trials_stop_a_clock_from_passing_for_responding() {
+        // a blind policy that clicks on steps 3-5 of every 10, counted from the start: with
+        // trials back to back it lines up with every light; with gaps it cannot
+        let run = |gap: usize| -> (i32, usize) {
+            let mut w = World::new(7, 4);
+            w.gap_max = gap;
+            w.reversal_period = 50;
+            w.conditioning(Conditioning::Reversal, 200);
+            let mut t = 0;
+            while !w.done() {
+                let a = w.act(None, if (3..=5).contains(&(t % 10)) { Some(CLICK) } else { None });
+                w.step(&a);
+                t += 1;
+            }
+            let d = World::new(8, 4);
+            (probes(&w.events, 50, &d.events)[0], w.events.len())
+        };
+        let (locked, steps) = run(0);
+        let (jittered, longer) = run(6);
+        assert!(locked > 900, "back to back, the clock looks like responding: {locked}");
+        assert!(jittered.abs() < 120, "with gaps it does not: {jittered}");
+        assert!(steps == 2000 && longer > 2400, "{steps} {longer}");
+    }
+
+    #[test]
     fn saying_the_next_token_is_counted() {
         let mut w = World::new(6, 4);
         let seq = [0, 1, 2, 3, 0, 1];

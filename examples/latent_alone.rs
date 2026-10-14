@@ -149,6 +149,9 @@ fn main() {
                     }
                     let born = ksep.births;
                     let (code, _) = ksep.code(&codes[light * 2 + (got > 0) as usize], true);
+                    if debug {
+                        eprintln!("event light {light} paid {} code {:?} new {}", got > 0, (0..1024).filter(|&b| code.bit_get(b)).take(6).collect::<Vec<_>>(), ksep.births > born);
+                    }
                     kh.hold(&code, ksep.births > born);
                 } else if circuit {
                     if l4_on {

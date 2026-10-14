@@ -61,6 +61,9 @@ pub struct Kernel {
     pub births: u64,
 }
 
+/// The fewest synapses a cell lives with.
+const MIN_SYN: u32 = 8;
+
 fn words(bits: usize) -> usize {
     bits.div_ceil(64)
 }
@@ -128,11 +131,17 @@ impl Kernel {
         }
     }
 
-    /// Anti-Hebbian: cell `c`'s synapses on the input's lines go, each with probability 2^-p.
+    /// Anti-Hebbian: cell `c`'s synapses on the input's lines go, each with probability 2^-p. A
+    /// cell left with fewer than `MIN_SYN` synapses dies (its mask is cleared: it never fires
+    /// again), as a cell that has lost its inputs is pruned; else, needing three quarters of a
+    /// few synapses, it would fire for nearly anything.
     pub fn anti_hebbian(&mut self, c: usize, input: &[u64], p: u32) {
         for w in 0..input.len() {
             let r = self.rand_mask(p);
             self.cells[c].syn[w] &= !(input[w] & r);
+        }
+        if pop(&self.cells[c].syn) < MIN_SYN {
+            self.cells[c].syn.iter_mut().for_each(|w| *w = 0);
         }
     }
 
@@ -212,21 +221,22 @@ impl Kernel {
 /// cell's own synapses on the input).
 ///
 /// - While the active assembly is young (its first 16 explained inputs: a context is learned at
-///   its start), an input it does not explain gets cells of its own born into it (it learns
-///   what comes).
-/// - Once settled, an input it does not explain inhibits it (a u8 count; an explained input is
-///   no news, and the count only leaks, one in sixteen explained inputs at random); a stored assembly that explains an input the
-///   active one does not gains drive against it, and loses it when the active one explains what
-///   it does not (an opponent count per rival).
-/// - When either count reaches the active assembly's strength (the bit length of how many inputs
-///   it has explained: what has held longer needs more), it falls silent; a rival that won comes
-///   on at once; otherwise the next input an assembly explains brings it back (completion), and
-///   one none explains starts a new assembly.
+///   its start), an input it does not explain gets cells of its own born into it.
+/// - Once settled, only rivals contradict it. A stored assembly that explains an input the active
+///   one does not gains drive against it; an input both explain carries no context and moves
+///   nothing. Every rival's drive leaks, one at random in sixteen inputs, so only what comes
+///   often under one assembly and not under the other builds up (a distractor that comes in every
+///   context now and then never does).
+/// - Something new while settled (its kernel cells were born for it) seeds a candidate assembly
+///   beside the active one, a possible new cause, with that input as its first drive: if it
+///   keeps coming it takes over (the first reversal); if not, the leak keeps it down. Something
+///   familiar that no assembly explains is background, learned into the active one.
+/// - A rival whose drive reaches the active assembly's strength (the bit length of how many
+///   inputs it has explained: what has held longer needs more) takes over.
 pub struct Holder {
     pub kernel: Kernel,
     /// per assembly, the inputs it has explained (saturating)
     explained: Vec<u8>,
-    sst: u8,
     rival: Vec<u8>,
     active: Option<usize>,
     pub now: usize,
@@ -237,7 +247,7 @@ pub struct Holder {
 
 impl Holder {
     pub fn new(bits: usize, seed: u64) -> Self {
-        Self { kernel: Kernel::new(bits, 64, 1, 1, seed), explained: Vec::new(), sst: 0, rival: Vec::new(), active: None, now: 0, switches: 0, resets: 0, debug: false }
+        Self { kernel: Kernel::new(bits, 64, 1, 1, seed), explained: Vec::new(), rival: Vec::new(), active: None, now: 0, switches: 0, resets: 0, debug: false }
     }
 
     pub fn contexts(&self) -> usize {
@@ -271,7 +281,6 @@ impl Holder {
 
     fn enter(&mut self, l: usize) {
         self.active = Some(l);
-        self.sst = 0;
         self.rival.iter_mut().for_each(|r| *r = 0);
         if l != self.now {
             self.switches += 1;
@@ -295,31 +304,58 @@ impl Holder {
         match self.active {
             Some(a) => {
                 let strength = 32 - (self.explained[a] as u32).leading_zeros() as u8;
-                if novel && !e[a] {
-                    for _ in 0..4 {
-                        self.kernel.birth(&inw, Some(a));
-                    }
-                } else if e[a] {
+                let young = self.explained[a] < 16;
+                if e[a] {
                     self.explained[a] = self.explained[a].saturating_add(1);
-                    // an explained input is no news: the inhibition only leaks, one at random
-                    // in sixteen explained inputs
-                    if self.kernel.rand_mask(4) & 1 == 1 {
-                        self.sst = self.sst.saturating_sub(1);
-                    }
-                } else if self.explained[a] < 16 {
+                } else if young {
                     // young: it learns what comes
                     for _ in 0..4 {
                         self.kernel.birth(&inw, Some(a));
                     }
-                } else {
-                    self.sst = self.sst.saturating_add(1);
+                } else if novel {
+                    // settled, and something new: it seeds a candidate assembly of its own (a
+                    // possible new cause), stored beside the active one, with that input as its
+                    // first drive
+                    // its cells are wired to what is new about the input: the input AND NOT the
+                    // lines the active assembly's cells cover (the distinctive part)
+                    let mut covered = vec![0u64; inw.len()];
+                    for c in 0..self.kernel.cells.len() {
+                        if self.kernel.cells[c].label == Some(a) {
+                            for (w, m) in covered.iter_mut().zip(&self.kernel.cells[c].syn) {
+                                *w |= m;
+                            }
+                        }
+                    }
+                    let own: Vec<u64> = inw.iter().zip(&covered).map(|(x, c)| x & !c).collect();
+                    let wire = if pop(&own) >= MIN_SYN { own } else { inw.clone() };
+                    let l = self.explained.len();
+                    self.explained.push(0);
+                    self.rival.push(1);
+                    for _ in 0..4 {
+                        self.kernel.birth(&wire, Some(l));
+                    }
+                } else if !(0..e.len()).any(|l| l != a && e[l]) {
+                    // familiar, and tied to no context: background, learned into the active one
+                    for _ in 0..4 {
+                        self.kernel.birth(&inw, Some(a));
+                    }
                 }
+                // only rivals contradict: a stored assembly that explains an input the active one
+                // does not gains drive against it (an input both explain carries no context);
+                // every rival's drive leaks, one at random in sixteen inputs, so only what comes
+                // often in one context and not in the other builds up
+                let leak = self.kernel.rand_mask(4) & 1 == 1;
                 let mut winner: Option<usize> = None;
                 for l in 0..self.explained.len() {
                     if l == a {
                         continue;
                     }
-                    self.rival[l] = if e[l] && !e[a] { self.rival[l].saturating_add(1) } else if e[a] && !e[l] { self.rival[l].saturating_sub(1) } else { self.rival[l] };
+                    if e.get(l).copied().unwrap_or(false) && !e[a] {
+                        self.rival[l] = self.rival[l].saturating_add(1);
+                    }
+                    if leak {
+                        self.rival[l] = self.rival[l].saturating_sub(1);
+                    }
                     if strength > 0 && self.rival[l] >= strength && winner.map_or(true, |w| self.rival[l] > self.rival[w]) {
                         winner = Some(l);
                     }
@@ -327,13 +363,11 @@ impl Holder {
                 if let Some(l) = winner {
                     self.resets += 1;
                     self.enter(l);
-                } else if strength > 0 && self.sst >= strength {
-                    self.resets += 1;
-                    self.active = None;
                 }
             }
             None => {
-                // silent: an assembly that explains the input comes back; none does, a new one
+                // nothing held yet: an assembly that explains the input comes on; none does, a
+                // new one
                 if let Some(l) = (0..e.len()).find(|&l| e[l]) {
                     self.enter(l);
                 } else {
@@ -348,7 +382,7 @@ impl Holder {
             }
         }
         if self.debug {
-            eprintln!("holder: explained {:?} by {:?} sst {} rivals {:?} -> {:?}", self.explained, e, self.sst, self.rival, self.active);
+            eprintln!("holder: explained {:?} by {:?} rivals {:?} -> {:?}", self.explained, e, self.rival, self.active);
         }
         self.now
     }

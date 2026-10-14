@@ -24,9 +24,9 @@ impl Responding {
     }
 }
 
-/// The score of a lifetime (or phase) that never clicked in a response window: below any
-/// discrimination (which runs from -1024 to 1024). Not acting is death; clicking at all, even at
-/// the wrong times, beats it; clicking at the right times is best.
+/// The score of a genome that never clicked in a response window in any of its lifetimes: below
+/// any discrimination (which runs from -1024 to 1024). Never acting is death; clicking at all,
+/// even at the wrong times, beats it; clicking at the right times is best.
 pub const SILENT: i32 = -4096;
 
 impl Responding {
@@ -79,14 +79,14 @@ pub fn responding(events: &[Event]) -> Responding {
 
 /// Discrimination within each phase of a reversal (trials `k*period` to `(k+1)*period`), the
 /// worst of them: a genome scores well only if it does well both before and after every swap.
-/// A phase with no click scores `SILENT`.
+/// A phase with no click counts 0.
 pub fn worst_phase(events: &[Event], period: usize) -> i32 {
     let period = period.max(1);
     let phases = events.iter().filter_map(|e| e.trial.map(|t| t.0 / period)).max().map_or(0, |m| m + 1);
     (0..phases)
         .map(|ph| {
             let evs: Vec<Event> = events.iter().filter(|e| e.trial.map_or(false, |t| t.0 / period == ph)).cloned().collect();
-            responding(&evs).score()
+            responding(&evs).discrimination()
         })
         .min()
         .unwrap_or(0)

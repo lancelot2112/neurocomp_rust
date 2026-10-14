@@ -237,16 +237,27 @@ pub fn live<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> Vec
 
 /// Fitness: the observer's discrimination (parts per 1024: click rate on paying trials minus on
 /// the others), the mean over `seeds` world seeds. A lifetime (or, scoring the worst phase, a
-/// phase) with no click scores `observe::SILENT`, below any clicking.
+/// phase) with no click counts 0, like clicking without telling the lights apart; a genome that
+/// never clicks in any of its lifetimes scores `observe::SILENT`, below any clicking.
 pub fn fitness<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64]) -> (i32, observe::Responding) {
+    let (f, r, _) = fitness_detail(g, task, physics, seeds);
+    (f, r)
+}
+
+/// As `fitness`, also counting the lifetimes with no click.
+pub fn fitness_detail<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64]) -> (i32, observe::Responding, usize) {
     let mut total = 0i32;
+    let mut silent = 0usize;
     let mut sum = observe::Responding::default();
     for &s in seeds {
         let events = live(g, task, physics, s);
         let r = observe::responding(&events);
+        if r.paying_clicked + r.other_clicked == 0 {
+            silent += 1;
+        }
         total += match task {
             Task::Reversal { period, worst_phase: true, .. } => observe::worst_phase(&events, period),
-            _ => r.score(),
+            _ => r.discrimination(),
         };
         sum.paying_trials += r.paying_trials;
         sum.paying_clicked += r.paying_clicked;
@@ -254,7 +265,10 @@ pub fn fitness<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64])
         sum.other_clicked += r.other_clicked;
         sum.strokes += r.strokes;
     }
-    (total / seeds.len().max(1) as i32, sum)
+    if silent == seeds.len() {
+        return (observe::SILENT, sum, silent);
+    }
+    (total / seeds.len().max(1) as i32, sum, silent)
 }
 
 /// Every genome's fitness, the population spread over the machine's cores (each lifetime is

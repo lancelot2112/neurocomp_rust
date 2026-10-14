@@ -779,6 +779,20 @@ mod tests {
     }
 
     #[test]
+    fn only_a_genome_silent_in_every_lifetime_dies() {
+        use crate::evolve::{fitness_detail, Physics, Task};
+        use crate::world::{observe, Conditioning};
+        let task = Task::Conditioning(Conditioning::Instrumental, 40);
+        let empty = TagGenome { tokens: vec![], next_id: 1 };
+        let (f, _, silent) = fitness_detail(&empty, task, Physics::Varied, &[1, 2, 3]);
+        assert_eq!((f, silent), (observe::SILENT, 3));
+        // a tonic population on the act clicks in some lifetimes: no death, silent ones count 0
+        let babble = TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic: 1, ..Pop::new(1, ACT, ACT) })], next_id: 2 };
+        let (f, _, silent) = fitness_detail(&babble, task, Physics::Varied, &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert!(silent < 8 && f > -1024, "{f} {silent}");
+    }
+
+    #[test]
     fn a_tonic_population_babbles_and_a_responsive_one_does_not() {
         let t = Task::Conditioning(Conditioning::Instrumental, 30);
         let mut g = TagGenome::bare_seed();

@@ -17,7 +17,7 @@
 
 use neurocomp::evolve::genes::GeneGenome;
 use neurocomp::evolve::tags::{TagGenome, Token};
-use neurocomp::evolve::{evolve_population, fitness, Evolvable, Genome, Physics, Task};
+use neurocomp::evolve::{evolve_population, fitness, fitness_detail, Evolvable, Genome, Physics, Task};
 use neurocomp::world::Conditioning;
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -49,12 +49,17 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize, describe: impl Fn(&G)
     let train_rev: Vec<u64> = (0..lives_rev).collect();
     let train: Vec<u64> = (0..lives).collect();
     let held: Vec<u64> = (10_000..10_000 + held_n).collect();
-    let check = |g: &G, t: Task| (fitness(g, t, Physics::Varied, &held).0, fitness(g, original, Physics::Varied, &held).0, fitness(g, original_worst, Physics::Varied, &held).0);
+    // held out: the stage's score, then the original's (pooled and worst phase); and, on the stage,
+    // the discrimination pooled over every held-out trial and how many lifetimes never clicked
+    let check = |g: &G, t: Task| {
+        let (h, r, silent) = fitness_detail(g, t, Physics::Varied, &held);
+        (h, fitness(g, original, Physics::Varied, &held).0, fitness(g, original_worst, Physics::Varied, &held).0, r.discrimination(), silent)
+    };
     let mut population: Vec<G> = vec![start; pop];
     println!("pop {pop}, elite {elite}, {lives} lifetimes a genome, {held_n} held out, {trials} trials a lifetime; stages {stages}");
-    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {:>11}  {:>14}  {:>14}", "stage", "gen", "best", "mean", "size", "held:stage", "held:original", "held:orig-worst");
-    let (s0, o0, w0) = check(&population[0], task(stages.split(',').next().unwrap().split(':').next().unwrap(), trials));
-    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {s0:>11}  {o0:>14}  {w0:>14}", "start", "-", "", "", size(&population[0]));
+    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {:>11}  {:>14}  {:>14}  {:>10}  {:>6}", "stage", "gen", "best", "mean", "size", "held:stage", "held:original", "held:orig-worst", "held:disc", "silent");
+    let (s0, o0, w0, d0, q0) = check(&population[0], task(stages.split(',').next().unwrap().split(':').next().unwrap(), trials));
+    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {s0:>11}  {o0:>14}  {w0:>14}  {d0:>10}  {q0:>3}/{}", "start", "-", "", "", size(&population[0]), held.len());
     for (k, st) in stages.split(',').enumerate() {
         let mut it = st.split(':');
         let name = it.next().unwrap().to_string();
@@ -63,8 +68,8 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize, describe: impl Fn(&G)
         let tr = if name.starts_with("reversal") { &train_rev } else { &train };
         population = evolve_population(population, t, Physics::Varied, tr, elite, gens, seed + k as u64, |g, r| {
             if g % every == 0 || g + 1 == gens {
-                let (h, o, w) = check(&r.best, t);
-                println!("{name:<13} {g:>4}  {:>5} {:>5}  {:>5}  {h:>11}  {o:>14}  {w:>14}", r.best_fitness, r.mean_fitness, size(&r.best));
+                let (h, o, w, d, q) = check(&r.best, t);
+                println!("{name:<13} {g:>4}  {:>5} {:>5}  {:>5}  {h:>11}  {o:>14}  {w:>14}  {d:>10}  {q:>3}/{}", r.best_fitness, r.mean_fitness, size(&r.best), held.len());
                 // (`CUR_SHOW=1`: the current best network under each row)
                 if show {
                     print!("{}", describe(&r.best));
@@ -72,7 +77,7 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize, describe: impl Fn(&G)
             }
         });
     }
-    let (_, o, w) = check(&population[0], original);
+    let (_, o, w, _, _) = check(&population[0], original);
     println!("final best: held out on the original {o}/1024 pooled, {w}/1024 worst phase");
     print!("{}", describe(&population[0]));
 }

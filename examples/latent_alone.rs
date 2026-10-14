@@ -89,6 +89,7 @@ fn main() {
         };
         let mut prev = BitVector::new(1024, Some(0));
         kh.debug = debug;
+        ksep.whole_births = std::env::var("LATENT_WHOLE").is_ok();
         kh.separate = std::env::var("LATENT_SEPARATE").is_ok();
         // the circuit's input: layer 4's code of what came together (the light shown and what
         // followed), a random sparse code per conjunction, as layer 4 recruits one for each

@@ -84,6 +84,8 @@ pub struct Kernel {
     /// only conjunction cells write the output (what came after what), plain cells code and
     /// learn but do not send
     pub conj_only: bool,
+    /// births on a new part are dealt the whole input's lines (conjunctive cells)
+    pub whole_births: bool,
 }
 
 /// The bits one coding cell writes (the popcount a new part must meet to be a cell of its own).
@@ -105,7 +107,7 @@ impl Kernel {
     /// Cells over `bits` input lines writing into `out_bits` output bits, `out_k` bits each, `k`
     /// winning an input.
     pub fn new(bits: usize, out_bits: usize, k: usize, out_k: usize, seed: u64) -> Self {
-        Self { bits, out_bits, k, out_k, cells: Vec::new(), rng: StdRng::seed_from_u64(seed), births: 0, depth: 0, hist: Default::default(), conj_only: false }
+        Self { bits, out_bits, k, out_k, cells: Vec::new(), rng: StdRng::seed_from_u64(seed), births: 0, depth: 0, hist: Default::default(), conj_only: false, whole_births: false }
     }
 
     pub fn rand_mask(&mut self, p: u32) -> u64 {
@@ -372,7 +374,10 @@ impl Kernel {
                 for &c in &winners {
                     self.hebbian(c, &inw, 3);
                 }
-                let born = self.births_for(&uncovered, self.k, None);
+                // (`whole_births`: the new cells are dealt lines from the whole input, not only
+                // its uncovered part, so each spans the new part and what came with it: a cell
+                // for the conjunction, firing (3/4 of its lines) only when both are there)
+                let born = if self.whole_births { self.births_for(&inw, self.k, None) } else { self.births_for(&uncovered, self.k, None) };
                 for (i, &c) in born.iter().enumerate() {
                     if self.depth > 0 {
                         self.wire_then(c, 1 + i % self.depth);

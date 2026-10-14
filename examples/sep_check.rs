@@ -1,7 +1,7 @@
 //! Pattern separation check: four inputs, two pairs sharing half their lines, presented at
 //! random; how much their codes overlap before and after learning.
 use neurocomp::bitvec::BitVector;
-use neurocomp::program::separation::Separator;
+use neurocomp::program::assembly::Assembly;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -25,7 +25,7 @@ fn main() {
         })
         .collect();
     let ov = |a: &BitVector, b: &BitVector| a.as_words().iter().zip(b.as_words()).map(|(x, y)| (x & y).count_ones()).sum::<u32>();
-    let mut sep = Separator::new(1024, 16, 1024, 32, 7);
+    let mut sep = Assembly::coding(1024, 16, 1024, 32, 7);
     let mut prev: Option<Vec<BitVector>> = None;
     for round in [0usize, 50, 200, 1000, 4000, 4000] {
         let mut done = 0;

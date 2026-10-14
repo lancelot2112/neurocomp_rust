@@ -14,14 +14,13 @@
 //! beyond the first in a phase (false alarms).
 //!
 //! `LATENT_MODEL=attractor|circuit` (the rate-test attractor, or the recurrent assembly stopped by
-//! inhibition, `context_circuit.rs`), `LATENT_SCALE=fixed|volatile`, `LATENT_POLICY=random|greedy`, `LATENT_P` (0..1),
+//! inhibition, `assembly.rs`), `LATENT_SCALE=fixed|volatile`, `LATENT_POLICY=random|greedy`, `LATENT_P` (0..1),
 //! `LATENT_PERIOD`, `LATENT_PHASES`, `LATENT_SEEDS`, `LATENT_DEBUG=1`.
 
 use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::area::Pool;
-use neurocomp::program::context_circuit::ContextCircuit;
-use neurocomp::program::separation::Separator;
+use neurocomp::program::assembly::Assembly;
 use neurocomp::program::latent::{LatentCause, Scale};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -59,7 +58,7 @@ fn main() {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut lc = LatentCause::new(BITS, scale);
         lc.debug = debug;
-        let mut cc = ContextCircuit::new(256, 8, 1024);
+        let mut cc = Assembly::holding(256, 8, 1024);
         cc.debug = debug;
         // the circuit's input: layer 4's code of what came together (the light shown and what
         // followed), a random sparse code per conjunction, as layer 4 recruits one for each
@@ -82,7 +81,7 @@ fn main() {
         let mut l4 = Pool::new(2, 1024, 1024, 32, 2, seed);
         // (`LATENT_SEP=1`: the codes pass through pattern separation first)
         let sep_on = std::env::var("LATENT_SEP").is_ok();
-        let mut sep = Separator::new(1024, 16, 1024, 32, seed);
+        let mut sep = Assembly::coding(1024, 16, 1024, 32, seed);
         let codes: Vec<BitVector> = (0..4)
             .map(|i| {
                 if shared {
@@ -110,11 +109,11 @@ fn main() {
         let mut home: [Option<usize>; 2] = [None, None];
         for ph in 0..phases {
             let kind = ph % 2;
-            let resets_before = if circuit { cc.resets } else { lc.resets };
+            let resets_before = if circuit { cc.resets() } else { lc.resets };
             let mut detected: Option<u32> = None;
             for t in 0..period {
                 let light = rng.gen_range(0..2usize);
-                let ctx = if circuit { cc.now } else { lc.now };
+                let ctx = if circuit { cc.now() } else { lc.now };
                 let act = if greedy {
                     let v = worth.get(ctx).map_or(-1, |w| w[light]);
                     let share = if v < 0 { 0.5 } else { (v as f64 / ONE as f64).max(0.1) };
@@ -127,27 +126,27 @@ fn main() {
                 }
                 let got = if light == kind && rng.gen_bool(p) { ONE as i32 } else { 0 };
                 let bits = [light, BACKGROUND];
-                let before = if circuit { cc.resets } else { lc.resets };
+                let before = if circuit { cc.resets() } else { lc.resets };
                 if circuit {
                     if l4_on {
                         let code = l4.learn(&[(0, &cue[light]), (1, &outcome[(got > 0) as usize])]);
-                        cc.step(&code);
+                        cc.hold(&code);
                     } else if sep_on {
                         // (the critical period closed: layer 4 codes, it no longer learns;
                         // LATENT_SEP_OPEN=1 keeps it learning)
                         let code = sep.code(&codes[light * 2 + (got > 0) as usize], std::env::var("LATENT_SEP_OPEN").is_ok());
-                        cc.step(&code);
+                        cc.hold(&code);
                     } else {
-                        cc.step(&codes[light * 2 + (got > 0) as usize]);
+                        cc.hold(&codes[light * 2 + (got > 0) as usize]);
                     }
                 } else {
                     lc.step(&worth, &learned, &bits, got);
                 }
-                if (if circuit { cc.resets } else { lc.resets }) > before && detected.is_none() {
+                if (if circuit { cc.resets() } else { lc.resets }) > before && detected.is_none() {
                     detected = Some(t);
                 }
                 // the active context learns the outcome (locking in)
-                let c = if circuit { cc.now } else { lc.now };
+                let c = if circuit { cc.now() } else { lc.now };
                 while worth.len() <= c {
                     worth.push(vec![-1; BITS]);
                     learned.push(vec![0; BITS]);
@@ -158,8 +157,8 @@ fn main() {
                     *n = n.saturating_add(1);
                 }
             }
-            let resets = if circuit { cc.resets } else { lc.resets } - resets_before;
-            let (now, contexts) = if circuit { (cc.now, cc.contexts) } else { (lc.now, lc.contexts) };
+            let resets = if circuit { cc.resets() } else { lc.resets } - resets_before;
+            let (now, contexts) = if circuit { (cc.now(), cc.contexts()) } else { (lc.now, lc.contexts) };
             let s = &mut per[ph];
             if ph == 0 {
                 first_phase_false += resets;

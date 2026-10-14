@@ -503,7 +503,7 @@ impl Config {
             phase: std::env::var("MIND_PHASE").map_or(false, |v| v == "1"),
             explore: std::env::var("MIND_EXPLORE").map_or(false, |v| v == "1"),
             ilam: std::env::var("MIND_ILAM").map_or(false, |v| v == "1"),
-            latent: std::env::var("MIND_LATENT").map_or(false, |v| v == "1" || v == "2" || v == "3"),
+            latent: std::env::var("MIND_LATENT").map_or(false, |v| ["1", "2", "3", "4"].contains(&v.as_str())),
             attractor: std::env::var("MIND_LATENT").map_or(false, |v| v == "2" || v == "3"),
             volatile: std::env::var("MIND_LATENT").map_or(false, |v| v == "3"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),

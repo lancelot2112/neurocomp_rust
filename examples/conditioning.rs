@@ -350,6 +350,9 @@ fn main() {
                 }
                 let (used, rec, cyc, why) = mind.brain.full_l4();
                 eprintln!("progress {kind:?} seed {seed} trials {trial}: top layer 4 cells in use {used} (recruited {rec}: salient {}, recurring {}, new {}; recycled {cyc}; orbitofrontal recycled {}); phase switches {}, context {}", why.0, why.1, why.2, mind.ofc_recycled, mind.phase_switches, mind.phase_context());
+                if let Some((n, sw, rs)) = mind.ofc_area.col.assembly_counts() {
+                    eprintln!("progress {kind:?} seed {seed} trials {trial}: orbitofrontal assemblies {n}, changes {sw}, silencings {rs}");
+                }
             }
             a_pays = (trial / world.reversal_period.max(1)) % 2 == 0;
             if sleep_every > 0 && trial % sleep_every == 0 {

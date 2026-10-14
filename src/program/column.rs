@@ -51,7 +51,7 @@
 //!   experience doubles (a critical period); layer 2/3's held population is an assembly that
 //!   sustains itself by recurrence and falls silent when inhibition (from inputs it did not
 //!   learn, and from rival assemblies the input drives more) reaches its recurrent strength
-//!   (`context_circuit.rs`). What is held is the active assembly's cells; which assembly is
+//!   (`assembly.rs`, holding). What is held is the active assembly's cells; which assembly is
 //!   active is the area's context.
 //!
 //! Both layers learn the same way: a confirmed prediction strengthens the cells that made it;
@@ -59,8 +59,7 @@
 //! context, silent synapses on the input, the target as its output).
 
 use crate::bitvec::BitVector;
-use crate::program::context_circuit::ContextCircuit;
-use crate::program::separation::Separator;
+use crate::program::assembly::Assembly;
 use crate::program::area::Pool;
 use crate::program::bitcells::BitCells;
 
@@ -265,7 +264,7 @@ pub struct Column {
     record: Option<(u32, u32)>,
     /// held as an assembly (`set_assembly`): the separator, the recurrent assembly population,
     /// and the inputs the separator has seen
-    assembly: Option<Box<(Separator, ContextCircuit, u64)>>,
+    assembly: Option<Box<(Assembly, Assembly, u64)>>,
     /// topographic output (keep the order): layer 2/3's activity is sent up in layer 4's own
     /// coordinates. Each cell has a home, the layer 4 code it first fired for, and a slot there
     /// (the lowest free: 0 for the first cell for that input, 1, 2, … for cells for the same
@@ -325,14 +324,19 @@ impl Column {
     /// Held as an assembly (see the module notes): a separator of `cells` cells (`k` firing) on
     /// layer 4's code, and a population of `assembly_cells` (`assembly_k` active) holding.
     pub fn set_assembly(&mut self, cells: usize, k: usize, assembly_cells: usize, assembly_k: usize, seed: u64) {
-        let sep = Separator::new(cells, k, self.bits, 32, seed);
-        let circuit = ContextCircuit::new(assembly_cells, assembly_k, cells);
+        let sep = Assembly::coding(cells, k, self.bits, 32, seed);
+        let circuit = Assembly::holding(assembly_cells, assembly_k, cells);
         self.assembly = Some(Box::new((sep, circuit, 0)));
     }
 
     /// With an assembly: the one active (the area's context), and whether one is.
     pub fn assembly_context(&self) -> Option<(usize, bool)> {
-        self.assembly.as_ref().map(|a| (a.1.now, !a.1.unsettled()))
+        self.assembly.as_ref().map(|a| (a.1.now(), !a.1.unsettled()))
+    }
+
+    /// With an assembly: (assemblies recruited, changes of assembly, silencings) so far.
+    pub fn assembly_counts(&self) -> Option<(usize, u32, u32)> {
+        self.assembly.as_ref().map(|a| (a.1.contexts(), a.1.switches(), a.1.resets()))
     }
 
     /// With an assembly: the input separated and held; the held state is the active assembly's
@@ -348,7 +352,7 @@ impl Column {
         let plastic = learn && t % every == 0;
         let sep = a.0.code(input, plastic);
         if sep.count_ones() > 0 {
-            a.1.step(&sep);
+            a.1.hold(&sep);
         }
         let mut held = BitVector::new(bits, Some(0));
         for &c in a.1.active() {

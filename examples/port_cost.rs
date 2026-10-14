@@ -1,7 +1,7 @@
 //! Why do sense readers not survive selection? The probes and work per step of a few one- or
 //! two-population genomes, over `PC_N` worlds (default 64), gaps of 0-6 steps between trials.
 
-use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, EYE, HAND, SELF, TOUCH};
+use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, EYE, HAND, SELF, TOUCH, VOICE};
 use neurocomp::evolve::{probe_all, probe_means, Physics, ALL_PROBES};
 use neurocomp::kernel::KernelOp;
 
@@ -24,6 +24,9 @@ fn main() {
             Token::Pop(to_hand(Pop { count: 4, cover: true, grow: true, from: EYE, from_port: true, ..Pop::new(1, EYE, HAND) })),
             Token::Pop(to_hand(Pop { count: 4, tonic: 3, ..Pop::new(2, SELF, HAND) })),
         ], next_id: 3 }),
+        ("blind speaker: self -> voice, tonic", TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic: 2, to: VOICE, to_port: true, ..Pop::new(1, SELF, VOICE) })], next_id: 2 }),
+        ("blind speaker: self -> voice, responsive", TagGenome { tokens: vec![Token::Pop(Pop { count: 8, to: VOICE, to_port: true, ..Pop::new(1, SELF, VOICE) })], next_id: 2 }),
+        ("eye -> voice, cover, growing, tonic", TagGenome { tokens: vec![Token::Pop(Pop { count: 4, tonic: 3, cover: true, grow: true, from: EYE, from_port: true, to: VOICE, to_port: true, ..Pop::new(1, EYE, VOICE) })], next_id: 2 }),
         ("touch -> hand, cover, 4 kernels", TagGenome { tokens: vec![Token::Pop(to_hand(Pop { count: 4, cover: true, from: TOUCH, from_port: true, op: KernelOp::Or, ..Pop::new(1, TOUCH, HAND) }))], next_id: 2 }),
     ];
     let _ = ACT;

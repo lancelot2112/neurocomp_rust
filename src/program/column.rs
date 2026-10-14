@@ -47,7 +47,7 @@
 //!
 //! - **Held as an assembly** (`set_assembly`): layer 4's code is separated first (competing
 //!   cells with counting synapses, Hebbian for winners, anti-Hebbian for cells that matched and
-//!   were held down, a homeostatic threshold; `separation.rs`), its plasticity closing as its
+//!   were held down, a homeostatic threshold; `assembly.rs`, coding), its plasticity closing as its
 //!   experience doubles (a critical period); layer 2/3's held population is an assembly that
 //!   sustains itself by recurrence and falls silent when inhibition (from inputs it did not
 //!   learn, and from rival assemblies the input drives more) reaches its recurrent strength
@@ -344,13 +344,7 @@ impl Column {
     fn hold_assembly(&mut self, input: &BitVector, learn: bool) -> BitVector {
         let bits = self.bits;
         let a = self.assembly.as_mut().unwrap();
-        // the separator's plasticity closes as its experience doubles: it learns every input
-        // for its first 2048, then every 2nd, 4th, ... (a critical period)
-        a.2 += 1;
-        let t = a.2;
-        let every = 1u64 << (64 - (t / 2048).leading_zeros()).min(20);
-        let plastic = learn && t % every == 0;
-        let sep = a.0.code(input, plastic);
+        let sep = a.0.code(input, learn);
         if sep.count_ones() > 0 {
             a.1.hold(&sep);
         }

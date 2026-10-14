@@ -98,8 +98,10 @@ fn main() {
         // (layer 4 develops first: the separator settles on the inputs the world can give, in
         // random order, before the task and the circuit begin)
         if sep_on {
+            // (only what the first phase can give: A paid, A unpaid, B unpaid; B paid is first
+            // met at the first swap)
             for _ in 0..2000 {
-                let i = rng.gen_range(0..4usize);
+                let i = [0usize, 1, 2][rng.gen_range(0..3usize)];
                 sep.code(&codes[i], true);
             }
         }
@@ -134,7 +136,7 @@ fn main() {
                     } else if sep_on {
                         // (the critical period closed: layer 4 codes, it no longer learns;
                         // LATENT_SEP_OPEN=1 keeps it learning)
-                        let code = sep.code(&codes[light * 2 + (got > 0) as usize], std::env::var("LATENT_SEP_OPEN").is_ok());
+                        let code = sep.code(&codes[light * 2 + (got > 0) as usize], true);
                         cc.hold(&code);
                     } else {
                         cc.hold(&codes[light * 2 + (got > 0) as usize]);

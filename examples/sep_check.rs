@@ -1,5 +1,7 @@
-//! Pattern separation check: four inputs, two pairs sharing half their lines, presented at
-//! random; how much their codes overlap before and after learning.
+//! Pattern separation check: four inputs, two pairs sharing half their lines. The separator
+//! develops on three of them; then the fourth arrives (with the others) and is learned only as
+//! its novelty reopens plasticity. How much each code overlaps the others, and whether it is
+//! stable.
 use neurocomp::bitvec::BitVector;
 use neurocomp::program::assembly::Assembly;
 use rand::rngs::StdRng;
@@ -26,17 +28,20 @@ fn main() {
         .collect();
     let ov = |a: &BitVector, b: &BitVector| a.as_words().iter().zip(b.as_words()).map(|(x, y)| (x & y).count_ones()).sum::<u32>();
     let mut sep = Assembly::coding(1024, 16, 1024, 32, 7);
-    let mut prev: Option<Vec<BitVector>> = None;
-    for round in [0usize, 50, 200, 1000, 4000, 4000] {
-        let mut done = 0;
-        while done < round {
-            let i = rng.gen_range(0..4);
-            sep.code(&codes[i], true);
-            done += 1;
-        }
+    for _ in 0..2000 {
+        let i = [0usize, 1, 2][rng.gen_range(0..3usize)];
+        sep.code(&codes[i], true);
+    }
+    let show = |sep: &mut Assembly, label: &str| {
         let c: Vec<BitVector> = codes.iter().map(|x| sep.code(x, false)).collect();
-        let kept: Vec<u32> = prev.as_ref().map_or(vec![], |p| p.iter().zip(&c).map(|(a, b)| ov(a, b)).collect());
-        println!("after {round:>5} more: within pair {} {}, across pairs {} {}, same code as before {:?}", ov(&c[0], &c[1]), ov(&c[2], &c[3]), ov(&c[0], &c[2]), ov(&c[1], &c[3]), kept);
-        prev = Some(c);
+        println!("{label}: A paid/A unpaid {}, B unpaid/B paid {}, A paid/B paid {}", ov(&c[0], &c[1]), ov(&c[2], &c[3]), ov(&c[0], &c[3]));
+    };
+    show(&mut sep, "after development (B paid never seen)");
+    for round in [10usize, 50, 200, 1000] {
+        for _ in 0..round {
+            let i = rng.gen_range(0..4usize);
+            sep.code(&codes[i], true);
+        }
+        show(&mut sep, &format!("after {round} more of all four"));
     }
 }

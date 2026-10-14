@@ -56,6 +56,9 @@ use crate::bitvec::BitVector;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+/// A coding cell's first, weak synapses (before it has learned anything).
+const FIRST: u8 = 4;
+
 fn bitlen(x: u32) -> i32 {
     32 - x.leading_zeros() as i32
 }
@@ -98,13 +101,16 @@ pub struct Assembly {
     rate: Vec<u32>,
     /// the cells active now
     active: Vec<usize>,
+    /// coding: inputs coded so far (plasticity closes as they double: a critical period; a
+    /// novel input reopens it, as acetylcholine does)
+    coded: u64,
     hold: Option<Hold>,
     pub debug: bool,
 }
 
 impl Assembly {
     fn base(n: usize, k: usize, bits: usize) -> Self {
-        Self { n, k, bits, w: vec![0; n * bits], sum: vec![0; n], seen: BitVector::new(bits, Some(0)), n_seen: 0, rate: vec![0; n], active: Vec::new(), hold: None, debug: false }
+        Self { n, k, bits, w: vec![0; n * bits], sum: vec![0; n], seen: BitVector::new(bits, Some(0)), n_seen: 0, rate: vec![0; n], active: Vec::new(), coded: 0, hold: None, debug: false }
     }
 
     /// For coding: `n` cells over `bits` input lines, `k` firing; each cell starts with weak
@@ -116,8 +122,8 @@ impl Assembly {
             for _ in 0..fan {
                 let b = rng.gen_range(0..bits);
                 if a.w[i * bits + b] == 0 {
-                    a.w[i * bits + b] = 4;
-                    a.sum[i] += 4;
+                    a.w[i * bits + b] = FIRST;
+                    a.sum[i] += FIRST as u32;
                 }
             }
         }
@@ -207,7 +213,12 @@ impl Assembly {
         from - bitlen(mean)
     }
 
-    /// Coding: the cells `input` fires (as bits of an `n`-bit vector), learning if `learn`.
+    /// Coding: the cells `input` fires (as bits of an `n`-bit vector). With `learn`, it learns
+    /// while its plasticity is open: every input for the first 2048, then every 2nd, 4th, ... as
+    /// its experience doubles (a critical period). A novel input (more than a quarter of its lines
+    /// learned by none of its winners: part of it nothing codes yet) always learns, by recruiting
+    /// cells of its own for the new part (as the dentate gyrus recruits), so it is not absorbed by
+    /// the cells of what it shares.
     pub fn code(&mut self, input: &BitVector, learn: bool) -> BitVector {
         let on = self.lines(input);
         // the drive, divided by how far the cell fires above its share (homeostasis)
@@ -222,10 +233,37 @@ impl Assembly {
         drive.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
         let winners: Vec<usize> = drive.iter().take(self.k).filter(|d| d.0 > 0).map(|d| d.1).collect();
         let weakest = drive.get(self.k.saturating_sub(1)).map_or(0, |d| d.0);
-        if learn && !on.is_empty() {
-            for (i, r) in self.rate.iter_mut().enumerate() {
-                *r = if winners.contains(&i) { *r + (256 - (*r).min(256)) / 16 } else { *r - *r / 16 };
-            }
+        // novel: more than a quarter of the input's lines are learned by none of the winners
+        // (no winner's synapse there beyond its first weak one): part of the input nothing codes
+        let uncoded = on.iter().filter(|&&b| winners.iter().all(|&i| self.w[i * self.bits + b] <= FIRST)).count();
+        let novel = 4 * uncoded > on.len();
+        self.coded += 1;
+        let every = 1u64 << (64 - (self.coded / 2048).leading_zeros()).min(20);
+        let open = learn && self.coded % every == 0;
+        // firing-rate adaptation follows every input (it is not plasticity)
+        for (i, r) in self.rate.iter_mut().enumerate() {
+            *r = if winners.contains(&i) { *r + (256 - (*r).min(256)) / 16 } else { *r - *r / 16 };
+        }
+        let mut winners = winners;
+        if learn && novel && !on.is_empty() {
+            // a novel input: the part nothing codes recruits its own cells (the cells its
+            // uncoded lines drive most, homeostasis applied, other than the winners), which learn
+            // the whole input and are its code; the winners, which matched only the familiar
+            // part, are depressed on the new part (they do not absorb it)
+            let new_lines: Vec<usize> = on.iter().copied().filter(|&b| winners.iter().all(|&i| self.w[i * self.bits + b] <= FIRST)).collect();
+            let mut fresh: Vec<(u32, usize)> = (0..self.n)
+                .filter(|i| !winners.contains(i))
+                .map(|i| {
+                    let d = new_lines.iter().map(|&b| self.w[i * self.bits + b] as u32).sum::<u32>() as u64;
+                    ((d * share / (share + self.rate[i] as u64)) as u32, i)
+                })
+                .collect();
+            fresh.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+            let recruits: Vec<usize> = fresh.iter().take(self.k).map(|d| d.1).collect();
+            self.potentiate(&recruits, &on);
+            self.depress(&winners, &new_lines);
+            winners = recruits;
+        } else if open && !on.is_empty() {
             self.potentiate(&winners, &on);
             // the cells that matched (at least half the weakest winner's drive) and were held down
             let losers: Vec<usize> = drive.iter().skip(self.k).take_while(|&&(d, _)| d > 0 && d * 2 >= weakest).map(|&(_, i)| i).collect();

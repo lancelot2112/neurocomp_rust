@@ -20,7 +20,7 @@ use neurocomp::kernel::{KernelClass, KernelGroup};
 use neurocomp::program::graph::{GraphInstruction as I, GraphProgram, ProgramDefaults};
 use neurocomp::program::neurocomp::RuntimeNetwork;
 use rand::rngs::StdRng;
-use rand::seq::SliceRandom;
+
 use rand::{Rng, SeedableRng};
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -45,8 +45,7 @@ fn main() {
     let mut rows: Vec<(u64, u64, usize)> = vec![(0, 0, 0); steps / 50];
     for seed in 0..seeds {
         let mut rng = StdRng::seed_from_u64(seed);
-        let all: Vec<usize> = (0..512).collect();
-        let codes: Vec<BitVector> = (0..symbols).map(|_| BitVector::from_bits(&all.choose_multiple(&mut rng, 16).copied().collect::<Vec<_>>(), 512)).collect();
+        let codes: Vec<BitVector> = (0..symbols).map(|_| neurocomp::world::clustered_code(512, 16, &mut rng)).collect();
         let mut net = RuntimeNetwork::from_graph_with(&g, 512, 512, seed, |_| KernelGroup::from_classes(vec![KernelClass::with_kernels(vec![])]));
         let mut at = 0usize;
         for t in 0..steps {

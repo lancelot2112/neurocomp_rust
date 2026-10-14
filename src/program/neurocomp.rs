@@ -6,7 +6,7 @@ use crate::bitvec::BitVector;
 use crate::bitvec::bithistory::{AdvanceMode, BitVecHistory};
 use crate::kernel::class::KernelOp;
 use crate::kernel::group::KernelGroup;
-use crate::kernel::{KernelClass, SimpleKernel};
+use crate::kernel::SimpleKernel;
 use crate::program::graph::{EdgeKind, EdgeSpec, GraphProgram, NodeSpec, ProgramDefaults};
 use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
@@ -24,9 +24,10 @@ pub struct RuntimeNetwork {
     pub births: Births,
 }
 
-/// How a kernel is born on a growing edge: wired to `syn` of the source's active lines (all of
-/// them if fewer), firing at `quarters`/4 of its synapses, writing the destination lines left
-/// uncovered (at most `out_max`), when at least `out_min` are; at most `cap` kernels an edge.
+/// How a kernel is born on a growing edge. It reads one word: the source word with the most
+/// active lines, wired to `syn` of them (all if fewer), firing at `quarters`/4 of its synapses.
+/// It writes one word: the destination word with the most lines left uncovered (at most
+/// `out_max` of them), when at least `out_min` are. At most `cap` kernels an edge.
 #[derive(Clone, Copy, Debug)]
 pub struct Births {
     pub syn: usize,
@@ -50,6 +51,11 @@ fn write_phase(op: KernelOp) -> u8 {
         KernelOp::And => 1,
         KernelOp::Xor | KernelOp::Clear => 2,
     }
+}
+
+/// The word with the most lines on, and how many.
+fn busiest_word(words: &[u64]) -> (usize, u32) {
+    words.iter().enumerate().map(|(i, w)| (i, w.count_ones())).max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).unwrap_or((0, 0))
 }
 
 fn apply(d: &mut [u64], t: &[u64], op: KernelOp) {
@@ -250,23 +256,21 @@ impl RuntimeNetwork {
                 let out = &class.kernels()[k].output_mask;
                 uncovered.mask_mut(class.kernels()[k].output_idx, out, |a, m| a & !m);
             }
-            let lines: Vec<usize> = (0..uncovered.bit_len()).filter(|&b| uncovered.bit_get(b)).collect();
+            // one word each side: the source word with the most active lines (the new kernel's
+            // window) and the destination word with the most uncovered lines (what it writes)
             let src = seen[i].as_ref().unwrap();
-            let active: Vec<usize> = (0..src.bit_len()).filter(|&b| src.bit_get(b)).collect();
-            if lines.len() < births.out_min || active.is_empty() {
+            let (sw, sn) = busiest_word(src.as_words());
+            let (dw, dn) = busiest_word(uncovered.as_words());
+            if (dn as usize) < births.out_min || sn == 0 {
                 continue;
             }
+            let ones = |w: u64| -> Vec<usize> { (0..64).filter(|b| w >> b & 1 == 1).collect() };
+            let active = ones(src.as_words()[sw]);
+            let lines = ones(uncovered.as_words()[dw]);
             let syn: Vec<usize> = active.choose_multiple(rng, births.syn.min(active.len())).copied().collect();
             let out: Vec<usize> = lines.choose_multiple(rng, births.out_max.min(lines.len())).copied().collect();
             let threshold = (births.quarters * syn.len()).div_ceil(4).max(1);
-            class.add(SimpleKernel::new(
-                BitVector::from_bits(&syn, src.bit_len()),
-                0,
-                BitVector::from_bits(&out, dest.bit_len()),
-                0,
-                threshold,
-                eg.op,
-            ));
+            class.add(SimpleKernel::new(BitVector::from_bits(&syn, 64), sw, BitVector::from_bits(&out, 64), dw, threshold, eg.op));
         }
     }
 
@@ -315,13 +319,11 @@ mod tests {
     /// is left on. On a repeating sequence R goes to nothing.
     #[test]
     fn residue_circuit_cancels_a_repeating_sequence() {
-        use rand::seq::SliceRandom;
         let prog = GraphProgram { code: vec![I::EdgeWire(), I::ReadInput(), I::EdgeLag(), I::EdgeXor(), I::EdgeGrow(), I::EdgeShare()] };
         let g = prog.build_graph(&ProgramDefaults { default_bits: 512, ..ProgramDefaults::default() });
         let mut net = RuntimeNetwork::from_graph_with(&g, 512, 512, 1, |_| KernelGroup::from_classes(vec![KernelClass::with_kernels(vec![])]));
         let mut rng = StdRng::seed_from_u64(2);
-        let all: Vec<usize> = (0..512).collect();
-        let codes: Vec<BitVector> = (0..5).map(|_| BitVector::from_bits(&all.choose_multiple(&mut rng, 16).copied().collect::<Vec<_>>(), 512)).collect();
+        let codes: Vec<BitVector> = (0..5).map(|_| crate::world::clustered_code(512, 16, &mut rng)).collect();
         let (mut early, mut late) = (0, 0);
         for t in 0..200 {
             net.tick(AdvanceMode::Clear, 0);

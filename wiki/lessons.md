@@ -14,6 +14,9 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
    0.03 (108).
    - Write one output bit per active cell, at scattered positions; never contiguous runs.
    - Dense outputs erased the signal downstream.
+   - On this branch: keep each code inside one 64-bit word (topographic), so a one-word kernel
+     sees it at density 1/4. Spreading codes over a whole vector forces whole-vector masks and
+     32× the popcount work (experiment 01, update).
 3. **Codes that are accumulated need more room than codes that are matched.**
    - Matching: 512 bits with 32 active is fine.
    - Statistics: aim for V·k/n ≲ 1 (V symbols, k active of n bits). Part-of-speech agreement

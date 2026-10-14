@@ -26,3 +26,12 @@ mutated copies (mu+lambda). `examples/evolve_world.rs`.
   lifetimes. Otherwise evolution memorises codes rather than evolving learning.
 - The best programs stayed one or two instructions; only kernel numbers evolved. Learning that
   needs structure (reversal) was not found, before or after the edge instructions.
+
+**Update: one-word kernels and topographic codes.** Kernels had been given masks spread over
+the whole source vector, because the world's codes were scattered (16 of 512 lines, about 2 per
+word). Now each code lives in one 64-bit word of its channel (density 1/4 there), and every
+kernel reads one word and writes one word. Thresholds are quarters of the kernel's own mask.
+- Instrumental, new codes each lifetime: held out **409**/1024 (121/312 paying clicked, 0/288
+  others), up from 45–204.
+- Reversal: −21, still nothing.
+- The residue circuit (02) is unchanged: 6 kernels and zero residue on a cycle, 9 on the branch.

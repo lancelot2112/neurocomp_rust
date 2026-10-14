@@ -184,8 +184,17 @@ fn overlap(a: &BitVector, b: &BitVector) -> usize {
 }
 
 fn codes(n: usize, rng: &mut StdRng) -> Vec<BitVector> {
-    let all: Vec<usize> = (0..CH_BITS).collect();
-    (0..n).map(|_| BitVector::from_bits(&all.choose_multiple(rng, ACTIVE).copied().collect::<Vec<_>>(), CH_BITS)).collect()
+    (0..n).map(|_| clustered_code(CH_BITS, ACTIVE, rng)).collect()
+}
+
+/// A topographic code: `k` random lines inside one random 64-bit word of a `bits`-wide vector.
+/// A kernel reading that word sees the code at density k/64 (a quarter, for 16), so one-word
+/// kernels can tell codes apart; two random codes in the same word share about k²/64 lines.
+pub fn clustered_code<R: Rng + ?Sized>(bits: usize, k: usize, rng: &mut R) -> BitVector {
+    let w = rng.gen_range(0..bits / 64);
+    let lines: Vec<usize> = (0..64).collect();
+    let picked: Vec<usize> = lines.choose_multiple(rng, k.min(64)).map(|b| w * 64 + b).collect();
+    BitVector::from_bits(&picked, bits)
 }
 
 /// Channel `ch` of a vector (word-aligned).
@@ -374,7 +383,8 @@ impl World {
         };
         if stroke {
             // a slow stroke: a run of neighbouring receptors on the skin's map
-            let start = self.rng.gen_range(0..CH_BITS - ACTIVE);
+            // (inside one word of the skin's map)
+            let start = self.rng.gen_range(0..CH_BITS / 64) * 64 + self.rng.gen_range(0..=64 - ACTIVE);
             let run: Vec<usize> = (start..start + ACTIVE).collect();
             put(&mut senses, AFFECT, &BitVector::from_bits(&run, CH_BITS));
             ev.stroked = true;

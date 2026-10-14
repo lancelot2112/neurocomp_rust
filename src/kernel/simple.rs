@@ -13,11 +13,15 @@ pub struct SimpleKernel {
     pub output_idx: usize, // word index in output where output_mask[0] lands
     pub threshold: usize,     // fire when (input & input_mask).ones() >= threshold
     pub op: KernelOp,
+    /// search when it does not fire: a near miss (at least half the threshold) moves one silent
+    /// synapse onto an active line; a window with nothing on drifts one word left or right
+    /// (chance 1/64 a step)
+    pub search: bool,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false }
     }
 
     pub fn default(output_bit: usize) -> Self {
@@ -28,6 +32,7 @@ impl SimpleKernel {
             output_idx: output_bit >> 6,
             threshold: 16,
             op: KernelOp::Or,
+            search: false,
         }
     }
 
@@ -134,6 +139,14 @@ impl KernelTrait for SimpleKernel {
     ) -> bool {
         let stats = self.input_stats(ctx);
         if stats.count < stats.threshold {
+            if self.search {
+                if stats.count > 0 && 2 * stats.count >= stats.threshold {
+                    self.strengthen(ctx, &stats, rng);
+                } else if stats.count == 0 && rng.gen_range(0..64) == 0 {
+                    let last = ctx.input.word_len().saturating_sub(self.input_mask.word_len());
+                    self.input_idx = if rng.gen_bool(0.5) { self.input_idx.saturating_sub(1) } else { (self.input_idx + 1).min(last) };
+                }
+            }
             return false;
         }
         if self.is_inhibited(ctx, &stats) {

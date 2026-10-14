@@ -64,7 +64,7 @@ pub struct Genome {
     pub kernels: u8,
     /// input synapses per kernel
     pub syn: u8,
-    /// active synapses needed to fire
+    /// quarters of its synapses a kernel needs active to fire (1 to 4)
     pub threshold: u8,
     /// output lines a hidden kernel writes
     pub out: u8,
@@ -78,11 +78,12 @@ impl Genome {
     pub fn random(rng: &mut StdRng) -> Self {
         let n = rng.gen_range(0..6);
         let syn = rng.gen_range(4..=32u8);
+        let _ = syn;
         Self {
             code: (0..n).map(|_| *INSTRUCTIONS.choose(rng).unwrap()).collect(),
             kernels: rng.gen_range(1..=16),
             syn,
-            threshold: rng.gen_range(1..=syn.min(8)),
+            threshold: rng.gen_range(1..=4),
             out: rng.gen_range(4..=32),
             op: *OPS.choose(rng).unwrap(),
             seed: rng.r#gen(),
@@ -107,12 +108,11 @@ impl Genome {
             }
             3 => g.kernels = step(g.kernels, rng, 1, 32),
             4 => g.syn = step(g.syn, rng, 2, 64),
-            5 => g.threshold = step(g.threshold, rng, 1, 64),
+            5 => g.threshold = step(g.threshold, rng, 1, 4),
             6 => g.out = step(g.out, rng, 1, 64),
             7 => g.op = *OPS.choose(rng).unwrap(),
             _ => g.seed = rng.r#gen(),
         }
-        g.threshold = g.threshold.min(g.syn);
         g
     }
 
@@ -128,15 +128,22 @@ impl Genome {
             .collect();
         RuntimeNetwork::from_graph_with(&graph, world::SENSE_BITS, world::ACT_BITS, seed, |e: &EdgeInfo| {
             let mut r = StdRng::seed_from_u64(self.seed ^ (e.index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            // each kernel reads one word of its source and writes one word of its destination;
+            // it fires at `threshold` quarters of its synapses
             let kernels = (0..self.kernels)
                 .map(|_| {
-                    let syn = sparse(e.src_bits, self.syn as usize, &mut r);
-                    let (out, op) = if e.to_output {
-                        (primitives.choose(&mut r).unwrap().clone(), KernelOp::Or)
+                    let syn = sparse(64, self.syn as usize, &mut r);
+                    let in_word = r.gen_range(0..(e.src_bits / 64).max(1));
+                    let (out, out_word, op) = if e.to_output {
+                        // a motor primitive lives in one word of its channel
+                        let p = primitives.choose(&mut r).unwrap();
+                        let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
+                        (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
                     } else {
-                        (sparse(e.dst_bits, self.out as usize, &mut r), e.spec.op)
+                        (sparse(64, self.out as usize, &mut r), r.gen_range(0..(e.dst_bits / 64).max(1)), e.spec.op)
                     };
-                    SimpleKernel::new(syn, 0, out, 0, self.threshold as usize, op)
+                    let threshold = (self.threshold as usize * self.syn as usize).div_ceil(4).max(1);
+                    SimpleKernel::new(syn, in_word, out, out_word, threshold, op)
                 })
                 .collect();
             KernelGroup::from_classes(vec![KernelClass::with_kernels(kernels)])
@@ -266,12 +273,12 @@ mod tests {
     }
 
     #[test]
-    fn mutation_keeps_the_threshold_within_the_synapses() {
+    fn mutation_keeps_the_threshold_a_fraction() {
         let mut rng = StdRng::seed_from_u64(4);
         let mut g = Genome::random(&mut rng);
         for _ in 0..500 {
             g = g.mutate(&mut rng);
-            assert!(g.threshold <= g.syn && g.threshold >= 1);
+            assert!((1..=4).contains(&g.threshold) && g.syn <= 64 && g.out <= 64);
         }
     }
 }

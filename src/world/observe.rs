@@ -92,6 +92,57 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
         .unwrap_or(0)
 }
 
+/// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
+/// evolution can climb them one at a time (none is fed to the program).
+pub const PROBES: [&str; 5] = ["respond", "tell", "discriminate", "reverse", "remember"];
+
+/// Per trial of a conditioning scene: (cue trial, paying trial, a click in steps `win`, a click
+/// in steps `off`).
+fn trials(events: &[Event], win: (usize, usize), off: (usize, usize)) -> Vec<(bool, bool, bool, bool)> {
+    let mut out: Vec<(bool, bool, bool, bool)> = Vec::new();
+    let mut cur: Option<usize> = None;
+    for e in events {
+        let Some((trial, t, cue, pays)) = e.trial else { continue };
+        if cur != Some(trial) {
+            out.push((cue, pays, false, false));
+            cur = Some(trial);
+        }
+        let last = out.last_mut().unwrap();
+        if e.moved == Some(CLICK) {
+            last.2 |= (win.0..=win.1).contains(&t);
+            last.3 |= (off.0..=off.1).contains(&t);
+        }
+    }
+    out
+}
+
+/// Click rate (parts per 1024) over the trials picked by `f`.
+fn rate(tr: &[(bool, bool, bool, bool)], pick: impl Fn(&(bool, bool, bool, bool)) -> bool, click: impl Fn(&(bool, bool, bool, bool)) -> bool) -> i32 {
+    let n = tr.iter().filter(|x| pick(x)).count();
+    if n == 0 { return 0; }
+    (tr.iter().filter(|x| pick(x) && click(x)).count() as i64 * 1024 / n as i64) as i32
+}
+
+/// The probes from one serial-reversal lifetime (both lights shown, steps 2-4; clicks counted in
+/// steps 3-5) and one delayed lifetime (a light at step 2 on cue trials only; clicks in 5-7):
+/// - respond: clicks while a light is up minus clicks in a matched stretch with none (steps 7-9);
+///   a blind babbler scores 0;
+/// - tell: how differently it clicks to the two lights, either way round (|A - B|);
+/// - discriminate: more clicks on the paying light than the other (the task);
+/// - reverse: the worst phase's discrimination (it must follow every swap);
+/// - remember: after a light that is already gone, more clicks than after no light.
+pub fn probes(reversal: &[Event], period: usize, delayed: &[Event]) -> [i32; 5] {
+    let tr = trials(reversal, (3, 5), (7, 9));
+    let all = |_: &(bool, bool, bool, bool)| true;
+    let respond = rate(&tr, all, |x| x.2) - rate(&tr, all, |x| x.3);
+    let tell = (rate(&tr, |x| x.0, |x| x.2) - rate(&tr, |x| !x.0, |x| x.2)).abs();
+    let discriminate = rate(&tr, |x| x.1, |x| x.2) - rate(&tr, |x| !x.1, |x| x.2);
+    let reverse = worst_phase(reversal, period);
+    let td = trials(delayed, (5, 7), (5, 7));
+    let remember = rate(&td, |x| x.0, |x| x.2) - rate(&td, |x| !x.0, |x| x.2);
+    [respond, tell, discriminate, reverse, remember]
+}
+
 /// Sequence: steps where a next token was due, and those where the program said it on the
 /// step before it was shown.
 pub fn anticipation(events: &[Event]) -> (u32, u32) {
@@ -173,6 +224,52 @@ mod tests {
         assert_eq!(silent.score(), SILENT);
         assert_eq!(always.score(), 0);
         assert!(silent.score() < -1024);
+    }
+
+    #[test]
+    fn the_probes_grade_each_capacity_on_its_own() {
+        // hand-written policies acting on what they saw a step ago (a harness test of the
+        // observer, not a network)
+        let lights = {
+            let mut probe = World::new(7, 4);
+            probe.conditioning(Conditioning::Reversal, 1);
+            probe.lights_for_test().to_vec()
+        };
+        let sees = |prev: &BitVector, l: &BitVector| channel(prev, EYE).as_words().iter().zip(l.as_words()).any(|(a, b)| a & b != 0);
+        let run = |policy: &dyn Fn(&BitVector, usize) -> bool| -> [i32; 5] {
+            let mut w = World::new(7, 4);
+            w.reversal_period = 50;
+            w.conditioning(Conditioning::Reversal, 200);
+            let mut prev = BitVector::new(SENSE_BITS, Some(0));
+            let mut t = 0;
+            while !w.done() {
+                let a = w.act(None, if policy(&prev, t) { Some(CLICK) } else { None });
+                prev = w.step(&a);
+                t += 1;
+            }
+            let mut d = World::new(8, 4);
+            d.conditioning(Conditioning::Delayed, 200);
+            let mut prev = BitVector::new(SENSE_BITS, Some(0));
+            let mut since = 99;
+            while !d.done() {
+                since = if channel(&prev, EYE).count_ones() > 0 { 1 } else { since + 1 };
+                let a = d.act(None, if (4..=6).contains(&since) { Some(CLICK) } else { None });
+                prev = d.step(&a);
+            }
+            probes(&w.events, 50, &d.events)
+        };
+        let blind = run(&|_, t| t % 3 == 0);
+        let any_light = run(&|p, _| channel(p, EYE).count_ones() > 0);
+        let light_a = run(&|p, _| sees(p, &lights[0]));
+        // a blind clicker: no probe above noise except remember, which the delayed policy adds
+        assert!(blind[0].abs() < 80 && blind[1] < 80 && blind[2].abs() < 80, "{blind:?}");
+        // clicking on any light: responds, cannot tell them apart
+        assert!(any_light[0] > 800 && any_light[1] < 80 && any_light[2].abs() < 80, "{any_light:?}");
+        // clicking on light A: responds, tells them apart; right half the time, so no discrimination
+        // pooled and a bad worst phase
+        assert!(light_a[0] > 300 && light_a[1] > 800 && light_a[2].abs() < 150 && light_a[3] < -500, "{light_a:?}");
+        // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
+        assert!(blind[4] > 500, "{blind:?}");
     }
 
     #[test]

@@ -96,50 +96,66 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 /// evolution can climb them one at a time (none is fed to the program).
 pub const PROBES: [&str; 5] = ["respond", "tell", "discriminate", "reverse", "remember"];
 
-/// Per trial of a conditioning scene: (cue trial, paying trial, a click in steps `win`, a click
-/// in steps `off`).
-fn trials(events: &[Event], win: (usize, usize), off: (usize, usize)) -> Vec<(bool, bool, bool, bool)> {
-    let mut out: Vec<(bool, bool, bool, bool)> = Vec::new();
+/// Per trial of a conditioning scene: (trial index, cue trial, paying trial, a click in steps
+/// `win`, a click in steps `off`).
+fn trials(events: &[Event], win: (usize, usize), off: (usize, usize)) -> Vec<(usize, bool, bool, bool, bool)> {
+    let mut out: Vec<(usize, bool, bool, bool, bool)> = Vec::new();
     let mut cur: Option<usize> = None;
     for e in events {
         let Some((trial, t, cue, pays)) = e.trial else { continue };
         if cur != Some(trial) {
-            out.push((cue, pays, false, false));
+            out.push((trial, cue, pays, false, false));
             cur = Some(trial);
         }
         let last = out.last_mut().unwrap();
         if e.moved == Some(CLICK) {
-            last.2 |= (win.0..=win.1).contains(&t);
-            last.3 |= (off.0..=off.1).contains(&t);
+            last.3 |= (win.0..=win.1).contains(&t);
+            last.4 |= (off.0..=off.1).contains(&t);
         }
     }
     out
 }
 
-/// Click rate (parts per 1024) over the trials picked by `f`.
-fn rate(tr: &[(bool, bool, bool, bool)], pick: impl Fn(&(bool, bool, bool, bool)) -> bool, click: impl Fn(&(bool, bool, bool, bool)) -> bool) -> i32 {
+type Trial = (usize, bool, bool, bool, bool);
+
+/// Click rate (parts per 1024) over the trials picked by `pick`.
+fn rate(tr: &[Trial], pick: impl Fn(&Trial) -> bool, click: impl Fn(&Trial) -> bool) -> i32 {
     let n = tr.iter().filter(|x| pick(x)).count();
     if n == 0 { return 0; }
     (tr.iter().filter(|x| pick(x) && click(x)).count() as i64 * 1024 / n as i64) as i32
 }
 
 /// The probes from one serial-reversal lifetime (both lights shown, steps 2-4; clicks counted in
-/// steps 3-5) and one delayed lifetime (a light at step 2 on cue trials only; clicks in 5-7):
+/// steps 3-5) and one delayed lifetime (a light at step 2 on cue trials only; clicks in 5-7).
+/// Each averages 0 for a network that clicks at random, and for one that never clicks:
 /// - respond: clicks while a light is up minus clicks in a matched stretch with none (steps 7-9);
-///   a blind babbler scores 0;
-/// - tell: how differently it clicks to the two lights, either way round (|A - B|);
+/// - tell: clicks differently to the two lights, consistently: the difference (A - B) in the
+///   lifetime's second half, signed by its direction in the first half;
 /// - discriminate: more clicks on the paying light than the other (the task);
-/// - reverse: the worst phase's discrimination (it must follow every swap);
+/// - reverse: discrimination in the second half of each reversal phase (after it has had time to
+///   switch), averaged over the phases; clicking one light is right in half the phases and wrong
+///   in the rest, so only following the swaps scores;
 /// - remember: after a light that is already gone, more clicks than after no light.
 pub fn probes(reversal: &[Event], period: usize, delayed: &[Event]) -> [i32; 5] {
     let tr = trials(reversal, (3, 5), (7, 9));
-    let all = |_: &(bool, bool, bool, bool)| true;
-    let respond = rate(&tr, all, |x| x.2) - rate(&tr, all, |x| x.3);
-    let tell = (rate(&tr, |x| x.0, |x| x.2) - rate(&tr, |x| !x.0, |x| x.2)).abs();
-    let discriminate = rate(&tr, |x| x.1, |x| x.2) - rate(&tr, |x| !x.1, |x| x.2);
-    let reverse = worst_phase(reversal, period);
+    let all = |_: &Trial| true;
+    let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
+    let half = tr.len() / 2;
+    let diff = |part: &[Trial]| rate(part, |x| x.1, |x| x.3) - rate(part, |x| !x.1, |x| x.3);
+    let first = diff(&tr[..half]);
+    let tell = if first == 0 { 0 } else { diff(&tr[half..]) * first.signum() };
+    let discriminate = rate(&tr, |x| x.2, |x| x.3) - rate(&tr, |x| !x.2, |x| x.3);
+    let period = period.max(1);
+    let phases = tr.last().map_or(0, |x| x.0 / period + 1);
+    let late: Vec<i32> = (0..phases)
+        .map(|ph| {
+            let part: Vec<Trial> = tr.iter().filter(|x| x.0 / period == ph && x.0 % period >= period / 2).copied().collect();
+            rate(&part, |x| x.2, |x| x.3) - rate(&part, |x| !x.2, |x| x.3)
+        })
+        .collect();
+    let reverse = if late.is_empty() { 0 } else { late.iter().sum::<i32>() / late.len() as i32 };
     let td = trials(delayed, (5, 7), (5, 7));
-    let remember = rate(&td, |x| x.0, |x| x.2) - rate(&td, |x| !x.0, |x| x.2);
+    let remember = rate(&td, |x| x.1, |x| x.3) - rate(&td, |x| !x.1, |x| x.3);
     [respond, tell, discriminate, reverse, remember]
 }
 
@@ -259,15 +275,21 @@ mod tests {
             probes(&w.events, 50, &d.events)
         };
         let blind = run(&|_, t| t % 3 == 0);
+        // a test-only policy that knows the phase (an oracle for checking the observer): clicks
+        // on the paying light; reverse rewards it
+        let follows = run(&|p, t| { let phase_a = (t / 10) / 50 % 2 == 0; sees(p, &lights[if phase_a { 0 } else { 1 }]) });
         let any_light = run(&|p, _| channel(p, EYE).count_ones() > 0);
         let light_a = run(&|p, _| sees(p, &lights[0]));
         // a blind clicker: no probe above noise except remember, which the delayed policy adds
-        assert!(blind[0].abs() < 80 && blind[1] < 80 && blind[2].abs() < 80, "{blind:?}");
+        assert!(blind[0].abs() < 80 && blind[2].abs() < 80, "{blind:?}");
         // clicking on any light: responds, cannot tell them apart
-        assert!(any_light[0] > 800 && any_light[1] < 80 && any_light[2].abs() < 80, "{any_light:?}");
+        assert!(any_light[0] > 800 && any_light[1].abs() < 80 && any_light[2].abs() < 80, "{any_light:?}");
         // clicking on light A: responds, tells them apart; right half the time, so no discrimination
-        // pooled and a bad worst phase
-        assert!(light_a[0] > 300 && light_a[1] > 800 && light_a[2].abs() < 150 && light_a[3] < -500, "{light_a:?}");
+        // pooled and none after the swaps either
+        assert!(light_a[0] > 300 && light_a[1] > 800 && light_a[2].abs() < 150 && light_a[3].abs() < 150, "{light_a:?}");
+        // the blind and any-light clickers average 0 on tell and reverse (no noise bias)
+        assert!(blind[1].abs() < 80 && blind[3].abs() < 120 && any_light[3].abs() < 120, "{blind:?} {any_light:?}");
+        assert!(follows[2] > 800 && follows[3] > 800, "{follows:?}");
         // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
         assert!(blind[4] > 500, "{blind:?}");
     }

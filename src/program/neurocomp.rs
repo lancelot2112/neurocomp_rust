@@ -25,6 +25,8 @@ pub struct RuntimeNetwork {
     pub output: usize,
     /// spontaneous lines per step, per node
     pub noise: Vec<usize>,
+    /// per node: it holds its lines from step to step instead of starting empty
+    pub hold: Vec<bool>,
 }
 
 /// What an edge reads: frames `read_back .. read_back + span` of a node ORed together, only the
@@ -176,7 +178,8 @@ impl RuntimeNetwork {
         let output = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("output")).map_or(g.node_count() - 1, |n| n.index());
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(i as u64 ^ 0xA0A0)).collect();
-        Self { nodes, edges, node_rngs, output, noise }
+        let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
+        Self { nodes, edges, node_rngs, output, noise, hold }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -222,14 +225,16 @@ impl RuntimeNetwork {
         }
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
-        Self { nodes, edges, node_rngs, output: last, noise }
+        let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
+        Self { nodes, edges, node_rngs, output: last, noise, hold }
     }
 
     /// Advance histories and process all edges once.
     pub fn tick(&mut self, mode: AdvanceMode, adj_temperature: i16) {
         // Advance all nodes first so writes go into a fresh current frame
-        for n in &mut self.nodes {
-            n.advance(mode);
+        // (a node that holds starts from its last frame: only clearing writes take lines away)
+        for (n, &hold) in self.nodes.iter_mut().zip(&self.hold) {
+            n.advance(if hold && matches!(mode, AdvanceMode::Clear) { AdvanceMode::CopyPrev } else { mode });
         }
 
         // Execute edges, writes in phase order (set, keep, toggle/clear); each edge reads its

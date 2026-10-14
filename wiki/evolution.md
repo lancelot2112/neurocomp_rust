@@ -75,3 +75,7 @@ needs.
   - **self-loop**: a population writes back into the channel it reads. Clocks (NOR), counters
     (ADD) and held state (OR) are self-loops (experiment 10), now one mutation away.
   - **sparse** as a population property (experiment 09).
+  - **hold** as a channel property: the channel starts each step with what it held, so state
+    needs no carry wire and lines go only when a population clears them. Off by default; new
+    random channels hold a quarter of the time and mutation toggles it. Untested in evolution
+    so far. The risk: OR writes pile up in a held channel until a clearing population evolves.

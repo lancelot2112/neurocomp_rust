@@ -28,7 +28,7 @@ fn genome(width: u8, whole: bool, sparse: bool) -> TagGenome {
     let mut g = TagGenome::context_seed();
     for t in g.tokens.iter_mut() {
         match t {
-            Token::Channel { tag, width: w } if *tag == Y => *w = width,
+            Token::Channel { tag, width: w, .. } if *tag == Y => *w = width,
             Token::Pop(p) if p.from == Y && p.to == Z && whole => { p.field = width; p.sparse = sparse }
             _ => {}
         }

@@ -35,9 +35,9 @@ fn main() {
     let tonic = Pop { count: 1, tonic: 2, fan_out: 4, ..Pop::new(4, SENSES, T) };
     let g = TagGenome {
         tokens: vec![
-            Token::Channel { tag: K, width: 0 },
-            Token::Channel { tag: C, width: 0 },
-            Token::Channel { tag: T, width: 0 },
+            Token::Channel { tag: K, width: 0, hold: false },
+            Token::Channel { tag: C, width: 0, hold: false },
+            Token::Channel { tag: T, width: 0, hold: false },
             Token::Pop(clock),
             Token::Pop(carry),
             Token::Pop(count),

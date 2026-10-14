@@ -98,7 +98,9 @@ what it can build. We do not add special-purpose modules to get a task done.
 - Keep it deterministic by seed. Evaluate on several seeds and compare genomes on the same ones.
 - **The genome is the tag grammar** (`src/evolve/tags.rs`), the one we work on. It is a string
   of tokens:
-  - `Channel { tag, width }`: a bit vector of 2^width words (up to 2^11 words, 131,072 bits);
+  - `Channel { tag, width, hold }`: a bit vector of 2^width words (up to 2^11 words, 131,072
+    bits). A channel that holds starts each step with its last frame, so only clearing writes
+    (CLEAR, AND, NOR, ...) take lines away; otherwise it starts each step empty;
   - `Pop { from, to, ... }`: a population of kernels (or a wire) from one channel to another,
     with all its own properties inline: op, lag, span, field, place, spread, starting kernels,
     fan-in and fan-out, threshold, tonic activity, inhibition, births, gate, rates.

@@ -82,7 +82,7 @@ fn main() {
                 // to resolve to instead of crowding onto the senses and the act)
                 let n: usize = env("CUR_CHANNELS", 0);
                 println!("(naked: an empty string, {n} empty channels)");
-                let tokens = (0..n).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3 }).collect();
+                let tokens = (0..n).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3, hold: false }).collect();
                 return run(TagGenome { tokens, next_id: 1 }, |g| g.tokens.len());
             }
             run(if bare { TagGenome::bare_seed() } else { TagGenome::context_seed() }, |g| g.tokens.len());

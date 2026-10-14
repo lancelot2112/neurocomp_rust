@@ -17,6 +17,9 @@ pub struct NodeSpec {
     pub history_depth: usize, // frames (conceptual) for this node
     /// random lines switched on each step (spontaneous activity)
     pub noise: usize,
+    /// it starts each step with what it held the step before (only clearing writes take lines
+    /// away), instead of empty
+    pub hold: bool,
 }
 
 impl NodeSpec {
@@ -26,6 +29,7 @@ impl NodeSpec {
             bits: defaults.default_bits,
             history_depth: defaults.default_history_depth,
             noise: 0,
+            hold: false,
         }
     }
 }
@@ -37,6 +41,7 @@ impl Default for NodeSpec {
             bits: 128,
             history_depth: 1,
             noise: 0,
+            hold: false,
         }
     }
 }

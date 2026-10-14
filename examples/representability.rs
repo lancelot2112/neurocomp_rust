@@ -31,7 +31,7 @@ fn tag_circuit() -> TagGenome {
     let r = R_TAG;
     let copy = Pop { field: 3, ..Pop::wire(1, SENSES, r) };
     let predict = Pop { lag: 2, field: 3, op: KernelOp::Xor, grow: true, share: true, ..Pop::new(2, SENSES, r) };
-    TagGenome { tokens: vec![Token::Channel { tag: r, width: 3 }, Token::Pop(copy), Token::Pop(predict)], next_id: 3 }
+    TagGenome { tokens: vec![Token::Channel { tag: r, width: 3, hold: false }, Token::Pop(copy), Token::Pop(predict)], next_id: 3 }
 }
 
 fn edge_circuit() -> GeneGenome {
@@ -101,7 +101,7 @@ fn main() {
         for _ in 0..n {
             let mut tag: u8 = r.r#gen();
             while tag == R_TAG || tag == SENSES || tag == 0xFF { tag = r.r#gen(); }
-            t0.tokens.push(Token::Channel { tag, width: 3 });
+            t0.tokens.push(Token::Channel { tag, width: 3, hold: false });
         }
     }
     println!("representability: the residue circuit on a cycle of {symbols} codes, {steps} steps");
@@ -132,7 +132,7 @@ fn main() {
     let own = |m: &TagGenome| {
         let pops: Vec<&Pop> = m.tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p) } else { None }).collect();
         let orig: Vec<&Pop> = t0.tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p) } else { None }).collect();
-        let r_same = m.tokens.iter().any(|t| *t == Token::Channel { tag: R_TAG, width: 3 });
+        let r_same = m.tokens.iter().any(|t| *t == Token::Channel { tag: R_TAG, width: 3, hold: false });
         !(r_same && orig.iter().all(|o| pops.iter().any(|p| p == o)))
     };
     let mut rng2 = StdRng::seed_from_u64(5);

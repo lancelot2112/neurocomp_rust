@@ -37,7 +37,7 @@ fn main() {
     println!("best: {} tokens ({chans} channels, {} populations)", best.tokens.len(), best.tokens.len() - chans);
     for t in &best.tokens {
         match t {
-            Token::Channel { tag, width } => println!("  channel {tag:08b} width 2^{width}"),
+            Token::Channel { tag, width, .. } => println!("  channel {tag:08b} width 2^{width}"),
             Token::Pop(p) => println!("  pop {:08b}->{:08b} {} {:?} lag {} field 2^{}@{} count {} fan {}/{} q{} tonic {} grow {} new {} repeat {}/{} gate {:?}",
                 p.from, p.to, if p.wire { "wire" } else { "kernels" }, p.op, p.lag, p.field, p.at, p.count, p.fan_in, p.fan_out, p.quarters, p.tonic, p.grow, p.new_code, p.repeat, p.repeat_lag, p.gate),
         }

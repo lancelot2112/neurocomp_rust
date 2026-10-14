@@ -32,7 +32,8 @@ pub const INPUT: u32 = 0;
 /// The act.
 pub const OUTPUT: u32 = 1;
 /// The widest a vector may grow, in words.
-const MAX_WORDS: usize = 128;
+/// The widest vector: 2048 words (131,072 bits).
+const MAX_WORDS: usize = 2048;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeGene {
@@ -198,10 +199,10 @@ impl GeneGenome {
                 });
             }
         }
-        add(y, z, Kernels, Or, &|e| { e.spec.grow = true; e.spec.new_code = true; e.spec.wide = true; e.spec.out_words = ch as u8; });
+        add(y, z, Kernels, Or, &|e| { e.spec.grow = true; e.spec.new_code = true; e.spec.wide = true; e.spec.out_words = ch as u16; });
         add(z, r, Wire, Or, &|_| {});
         add(c, r, Kernels, Clear, &|e| { e.spec.grow = true; e.spec.inhibit = false; e.gate = Some((yg, true)); });
-        add(r, c, Kernels, Clear, &|e| { e.spec.grow = true; e.gate = Some((yg, false)); e.spec.out_words = ch as u8; });
+        add(r, c, Kernels, Clear, &|e| { e.spec.grow = true; e.gate = Some((yg, false)); e.spec.out_words = ch as u16; });
         add(r, c, Kernels, Or, &|e| { e.spec.grow = true; e.gate = Some((yg, true)); });
         add(r, c, Kernels, Or, &|e| { e.spec.grow = true; e.spec.new_code = true; });
         add(c, c, Wire, Or, &|_| {});
@@ -362,9 +363,9 @@ impl Evolvable for GeneGenome {
                     11 => {}
                     12 => s.gate_lag = stepu(s.gate_lag, 1, 8),
                     13 => s.window = if s.window.is_some() && rng.gen_bool(0.3) { None } else { let (o, n) = s.window.unwrap_or((0, 8)); Some(if up { (o + 1, n) } else { (o.saturating_sub(1), n) }) },
-                    14 => s.window = s.window.map(|(o, n)| (o, if up { (n * 2).min(64) } else { (n / 2).max(1) })),
+                    14 => s.window = s.window.map(|(o, n)| (o, if up { (n * 2).min(MAX_WORDS) } else { (n / 2).max(1) })),
                     15 => s.dst_word = stepu(s.dst_word, 0, MAX_WORDS - 1),
-                    16 => s.out_words = step(s.out_words, 0, 64),
+                    16 => s.out_words = if up { (s.out_words * 2).max(1).min(MAX_WORDS as u16) } else { s.out_words / 2 },
                     17 => s.noise = if up { (s.noise * 2).max(1).min(64) } else { s.noise / 2 },
                     18 => s.start_kernels = step(s.start_kernels, 0, 32),
                     19 => s.start_syn = step(s.start_syn, 1, 64),

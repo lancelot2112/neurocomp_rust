@@ -28,6 +28,15 @@ use crate::program::graph::{EdgeKind, EdgeSpec, NodeSpec};
 use crate::program::neurocomp::{EdgeInfo, RuntimeNetwork};
 use crate::world::{self, World};
 
+/// The widest channel: 2^11 words (131,072 bits). Fields and spreads go as wide.
+pub const MAX_WIDTH: u8 = 11;
+
+/// How far a mutation moves an offset: one word, or a whole field (so a wide population can step
+/// to its neighbour's lines in one move).
+fn hop(scale: u8, rng: &mut StdRng) -> u16 {
+    if rng.gen_bool(0.5) { 1 } else { 1u16 << scale.min(MAX_WIDTH) }
+}
+
 use super::Evolvable;
 
 /// The senses' tag.
@@ -49,10 +58,10 @@ pub struct Pop {
     pub lag: u8,
     pub span: u8,
     /// its field: 2^field source words from word `at` (wrapping)
-    pub at: u8,
+    pub at: u16,
     pub field: u8,
     /// where it writes: from destination word `place` (wrapping), over 2^spread words
-    pub place: u8,
+    pub place: u16,
     pub spread: u8,
     /// starting kernels; lines each reads (fan-in) and writes (fan-out); threshold in quarters
     pub count: u8,
@@ -129,7 +138,7 @@ impl Channels {
         let mut list = vec![(SENSES, world::SENSE_BITS / 64)];
         for t in tokens {
             if let Token::Channel { tag, width } = t {
-                list.push((*tag, 1usize << (*width).min(6)));
+                list.push((*tag, 1usize << (*width).min(MAX_WIDTH)));
             }
         }
         list.push((ACT, world::ACT_BITS / 64));
@@ -175,7 +184,7 @@ impl TagGenome {
             if let Some((g, _)) = gate {
                 depth[g] = depth[g].max((p.gate_lag as usize).max(1));
             }
-            let field = 1usize << p.field.min(6);
+            let field = 1usize << p.field.min(MAX_WIDTH);
             edges.push((a, b, EdgeSpec {
                 input_read_back: lag,
                 op: p.op,
@@ -206,7 +215,7 @@ impl TagGenome {
                 fade: p.fade,
                 gate_lag: (p.gate_lag as usize).max(1),
                 salt: p.id,
-                out_words: 1 << p.spread.min(6),
+                out_words: 1 << p.spread.min(MAX_WIDTH),
                 tonic: p.tonic,
                 ..EdgeSpec::plain()
             }));
@@ -249,15 +258,15 @@ impl TagGenome {
     /// The act path (experiment 06 starting point): a tonic population babbling into the act, and
     /// a growing population repeating acts a stroke followed, on what the eye saw before them.
     pub fn act_seed() -> Self {
-        let ch = (world::CH_BITS / 64) as u8;
+        let ch = (world::CH_BITS / 64) as u16;
         let (eye, aff) = (0x0F, 0xF0);
         let mut t = vec![Token::Channel { tag: eye, width: 3 }, Token::Channel { tag: aff, width: 3 }];
         let mut w = Pop::wire(1, SENSES, eye);
-        w.at = world::EYE as u8 * ch;
+        w.at = world::EYE as u16 * ch;
         w.field = 3;
         t.push(Token::Pop(w));
         let mut w = Pop::wire(2, SENSES, aff);
-        w.at = world::AFFECT as u8 * ch;
+        w.at = world::AFFECT as u16 * ch;
         w.field = 3;
         t.push(Token::Pop(w));
         let mut b = Pop::new(3, eye, ACT);
@@ -287,7 +296,7 @@ impl TagGenome {
     /// Acts: a tonic population babbling into the act, and acts a stroke followed repeated on what
     /// A held before them (fading when no stroke follows).
     pub fn context_seed() -> Self {
-        let ch = (world::CH_BITS / 64) as u8;
+        let ch = (world::CH_BITS / 64) as u16;
         let (y, z, r, c, n, yg, aff, a) = (0x33u8, 0x55, 0x66, 0x99, 0xAA, 0xCC, 0xF0, 0x0F);
         let mut t = vec![
             Token::Channel { tag: y, width: 6 },
@@ -303,7 +312,7 @@ impl TagGenome {
         let mut pop = |p: Pop, t: &mut Vec<Token>| { t.push(Token::Pop(Pop { id, ..p })); id += 1; };
         for lag in 1..=3u8 {
             for (k, chan) in [world::EYE, world::AFFECT].into_iter().enumerate() {
-                pop(Pop { lag, at: chan as u8 * ch, field: 3, place: ((lag - 1) * 2 + k as u8) * ch, ..Pop::wire(0, SENSES, y) }, &mut t);
+                pop(Pop { lag, at: chan as u16 * ch, field: 3, place: ((lag - 1) as u16 * 2 + k as u16) * ch, ..Pop::wire(0, SENSES, y) }, &mut t);
             }
         }
         pop(Pop { field: 6, spread: 3, grow: true, new_code: true, ..Pop::new(0, y, z) }, &mut t);
@@ -316,8 +325,8 @@ impl TagGenome {
         pop(Pop { field: 3, ..Pop::wire(0, c, n) }, &mut t);
         pop(Pop { field: 3, lag: 2, op: KernelOp::Clear, ..Pop::wire(0, c, n) }, &mut t);
         pop(Pop { field: 3, span: 32, ..Pop::wire(0, n, yg) }, &mut t);
-        pop(Pop { at: world::AFFECT as u8 * ch, field: 3, ..Pop::wire(0, SENSES, aff) }, &mut t);
-        pop(Pop { at: world::EYE as u8 * ch, field: 3, ..Pop::wire(0, SENSES, a) }, &mut t);
+        pop(Pop { at: world::AFFECT as u16 * ch, field: 3, ..Pop::wire(0, SENSES, aff) }, &mut t);
+        pop(Pop { at: world::EYE as u16 * ch, field: 3, ..Pop::wire(0, SENSES, a) }, &mut t);
         pop(Pop { field: 3, place: ch, ..Pop::wire(0, c, a) }, &mut t);
         pop(Pop { count: 8, tonic: 3, ..Pop::new(0, a, ACT) }, &mut t);
         pop(Pop { field: 4, grow: true, repeat: true, repeat_lag: 4, gate: Some((aff, true)), ..Pop::new(0, a, ACT) }, &mut t);
@@ -380,7 +389,7 @@ impl Evolvable for TagGenome {
         match rng.gen_range(0..12) {
             // a new token
             0 => {
-                let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..4) } } else { Token::Pop(g.random_pop(rng)) };
+                let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..=MAX_WIDTH) } } else { Token::Pop(g.random_pop(rng)) };
                 let at = rng.gen_range(0..=n);
                 g.tokens.insert(at, t);
             }
@@ -443,7 +452,7 @@ impl Evolvable for TagGenome {
                 let bit = 1u8 << rng.gen_range(0..8);
                 match &mut g.tokens[at] {
                     Token::Channel { tag, width } => {
-                        if rng.gen_bool(0.5) { *tag ^= bit } else { *width = step(*width, 0, 6) }
+                        if rng.gen_bool(0.5) { *tag ^= bit } else { *width = step(*width, 0, MAX_WIDTH) }
                     }
                     Token::Pop(p) => match rng.gen_range(0..30) {
                         0 => p.from ^= bit,
@@ -452,10 +461,10 @@ impl Evolvable for TagGenome {
                         3 => p.op = if rng.gen_bool(0.5) { KernelOp::random(rng) } else { p.op.nudge(up) },
                         4 => p.lag = step(p.lag, 1, 8),
                         5 => p.span = if up { (p.span * 2).min(64) } else { (p.span / 2).max(1) },
-                        6 => p.at = if up { p.at.wrapping_add(1) } else { p.at.wrapping_sub(1) },
-                        7 => p.field = step(p.field, 0, 6),
-                        8 => p.place = if up { p.place.wrapping_add(1) } else { p.place.wrapping_sub(1) },
-                        9 => p.spread = step(p.spread, 0, 6),
+                        6 => { let d = hop(p.field, rng); p.at = if up { p.at.wrapping_add(d) } else { p.at.wrapping_sub(d) } }
+                        7 => p.field = step(p.field, 0, MAX_WIDTH),
+                        8 => { let d = hop(p.spread, rng); p.place = if up { p.place.wrapping_add(d) } else { p.place.wrapping_sub(d) } }
+                        9 => p.spread = step(p.spread, 0, MAX_WIDTH),
                         10 => p.count = step(p.count, 0, 32),
                         11 => p.fan_in = step(p.fan_in, 1, 64),
                         12 => p.fan_out = step(p.fan_out, 1, 64),

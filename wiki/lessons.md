@@ -168,3 +168,7 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
 34. **Event-driven exact speedups pay, dense hardware does not.** Bit-position lists, an inverted
     index from bit to cells, canonical kernels and incremental match counts gave 85–190× (23).
     Build with hardware popcount (target x86-64-v3).
+35. **Width is free until it is read (experiment 09).** A step costs the words an edge reads and
+    writes, so a 131,072-bit channel read through a 64-word field costs the same as a 512-bit
+    one. A kernel spread across a wide field still pays for its mask's whole extent, because
+    masks are dense; lesson 34's bit-position lists are the fix.

@@ -173,7 +173,7 @@ pub struct EdgeSpec {
     pub salt: u32,
     /// destination words it writes, from `dst_word` (0: all of the destination); starting
     /// kernels and noise land there
-    pub out_words: u8,
+    pub out_words: u16,
     /// a noise edge's random lines a step
     pub noise: u16,
     /// its starting kernels' activity: 0 responsive; k > 0 tonic (chance 2^-k a step)

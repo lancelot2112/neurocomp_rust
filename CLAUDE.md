@@ -53,6 +53,17 @@ what it can build. We do not add special-purpose modules to get a task done.
 - **Cheapest recursion first.** A loop is a kernel writing into a vector it (or its source)
   reads on the next step.
 
+## The world and evolution
+
+- Programs are tested in `src/world`. Only bit vectors cross: an act vector out, a senses
+  vector in, each with fixed word-aligned channels.
+- The world gives no rewards. Fitness comes from `world::observe`, which reads the event log.
+  Never feed the observer's scores, the scene or the phase into the program.
+- Keep the world honest: an act that does nothing is sensed as nothing.
+- Keep it deterministic by seed. Evaluate on several seeds and compare genomes on the same ones.
+- Genomes mutate locally: permanent gene ids, explicit loops, a random stream per gene, and
+  graded wiring (see `wiki/evolution.md`).
+
 ## Workflow
 
 - Experiments are `examples/<name>.rs`, configured by environment variables, printing a short

@@ -54,11 +54,18 @@ This branch restarts from the lean base. What exists:
   Clear`; strengthen and search moves), kernel classes and groups.
 - `src/program`: a graph of bit-vector nodes and kernel-group edges, built from a small
   instruction program, and a runtime network that steps it.
+- `src/world`: the world a program lives in, for evolving programs. Senses come in and acts
+  go out, both as one bit vector with fixed channels (eye, ear, touch, affect; voice, hand).
+  Acts drive a body's motor primitives. The world gives no rewards. Scenes are conditioning
+  (Pavlovian, instrumental, delayed, serial reversal), token sequences and echo play.
+  `world::observe` scores the event log from outside, which is evolution's fitness.
 - `src/cli`: renderers for watching bit vectors.
 
-Next: add `NAND`, `ADD`/`SUB` and `ROTATE` writes, overlap inhibition and births to the kernel,
-then rebuild the basic experiments (sequence prediction, pattern separation, context holding)
-on this base only.
+Next:
+1. Add `NAND`, `ADD`/`SUB` and `ROTATE` writes, overlap inhibition and births to the kernel.
+2. Write a genome for a kernel network: genes with permanent ids, explicit loops, their own
+   random streams and graded wiring (see [wiki/evolution.md](wiki/evolution.md)).
+3. Evolve networks in the world, scored by the observer over several seeds.
 
 ## What earlier work taught us
 

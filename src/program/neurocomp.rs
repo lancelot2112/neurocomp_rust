@@ -294,6 +294,13 @@ impl RuntimeNetwork {
                         }
                     }
                     EdgeKind::Kernels => {
+                        // what it reads is all off (a population upstream cleared it): none of
+                        // its kernels can fire or learn, so it is paused, at no cost (exact,
+                        // unless a kernel acts on nothing)
+                        if src_view.as_words().iter().all(|&w| w == 0) && !eg.group.acts_on_nothing() {
+                            seen[i] = Some(src_view);
+                            continue;
+                        }
                         fired[i] = eg.group.process(&src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
                         seen[i] = Some(src_view);
                     }

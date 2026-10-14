@@ -48,6 +48,12 @@ impl KernelGroup {
         fired
     }
 
+    /// Whether any kernel can do anything on an input with no lines on (see
+    /// `SimpleKernel::acts_on_nothing`).
+    pub fn acts_on_nothing(&self) -> bool {
+        self.available_classes.iter().any(|c| c.kernels().iter().any(|k| k.acts_on_nothing()))
+    }
+
     pub fn kernel_count(&self) -> usize {
         self.available_classes.iter().map(|c| c.len()).sum()
     }

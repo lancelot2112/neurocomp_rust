@@ -77,6 +77,12 @@ impl SimpleKernel {
         tile_word(start, bits, w)
     }
 
+    /// Whether it can do anything on an input with no lines on: fire spontaneously (tonic), match
+    /// expected zeros (a two-mask kernel), drift (search), or fire with a zero threshold.
+    pub fn acts_on_nothing(&self) -> bool {
+        self.tonic > 0 || self.pattern.is_some() || self.search || self.threshold == 0
+    }
+
     /// Count its mask's lines once.
     fn counted(mut self) -> Self {
         self.lines = self.input_mask.count_ones();

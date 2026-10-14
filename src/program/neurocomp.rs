@@ -261,6 +261,18 @@ impl RuntimeNetwork {
                 }
                 let dst_curr = nodes[eg.dst].current_mut();
                 match eg.kind {
+                    EdgeKind::Noise => {
+                        // spontaneous lines in the destination's span
+                        let dw = dst_curr.word_len().max(1);
+                        let from = eg.spec.dst_word.min(dw - 1);
+                        let n = if eg.spec.out_words == 0 { dw - from } else { (eg.spec.out_words as usize).min(dw - from) };
+                        for _ in 0..eg.spec.noise {
+                            let b = from * 64 + eg.rng.gen_range(0..n * 64);
+                            let mut t = vec![0u64; dw];
+                            t[b / 64] = 1 << (b % 64);
+                            apply(dst_curr.as_words_mut(), &t, eg.op);
+                        }
+                    }
                     EdgeKind::Wire => {
                         if eg.rotate > 0 {
                             let n = src_view.bit_len();

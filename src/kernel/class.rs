@@ -68,11 +68,11 @@ pub struct KernelClass<K: KernelTrait> {
 
 impl<K: KernelTrait> KernelClass<K> {
     pub fn default() -> Self {
-        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::default() }
+        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0) }
     }
 
     pub fn with_kernels(kernels: Vec<K>) -> Self {
-        Self { active_kernels: kernels, temperature: KernelClassTemperature::default() }
+        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0) }
     }
 
     pub fn add(&mut self, k: K) {

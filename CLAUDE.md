@@ -90,8 +90,18 @@ what it can build. We do not add special-purpose modules to get a task done.
   Never feed the observer's scores, the scene or the phase into the program.
 - Keep the world honest: an act that does nothing is sensed as nothing.
 - Keep it deterministic by seed. Evaluate on several seeds and compare genomes on the same ones.
-- Genomes mutate locally: permanent gene ids, explicit loops, a random stream per gene, and
-  graded wiring (see `wiki/evolution.md`).
+- **The genome is a list of edges** (`src/evolve/genes.rs`). An edge names its source and
+  destination vectors by id and carries all its own properties: kind (wire, kernels, noise), op,
+  lag, span, window, landing word and span, gate, births, rates, starting kernels.
+- **Vectors are not genes.** A vector exists because edges name it, and its shape follows from
+  them: its width from the widest span written into it, and its history depth from the deepest
+  frame read from it. Vector 0 is the senses, vector 1 the act.
+- Mutation is local: add, copy, remove or rewire an edge, or change one of its properties. Every
+  edge has a permanent id, which keys its own random stream.
+- **Improvements come from evolution.** Hand-written genomes are only starting points. Do not
+  tune a seed by hand to make a task work. Make the evolutionary system able to find it: enough
+  lifetimes per genome for selection to beat noise, held-out lifetimes for every claim, and a
+  grammar that can express what is needed.
 
 ## Workflow
 

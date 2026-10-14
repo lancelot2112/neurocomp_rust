@@ -64,7 +64,7 @@ pub const INSTRUCTIONS: [GraphInstruction; 31] = [
 pub mod genes;
 
 /// What evolution works on: something that builds a network for a world and mutates locally.
-pub trait Evolvable: Clone {
+pub trait Evolvable: Clone + Send + Sync {
     fn build(&self, w: &World, seed: u64) -> RuntimeNetwork;
     fn mutate(&self, rng: &mut StdRng) -> Self;
     /// A size, for breaking ties toward the smaller genome.
@@ -201,6 +201,24 @@ pub fn fitness<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64])
     (total / seeds.len().max(1) as i32, sum)
 }
 
+/// Every genome's fitness, the population spread over the machine's cores (each lifetime is
+/// deterministic by its seed, so the order of evaluation does not matter).
+pub fn score_all<G: Evolvable>(population: Vec<G>, task: Task, physics: Physics, seeds: &[u64]) -> Vec<(i32, observe::Responding, G)> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).max(1);
+    let chunk = population.len().div_ceil(threads).max(1);
+    let mut out: Vec<(i32, observe::Responding, G)> = Vec::with_capacity(population.len());
+    std::thread::scope(|sc| {
+        let handles: Vec<_> = population
+            .chunks(chunk)
+            .map(|part| sc.spawn(move || part.iter().map(|g| { let (f, r) = fitness(g, task, physics, seeds); (f, r, g.clone()) }).collect::<Vec<_>>()))
+            .collect();
+        for h in handles {
+            out.extend(h.join().unwrap());
+        }
+    });
+    out
+}
+
 /// A generation's report.
 pub struct Generation<G> {
     pub best: G,
@@ -226,7 +244,7 @@ pub fn evolve_from<G: Evolvable>(start: Vec<G>, task: Task, physics: Physics, se
     let mut population = start;
     let mut best = population[0].clone();
     for generation in 0..generations {
-        let mut scored: Vec<(i32, observe::Responding, G)> = population.drain(..).map(|g| { let (f, r) = fitness(&g, task, physics, seeds); (f, r, g) }).collect();
+        let mut scored: Vec<(i32, observe::Responding, G)> = score_all(population.drain(..).collect(), task, physics, seeds);
         // ties go to the smaller genome, then to the earlier one
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.size().cmp(&b.2.size())));
         let mean = scored.iter().map(|s| s.0).sum::<i32>() / scored.len() as i32;

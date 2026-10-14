@@ -94,6 +94,8 @@ pub enum EdgeKind {
     Kernels,
     /// the source frame itself, rotated by `rotate` steps, written into the destination
     Wire,
+    /// spontaneous activity: `noise` random lines a step, written into the destination's span
+    Noise,
 }
 
 /// Instructions for defining available kernel classes
@@ -160,6 +162,11 @@ pub struct EdgeSpec {
     pub gate_lag: usize,
     /// this edge's random stream
     pub salt: u32,
+    /// destination words it writes, from `dst_word` (0: all of the destination); starting
+    /// kernels and noise land there
+    pub out_words: u8,
+    /// a noise edge's random lines a step
+    pub noise: u16,
 }
 
 impl EdgeSpec {
@@ -196,6 +203,8 @@ impl EdgeSpec {
             fade: 2,
             gate_lag: 1,
             salt: 0,
+            out_words: 0,
+            noise: 0,
         }
     }
 }

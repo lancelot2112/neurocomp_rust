@@ -1,10 +1,17 @@
-//! The genome as a list of genes: nodes and edges with permanent ids.
+//! The genome as a list of edges.
 //!
-//! The stack grammar (`GraphProgram`) cannot wire a re-entrant circuit without junk edges: every
-//! edge goes out from the cursor or in from the input, the stack offers only push, dup and swap,
-//! and a gate must name a node made before it. Here each node and edge has a permanent id; an
-//! edge names its endpoints (and its gate) by id, so adding or removing a gene leaves the rest of
-//! the wiring alone (`wiki/evolution.md`). It compiles to the same runtime graph.
+//! An edge gene names its source and destination vectors by id and carries all of its own
+//! properties. There are no node genes: a vector exists because edges name it, and what it is
+//! follows from them:
+//! - its **width** is the widest span written into it (an edge writes from `dst_word` over its
+//!   span: a wire, what it reads; kernels and noise, `out_words`);
+//! - its **history depth** is the deepest frame any edge, gate or repeat reads from it.
+//!
+//! Vector 0 is the world's senses (nothing writes it); vector 1 is the act (the world's act
+//! width). Every edge has a permanent id, which also keys its random stream, so adding or removing
+//! one leaves the others alone. The genome compiles to the same runtime graph as the stack grammar.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use petgraph::graph::Graph;
 use petgraph::Directed;
@@ -20,93 +27,34 @@ use crate::world::{self, World};
 
 use super::Evolvable;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Role {
-    Input,
-    Output,
-    Hidden,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct NodeGene {
-    pub id: u32,
-    pub role: Role,
-    /// width (hidden nodes; input and output take the world's widths)
-    pub bits: usize,
-    /// random lines switched on each step (spontaneous activity)
-    pub noise: usize,
-}
+/// The senses.
+pub const INPUT: u32 = 0;
+/// The act.
+pub const OUTPUT: u32 = 1;
+/// The widest a vector may grow, in words.
+const MAX_WORDS: usize = 128;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeGene {
     pub id: u32,
     pub src: u32,
     pub dst: u32,
-    /// frames back it reads (1: the frame before)
-    pub lag: usize,
-    /// frames it ORs together, from `lag` back
-    pub span: usize,
-    /// only these words of the source (offset, count)
-    pub window: Option<(usize, usize)>,
-    /// a wire lands its copy from this destination word
-    pub dst_word: usize,
-    pub kind: EdgeKind,
-    pub op: KernelOp,
-    /// a wire's rotation, in bits
-    pub rotate: u16,
-    pub grow: bool,
-    /// kernels hold each other down where their masks overlap
-    pub inhibit: bool,
-    /// learns only while this node had lines on (true) or none (false)
+    /// learns only while this vector had lines on (true) or none (false), `spec.gate_lag` back
     pub gate: Option<(u32, bool)>,
-    pub new_code: bool,
-    pub wide: bool,
-    pub repeat: bool,
-    /// frames back of the act a repeat birth copies
-    pub repeat_lag: usize,
-    /// random kernels it starts with, and their synapses, threshold (quarters) and output lines
-    pub kernels: u8,
-    pub start_syn: u8,
-    pub start_quarters: u8,
-    pub start_out: u8,
-    /// births: synapses, threshold (quarters), fewest and most output lines, most kernels
-    pub birth_syn: u8,
-    pub birth_quarters: u8,
-    pub out_min: u8,
-    pub out_max: u8,
-    pub cap: u16,
-    /// lines of a fresh code
-    pub code_lines: u8,
-    /// output learning chance 2^-out_learn; extinction chance 2^-fade
-    pub out_learn: u8,
-    pub fade: u8,
-    /// frames back its gate is read
-    pub gate_lag: usize,
+    /// everything else this edge is (its gate field is filled from `gate` when compiled)
+    pub spec: EdgeSpec,
 }
 
 impl EdgeGene {
-    /// A wire, with the grammar's starting values for everything else (`EdgeSpec::plain`).
-    pub fn wire(id: u32, src: u32, dst: u32) -> Self {
-        let p = EdgeSpec::plain();
-        Self {
-            id, src, dst, lag: 1, span: 1, window: None, dst_word: 0, kind: EdgeKind::Wire, op: KernelOp::Or, rotate: 0, grow: false,
-            inhibit: true, gate: None, new_code: false, wide: false, repeat: false, repeat_lag: 1, kernels: 0,
-            start_syn: p.start_syn, start_quarters: p.start_quarters, start_out: p.start_out, birth_syn: p.birth_syn,
-            birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, gate_lag: p.gate_lag,
-        }
-    }
-
-    pub fn kernels(id: u32, src: u32, dst: u32, op: KernelOp) -> Self {
-        Self { kind: EdgeKind::Kernels, op, ..Self::wire(id, src, dst) }
+    pub fn new(id: u32, src: u32, dst: u32, kind: EdgeKind, op: KernelOp) -> Self {
+        Self { id, src, dst, gate: None, spec: EdgeSpec { kind, op, salt: id, ..EdgeSpec::plain() } }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GeneGenome {
-    pub nodes: Vec<NodeGene>,
     pub edges: Vec<EdgeGene>,
-    /// the next permanent id
+    /// the next permanent id (for edges and for new vectors)
     pub next_id: u32,
 }
 
@@ -118,203 +66,182 @@ fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
 }
 
 impl GeneGenome {
-    /// The runtime graph: the input node first, hidden nodes by id, the output node last.
+    /// Every vector the edges name, the senses and the act included.
+    pub fn vectors(&self) -> BTreeSet<u32> {
+        let mut v: BTreeSet<u32> = [INPUT, OUTPUT].into_iter().collect();
+        for e in &self.edges {
+            v.insert(e.src);
+            v.insert(e.dst);
+            if let Some((g, _)) = e.gate {
+                v.insert(g);
+            }
+        }
+        v
+    }
+
+    /// Each vector's width in words, from the edges that write it (a fixed point: a wire spans
+    /// what it reads, which may itself be derived).
+    pub fn widths(&self) -> BTreeMap<u32, usize> {
+        let mut w: BTreeMap<u32, usize> = self.vectors().into_iter().map(|v| (v, 1)).collect();
+        w.insert(INPUT, world::SENSE_BITS / 64);
+        w.insert(OUTPUT, world::ACT_BITS / 64);
+        for _ in 0..64 {
+            let mut changed = false;
+            for e in &self.edges {
+                if e.dst == INPUT || e.dst == OUTPUT {
+                    continue;
+                }
+                let span = match e.spec.kind {
+                    EdgeKind::Wire => {
+                        let src = w[&e.src];
+                        e.spec.window.map_or(src, |(o, n)| n.min(src.saturating_sub(o)).max(1))
+                    }
+                    _ => (e.spec.out_words as usize).max(1),
+                };
+                let need = (e.spec.dst_word + span).min(MAX_WORDS);
+                if need > w[&e.dst] {
+                    w.insert(e.dst, need);
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        w
+    }
+
+    /// Each vector's history depth: the deepest frame read from it.
+    pub fn depths(&self) -> BTreeMap<u32, usize> {
+        let mut d: BTreeMap<u32, usize> = self.vectors().into_iter().map(|v| (v, 1)).collect();
+        let mut need = |v: u32, k: usize| {
+            let e = d.get_mut(&v).unwrap();
+            *e = (*e).max(k);
+        };
+        for e in &self.edges {
+            let s = &e.spec;
+            need(e.src, s.input_read_back.max(1) + s.span.max(1) - 1);
+            if s.repeat {
+                need(e.src, s.input_read_back.max(1) + s.repeat_lag + 1);
+                need(e.dst, s.repeat_lag);
+            }
+            if let Some((g, _)) = e.gate {
+                need(g, s.gate_lag.max(1));
+            }
+        }
+        d
+    }
+
+    /// The runtime graph: the senses first, the other vectors by id, the act last.
     pub fn graph(&self) -> Graph<NodeSpec, EdgeSpec, Directed> {
-        let mut order: Vec<&NodeGene> = self.nodes.iter().filter(|n| n.role == Role::Input).collect();
-        let mut hidden: Vec<&NodeGene> = self.nodes.iter().filter(|n| n.role == Role::Hidden).collect();
-        hidden.sort_by_key(|n| n.id);
-        order.extend(hidden);
-        order.extend(self.nodes.iter().filter(|n| n.role == Role::Output));
-        let index = |id: u32| order.iter().position(|n| n.id == id);
+        let widths = self.widths();
+        let depths = self.depths();
+        let mut order: Vec<u32> = vec![INPUT];
+        order.extend(self.vectors().into_iter().filter(|&v| v != INPUT && v != OUTPUT));
+        order.push(OUTPUT);
+        let index = |id: u32| order.iter().position(|&v| v == id).unwrap();
         let mut g: Graph<NodeSpec, EdgeSpec, Directed> = Graph::new();
         let idx: Vec<_> = order
             .iter()
-            .map(|n| {
-                let out_reach = self.edges.iter().filter(|e| e.src == n.id).map(|e| (e.lag + e.span - 1).max(if e.repeat { e.lag + e.repeat_lag + 1 } else { 1 })).max().unwrap_or(1);
-                let in_reach = self.edges.iter().filter(|e| e.dst == n.id && e.repeat).map(|e| e.repeat_lag).max().unwrap_or(1);
-                let depth = out_reach.max(in_reach).max(1);
-                let name = match n.role { Role::Output => Some("output".to_string()), Role::Input => Some("input".to_string()), Role::Hidden => None };
-                g.add_node(NodeSpec { name, bits: n.bits, history_depth: depth, noise: n.noise })
+            .map(|&v| {
+                let name = match v { INPUT => Some("input".to_string()), OUTPUT => Some("output".to_string()), _ => None };
+                g.add_node(NodeSpec { name, bits: widths[&v] * 64, history_depth: depths[&v], noise: 0 })
             })
             .collect();
         for e in &self.edges {
-            let (Some(a), Some(b)) = (index(e.src), index(e.dst)) else { continue };
-            let gate = e.gate.and_then(|(id, on)| index(id).map(|i| (i, on)));
-            g.add_edge(idx[a], idx[b], EdgeSpec {
-                input_read_back: e.lag.max(1),
-                threshold: 1,
-                op: e.op,
-                kind: e.kind,
-                rotate: e.rotate,
-                grow: e.grow,
-                inhibit: e.inhibit,
-                gate,
-                new_code: e.new_code,
-                wide: e.wide,
-                span: e.span.max(1),
-                window: e.window,
-                dst_word: e.dst_word,
-                repeat: e.repeat,
-                repeat_lag: e.repeat_lag.max(1),
-                start_kernels: e.kernels,
-                start_syn: e.start_syn,
-                start_quarters: e.start_quarters,
-                start_out: e.start_out,
-                birth_syn: e.birth_syn,
-                birth_quarters: e.birth_quarters,
-                out_min: e.out_min,
-                out_max: e.out_max,
-                cap: e.cap,
-                code_lines: e.code_lines,
-                out_learn: e.out_learn,
-                fade: e.fade,
-                gate_lag: e.gate_lag.max(1),
-                // its own random stream comes from its permanent id
-                salt: e.id,
-            });
+            if e.dst == INPUT {
+                continue;
+            }
+            let mut spec = e.spec.clone();
+            spec.gate = e.gate.map(|(v, on)| (index(v), on));
+            spec.salt = e.id;
+            g.add_edge(idx[index(e.src)], idx[index(e.dst)], spec);
         }
         g
     }
 
-    fn hidden_ids(&self) -> Vec<u32> {
-        self.nodes.iter().filter(|n| n.role == Role::Hidden).map(|n| n.id).collect()
+    fn any_vector(&self, rng: &mut StdRng, as_dst: bool) -> u32 {
+        let v: Vec<u32> = self.vectors().into_iter().filter(|&v| !(as_dst && v == INPUT)).collect();
+        *v.choose(rng).unwrap()
     }
 
-    fn any_node(&self, rng: &mut StdRng, as_dst: bool) -> u32 {
-        let ids: Vec<u32> = self.nodes.iter().filter(|n| !(as_dst && n.role == Role::Input)).map(|n| n.id).collect();
-        *ids.choose(rng).unwrap()
-    }
-
-    /// The context circuit, hand-written as genes (experiment 05):
-    /// - Y: the senses of the last three steps, side by side (wires at lags 1-3, rotated apart);
-    /// - Z: conjunction codes (kernels on all of Y, born with new codes when nothing matches);
-    /// - R: Z less what the context C expects (expectation kernels clear their lines);
-    /// - C: the context, held by a self-wire. Kernels on R clear it (leave: born when settled),
-    ///   restore a context that expected this (recognise: born while young), or set a new code
-    ///   when C is empty (enter);
-    /// - N, Yg: C's onset, held 32 frames: "young", the gate for learning expectations;
-    /// - Aff: the affect channel; A: the eye channel beside C;
-    /// - A to the act: random babbling kernels, and kernels born when a stroke follows an act,
-    ///   repeating that act on what came before it.
+    /// The context circuit, hand-written as edges (experiment 05). The vectors:
+    /// - 2, Y: eye and affect of the last three steps, side by side;
+    /// - 3, Z: conjunction codes on Y (born with new codes when nothing matches);
+    /// - 4, R: Z less what the context expects;
+    /// - 5, C: the context, held by a self-wire. Kernels on R clear it (leave: learned when
+    ///   settled), restore a context that expected this (recognise: learned while young), or set
+    ///   a new code when C is empty (enter);
+    /// - 6, N and 7, Yg: C's onset, held 32 frames ("young");
+    /// - 8, Aff: the affect channel;
+    /// - 9, A: the eye channel and C side by side;
+    /// - 10: spontaneous activity, driving babbling kernels into the act; acts a stroke followed
+    ///   are repeated on what A held before them, and fade when no stroke follows.
     pub fn context_seed(babblers: u8) -> Self {
         let ch = world::CH_BITS / 64;
-        let nodes = vec![
-            NodeGene { id: 0, role: Role::Input, bits: world::SENSE_BITS, noise: 0 },
-            NodeGene { id: 1, role: Role::Hidden, bits: world::SENSE_BITS, noise: 0 }, // Y
-            NodeGene { id: 2, role: Role::Hidden, bits: 512, noise: 0 },               // Z
-            NodeGene { id: 3, role: Role::Hidden, bits: 512, noise: 0 },               // R
-            NodeGene { id: 4, role: Role::Hidden, bits: 512, noise: 0 },               // C
-            NodeGene { id: 5, role: Role::Hidden, bits: 512, noise: 0 },               // N
-            NodeGene { id: 6, role: Role::Hidden, bits: 512, noise: 0 },               // Yg
-            NodeGene { id: 7, role: Role::Hidden, bits: 512, noise: 0 },               // Aff
-            NodeGene { id: 8, role: Role::Hidden, bits: 1024, noise: 0 },              // A
-            NodeGene { id: 9, role: Role::Output, bits: world::ACT_BITS, noise: 0 },
-            NodeGene { id: 10, role: Role::Hidden, bits: 64, noise: 8 },              // spontaneous
-        ];
-        let mut edges = Vec::new();
+        let (y, z, r, c, n, yg, aff, a, spont) = (2, 3, 4, 5, 6, 7, 8, 9, 10);
+        let mut edges: Vec<EdgeGene> = Vec::new();
         let mut id = 100;
-        let mut push = |e: EdgeGene, edges: &mut Vec<EdgeGene>| edges.push(e);
-        // Y: the eye and affect channels of the last three steps, side by side (one channel
-        // per eight words: step 1 eye at word 0, affect at 8; step 2 at 16 and 24; ...)
+        let mut add = |src: u32, dst: u32, kind: EdgeKind, op: KernelOp, f: &dyn Fn(&mut EdgeGene)| {
+            let mut e = EdgeGene::new(id, src, dst, kind, op);
+            f(&mut e);
+            edges.push(e);
+            id += 1;
+        };
+        use EdgeKind::{Kernels, Noise, Wire};
+        use KernelOp::{Clear, Or};
         for lag in 1..=3usize {
             for (k, chan) in [world::EYE, world::AFFECT].into_iter().enumerate() {
-                let mut e = EdgeGene::wire(id, 0, 1);
-                e.lag = lag;
-                e.window = Some((chan * ch, ch));
-                e.dst_word = ((lag - 1) * 2 + k) * ch;
-                push(e, &mut edges);
-                id += 1;
+                add(INPUT, y, Wire, Or, &|e| {
+                    e.spec.input_read_back = lag;
+                    e.spec.window = Some((chan * ch, ch));
+                    e.spec.dst_word = ((lag - 1) * 2 + k) * ch;
+                });
             }
         }
-        // Z: conjunction codes
-        let mut e = EdgeGene::kernels(id, 1, 2, KernelOp::Or);
-        e.grow = true;
-        e.new_code = true;
-        e.wide = true;
-        push(e, &mut edges);
-        id += 1;
-        // R = Z ...
-        push(EdgeGene::wire(id, 2, 3), &mut edges);
-        id += 1;
-        // ... less what C expects (learned while young)
-        let mut e = EdgeGene::kernels(id, 4, 3, KernelOp::Clear);
-        e.grow = true;
-        e.inhibit = false;
-        e.gate = Some((6, true));
-        push(e, &mut edges);
-        id += 1;
-        // leave: clear C on what it does not expect (learned when settled)
-        let mut e = EdgeGene::kernels(id, 3, 4, KernelOp::Clear);
-        e.grow = true;
-        e.gate = Some((6, false));
-        push(e, &mut edges);
-        id += 1;
-        // recognise: restore the context that expected this (learned while young)
-        let mut e = EdgeGene::kernels(id, 3, 4, KernelOp::Or);
-        e.grow = true;
-        e.gate = Some((6, true));
-        push(e, &mut edges);
-        id += 1;
-        // enter: a new context code when C is empty
-        let mut e = EdgeGene::kernels(id, 3, 4, KernelOp::Or);
-        e.grow = true;
-        e.new_code = true;
-        push(e, &mut edges);
-        id += 1;
-        // hold C
-        push(EdgeGene::wire(id, 4, 4), &mut edges);
-        id += 1;
-        // N = C(t-1) and not C(t-2): onset; Yg = N over the last 32 frames: young
-        push(EdgeGene::wire(id, 4, 5), &mut edges);
-        id += 1;
-        let mut e = EdgeGene::wire(id, 4, 5);
-        e.lag = 2;
-        e.op = KernelOp::Clear;
-        push(e, &mut edges);
-        id += 1;
-        let mut e = EdgeGene::wire(id, 5, 6);
-        e.span = 32;
-        push(e, &mut edges);
-        id += 1;
-        // Aff: the affect channel
-        let mut e = EdgeGene::wire(id, 0, 7);
-        e.window = Some((world::AFFECT * ch, ch));
-        push(e, &mut edges);
-        id += 1;
-        // A: the eye channel and C side by side
-        let mut e = EdgeGene::wire(id, 0, 8);
-        e.window = Some((world::EYE * ch, ch));
-        push(e, &mut edges);
-        id += 1;
-        let mut e = EdgeGene::wire(id, 4, 8);
-        e.dst_word = ch;
-        push(e, &mut edges);
-        id += 1;
-        // acts: babbling kernels on spontaneous activity, and acts repeated where a stroke
-        // followed them (born on what A held before)
-        let mut e = EdgeGene::kernels(id, 10, 9, KernelOp::Or);
-        e.kernels = babblers;
-        push(e, &mut edges);
-        id += 1;
-        let mut e = EdgeGene::kernels(id, 8, 9, KernelOp::Or);
-        e.grow = true;
-        e.wide = true;
-        e.repeat = true;
-        // a click is felt as a stroke four steps later on Aff's previous frame
-        e.repeat_lag = 4;
-        e.gate = Some((7, true));
-        push(e, &mut edges);
-        id += 1;
-        Self { nodes, edges, next_id: id }
+        add(y, z, Kernels, Or, &|e| { e.spec.grow = true; e.spec.new_code = true; e.spec.wide = true; e.spec.out_words = ch as u8; });
+        add(z, r, Wire, Or, &|_| {});
+        add(c, r, Kernels, Clear, &|e| { e.spec.grow = true; e.spec.inhibit = false; e.gate = Some((yg, true)); });
+        add(r, c, Kernels, Clear, &|e| { e.spec.grow = true; e.gate = Some((yg, false)); e.spec.out_words = ch as u8; });
+        add(r, c, Kernels, Or, &|e| { e.spec.grow = true; e.gate = Some((yg, true)); });
+        add(r, c, Kernels, Or, &|e| { e.spec.grow = true; e.spec.new_code = true; });
+        add(c, c, Wire, Or, &|_| {});
+        add(c, n, Wire, Or, &|_| {});
+        add(c, n, Wire, Clear, &|e| e.spec.input_read_back = 2);
+        add(n, yg, Wire, Or, &|e| e.spec.span = 32);
+        add(INPUT, aff, Wire, Or, &|e| e.spec.window = Some((world::AFFECT * ch, ch)));
+        add(INPUT, a, Wire, Or, &|e| e.spec.window = Some((world::EYE * ch, ch)));
+        add(c, a, Wire, Or, &|e| e.spec.dst_word = ch);
+        add(spont, spont, Noise, Or, &|e| { e.spec.noise = 8; e.spec.out_words = 1; });
+        add(spont, OUTPUT, Kernels, Or, &|e| e.spec.start_kernels = babblers);
+        add(a, OUTPUT, Kernels, Or, &|e| {
+            e.spec.grow = true;
+            e.spec.wide = true;
+            e.spec.repeat = true;
+            e.spec.repeat_lag = 4;
+            e.gate = Some((aff, true));
+        });
+        Self { edges, next_id: id }
+    }
+
+    /// Only the act path of the context seed: spontaneous babbling, and acts repeated where a
+    /// stroke followed them (on the eye channel), fading where none did.
+    pub fn act_seed(babblers: u8) -> Self {
+        let mut g = Self::context_seed(babblers);
+        g.edges.retain(|e| matches!((e.src, e.dst), (INPUT, 8) | (INPUT, 9) | (10, _) | (9, OUTPUT)));
+        g
     }
 }
 
-/// An edge's starting kernels, made from its own parameters and its own random stream: each
-/// reads one word of what the edge reads and writes one word (into the act node: one of the
-/// body's motor primitives).
+/// An edge's starting kernels, made from its own properties and its own random stream: each
+/// reads one word of what the edge reads and writes one word of its span (into the act: one of
+/// the body's motor primitives).
 pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
     let sp = e.spec;
     let mut r = StdRng::seed_from_u64((sp.salt as u64 + 1).wrapping_mul(0x2545_F491_4F6C_DD1D));
+    let dst_words = (e.dst_bits / 64).max(1);
+    let from = sp.dst_word.min(dst_words - 1);
+    let span = if sp.out_words == 0 { dst_words - from } else { (sp.out_words as usize).min(dst_words - from) };
     let kernels = (0..sp.start_kernels)
         .map(|_| {
             let syn = sparse(64, sp.start_syn as usize, &mut r);
@@ -326,7 +253,7 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
                 let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
                 (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
             } else {
-                (sparse(64, sp.start_out as usize, &mut r), r.gen_range(0..(e.dst_bits / 64).max(1)), sp.op)
+                (sparse(64, sp.start_out as usize, &mut r), from + r.gen_range(0..span), sp.op)
             };
             let threshold = (sp.start_quarters as usize * sp.start_syn as usize).div_ceil(4).max(1);
             SimpleKernel::new(syn, in_word, out, out_word, threshold, op)
@@ -348,92 +275,85 @@ impl Evolvable for GeneGenome {
 
     fn mutate(&self, rng: &mut StdRng) -> Self {
         let mut g = self.clone();
-        match rng.gen_range(0..12) {
-            // a new hidden node, wired in from one node and out to another
+        let fresh = |g: &mut GeneGenome| {
+            g.next_id += 1;
+            g.next_id - 1
+        };
+        match rng.gen_range(0..10) {
+            // a new edge (its source or destination may be a new vector)
             0 => {
-                let id = g.next_id;
-                g.next_id += 1;
-                g.nodes.push(NodeGene { id, role: Role::Hidden, bits: 512, noise: 0 });
-                let (a, b) = (g.any_node(rng, false), g.any_node(rng, true));
-                g.edges.push(EdgeGene::wire(g.next_id, a, id));
-                g.edges.push(EdgeGene::kernels(g.next_id + 1, id, b, KernelOp::Or));
-                g.next_id += 2;
-            }
-            // remove a hidden node and its edges
-            1 => {
-                if let Some(&id) = g.hidden_ids().choose(rng) {
-                    g.nodes.retain(|n| n.id != id);
-                    g.edges.retain(|e| e.src != id && e.dst != id);
-                    for e in &mut g.edges {
-                        if e.gate.map_or(false, |(n, _)| n == id) {
-                            e.gate = None;
-                        }
-                    }
+                let src = if rng.gen_range(0..4) == 0 { fresh(&mut g) } else { g.any_vector(rng, false) };
+                let dst = if rng.gen_range(0..4) == 0 { fresh(&mut g) } else { g.any_vector(rng, true) };
+                let kind = *[EdgeKind::Wire, EdgeKind::Kernels, EdgeKind::Kernels, EdgeKind::Noise].choose(rng).unwrap();
+                let id = fresh(&mut g);
+                let mut e = EdgeGene::new(id, src, dst, kind, *OPS.choose(rng).unwrap());
+                if kind == EdgeKind::Noise {
+                    e.spec.noise = 4;
+                    e.spec.out_words = 1;
                 }
-            }
-            // a new edge
-            2 => {
-                let (a, b) = (g.any_node(rng, false), g.any_node(rng, true));
-                let mut e = if rng.gen_bool(0.5) { EdgeGene::wire(g.next_id, a, b) } else { EdgeGene::kernels(g.next_id, a, b, *OPS.choose(rng).unwrap()) };
-                e.op = *OPS.choose(rng).unwrap();
                 g.edges.push(e);
-                g.next_id += 1;
             }
-            // remove an edge
-            3 if !g.edges.is_empty() => {
+            // a copy of an edge (a new id: its own stream)
+            1 if !g.edges.is_empty() => {
+                let mut e = g.edges.choose(rng).unwrap().clone();
+                e.id = fresh(&mut g);
+                g.edges.push(e);
+            }
+            // an edge removed
+            2 if !g.edges.is_empty() => {
                 let i = rng.gen_range(0..g.edges.len());
                 g.edges.remove(i);
             }
-            // rewire one end of an edge
-            4 if !g.edges.is_empty() => {
+            // one end of an edge moved (possibly to a new vector)
+            3 if !g.edges.is_empty() => {
                 let i = rng.gen_range(0..g.edges.len());
-                if rng.gen_bool(0.5) { g.edges[i].src = g.any_node(rng, false) } else { g.edges[i].dst = g.any_node(rng, true) }
+                let v = if rng.gen_range(0..4) == 0 { fresh(&mut g) } else { g.any_vector(rng, false) };
+                if rng.gen_bool(0.5) { g.edges[i].src = v } else if v != INPUT { g.edges[i].dst = v }
             }
-            // change one setting of an edge
-            5..=9 if !g.edges.is_empty() => {
+            // one property of an edge changed
+            _ if !g.edges.is_empty() => {
+                let vectors: Vec<u32> = g.vectors().into_iter().collect();
                 let i = rng.gen_range(0..g.edges.len());
-                let hidden = g.hidden_ids();
                 let e = &mut g.edges[i];
-                match rng.gen_range(0..14) {
-                    0 => e.op = *OPS.choose(rng).unwrap(),
-                    1 => e.kind = if e.kind == EdgeKind::Wire { EdgeKind::Kernels } else { EdgeKind::Wire },
-                    2 => e.lag = if rng.gen_bool(0.5) { (e.lag + 1).min(8) } else { e.lag.saturating_sub(1).max(1) },
-                    3 => e.span = if rng.gen_bool(0.5) { (e.span * 2).min(64) } else { (e.span / 2).max(1) },
-                    4 => e.rotate = e.rotate.wrapping_add(61),
-                    5 => e.grow = !e.grow,
-                    6 => e.inhibit = !e.inhibit,
-                    7 => e.new_code = !e.new_code,
-                    8 => e.wide = !e.wide,
-                    9 => e.repeat = !e.repeat,
-                    10 => e.gate = if e.gate.is_some() && rng.gen_bool(0.5) { None } else { hidden.choose(rng).map(|&n| (n, rng.gen_bool(0.5))) },
-                    11 => {
-                        // one of its numbers, up or down
-                        let up = rng.gen_bool(0.5);
-                        let step = |v: u8, lo: u8, hi: u8| if up { v.saturating_add(1).min(hi) } else { v.saturating_sub(1).max(lo) };
-                        match rng.gen_range(0..12) {
-                            0 => e.kernels = step(e.kernels, 0, 32),
-                            1 => e.start_syn = step(e.start_syn, 1, 64),
-                            2 => e.start_quarters = step(e.start_quarters, 1, 4),
-                            3 => e.start_out = step(e.start_out, 1, 64),
-                            4 => e.birth_syn = step(e.birth_syn, 1, 64),
-                            5 => e.birth_quarters = step(e.birth_quarters, 1, 4),
-                            6 => e.out_min = step(e.out_min, 1, 64),
-                            7 => e.out_max = step(e.out_max, 1, 64),
-                            8 => e.code_lines = step(e.code_lines, 1, 64),
-                            9 => e.out_learn = step(e.out_learn, 0, 8),
-                            10 => e.fade = step(e.fade, 0, 8),
-                            _ => e.gate_lag = if up { (e.gate_lag + 1).min(8) } else { e.gate_lag.saturating_sub(1).max(1) },
-                        }
-                    }
-                    12 if e.repeat => e.repeat_lag = if rng.gen_bool(0.5) { (e.repeat_lag + 1).min(8) } else { e.repeat_lag.saturating_sub(1).max(1) },
-                    _ => e.dst_word = (if rng.gen_bool(0.5) { e.dst_word + 1 } else { e.dst_word.saturating_sub(1) }) % 32,
+                let up = rng.gen_bool(0.5);
+                let step = |v: u8, lo: u8, hi: u8| if up { v.saturating_add(1).min(hi) } else { v.saturating_sub(1).max(lo) };
+                let stepu = |v: usize, lo: usize, hi: usize| if up { (v + 1).min(hi) } else { v.saturating_sub(1).max(lo) };
+                let which = rng.gen_range(0..30);
+                if which == 11 {
+                    e.gate = if e.gate.is_some() && rng.gen_bool(0.5) { None } else { vectors.choose(rng).map(|&v| (v, rng.gen_bool(0.5))) };
                 }
-            }
-            10 | 11 => {
-                let ids = g.hidden_ids();
-                if let Some(&id) = ids.choose(rng) {
-                    let n = g.nodes.iter_mut().find(|n| n.id == id).unwrap();
-                    n.noise = if rng.gen_bool(0.5) { (n.noise * 2).max(1).min(n.bits / 2) } else { n.noise / 2 };
+                let s = &mut e.spec;
+                match which {
+                    0 => s.op = *OPS.choose(rng).unwrap(),
+                    1 => s.kind = *[EdgeKind::Wire, EdgeKind::Kernels, EdgeKind::Noise].choose(rng).unwrap(),
+                    2 => s.input_read_back = stepu(s.input_read_back, 1, 8),
+                    3 => s.span = if up { (s.span * 2).min(64) } else { (s.span / 2).max(1) },
+                    4 => s.rotate = if up { s.rotate.wrapping_add(61) } else { s.rotate.wrapping_sub(61) },
+                    5 => s.grow = !s.grow,
+                    6 => s.inhibit = !s.inhibit,
+                    7 => s.new_code = !s.new_code,
+                    8 => s.wide = !s.wide,
+                    9 => s.repeat = !s.repeat,
+                    10 => s.repeat_lag = stepu(s.repeat_lag, 1, 8),
+                    11 => {}
+                    12 => s.gate_lag = stepu(s.gate_lag, 1, 8),
+                    13 => s.window = if s.window.is_some() && rng.gen_bool(0.3) { None } else { let (o, n) = s.window.unwrap_or((0, 8)); Some(if up { (o + 1, n) } else { (o.saturating_sub(1), n) }) },
+                    14 => s.window = s.window.map(|(o, n)| (o, if up { (n * 2).min(64) } else { (n / 2).max(1) })),
+                    15 => s.dst_word = stepu(s.dst_word, 0, MAX_WORDS - 1),
+                    16 => s.out_words = step(s.out_words, 0, 64),
+                    17 => s.noise = if up { (s.noise * 2).max(1).min(64) } else { s.noise / 2 },
+                    18 => s.start_kernels = step(s.start_kernels, 0, 32),
+                    19 => s.start_syn = step(s.start_syn, 1, 64),
+                    20 => s.start_quarters = step(s.start_quarters, 1, 4),
+                    21 => s.start_out = step(s.start_out, 1, 64),
+                    22 => s.birth_syn = step(s.birth_syn, 1, 64),
+                    23 => s.birth_quarters = step(s.birth_quarters, 1, 4),
+                    24 => s.out_min = step(s.out_min, 1, 64),
+                    25 => s.out_max = step(s.out_max, 1, 64),
+                    26 => s.code_lines = step(s.code_lines, 1, 64),
+                    27 => s.out_learn = step(s.out_learn, 0, 8),
+                    28 => s.fade = step(s.fade, 0, 8),
+                    _ => s.cap = if up { s.cap.saturating_mul(2).min(4096) } else { (s.cap / 2).max(1) },
                 }
             }
             _ => {}
@@ -442,7 +362,7 @@ impl Evolvable for GeneGenome {
     }
 
     fn size(&self) -> usize {
-        self.nodes.len() + self.edges.len()
+        self.edges.len()
     }
 }
 
@@ -451,23 +371,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_context_seed_compiles_with_input_first_and_output_last() {
-        let g = GeneGenome::context_seed(8).graph();
-        assert_eq!(g.node_count(), 11);
-        assert_eq!(g.node_weight(0.into()).unwrap().name.as_deref(), Some("input"));
-        assert_eq!(g.node_weight(10.into()).unwrap().name.as_deref(), Some("output"));
-        // N reads C two frames back, Yg reads N over 32 frames
-        assert!(g.node_weight(4.into()).unwrap().history_depth >= 2);
-        assert!(g.node_weight(5.into()).unwrap().history_depth >= 32);
+    fn vectors_take_their_shape_from_the_edges() {
+        let g = GeneGenome::context_seed(8);
+        let w = g.widths();
+        // Y holds six channel windows side by side: 48 words
+        assert_eq!(w[&2], 48);
+        // A holds the eye beside the context: 8 + 8 words
+        assert_eq!(w[&9], 16);
+        // the spontaneous vector is one word
+        assert_eq!(w[&10], 1);
+        let d = g.depths();
+        // N reads C two frames back; Yg reads N over 32 frames; the senses are read 3 back
+        assert!(d[&5] >= 2 && d[&6] >= 32 && d[&INPUT] >= 3);
+        let graph = g.graph();
+        assert_eq!(graph.node_weight(0.into()).unwrap().name.as_deref(), Some("input"));
+        assert_eq!(graph.node_weight(petgraph::graph::NodeIndex::new(graph.node_count() - 1)).unwrap().name.as_deref(), Some("output"));
     }
 
     #[test]
-    fn mutation_keeps_edges_off_the_input_node() {
+    fn mutation_never_writes_the_senses_and_always_compiles() {
         let mut rng = StdRng::seed_from_u64(5);
         let mut g = GeneGenome::context_seed(8);
-        for _ in 0..500 {
+        for _ in 0..2000 {
             g = g.mutate(&mut rng);
-            assert!(g.edges.iter().all(|e| e.dst != 0));
+            assert!(g.edges.iter().all(|e| e.dst != INPUT));
+            let w = g.widths();
+            assert!(w.values().all(|&x| (1..=MAX_WORDS).contains(&x)));
             let _ = g.graph();
         }
     }

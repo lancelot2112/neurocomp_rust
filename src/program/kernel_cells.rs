@@ -26,6 +26,15 @@
 //!   other), each writing its own random output bits. So a new
 //!   pattern gets cells of its own, and what it shares with an old one does not absorb it.
 //!
+//! - **Conjunctions in time** (`with_history`): the kernel keeps its last few inputs (a
+//!   history), and a cell may also look back: it fires only when its synapses on the input hold
+//!   and three quarters of its `then` synapses are on the input from `lag` inputs back. Cells
+//!   born for an input start at different lags. A cell that has not fired yet, whose input holds
+//!   but whose look back does not, moves to another lag and wires to what was there (it searches
+//!   for the conjunction that recurs). A cell that has fired, whose input holds but whose look
+//!   back does not, has met its familiar now after an unfamiliar then: a new sequence, which gets
+//!   a cell of its own at the same lag (and is new to the area).
+//!
 //! All bitwise: masks, popcounts, compares.
 
 use crate::bitvec::BitVector;
@@ -50,6 +59,11 @@ pub struct Cell {
     pub write: Write,
     /// a label the user may give it (an assembly's, say)
     pub label: Option<usize>,
+    /// a conjunction cell also needs a pattern from `lag` inputs back (`then`, over the input as
+    /// it was then; lag 0: none), and whether it has ever fired
+    pub lag: usize,
+    pub then: Vec<u64>,
+    pub fired: bool,
 }
 
 #[derive(Clone)]
@@ -63,7 +77,14 @@ pub struct Kernel {
     rng: StdRng,
     /// cells born so far
     pub births: u64,
+    /// conjunctions: how many inputs back cells may look (0: none), and the inputs that came,
+    /// newest first
+    depth: usize,
+    hist: std::collections::VecDeque<Vec<u64>>,
 }
+
+/// The bits one coding cell writes (the popcount a new part must meet to be a cell of its own).
+const ONE_CELL: u32 = 8;
 
 fn words(bits: usize) -> usize {
     bits.div_ceil(64)
@@ -81,7 +102,7 @@ impl Kernel {
     /// Cells over `bits` input lines writing into `out_bits` output bits, `out_k` bits each, `k`
     /// winning an input.
     pub fn new(bits: usize, out_bits: usize, k: usize, out_k: usize, seed: u64) -> Self {
-        Self { bits, out_bits, k, out_k, cells: Vec::new(), rng: StdRng::seed_from_u64(seed), births: 0 }
+        Self { bits, out_bits, k, out_k, cells: Vec::new(), rng: StdRng::seed_from_u64(seed), births: 0, depth: 0, hist: Default::default() }
     }
 
     pub fn rand_mask(&mut self, p: u32) -> u64 {
@@ -131,9 +152,60 @@ impl Kernel {
                 n += 1;
             }
         }
-        self.cells.push(Cell { syn, out, write: Write::Or, label });
+        self.cells.push(Cell { syn, out, write: Write::Or, label, lag: 0, then: Vec::new(), fired: false });
         self.births += 1;
         self.cells.len() - 1
+    }
+
+    /// Conjunction cells: born cells also look `depth` inputs back at most (see `code`).
+    pub fn with_history(mut self, depth: usize) -> Self {
+        self.depth = depth;
+        self
+    }
+
+    /// `n` lines of `frame` at random (all of them if fewer).
+    fn sample(&mut self, frame: &[u64], n: usize) -> Vec<u64> {
+        let mut lines = Self::ones(frame);
+        let mut v = vec![0u64; frame.len()];
+        for i in 0..n.min(lines.len()) {
+            let j = i + (self.rng.next_u64() % (lines.len() - i) as u64) as usize;
+            lines.swap(i, j);
+            v[lines[i] / 64] |= 1u64 << (lines[i] % 64);
+        }
+        v
+    }
+
+    /// Cell `c` looks `lag` inputs back, wired to as many of that input's lines as it has
+    /// synapses now (none if that input is not in the history: it is then a plain cell).
+    fn wire_then(&mut self, c: usize, lag: usize) {
+        match self.hist.get(lag.wrapping_sub(1)).cloned() {
+            Some(frame) if lag > 0 && pop(&frame) > 0 => {
+                let n = pop(&self.cells[c].syn) as usize;
+                let then = self.sample(&frame, n);
+                self.cells[c].lag = lag;
+                self.cells[c].then = then;
+            }
+            _ => {
+                self.cells[c].lag = 0;
+                self.cells[c].then.clear();
+            }
+        }
+    }
+
+    /// Whether cell `c`'s look back holds (three quarters of its `then` synapses on the input
+    /// that came `lag` inputs back; always, for a plain cell).
+    fn then_holds(&self, c: usize) -> bool {
+        let cell = &self.cells[c];
+        if cell.lag == 0 {
+            return true;
+        }
+        match self.hist.get(cell.lag - 1) {
+            Some(frame) => {
+                let n = pop(&cell.then);
+                n > 0 && 4 * and_pop(&cell.then, frame) >= 3 * n
+            }
+            None => false,
+        }
     }
 
     /// The bit positions set in `mask`.
@@ -222,10 +294,20 @@ impl Kernel {
     pub fn code(&mut self, input: &BitVector, learn: bool) -> (BitVector, Vec<usize>) {
         let mut inw = input.as_words().to_vec();
         inw.resize(words(self.bits), 0);
-        let mut fired: Vec<(u32, usize)> = (0..self.cells.len()).filter_map(|c| {
+        // a cell fires when its synapses on the input hold and, a conjunction cell, its look back
+        // holds too; one whose input holds but whose look back does not is noted
+        let mut fired: Vec<(u32, usize)> = Vec::new();
+        let mut unmet: Vec<usize> = Vec::new();
+        for c in 0..self.cells.len() {
             let (f, on) = self.match_of(c, &inw);
-            f.then_some((on, c))
-        }).collect();
+            if f {
+                if self.then_holds(c) {
+                    fired.push((on, c));
+                } else {
+                    unmet.push(c);
+                }
+            }
+        }
         fired.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
         // inhibition is local: a fired cell is held down by a better-matched one whose mask
         // overlaps its own (more than half the smaller), as cells competing for the same lines
@@ -245,6 +327,34 @@ impl Kernel {
                 winners.push(c);
             }
         }
+        // the cells that fired by matching (newborn cells have not fired yet)
+        let matched: Vec<usize> = winners.clone();
+        if learn && self.depth > 0 {
+            let mut spawned_lags: Vec<usize> = Vec::new();
+            for c in unmet {
+                if !self.cells[c].fired {
+                    // not yet fired: it moves its look back to another lag and wires to what was
+                    // there (searching for the conjunction that recurs)
+                    let lag = 1 + (self.rng.next_u64() % self.depth as u64) as usize;
+                    self.wire_then(c, lag);
+                } else {
+                    // a conjunction it knows, with something else before it: the familiar now
+                    // after an unfamiliar then is a new conjunction, and gets a cell of its own at
+                    // the same lag (counted as a birth: the area has not seen this sequence) —
+                    // unless a cell at that lag that fired already covers it, and one a lag
+                    let lag = self.cells[c].lag;
+                    let covered = matched.iter().any(|&w| self.cells[w].lag == lag && 2 * and_pop(&self.cells[w].syn, &self.cells[c].syn) > pop(&self.cells[c].syn));
+                    if covered || spawned_lags.contains(&lag) {
+                        continue;
+                    }
+                    spawned_lags.push(lag);
+                    let now: Vec<u64> = self.cells[c].syn.iter().zip(&inw).map(|(m, x)| m & x).collect();
+                    let n = self.birth_on(now, None);
+                    self.wire_then(n, lag);
+                    winners.push(n);
+                }
+            }
+        }
         if learn && pop(&inw) > 0 {
             // what of the input no winner covers (the input AND NOT their masks): if more than a
             // quarter of it, that part gets cells of its own (every part of an input is coded)
@@ -259,9 +369,19 @@ impl Kernel {
                     self.hebbian(c, &inw, 3);
                 }
                 let born = self.births_for(&uncovered, self.k, None);
+                for (i, &c) in born.iter().enumerate() {
+                    if self.depth > 0 {
+                        self.wire_then(c, 1 + i % self.depth);
+                    }
+                }
                 winners.extend(born);
             } else if winners.is_empty() {
                 winners = self.births_for(&inw, self.k, None);
+                for (i, &c) in winners.clone().iter().enumerate() {
+                    if self.depth > 0 {
+                        self.wire_then(c, 1 + i % self.depth);
+                    }
+                }
             } else {
                 for &c in &winners {
                     self.hebbian(c, &inw, 3);
@@ -270,6 +390,13 @@ impl Kernel {
                     self.anti_hebbian(c, &inw, 1);
                 }
             }
+        }
+        for &c in &matched {
+            self.cells[c].fired = true;
+        }
+        if self.depth > 0 {
+            self.hist.push_front(inw.clone());
+            self.hist.truncate(self.depth);
         }
         let mut out = vec![0u64; words(self.out_bits)];
         for &c in &winners {
@@ -293,8 +420,8 @@ impl Kernel {
 ///   often under one assembly and not under the other builds up (a distractor that comes in every
 ///   context now and then never does).
 /// - Something new while settled (its kernel cells were born for it), when its new part (the
-///   input AND NOT what the active assembly covers) meets the popcount (at least half the
-///   input), seeds a candidate assembly wired to that part, beside the active one, a possible
+///   input AND NOT what the active assembly covers) meets the popcount (one cell's output: a
+///   whole new cell firing), seeds a candidate assembly wired to that part, beside the active one, a possible
 ///   new cause, with that input as its first drive (a smaller novelty is learned into the active
 ///   one): if it
 ///   keeps coming it takes over (the first reversal); if not, the leak keeps it down. Something
@@ -335,6 +462,7 @@ impl Holder {
     }
 
     /// The assemblies whose cells fire for the input.
+    /// The assemblies that explain the input: one of their cells fires for it.
     fn explainers(&self, inw: &[u64]) -> Vec<bool> {
         let mut e = vec![false; self.explained.len()];
         for c in 0..self.kernel.cells.len() {
@@ -380,8 +508,8 @@ impl Holder {
                     self.kernel.births_for(&inw, 4, Some(a));
                 } else if novel {
                     // settled, and something new. What is new about it is the input AND NOT the
-                    // lines the active assembly's cells cover. When that meets the popcount (at
-                    // least half the input: a pattern of its own, not a shift of a few bits), it
+                    // lines the active assembly's cells cover. When that meets the popcount (one
+                    // cell's output: a whole new cell is firing, not a shift of a few bits), it
                     // seeds a candidate assembly wired to it, a possible new cause, stored beside
                     // the active one with that input as its first drive; else it is a small
                     // novelty, learned into the active one
@@ -394,7 +522,7 @@ impl Holder {
                         }
                     }
                     let own: Vec<u64> = inw.iter().zip(&covered).map(|(x, c)| x & !c).collect();
-                    if 2 * pop(&own) >= pop(&inw) {
+                    if pop(&own) >= ONE_CELL {
                         let l = self.explained.len();
                         self.explained.push(0);
                         self.rival.push(1);

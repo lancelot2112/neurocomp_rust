@@ -65,7 +65,9 @@ fn main() {
         cc.debug = debug;
         // (`LATENT_MODEL=kernel`: kernel cells separate the input and a holder of kernel
         // assemblies holds; `kernel_cells.rs`)
-        let mut ksep = Kernel::new(1024, 1024, 4, 8, seed ^ 0xC0DE);
+        // (`LATENT_HIST=h`: the kernel's cells may look up to h inputs back: conjunctions in time)
+        let hist: usize = env("LATENT_HIST", 0);
+        let mut ksep = Kernel::new(1024, 1024, 4, 8, seed ^ 0xC0DE).with_history(hist);
         let mut kh = Holder::new(1024, seed ^ 0xF00D);
         let noise: usize = env("LATENT_NOISE", 0);
         let seq = std::env::var("LATENT_SEQ").is_ok();
@@ -89,6 +91,7 @@ fn main() {
         // cells as new inputs need them)
         let l4_on = std::env::var("LATENT_L4").is_ok();
         let outcome = [sparse(16), sparse(16)];
+        let click = sparse(16);
         let mut l4 = Pool::new(2, 1024, 1024, 32, 2, seed);
         // (`LATENT_SEP=1`: the codes pass through pattern separation first)
         let sep_on = std::env::var("LATENT_SEP").is_ok();
@@ -154,7 +157,16 @@ fn main() {
                     // (`LATENT_SEQ=1`: the act is a sequence of two steps, the light and then what
                     // followed, paid or not, the same code whichever light; the kernel's input is
                     // each step with the step before it, rotated (a transition))
-                    let ev = if seq {
+                    let ev = if seq && hist > 0 {
+                        // light, then the click (the same whichever light), then what followed;
+                        // each coded as it is, the kernel's history holding what came before
+                        for first in [cue[light].clone(), click.clone()] {
+                            let b0 = ksep.births;
+                            let (c1, _) = ksep.code(&first, true);
+                            kh.hold(&c1, ksep.births > b0);
+                        }
+                        outcome[(got > 0) as usize].clone()
+                    } else if seq {
                         let step = |now: &BitVector, before: &BitVector| -> BitVector {
                             let mut v = now.clone();
                             for b in (0..1024).filter(|&b| before.bit_get(b)) {

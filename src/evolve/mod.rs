@@ -236,7 +236,8 @@ pub fn live<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> Vec
 }
 
 /// Fitness: the observer's discrimination (parts per 1024: click rate on paying trials minus on
-/// the others), the mean over `seeds` world seeds.
+/// the others), the mean over `seeds` world seeds. A lifetime (or, scoring the worst phase, a
+/// phase) with no click scores `observe::SILENT`, below any clicking.
 pub fn fitness<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64]) -> (i32, observe::Responding) {
     let mut total = 0i32;
     let mut sum = observe::Responding::default();
@@ -245,7 +246,7 @@ pub fn fitness<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64])
         let r = observe::responding(&events);
         total += match task {
             Task::Reversal { period, worst_phase: true, .. } => observe::worst_phase(&events, period),
-            _ => r.discrimination(),
+            _ => r.score(),
         };
         sum.paying_trials += r.paying_trials;
         sum.paying_clicked += r.paying_clicked;

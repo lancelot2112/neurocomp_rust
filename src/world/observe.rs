@@ -24,6 +24,18 @@ impl Responding {
     }
 }
 
+/// The score of a lifetime (or phase) that never clicked in a response window: below any
+/// discrimination (which runs from -1024 to 1024). Not acting is death; clicking at all, even at
+/// the wrong times, beats it; clicking at the right times is best.
+pub const SILENT: i32 = -4096;
+
+impl Responding {
+    /// Discrimination, or `SILENT` if there was no click in any trial's response window.
+    pub fn score(&self) -> i32 {
+        if self.paying_clicked + self.other_clicked == 0 { SILENT } else { self.discrimination() }
+    }
+}
+
 fn window(kind: Conditioning, t: usize) -> bool {
     match kind {
         Conditioning::Pavlov => true,
@@ -67,13 +79,14 @@ pub fn responding(events: &[Event]) -> Responding {
 
 /// Discrimination within each phase of a reversal (trials `k*period` to `(k+1)*period`), the
 /// worst of them: a genome scores well only if it does well both before and after every swap.
+/// A phase with no click scores `SILENT`.
 pub fn worst_phase(events: &[Event], period: usize) -> i32 {
     let period = period.max(1);
     let phases = events.iter().filter_map(|e| e.trial.map(|t| t.0 / period)).max().map_or(0, |m| m + 1);
     (0..phases)
         .map(|ph| {
             let evs: Vec<Event> = events.iter().filter(|e| e.trial.map_or(false, |t| t.0 / period == ph)).cloned().collect();
-            responding(&evs).discrimination()
+            responding(&evs).score()
         })
         .min()
         .unwrap_or(0)
@@ -143,6 +156,23 @@ mod tests {
         }
         assert!(responding(&w.events).discrimination().abs() < 400, "pooled, it looks like half right");
         assert!(worst_phase(&w.events, 20) < -500, "its worst phase shows it never switched");
+    }
+
+    #[test]
+    fn silence_is_worse_than_any_clicking() {
+        let run = |click: bool| {
+            let mut w = World::new(5, 4);
+            w.conditioning(Conditioning::Instrumental, 20);
+            while !w.done() {
+                let a = w.act(None, if click { Some(CLICK) } else { None });
+                w.step(&a);
+            }
+            responding(&w.events)
+        };
+        let (silent, always) = (run(false), run(true));
+        assert_eq!(silent.score(), SILENT);
+        assert_eq!(always.score(), 0);
+        assert!(silent.score() < -1024);
     }
 
     #[test]

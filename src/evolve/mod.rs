@@ -210,7 +210,12 @@ pub fn score_all<G: Evolvable>(population: Vec<G>, task: Task, physics: Physics,
     std::thread::scope(|sc| {
         let handles: Vec<_> = population
             .chunks(chunk)
-            .map(|part| sc.spawn(move || part.iter().map(|g| { let (f, r) = fitness(g, task, physics, seeds); (f, r, g.clone()) }).collect::<Vec<_>>()))
+            .map(|part| sc.spawn(move || part.iter().map(|g| {
+                // a genome that breaks (a panic in its network) scores worst and dies; the run
+                // goes on
+                let (f, r) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| fitness(g, task, physics, seeds))).unwrap_or((i32::MIN / 2, observe::Responding::default()));
+                (f, r, g.clone())
+            }).collect::<Vec<_>>()))
             .collect();
         for h in handles {
             out.extend(h.join().unwrap());

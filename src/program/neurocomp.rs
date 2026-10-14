@@ -255,9 +255,12 @@ impl RuntimeNetwork {
                     }
                 }
                 if let Some((off, n)) = eg.window {
+                    // a window always reads something: its offset wraps around the source, and it
+                    // takes at least one word (a mutated genome still makes a network)
                     let w = src_view.as_words();
-                    let end = (off + n).min(w.len());
-                    src_view = BitVector::from_words(w[off.min(end)..end].to_vec());
+                    let off = off % w.len().max(1);
+                    let end = (off + n.max(1)).min(w.len());
+                    src_view = BitVector::from_words(w[off..end].to_vec());
                 }
                 let dst_curr = nodes[eg.dst].current_mut();
                 match eg.kind {
@@ -321,7 +324,7 @@ impl RuntimeNetwork {
                 if !open && eg.repeat {
                     let then = nodes[eg.src.idx].get_frame(eg.src.read_back + eg.repeat_lag).clone();
                     let then = match eg.window {
-                        Some((off, n)) => { let w = then.as_words(); let end = (off + n).min(w.len()); BitVector::from_words(w[off.min(end)..end].to_vec()) }
+                        Some((off, n)) => { let w = then.as_words(); let off = off % w.len().max(1); let end = (off + n.max(1)).min(w.len()); BitVector::from_words(w[off..end].to_vec()) }
                         None => then,
                     };
                     if let Some(class) = eg.group.classes_mut().first_mut() {
@@ -351,8 +354,9 @@ impl RuntimeNetwork {
                 let mut v = nodes[eg.src.idx].get_frame(eg.src.read_back + eg.repeat_lag).clone();
                 if let Some((off, n)) = eg.window {
                     let w = v.as_words();
-                    let end = (off + n).min(w.len());
-                    v = BitVector::from_words(w[off.min(end)..end].to_vec());
+                    let off = off % w.len().max(1);
+                    let end = (off + n.max(1)).min(w.len());
+                    v = BitVector::from_words(w[off..end].to_vec());
                 }
                 older = v;
                 &older

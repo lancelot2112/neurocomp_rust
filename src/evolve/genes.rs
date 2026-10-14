@@ -94,7 +94,7 @@ impl GeneGenome {
                 let span = match e.spec.kind {
                     EdgeKind::Wire => {
                         let src = w[&e.src];
-                        e.spec.window.map_or(src, |(o, n)| n.min(src.saturating_sub(o)).max(1))
+                        e.spec.window.map_or(src, |(o, n)| { let o = o % src.max(1); n.max(1).min(src - o) })
                     }
                     _ => (e.spec.out_words as usize).max(1),
                 };
@@ -246,7 +246,7 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
         .map(|_| {
             let syn = sparse(64, sp.start_syn as usize, &mut r);
             let src_words = (e.src_bits / 64).max(1);
-            let read = sp.window.map_or(src_words, |(o, n)| n.min(src_words.saturating_sub(o)).max(1));
+            let read = sp.window.map_or(src_words, |(o, n)| { let o = o % src_words; n.max(1).min(src_words - o) });
             let in_word = r.gen_range(0..read);
             let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
                 let p = primitives.choose(&mut r).unwrap();
@@ -386,6 +386,20 @@ mod tests {
         let graph = g.graph();
         assert_eq!(graph.node_weight(0.into()).unwrap().name.as_deref(), Some("input"));
         assert_eq!(graph.node_weight(petgraph::graph::NodeIndex::new(graph.node_count() - 1)).unwrap().name.as_deref(), Some("output"));
+    }
+
+    #[test]
+    fn every_mutant_lives() {
+        use crate::evolve::{live, Physics, Task};
+        use crate::world::Conditioning;
+        let mut rng = StdRng::seed_from_u64(11);
+        let mut g = GeneGenome::context_seed(8);
+        for i in 0..300 {
+            g = g.mutate(&mut rng);
+            if i % 10 == 0 {
+                let _ = live(&g, Task::Conditioning(Conditioning::Reversal, 8), Physics::Varied, i);
+            }
+        }
     }
 
     #[test]

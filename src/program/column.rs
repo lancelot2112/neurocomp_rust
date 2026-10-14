@@ -45,21 +45,21 @@
 //!   against input); silent, the next surprise is loaded and completed by the autoassociative
 //!   map, so the state comes back if what broke the last one has broken one before.
 //!
-//! - **Held as an assembly** (`set_assembly`): layer 4's code is separated first (competing
-//!   cells with counting synapses, Hebbian for winners, anti-Hebbian for cells that matched and
-//!   were held down, a homeostatic threshold; `assembly.rs`, coding), its plasticity closing as its
-//!   experience doubles (a critical period); layer 2/3's held population is an assembly that
-//!   sustains itself by recurrence and falls silent when inhibition (from inputs it did not
-//!   learn, and from rival assemblies the input drives more) reaches its recurrent strength
-//!   (`assembly.rs`, holding). What is held is the active assembly's cells; which assembly is
-//!   active is the area's context.
+//! - **Held as an assembly** (`set_assembly`): layer 4's code is coded again by kernel cells
+//!   (binary masks born as needed, Hebbian for winners, anti-Hebbian for overlapping cells they
+//!   hold down; `kernel_cells.rs`); layer 2/3's held population is an assembly of kernel cells that
+//!   holds with no input, explains an input when one of its cells fires for it, grows cells for
+//!   what it does not explain while young, and once settled falls silent when inputs it does not
+//!   explain, or rivals that explain them, reach its strength (`kernel_cells.rs`, `Holder`).
+//!   What is held is the active assembly's cells; which assembly is active is the area's
+//!   context.
 //!
 //! Both layers learn the same way: a confirmed prediction strengthens the cells that made it;
 //! where nothing predicted the target, a cell is grown for the moment (its tuft on the
 //! context, silent synapses on the input, the target as its output).
 
 use crate::bitvec::BitVector;
-use crate::program::assembly::Assembly;
+use crate::program::kernel_cells::{Holder, Kernel};
 use crate::program::area::Pool;
 use crate::program::bitcells::BitCells;
 
@@ -264,7 +264,7 @@ pub struct Column {
     record: Option<(u32, u32)>,
     /// held as an assembly (`set_assembly`): the separator, the recurrent assembly population,
     /// and the inputs the separator has seen
-    assembly: Option<Box<(Assembly, Assembly, u64)>>,
+    assembly: Option<Box<(Kernel, Holder)>>,
     /// topographic output (keep the order): layer 2/3's activity is sent up in layer 4's own
     /// coordinates. Each cell has a home, the layer 4 code it first fired for, and a slot there
     /// (the lowest free: 0 for the first cell for that input, 1, 2, … for cells for the same
@@ -321,35 +321,37 @@ impl Column {
         self.gain = gain;
     }
 
-    /// Held as an assembly (see the module notes): a separator of `cells` cells (`k` firing) on
-    /// layer 4's code, and a population of `assembly_cells` (`assembly_k` active) holding.
-    pub fn set_assembly(&mut self, cells: usize, k: usize, assembly_cells: usize, assembly_k: usize, seed: u64) {
-        let sep = Assembly::coding(cells, k, self.bits, 32, seed);
-        let circuit = Assembly::holding(assembly_cells, assembly_k, cells, seed ^ 0x5EED);
-        self.assembly = Some(Box::new((sep, circuit, 0)));
+    /// Held as an assembly (see the module notes): kernel cells code layer 4's input into
+    /// `out_bits` bits (`k` cells born for an input none fires for), and a holder of kernel
+    /// assemblies holds.
+    pub fn set_assembly(&mut self, out_bits: usize, k: usize, seed: u64) {
+        let sep = Kernel::new(self.bits, out_bits, k, 8, seed);
+        let holder = Holder::new(out_bits, seed ^ 0x5EED);
+        self.assembly = Some(Box::new((sep, holder)));
     }
 
     /// With an assembly: the one active (the area's context), and whether one is.
     pub fn assembly_context(&self) -> Option<(usize, bool)> {
-        self.assembly.as_ref().map(|a| (a.1.now(), !a.1.unsettled()))
+        self.assembly.as_ref().map(|a| (a.1.now, !a.1.unsettled()))
     }
 
     /// With an assembly: (assemblies recruited, changes of assembly, silencings) so far.
     pub fn assembly_counts(&self) -> Option<(usize, u32, u32)> {
-        self.assembly.as_ref().map(|a| (a.1.contexts(), a.1.switches(), a.1.resets()))
+        self.assembly.as_ref().map(|a| (a.1.contexts(), a.1.switches, a.1.resets))
     }
 
-    /// With an assembly: the input separated and held; the held state is the active assembly's
-    /// cells (spread over the column's bits). The code is the input and what is held.
+    /// With an assembly: the input coded by the kernel cells and held; the held state is the
+    /// active assembly's cells (spread over the column's bits). The code is the input and what
+    /// is held.
     fn hold_assembly(&mut self, input: &BitVector, learn: bool) -> BitVector {
         let bits = self.bits;
         let a = self.assembly.as_mut().unwrap();
-        let sep = a.0.code(input, learn);
-        if sep.count_ones() > 0 {
-            a.1.hold(&sep);
+        let (code, _) = a.0.code(input, learn);
+        if code.count_ones() > 0 {
+            a.1.hold(&code);
         }
         let mut held = BitVector::new(bits, Some(0));
-        for &c in a.1.active() {
+        for c in a.1.active_cells() {
             let mut h = (c as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
             h ^= h >> 29;
             held.bit_set((h % bits as u64) as usize);

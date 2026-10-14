@@ -248,6 +248,14 @@ impl Holder {
         self.active.is_none()
     }
 
+    /// The cells of the active assembly (none while silent).
+    pub fn active_cells(&self) -> Vec<usize> {
+        match self.active {
+            Some(a) => (0..self.kernel.cells.len()).filter(|&c| self.kernel.cells[c].label == Some(a)).collect(),
+            None => Vec::new(),
+        }
+    }
+
     /// The assemblies whose cells fire for the input.
     fn explainers(&self, inw: &[u64]) -> Vec<bool> {
         let mut e = vec![false; self.explained.len()];

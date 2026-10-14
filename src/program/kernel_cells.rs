@@ -65,9 +65,6 @@ pub struct Kernel {
     pub births: u64,
 }
 
-/// The fewest new lines a candidate assembly's cells are wired to (else the whole input).
-const MIN_SYN: u32 = 8;
-
 fn words(bits: usize) -> usize {
     bits.div_ceil(64)
 }
@@ -295,8 +292,11 @@ impl Kernel {
 ///   nothing. Every rival's drive leaks, one at random in sixteen inputs, so only what comes
 ///   often under one assembly and not under the other builds up (a distractor that comes in every
 ///   context now and then never does).
-/// - Something new while settled (its kernel cells were born for it) seeds a candidate assembly
-///   beside the active one, a possible new cause, with that input as its first drive: if it
+/// - Something new while settled (its kernel cells were born for it), when its new part (the
+///   input AND NOT what the active assembly covers) meets the popcount (at least half the
+///   input), seeds a candidate assembly wired to that part, beside the active one, a possible
+///   new cause, with that input as its first drive (a smaller novelty is learned into the active
+///   one): if it
 ///   keeps coming it takes over (the first reversal); if not, the leak keeps it down. Something
 ///   familiar that no assembly explains is background, learned into the active one.
 /// - A rival whose drive reaches the active assembly's strength (the bit length of how many
@@ -379,11 +379,12 @@ impl Holder {
                     // young: it learns what comes
                     self.kernel.births_for(&inw, 4, Some(a));
                 } else if novel {
-                    // settled, and something new: it seeds a candidate assembly of its own (a
-                    // possible new cause), stored beside the active one, with that input as its
-                    // first drive
-                    // its cells are wired to what is new about the input: the input AND NOT the
-                    // lines the active assembly's cells cover (the distinctive part)
+                    // settled, and something new. What is new about it is the input AND NOT the
+                    // lines the active assembly's cells cover. When that meets the popcount (at
+                    // least half the input: a pattern of its own, not a shift of a few bits), it
+                    // seeds a candidate assembly wired to it, a possible new cause, stored beside
+                    // the active one with that input as its first drive; else it is a small
+                    // novelty, learned into the active one
                     let mut covered = vec![0u64; inw.len()];
                     for c in 0..self.kernel.cells.len() {
                         if self.kernel.cells[c].label == Some(a) {
@@ -393,11 +394,14 @@ impl Holder {
                         }
                     }
                     let own: Vec<u64> = inw.iter().zip(&covered).map(|(x, c)| x & !c).collect();
-                    let wire = if pop(&own) >= MIN_SYN { own } else { inw.clone() };
-                    let l = self.explained.len();
-                    self.explained.push(0);
-                    self.rival.push(1);
-                    self.kernel.births_for(&wire, 4, Some(l));
+                    if 2 * pop(&own) >= pop(&inw) {
+                        let l = self.explained.len();
+                        self.explained.push(0);
+                        self.rival.push(1);
+                        self.kernel.births_for(&own, 4, Some(l));
+                    } else {
+                        self.kernel.births_for(&inw, 4, Some(a));
+                    }
                 } else if !(0..e.len()).any(|l| l != a && e[l]) {
                     // familiar, and tied to no context: background, learned into the active one
                     self.kernel.births_for(&inw, 4, Some(a));

@@ -237,8 +237,10 @@ impl RuntimeNetwork {
             n.advance(if hold && matches!(mode, AdvanceMode::Clear) { AdvanceMode::CopyPrev } else { mode });
         }
 
-        // Execute edges, writes in phase order (set, keep, toggle/clear); each edge reads its
-        // source as it was `read_back` frames ago
+        // Execute edges in their order (the genome's): writes into a vector land in that order,
+        // whatever their ops. Each edge reads its source as it was `read_back` (at least 1)
+        // frames ago, never the frame being written, so edges into different vectors do not
+        // depend on each other.
         let Self { nodes, edges, node_rngs, noise, .. } = self;
         // spontaneous activity: random lines on, in the nodes that have it (each its own stream)
         for (i, &k) in noise.iter().enumerate() {
@@ -250,11 +252,8 @@ impl RuntimeNetwork {
         }
         let mut fired: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
         let mut seen: Vec<Option<BitVector>> = vec![None; edges.len()];
-        for phase in 0..4u8 {
+        {
             for (i, eg) in edges.iter_mut().enumerate() {
-                if eg.op.phase() != phase {
-                    continue;
-                }
                 let mut src_view = view(&nodes[eg.src.idx], eg.src.read_back, eg.src.span, eg.window);
                 let dst_curr = nodes[eg.dst].current_mut();
                 match eg.kind {

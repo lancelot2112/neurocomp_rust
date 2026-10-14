@@ -280,7 +280,8 @@ impl TagGenome {
         let mut p = Pop::new(id, rng.r#gen(), rng.r#gen());
         p.wire = rng.gen_bool(0.25);
         p.sparse = rng.gen_bool(0.5);
-        p.op = if rng.gen_bool(0.5) { KernelOp::Or } else { KernelOp::random(rng) };
+        // any of the ops, evenly (OR is one of twelve)
+        p.op = KernelOp::random(rng);
         p.count = rng.gen_range(1..=8);
         p.field = rng.gen_range(0..4);
         p.at = rng.r#gen();

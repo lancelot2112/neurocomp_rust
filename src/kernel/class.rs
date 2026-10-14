@@ -60,17 +60,6 @@ impl KernelOp {
         }
     }
 
-    /// The order writes land in within a step: setting and shifting first, then arithmetic, then
-    /// keeping and inverting, then toggling and clearing (so an XOR can cancel what came in).
-    pub fn phase(self) -> u8 {
-        match self {
-            KernelOp::Or | KernelOp::Shl(_) | KernelOp::Shr(_) | KernelOp::Rotl(_) | KernelOp::Rotr(_) => 0,
-            KernelOp::Add(_) | KernelOp::Sub(_) => 1,
-            KernelOp::And | KernelOp::Nand | KernelOp::Nor => 2,
-            KernelOp::Xor | KernelOp::Clear => 3,
-        }
-    }
-
     /// A random op, with a random lane width or amount where it takes one.
     pub fn random<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
         let n: u8 = rng.gen_range(0..64);

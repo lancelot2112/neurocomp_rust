@@ -79,3 +79,10 @@ needs.
     needs no carry wire and lines go only when a population clears them. Off by default; new
     random channels hold a quarter of the time and mutation toggles it. Untested in evolution
     so far. The risk: OR writes pile up in a held channel until a clearing population evolves.
+- **Write order is the genome's.** Writes into a vector land in the order their populations
+  appear in the string, whatever their ops (before: set and shift, then arithmetic, then
+  AND/NAND/NOR, then XOR/AND-NOT). Moving a population moves its writes, so the order is
+  evolvable: an XOR can cancel before an OR lands, or an AND can mask what follows it. Every
+  edge reads past frames only, so edges into different vectors are independent and could run
+  in parallel. New random populations pick any of the twelve op families evenly (before, OR half
+  the time). The residue circuit still cancels; 227 of 300 single mutants keep cancelling.

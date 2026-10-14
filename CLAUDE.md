@@ -29,8 +29,10 @@ what it can build. We do not add special-purpose modules to get a task done.
   - moving bits: shift left or right, and rotate left or right, by 0 to 63 bits. What is written
     is moved, then ORed in. A word carried from a vector's previous frame and shifted is a
     sliding window.
-  - Within a step, writes land in this order: set and shift, then arithmetic, then
-    AND/NAND/NOR, then XOR/AND-NOT.
+  - Within a step, writes into a vector land in the order their populations appear in the
+    genome, whatever their ops; moving a population moves its writes. No op has a fixed place.
+    Every edge reads past frames only (lag at least 1), so edges into different vectors are
+    independent of each other.
   - Any new op must be a single cheap word operation like these.
 - **Learning** (density-preserving moves, the mask keeps its popcount):
   - Hebbian, on firing: move one mask bit from a line that was off to a line that was on.

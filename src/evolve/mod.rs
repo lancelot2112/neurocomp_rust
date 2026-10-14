@@ -27,7 +27,7 @@ use crate::program::neurocomp::{EdgeInfo, RuntimeNetwork};
 use crate::world::{self, observe, Conditioning, World};
 
 /// Every graph instruction, for mutation.
-pub const INSTRUCTIONS: [GraphInstruction; 13] = [
+pub const INSTRUCTIONS: [GraphInstruction; 22] = [
     GraphInstruction::Stay(),
     GraphInstruction::Create(),
     GraphInstruction::Pop(),
@@ -41,6 +41,15 @@ pub const INSTRUCTIONS: [GraphInstruction; 13] = [
     GraphInstruction::Nop(),
     GraphInstruction::Jump(),
     GraphInstruction::Mark(),
+    GraphInstruction::EdgeOr(),
+    GraphInstruction::EdgeAnd(),
+    GraphInstruction::EdgeXor(),
+    GraphInstruction::EdgeClear(),
+    GraphInstruction::EdgeWire(),
+    GraphInstruction::EdgeRotate(),
+    GraphInstruction::EdgeLag(),
+    GraphInstruction::EdgeGrow(),
+    GraphInstruction::EdgeShare(),
 ];
 
 const OPS: [KernelOp; 4] = [KernelOp::Or, KernelOp::And, KernelOp::Xor, KernelOp::Clear];
@@ -125,7 +134,7 @@ impl Genome {
                     let (out, op) = if e.to_output {
                         (primitives.choose(&mut r).unwrap().clone(), KernelOp::Or)
                     } else {
-                        (sparse(e.dst_bits, self.out as usize, &mut r), self.op)
+                        (sparse(e.dst_bits, self.out as usize, &mut r), e.spec.op)
                     };
                     SimpleKernel::new(syn, 0, out, 0, self.threshold as usize, op)
                 })

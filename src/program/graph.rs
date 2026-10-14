@@ -6,7 +6,7 @@
 // - If the cursor stays on a node then the history depth increases by one
 // - If the cursor moves to a new node then a new node is created with history depth 1 (only current frame)
 
-use petgraph::graph::{Graph, NodeIndex};
+use petgraph::graph::{EdgeIndex, Graph, NodeIndex};
 use petgraph::Directed;
 use crate::kernel::class::KernelOp;
 
@@ -61,6 +61,26 @@ pub enum GraphInstruction {
     // LOOP
     Jump(), // jump back to the last loop instruction and disable this jump
     Mark(), // mark the start of a loop section
+
+    // Edge settings: each changes the last edge made (no-op if there is none)
+    EdgeOr(),     // its writes set lines
+    EdgeAnd(),    // its writes keep only their lines
+    EdgeXor(),    // its writes toggle lines (compare, cancel)
+    EdgeClear(),  // its writes clear lines (AND-NOT)
+    EdgeWire(),   // it copies its source whole (with its op) instead of holding kernels
+    EdgeRotate(), // a wire rotates what it copies by a fixed step more
+    EdgeLag(),    // it reads its source one frame further back
+    EdgeGrow(),   // kernels are born on it where its destination is left uncovered
+    EdgeShare(),  // its kernels do not hold each other down (all that match fire)
+}
+
+/// What an edge carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EdgeKind {
+    /// a group of kernels (masks over the source, writing masks into the destination)
+    Kernels,
+    /// the source frame itself, rotated by `rotate` steps, written into the destination
+    Wire,
 }
 
 /// Instructions for defining available kernel classes
@@ -80,7 +100,13 @@ pub struct EdgeSpec {
     pub input_read_back: usize, // how many frames back to read from source node
     pub threshold: usize,
     pub op: KernelOp,
-    // room for future kernel-class parameters (windows, remapping, etc.)
+    pub kind: EdgeKind,
+    /// a wire's rotation, in steps
+    pub rotate: u16,
+    /// kernels are born on uncovered destination lines
+    pub grow: bool,
+    /// kernels whose masks overlap hold each other down (off: all that match fire)
+    pub inhibit: bool,
 }
 
 impl EdgeSpec {
@@ -89,6 +115,10 @@ impl EdgeSpec {
             input_read_back: defaults.default_history_depth, // default to reading snapshot of previous frame
             threshold: defaults.default_threshold,
             op: defaults.default_op,
+            kind: EdgeKind::Kernels,
+            rotate: 0,
+            grow: false,
+            inhibit: true,
         }
     }
 }
@@ -99,6 +129,10 @@ impl Default for EdgeSpec {
             input_read_back: 1, // default to reading snapshot of previous frame
             threshold: 16,
             op: KernelOp::Or,
+            kind: EdgeKind::Kernels,
+            rotate: 0,
+            grow: false,
+            inhibit: true,
         }
     }
 }
@@ -194,6 +228,8 @@ impl GraphProgram {
         let mut graph: Graph<NodeSpec, EdgeSpec, Directed> = Graph::new();
         // Start with one implicit node so programs can begin with ops without Create().
         let mut curr = graph.add_node(NodeSpec::from_defaults(&defaults));
+        #[allow(unused_assignments)]
+        let mut last_edge: EdgeIndex = EdgeIndex::end();
         let mut stack: Vec<NodeIndex> = Vec::new();
 
         // Node 0 is always the "input" node. A bitvector with an edge is created off this
@@ -202,7 +238,7 @@ impl GraphProgram {
         let input_node = curr;
         if self.code.len() > 0 {
             curr = graph.add_node(NodeSpec::from_defaults(&defaults));
-            graph.add_edge(
+            last_edge = graph.add_edge(
                 input_node,
                 curr,
                 EdgeSpec::from_defaults(&defaults),
@@ -225,19 +261,18 @@ impl GraphProgram {
                         let n = graph.node_weight_mut(curr).expect("current node must exist");
                         n.history_depth = n.history_depth.saturating_add(1);
                     }
-                    graph.add_edge(
+                    last_edge = graph.add_edge(
                         curr,
                         curr,
                         EdgeSpec {
                             input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
-                            threshold: defaults.default_threshold,
-                            op: defaults.default_op,
+                            ..EdgeSpec::from_defaults(&defaults)
                         },
                     );
                 }
                 GraphInstruction::Create() => {
                     let new_node = graph.add_node(NodeSpec::from_defaults(&defaults));
-                    graph.add_edge(
+                    last_edge = graph.add_edge(
                         curr,
                         new_node,
                         EdgeSpec::from_defaults(&defaults),
@@ -253,18 +288,17 @@ impl GraphProgram {
                                 let n = graph.node_weight_mut(curr).expect("current node must exist");
                                 n.history_depth = n.history_depth.saturating_add(1);
                             }
-                            graph.add_edge(
+                            last_edge = graph.add_edge(
                                 curr,
                                 curr,
                                 EdgeSpec {
                                     input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
-                                    threshold: defaults.default_threshold,
-                                    op: defaults.default_op,
+                                    ..EdgeSpec::from_defaults(&defaults)
                                 },
                             );
                         } else {
                             // add edge: curr -> target
-                            graph.add_edge(
+                            last_edge = graph.add_edge(
                                 curr,
                                 target,
                                 EdgeSpec::from_defaults(&defaults),
@@ -276,7 +310,7 @@ impl GraphProgram {
                 }
                 GraphInstruction::ReadInput() => {
                     // add edge: input_node -> curr
-                    graph.add_edge(
+                    last_edge = graph.add_edge(
                         input_node,
                         curr,
                         EdgeSpec::from_defaults(&defaults),
@@ -285,7 +319,7 @@ impl GraphProgram {
                 }
                 GraphInstruction::WriteOutput() => {
                     // add edge: curr -> output_node
-                    graph.add_edge(
+                    last_edge = graph.add_edge(
                         curr,
                         output_node,
                         EdgeSpec::from_defaults(&defaults),
@@ -327,6 +361,31 @@ impl GraphProgram {
                     last_mark = Some(pc);
                 }
                 GraphInstruction::Nop() => {}
+                GraphInstruction::EdgeOr() | GraphInstruction::EdgeAnd() | GraphInstruction::EdgeXor() | GraphInstruction::EdgeClear()
+                | GraphInstruction::EdgeWire() | GraphInstruction::EdgeRotate() | GraphInstruction::EdgeLag() | GraphInstruction::EdgeGrow()
+                | GraphInstruction::EdgeShare() => {
+                    if last_edge != EdgeIndex::end() {
+                        let src = graph.edge_endpoints(last_edge).unwrap().0;
+                        let e = graph.edge_weight_mut(last_edge).unwrap();
+                        match instr {
+                            GraphInstruction::EdgeOr() => e.op = KernelOp::Or,
+                            GraphInstruction::EdgeAnd() => e.op = KernelOp::And,
+                            GraphInstruction::EdgeXor() => e.op = KernelOp::Xor,
+                            GraphInstruction::EdgeClear() => e.op = KernelOp::Clear,
+                            GraphInstruction::EdgeWire() => e.kind = EdgeKind::Wire,
+                            GraphInstruction::EdgeRotate() => e.rotate = e.rotate.wrapping_add(1),
+                            GraphInstruction::EdgeGrow() => e.grow = true,
+                            GraphInstruction::EdgeShare() => e.inhibit = false,
+                            _ => {
+                                // lag: read one frame further back; the source keeps enough frames
+                                e.input_read_back += 1;
+                                let rb = e.input_read_back;
+                                let n = graph.node_weight_mut(src).unwrap();
+                                n.history_depth = n.history_depth.max(rb);
+                            }
+                        }
+                    }
+                }
             }
             pc += 1;
 
@@ -334,7 +393,7 @@ impl GraphProgram {
 
         // As a final step connect the current node to the output node!
         // This ensures there is always a path to output.
-        graph.add_edge(
+        last_edge = graph.add_edge(
             curr,
             output_node,
             EdgeSpec::from_defaults(&defaults),

@@ -34,10 +34,26 @@ impl KernelGroup {
         Self { available_classes }
     }
 
-    pub fn process_all<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, rng: &mut R) {
+    /// Run every class; returns, per class, the kernels that fired.
+    pub fn process_all<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, rng: &mut R) -> Vec<Vec<usize>> {
+        self.process(input, output, phase, adj_temperature, true, rng)
+    }
+
+    /// As `process_all`; with `inhibit` off, kernels do not hold each other down.
+    pub fn process<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, inhibit: bool, rng: &mut R) -> Vec<Vec<usize>> {
+        let mut fired = Vec::new();
         for kclass in &mut self.available_classes {
-            kclass.process_all(input, output, phase, adj_temperature, rng);
+            fired.push(kclass.process(input, output, phase, adj_temperature, inhibit, rng));
         }
+        fired
+    }
+
+    pub fn kernel_count(&self) -> usize {
+        self.available_classes.iter().map(|c| c.len()).sum()
+    }
+
+    pub fn classes_mut(&mut self) -> &mut [KernelClass<SimpleKernel>] {
+        &mut self.available_classes
     }
 }
 

@@ -80,9 +80,15 @@ impl<K: KernelTrait> KernelClass<K> {
     /// Run all kernels; kernels may OR/XOR/AND/CLEAR into `output`. A kernel that fires marks
     /// its input mask as taken: a later kernel whose mask overlaps the taken lines by more than
     /// half is held down (and, if it matched, learns anti-Hebbian).
-    pub fn process_all<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, rng: &mut R) {
+    pub fn process_all<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, rng: &mut R) -> Vec<usize> {
+        self.process(input, output, phase, adj_temperature, true, rng)
+    }
+
+    /// As `process_all`; with `inhibit` off, kernels do not hold each other down.
+    pub fn process<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, inhibit_on: bool, rng: &mut R) -> Vec<usize> {
         let mut inhibit = BitVector::new(input.bit_len(), Some(0));
-        for k in &mut self.active_kernels {
+        let mut fired = Vec::new();
+        for (i, k) in self.active_kernels.iter_mut().enumerate() {
             let ctx = KernelContext {
                 input,
                 inhibit: &inhibit,
@@ -90,10 +96,17 @@ impl<K: KernelTrait> KernelClass<K> {
                 phase,
             };
             if k.try_fire(&ctx, output, rng) {
-                k.mark_inhibit(&mut inhibit);
+                if inhibit_on {
+                    k.mark_inhibit(&mut inhibit);
+                }
+                fired.push(i);
             }
         }
+        fired
     }
+
+    pub fn kernels(&self) -> &[K] { &self.active_kernels }
+    pub fn kernels_mut(&mut self) -> &mut [K] { &mut self.active_kernels }
 
     pub fn len(&self) -> usize { self.active_kernels.len() }
     pub fn is_empty(&self) -> bool { self.active_kernels.is_empty() }

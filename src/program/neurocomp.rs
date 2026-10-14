@@ -6,7 +6,9 @@ use crate::bitvec::BitVector;
 use crate::bitvec::bithistory::{AdvanceMode, BitVecHistory};
 use crate::kernel::class::KernelOp;
 use crate::kernel::group::KernelGroup;
-use crate::program::graph::{EdgeSpec, GraphProgram, NodeSpec, ProgramDefaults};
+use crate::kernel::{KernelClass, SimpleKernel};
+use crate::program::graph::{EdgeKind, EdgeSpec, GraphProgram, NodeSpec, ProgramDefaults};
+use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -18,6 +20,47 @@ pub struct RuntimeNetwork {
     pub edges: Vec<RuntimeEdgeGroup>,
     /// the network's own random stream (learning moves), so runs are deterministic
     pub rng: StdRng,
+    /// how kernels are born on growing edges
+    pub births: Births,
+}
+
+/// How a kernel is born on a growing edge: wired to `syn` of the source's active lines (all of
+/// them if fewer), firing at `quarters`/4 of its synapses, writing the destination lines left
+/// uncovered (at most `out_max`), when at least `out_min` are; at most `cap` kernels an edge.
+#[derive(Clone, Copy, Debug)]
+pub struct Births {
+    pub syn: usize,
+    pub quarters: usize,
+    pub out_min: usize,
+    pub out_max: usize,
+    pub cap: usize,
+}
+
+impl Default for Births {
+    fn default() -> Self {
+        Self { syn: 16, quarters: 3, out_min: 8, out_max: 64, cap: 512 }
+    }
+}
+
+/// The order writes land in within a tick: what sets lines first, then what keeps, then what
+/// toggles or clears (so an XOR edge can cancel what came in).
+fn write_phase(op: KernelOp) -> u8 {
+    match op {
+        KernelOp::Or => 0,
+        KernelOp::And => 1,
+        KernelOp::Xor | KernelOp::Clear => 2,
+    }
+}
+
+fn apply(d: &mut [u64], t: &[u64], op: KernelOp) {
+    for (a, b) in d.iter_mut().zip(t) {
+        match op {
+            KernelOp::Or => *a |= b,
+            KernelOp::And => *a &= b,
+            KernelOp::Xor => *a ^= b,
+            KernelOp::Clear => *a &= !b,
+        }
+    }
 }
 
 /// What an edge's kernel factory is told about the edge it fills.
@@ -41,6 +84,22 @@ pub struct RuntimeEdgeGroup {
     pub src: RuntimeEdgeTarget,
     pub dst: usize,
     pub group: KernelGroup,
+    pub kind: EdgeKind,
+    pub op: KernelOp,
+    pub rotate: u16,
+    pub grow: bool,
+    /// kernels hold each other down where their masks overlap
+    pub inhibit: bool,
+    /// births are allowed (not on edges into the act node, whose kernels write the body's
+    /// primitives)
+    pub can_grow: bool,
+}
+
+impl RuntimeEdgeGroup {
+    /// Kernels on this edge.
+    pub fn group_len(&self) -> usize {
+        self.group.kernel_count()
+    }
 }
 
 impl RuntimeNetwork {
@@ -84,10 +143,16 @@ impl RuntimeNetwork {
                 },
                 dst,
                 group: KernelGroup::default(), // placeholder; later: pick group per edge
+                kind: es.kind,
+                op: es.op,
+                rotate: es.rotate,
+                grow: es.grow,
+                inhibit: es.inhibit,
+                can_grow: true,
             });
         }
 
-        Self { nodes, edges, rng: StdRng::seed_from_u64(0) }
+        Self { nodes, edges, rng: StdRng::seed_from_u64(0), births: Births::default() }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -113,9 +178,15 @@ impl RuntimeNetwork {
                 src: RuntimeEdgeTarget { idx: src, read_back: e.weight().input_read_back.max(1) },
                 dst,
                 group: factory(&info),
+                kind: e.weight().kind,
+                op: e.weight().op,
+                rotate: e.weight().rotate,
+                grow: e.weight().grow,
+                inhibit: e.weight().inhibit,
+                can_grow: dst != last,
             });
         }
-        Self { nodes, edges, rng: StdRng::seed_from_u64(seed) }
+        Self { nodes, edges, rng: StdRng::seed_from_u64(seed), births: Births::default() }
     }
 
     /// Advance histories and process all edges once.
@@ -125,14 +196,77 @@ impl RuntimeNetwork {
             n.advance(mode);
         }
 
-        // Execute edges
-        let Self { nodes, edges, rng } = self;
-        for eg in edges.iter_mut() {
-            // Snapshot source at read_back frames
-            let src_view = nodes[eg.src.idx].snapshot(eg.src.read_back);
-            let dst_curr = nodes[eg.dst].current_mut();
-
-            eg.group.process_all(&src_view, dst_curr, 0, adj_temperature, rng); // phase=0 for now
+        // Execute edges, writes in phase order (set, keep, toggle/clear); each edge reads its
+        // source as it was `read_back` frames ago
+        let Self { nodes, edges, rng, births } = self;
+        let mut fired: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
+        let mut seen: Vec<Option<BitVector>> = vec![None; edges.len()];
+        for phase in 0..3u8 {
+            for (i, eg) in edges.iter_mut().enumerate() {
+                if write_phase(eg.op) != phase {
+                    continue;
+                }
+                let mut src_view = nodes[eg.src.idx].snapshot(eg.src.read_back);
+                let dst_curr = nodes[eg.dst].current_mut();
+                match eg.kind {
+                    EdgeKind::Wire => {
+                        if eg.rotate > 0 {
+                            let n = src_view.bit_len();
+                            src_view.rotr_mut((eg.rotate as usize * 61) % n.max(1));
+                        }
+                        // fold (or pad) the source to the destination's width
+                        let dw = dst_curr.word_len();
+                        let mut t = vec![0u64; dw];
+                        for (j, w) in src_view.as_words().iter().enumerate() {
+                            t[j % dw] |= w;
+                        }
+                        apply(dst_curr.as_words_mut(), &t, eg.op);
+                    }
+                    EdgeKind::Kernels => {
+                        fired[i] = eg.group.process(&src_view, dst_curr, 0, adj_temperature, eg.inhibit, rng).into_iter().flatten().collect();
+                        seen[i] = Some(src_view);
+                    }
+                }
+            }
+        }
+        // After the tick: cancelling kernels learn their outputs, and growing edges give birth
+        // where their destination was left uncovered
+        for (i, eg) in edges.iter_mut().enumerate() {
+            if eg.kind != EdgeKind::Kernels {
+                continue;
+            }
+            let dest = nodes[eg.dst].current().clone();
+            let Some(class) = eg.group.classes_mut().first_mut() else { continue };
+            if matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
+                for &k in &fired[i] {
+                    class.kernels_mut()[k].learn_output(&dest, rng);
+                }
+            }
+            if !(eg.grow && eg.can_grow) || class.len() >= births.cap {
+                continue;
+            }
+            let mut uncovered = dest.clone();
+            for &k in &fired[i] {
+                let out = &class.kernels()[k].output_mask;
+                uncovered.mask_mut(class.kernels()[k].output_idx, out, |a, m| a & !m);
+            }
+            let lines: Vec<usize> = (0..uncovered.bit_len()).filter(|&b| uncovered.bit_get(b)).collect();
+            let src = seen[i].as_ref().unwrap();
+            let active: Vec<usize> = (0..src.bit_len()).filter(|&b| src.bit_get(b)).collect();
+            if lines.len() < births.out_min || active.is_empty() {
+                continue;
+            }
+            let syn: Vec<usize> = active.choose_multiple(rng, births.syn.min(active.len())).copied().collect();
+            let out: Vec<usize> = lines.choose_multiple(rng, births.out_max.min(lines.len())).copied().collect();
+            let threshold = (births.quarters * syn.len()).div_ceil(4).max(1);
+            class.add(SimpleKernel::new(
+                BitVector::from_bits(&syn, src.bit_len()),
+                0,
+                BitVector::from_bits(&out, dest.bit_len()),
+                0,
+                threshold,
+                eg.op,
+            ));
         }
     }
 
@@ -173,6 +307,32 @@ impl RuntimeNetwork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::KernelClass;
+    use crate::program::graph::GraphInstruction as I;
+
+    /// The residue circuit, written in the graph language: the input wired (OR) into R, and a
+    /// second edge from the input one frame back whose kernels cancel (XOR) and are born where R
+    /// is left on. On a repeating sequence R goes to nothing.
+    #[test]
+    fn residue_circuit_cancels_a_repeating_sequence() {
+        use rand::seq::SliceRandom;
+        let prog = GraphProgram { code: vec![I::EdgeWire(), I::ReadInput(), I::EdgeLag(), I::EdgeXor(), I::EdgeGrow(), I::EdgeShare()] };
+        let g = prog.build_graph(&ProgramDefaults { default_bits: 512, ..ProgramDefaults::default() });
+        let mut net = RuntimeNetwork::from_graph_with(&g, 512, 512, 1, |_| KernelGroup::from_classes(vec![KernelClass::with_kernels(vec![])]));
+        let mut rng = StdRng::seed_from_u64(2);
+        let all: Vec<usize> = (0..512).collect();
+        let codes: Vec<BitVector> = (0..5).map(|_| BitVector::from_bits(&all.choose_multiple(&mut rng, 16).copied().collect::<Vec<_>>(), 512)).collect();
+        let (mut early, mut late) = (0, 0);
+        for t in 0..200 {
+            net.tick(AdvanceMode::Clear, 0);
+            net.write_input(&codes[t % 5], 0);
+            let r = net.read_node(1).count_ones();
+            if t < 10 { early += r } else if t >= 150 { late += r }
+        }
+        assert!(early >= 40, "the first steps are unpredicted ({early})");
+        assert_eq!(late, 0, "a learned cycle leaves no residue");
+        assert_eq!(net.edges.iter().map(|e| e.group_len()).sum::<usize>(), 5, "one kernel per transition");
+    }
     use crate::program::graph::{GraphProgram};
 
     #[test]

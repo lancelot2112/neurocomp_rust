@@ -88,6 +88,38 @@ impl SimpleKernel {
     }
 }
 
+impl SimpleKernel {
+    /// Output learning for a kernel that cancels (writes by XOR or clear), after the tick, with
+    /// `dest` its destination as the tick left it: each line it wrote that is still on (its
+    /// cancel failed: what it predicted did not come) moves to a line of the
+    /// destination still on that it does not write. It learns to cancel what is left; its output
+    /// keeps its number of lines. Each failed line moves with chance 1/16: slower than success,
+    /// so a prediction that comes true half the time is kept while one that never comes fades.
+    pub fn learn_output<R: rand::Rng + ?Sized>(&mut self, dest: &BitVector, rng: &mut R) {
+        let words = self.output_mask.word_len();
+        let d = dest.as_slice(self.output_idx, words);
+        let o = self.output_mask.as_words();
+        let mut failed: Vec<usize> = Vec::new();
+        let mut left: Vec<usize> = Vec::new();
+        for w in 0..words {
+            let (f, l) = (o[w] & d[w], d[w] & !o[w]);
+            failed.extend((0..64).filter(|b| f >> b & 1 == 1).map(|b| w * 64 + b));
+            left.extend((0..64).filter(|b| l >> b & 1 == 1).map(|b| w * 64 + b));
+        }
+        for b in failed {
+            if left.is_empty() {
+                break;
+            }
+            if rng.gen_range(0..16) == 0 {
+                let i = rng.gen_range(0..left.len());
+                let to = left.swap_remove(i);
+                self.output_mask.bit_clear(b);
+                self.output_mask.bit_set(to);
+            }
+        }
+    }
+}
+
 pub struct InputStats {
     pub threshold: usize, 
     pub count: usize,

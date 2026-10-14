@@ -285,7 +285,17 @@ impl Evolvable for GeneGenome {
                 let dst = if rng.gen_range(0..4) == 0 { fresh(&mut g) } else { g.any_vector(rng, true) };
                 let kind = *[EdgeKind::Wire, EdgeKind::Kernels, EdgeKind::Kernels, EdgeKind::Noise].choose(rng).unwrap();
                 let id = fresh(&mut g);
-                let mut e = EdgeGene::new(id, src, dst, kind, KernelOp::random(rng));
+                let op = if rng.gen_bool(0.5) { KernelOp::Or } else { KernelOp::random(rng) };
+                let mut e = EdgeGene::new(id, src, dst, kind, op);
+                // born active: some kernels, a random fan-in, sometimes tonic or growing
+                e.spec.start_kernels = rng.gen_range(1..=8);
+                e.spec.start_syn = 1 << rng.gen_range(2..5);
+                e.spec.tonic = if rng.gen_range(0..3) == 0 { rng.gen_range(1..5) } else { 0 };
+                e.spec.grow = rng.gen_bool(0.3);
+                e.spec.wide = rng.gen_bool(0.5);
+                if rng.gen_bool(0.5) {
+                    e.spec.window = Some((rng.gen_range(0..32), 1 << rng.gen_range(0..4)));
+                }
                 if kind == EdgeKind::Noise {
                     e.spec.noise = 4;
                     e.spec.out_words = 1;
@@ -297,6 +307,21 @@ impl Evolvable for GeneGenome {
                 let mut e = g.edges.choose(rng).unwrap().clone();
                 e.id = fresh(&mut g);
                 g.edges.push(e);
+            }
+            // a group copied: every edge touching one vector, onto a fresh vector (a module
+            // duplicated; its outside connections shared, the vector its own)
+            9 if !g.edges.is_empty() => {
+                let vs: Vec<u32> = g.vectors().into_iter().filter(|&v| v != INPUT && v != OUTPUT).collect();
+                if let Some(&v) = vs.choose(rng) {
+                    let nv = fresh(&mut g);
+                    let group: Vec<EdgeGene> = g.edges.iter().filter(|e| e.src == v || e.dst == v).cloned().collect();
+                    for mut e in group {
+                        e.id = fresh(&mut g);
+                        if e.src == v { e.src = nv }
+                        if e.dst == v { e.dst = nv }
+                        g.edges.push(e);
+                    }
+                }
             }
             // an edge removed
             2 if !g.edges.is_empty() => {
@@ -317,7 +342,7 @@ impl Evolvable for GeneGenome {
                 let up = rng.gen_bool(0.5);
                 let step = |v: u8, lo: u8, hi: u8| if up { v.saturating_add(1).min(hi) } else { v.saturating_sub(1).max(lo) };
                 let stepu = |v: usize, lo: usize, hi: usize| if up { (v + 1).min(hi) } else { v.saturating_sub(1).max(lo) };
-                let which = rng.gen_range(0..30);
+                let which = rng.gen_range(0..31);
                 if which == 11 {
                     e.gate = if e.gate.is_some() && rng.gen_bool(0.5) { None } else { vectors.choose(rng).map(|&v| (v, rng.gen_bool(0.5))) };
                 }
@@ -352,6 +377,7 @@ impl Evolvable for GeneGenome {
                     26 => s.code_lines = step(s.code_lines, 1, 64),
                     27 => s.out_learn = step(s.out_learn, 0, 8),
                     28 => s.fade = step(s.fade, 0, 8),
+                    29 => s.tonic = step(s.tonic, 0, 12),
                     _ => s.cap = if up { s.cap.saturating_mul(2).min(4096) } else { (s.cap / 2).max(1) },
                 }
             }
@@ -362,6 +388,23 @@ impl Evolvable for GeneGenome {
 
     fn size(&self) -> usize {
         self.edges.len()
+    }
+
+    /// Each edge (by id) from one parent or the other; an edge only one parent has, half the time.
+    fn crossover(&self, other: &Self, rng: &mut StdRng) -> Self {
+        let mut edges: Vec<EdgeGene> = Vec::new();
+        for e in &self.edges {
+            match other.edges.iter().find(|o| o.id == e.id) {
+                Some(o) => edges.push(if rng.gen_bool(0.5) { e.clone() } else { o.clone() }),
+                None => if rng.gen_bool(0.5) { edges.push(e.clone()) },
+            }
+        }
+        for o in &other.edges {
+            if !self.edges.iter().any(|e| e.id == o.id) && rng.gen_bool(0.5) {
+                edges.push(o.clone());
+            }
+        }
+        GeneGenome { edges, next_id: self.next_id.max(other.next_id) }
     }
 }
 

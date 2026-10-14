@@ -7,8 +7,8 @@
 //! - `reversal1`: serial reversal with one swap per lifetime (every 200 trials);
 //! - `reversal`: the original (every 100 trials).
 //!
-//! `CUR_GENOME=edges|tags|stack`, `CUR_START=context|bare` (the context circuit, or the barest
-//! start: a single tonic population on the act; for the stack grammar, random programs), `CUR_TRIALS`, `CUR_LIVES`, `CUR_HELD`, `CUR_POP`, `CUR_ELITE`,
+//! `CUR_GENOME=edges|tags|stack`, `CUR_START=context|bare|naked` (the context circuit; a bare start,
+//! a single tonic population on the act; or naked, an empty genome), `CUR_TRIALS`, `CUR_LIVES`, `CUR_HELD`, `CUR_POP`, `CUR_ELITE`,
 //! `CUR_EVERY` (held-out check interval), `CUR_SEED`.
 
 use neurocomp::evolve::genes::GeneGenome;
@@ -60,10 +60,16 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize) {
 }
 
 fn main() {
-    let bare = std::env::var("CUR_START").map_or(false, |v| v == "bare");
+    let start = std::env::var("CUR_START").unwrap_or_default();
+    let bare = start == "bare";
+    let naked = start == "naked";
     match std::env::var("CUR_GENOME").unwrap_or_else(|_| "edges".into()).as_str() {
         "tags" => {
             println!("curriculum, tag genome from {}", if bare { "a bare start" } else { "the context circuit" });
+            if naked {
+                println!("(naked: an empty string)");
+                return run(TagGenome { tokens: vec![], next_id: 1 }, |g| g.tokens.len());
+            }
             run(if bare { TagGenome::bare_seed() } else { TagGenome::context_seed() }, |g| g.tokens.len());
         }
         "stack" => {
@@ -72,6 +78,10 @@ fn main() {
         }
         _ => {
             println!("curriculum, edge genome from {}", if bare { "a bare start" } else { "the context circuit" });
+            if naked {
+                println!("(naked: no edges)");
+                return run(GeneGenome { edges: vec![], next_id: 2 }, |g| g.edges.len());
+            }
             run(if bare { GeneGenome::act_seed(8) } else { GeneGenome::context_seed(8) }, |g| g.edges.len());
         }
     }

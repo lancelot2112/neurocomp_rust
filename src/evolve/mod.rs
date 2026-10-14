@@ -77,8 +77,12 @@ pub mod tags;
 pub trait Evolvable: Clone + Send + Sync {
     fn build(&self, w: &World, seed: u64) -> RuntimeNetwork;
     fn mutate(&self, rng: &mut StdRng) -> Self;
-    /// A size, for breaking ties toward the smaller genome.
+    /// A size (reported).
     fn size(&self) -> usize;
+    /// A child of this genome and another: part from each (recombination). By default, this one.
+    fn crossover(&self, _other: &Self, _rng: &mut StdRng) -> Self {
+        self.clone()
+    }
 }
 
 impl Evolvable for Genome {
@@ -90,6 +94,12 @@ impl Evolvable for Genome {
     }
     fn size(&self) -> usize {
         self.code.len()
+    }
+    /// One point: this program's front, the other's back.
+    fn crossover(&self, other: &Self, rng: &mut StdRng) -> Self {
+        let a = rng.gen_range(0..=self.code.len());
+        let b = rng.gen_range(0..=other.code.len());
+        Genome { code: self.code[..a].iter().chain(other.code[b..].iter()).copied().collect() }
     }
 }
 
@@ -115,17 +125,39 @@ impl Genome {
     /// One local change: an instruction inserted, removed or replaced.
     pub fn mutate(&self, rng: &mut StdRng) -> Self {
         let mut g = self.clone();
-        match rng.gen_range(0..3) {
-            0 if g.code.len() < 64 => {
-                let at = rng.gen_range(0..=g.code.len());
+        let n = g.code.len();
+        match rng.gen_range(0..6) {
+            0 if n < 96 => {
+                let at = rng.gen_range(0..=n);
                 g.code.insert(at, *INSTRUCTIONS.choose(rng).unwrap());
             }
-            1 if !g.code.is_empty() => {
-                let at = rng.gen_range(0..g.code.len());
+            1 if n > 0 => {
+                let at = rng.gen_range(0..n);
                 g.code.remove(at);
             }
-            _ if !g.code.is_empty() => {
-                let at = rng.gen_range(0..g.code.len());
+            // two instructions swapped
+            2 if n > 1 => {
+                let (a, b) = (rng.gen_range(0..n), rng.gen_range(0..n));
+                g.code.swap(a, b);
+            }
+            // a segment copied elsewhere (duplication)
+            3 if n > 0 && n < 96 => {
+                let a = rng.gen_range(0..n);
+                let len = rng.gen_range(1..=8.min(n - a));
+                let seg: Vec<GraphInstruction> = g.code[a..a + len].to_vec();
+                let at = rng.gen_range(0..=n);
+                for (k, i) in seg.into_iter().enumerate() {
+                    g.code.insert(at + k, i);
+                }
+            }
+            // a segment deleted
+            4 if n > 1 => {
+                let a = rng.gen_range(0..n);
+                let len = rng.gen_range(1..=8.min(n - a));
+                g.code.drain(a..a + len);
+            }
+            _ if n > 0 => {
+                let at = rng.gen_range(0..n);
                 g.code[at] = *INSTRUCTIONS.choose(rng).unwrap();
             }
             _ => g.code.push(*INSTRUCTIONS.choose(rng).unwrap()),
@@ -292,6 +324,12 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
             let a = rng.gen_range(0..parents.len());
             let b = rng.gen_range(0..parents.len());
             let mut child = parents[a.min(b)].clone();
+            // a quarter of the children recombine two parents before mutating
+            if rng.gen_range(0..4) == 0 {
+                let c = rng.gen_range(0..parents.len());
+                let d = rng.gen_range(0..parents.len());
+                child = child.crossover(&parents[c.min(d)], &mut rng);
+            }
             loop {
                 child = child.mutate(&mut rng);
                 if rng.gen_bool(0.5) {

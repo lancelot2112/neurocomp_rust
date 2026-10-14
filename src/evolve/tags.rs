@@ -227,12 +227,22 @@ impl TagGenome {
     fn random_pop(&mut self, rng: &mut StdRng) -> Pop {
         let id = self.next_id;
         self.next_id += 1;
+        // a new population is born active: some kernels, a random field and fan-in, sometimes
+        // tonic, sometimes growing (an inert gene would need several more mutations to matter)
         let mut p = Pop::new(id, rng.r#gen(), rng.r#gen());
-        p.wire = rng.gen_bool(0.3);
-        p.op = KernelOp::random(rng);
-        p.count = rng.gen_range(0..4);
+        p.wire = rng.gen_bool(0.25);
+        p.op = if rng.gen_bool(0.5) { KernelOp::Or } else { KernelOp::random(rng) };
+        p.count = rng.gen_range(1..=8);
         p.field = rng.gen_range(0..4);
         p.at = rng.r#gen();
+        p.fan_in = 1 << rng.gen_range(2..5);
+        p.tonic = if rng.gen_range(0..3) == 0 { rng.gen_range(1..5) } else { 0 };
+        p.grow = rng.gen_bool(0.3);
+        p.repeat = p.grow && rng.gen_bool(0.3);
+        p.repeat_lag = rng.gen_range(1..6);
+        if rng.gen_range(0..3) == 0 {
+            p.gate = Some((rng.r#gen(), rng.gen_bool(0.5)));
+        }
         p
     }
 
@@ -476,6 +486,13 @@ impl Evolvable for TagGenome {
 
     fn size(&self) -> usize {
         self.tokens.len()
+    }
+
+    /// One point: this string's front, the other's back (tags carry the wiring across).
+    fn crossover(&self, other: &Self, rng: &mut StdRng) -> Self {
+        let a = rng.gen_range(0..=self.tokens.len());
+        let b = rng.gen_range(0..=other.tokens.len());
+        TagGenome { tokens: self.tokens[..a].iter().chain(other.tokens[b..].iter()).cloned().collect(), next_id: self.next_id.max(other.next_id) }
     }
 }
 

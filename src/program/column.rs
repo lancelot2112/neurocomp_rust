@@ -346,9 +346,10 @@ impl Column {
     fn hold_assembly(&mut self, input: &BitVector, learn: bool) -> BitVector {
         let bits = self.bits;
         let a = self.assembly.as_mut().unwrap();
+        let born = a.0.births;
         let (code, _) = a.0.code(input, learn);
         if code.count_ones() > 0 {
-            a.1.hold(&code);
+            a.1.hold(&code, a.0.births > born);
         }
         let mut held = BitVector::new(bits, Some(0));
         for c in a.1.active_cells() {

@@ -279,8 +279,12 @@ impl Holder {
         }
     }
 
-    /// One input; returns the assembly now active (or last active).
-    pub fn hold(&mut self, input: &BitVector) -> usize {
+    /// One input, and whether it is novel (new to the area: the cells that code it were born
+    /// for it); returns the assembly now active (or last active). A novel input is learned into
+    /// the active assembly (acetylcholine's encoding mode: what is new is learned, not taken as
+    /// a contradiction); only a familiar input the active assembly does not explain counts
+    /// against it.
+    pub fn hold(&mut self, input: &BitVector, novel: bool) -> usize {
         let mut inw = input.as_words().to_vec();
         inw.resize(words(self.kernel.bits), 0);
         if pop(&inw) == 0 {
@@ -291,7 +295,11 @@ impl Holder {
         match self.active {
             Some(a) => {
                 let strength = 32 - (self.explained[a] as u32).leading_zeros() as u8;
-                if e[a] {
+                if novel && !e[a] {
+                    for _ in 0..4 {
+                        self.kernel.birth(&inw, Some(a));
+                    }
+                } else if e[a] {
                     self.explained[a] = self.explained[a].saturating_add(1);
                     // an explained input is no news: the inhibition only leaks, one at random
                     // in sixteen explained inputs

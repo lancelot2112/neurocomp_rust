@@ -66,6 +66,7 @@ fn main() {
         // assemblies holds; `kernel_cells.rs`)
         let mut ksep = Kernel::new(1024, 1024, 4, 8, seed ^ 0xC0DE);
         let mut kh = Holder::new(1024, seed ^ 0xF00D);
+        let noise: usize = env("LATENT_NOISE", 0);
         kh.debug = debug;
         // the circuit's input: layer 4's code of what came together (the light shown and what
         // followed), a random sparse code per conjunction, as layer 4 recruits one for each
@@ -102,6 +103,7 @@ fn main() {
                 }
             })
             .collect();
+        let distract: Vec<BitVector> = (0..noise).map(|_| sparse(32)).collect();
         // (layer 4 develops first: the separator settles on the inputs the world can give, in
         // random order, before the task and the circuit begin)
         if sep_on {
@@ -137,8 +139,17 @@ fn main() {
                 let bits = [light, BACKGROUND];
                 let before = if kern { kh.resets } else if circuit { cc.resets() } else { lc.resets };
                 if kern {
+                    // (`LATENT_NOISE=n`: before each act, half the time, one of n other inputs,
+                    // the same in every phase, as the area's other sources come and go)
+                    if noise > 0 && rng.gen_bool(0.5) {
+                        let d = &distract[rng.gen_range(0..noise)];
+                        let born = ksep.births;
+                        let (code, _) = ksep.code(d, true);
+                        kh.hold(&code, ksep.births > born);
+                    }
+                    let born = ksep.births;
                     let (code, _) = ksep.code(&codes[light * 2 + (got > 0) as usize], true);
-                    kh.hold(&code);
+                    kh.hold(&code, ksep.births > born);
                 } else if circuit {
                     if l4_on {
                         let code = l4.learn(&[(0, &cue[light]), (1, &outcome[(got > 0) as usize])]);

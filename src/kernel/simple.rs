@@ -46,11 +46,35 @@ pub struct SimpleKernel {
     pub words: Option<Vec<u32>>,
     /// how many lines its mask has (learning moves lines, so this stays fixed); counted once
     lines: usize,
+    /// a tile kernel: per mask word, the lines it may use (its tile); its lines move only there
+    pub room: Option<Vec<u64>>,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0 }.counted()
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, room: None }.counted()
+    }
+
+    /// A tile kernel: it reads bits `start .. start + bits` of its input (a tile, which may
+    /// straddle words), with `lines` (absolute bit indices inside the tile) as its mask; its
+    /// lines move only within the tile.
+    pub fn tile(start: usize, bits: usize, lines: &[usize], output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
+        let (w0, w1) = (start / 64, (start + bits.max(1) - 1) / 64);
+        let n = w1 - w0 + 1;
+        let mut mask = BitVector::new(n * 64, Some(0));
+        for &b in lines {
+            mask.bit_set(b - w0 * 64);
+        }
+        let room = (w0..=w1).map(|w| tile_word(start, bits, w)).collect();
+        let mut k = Self::new(mask, w0, output_mask, output_idx, threshold, op);
+        k.words = Some((0..n as u32).collect());
+        k.room = Some(room);
+        k
+    }
+
+    /// The lines of word `w` inside bits `start .. start + bits`.
+    pub fn tile_word(start: usize, bits: usize, w: usize) -> u64 {
+        tile_word(start, bits, w)
     }
 
     /// Count its mask's lines once.
@@ -97,7 +121,8 @@ impl SimpleKernel {
     fn sparse_move<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, src: impl Fn(u64, u64) -> u64, dst: impl Fn(u64, u64) -> u64, rng: &mut R) {
         let Some(ws) = &self.words else { return };
         let m = self.input_mask.as_words();
-        let cand: Vec<(u32, u64, u64)> = ws.iter().map(|&w| { let a = self.at(input, w); (w, src(a, m[w as usize]), dst(a, m[w as usize])) }).collect();
+        let room = |w: u32| self.room.as_ref().map_or(u64::MAX, |r| r[w as usize]);
+        let cand: Vec<(u32, u64, u64)> = ws.iter().map(|&w| { let a = self.at(input, w); (w, src(a, m[w as usize]), dst(a, m[w as usize]) & room(w)) }).collect();
         let pick = |sel: &dyn Fn(&(u32, u64, u64)) -> u64, rng: &mut R| -> Option<(usize, u32)> {
             let n: u32 = cand.iter().map(|c| sel(c).count_ones()).sum();
             if n == 0 { return None; }
@@ -161,7 +186,8 @@ impl SimpleKernel {
         let from: Vec<u64> = agree.iter().zip(&m).map(|(g, m)| if from_agreeing { *g } else { !g & m }).collect();
         // a sparse kernel's lines stay within its words
         let mine = |i: usize| self.words.as_ref().map_or(true, |ws| ws.contains(&(i as u32)));
-        let free: Vec<u64> = m.iter().enumerate().map(|(i, m)| if mine(i) { !m } else { 0 }).collect();
+        let room = |i: usize| self.room.as_ref().map_or(u64::MAX, |r| r[i]);
+        let free: Vec<u64> = m.iter().enumerate().map(|(i, m)| if mine(i) { !m & room(i) } else { 0 }).collect();
         let (Some(a), Some(b)) = (pick(from, rng), pick(free, rng)) else { return };
         self.input_mask.bit_clear(a);
         self.input_mask.bit_set(b);
@@ -189,6 +215,7 @@ impl SimpleKernel {
             tonic: 0,
             words: None,
             lines: 32,
+            room: None,
         }
     }
 
@@ -322,6 +349,16 @@ impl SimpleKernel {
             }
         }
     }
+}
+
+/// The lines of word `w` inside bits `start .. start + bits`.
+pub fn tile_word(start: usize, bits: usize, w: usize) -> u64 {
+    let (lo, hi) = (start.max(w * 64), (start + bits).min(w * 64 + 64));
+    if lo >= hi {
+        return 0;
+    }
+    let n = hi - lo;
+    (if n == 64 { u64::MAX } else { (1u64 << n) - 1 }) << (lo - w * 64)
 }
 
 pub struct InputStats {
@@ -483,6 +520,30 @@ mod tests {
         assert_eq!(sparse.agreement(&input), 6);
         let m = sparse.input_mask.as_words();
         assert_eq!(m.iter().enumerate().filter(|(w, x)| **x != 0 && *w != 0 && *w != 1000).count(), 0);
+    }
+
+    #[test]
+    fn a_tile_kernel_straddles_words_and_learns_inside_its_tile() {
+        // a 64-bit tile from bit 32: the top half of word 0 and the bottom half of word 1
+        assert_eq!(tile_word(32, 64, 0), 0xFFFF_FFFF_0000_0000);
+        assert_eq!(tile_word(32, 64, 1), 0x0000_0000_FFFF_FFFF);
+        assert_eq!(tile_word(32, 64, 2), 0);
+        let mut k = SimpleKernel::tile(32, 64, &[40, 41, 70, 71], BitVector::from_words(vec![1]), 0, 3, KernelOp::Or);
+        assert_eq!((k.input_idx, k.care()), (0, 4));
+        let mut input = BitVector::new(256, Some(0));
+        for b in [40, 41, 70, 72, 73, 10, 200] { input.bit_set(b); }
+        assert_eq!(k.agreement(&input), 3);
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
+        let inhibit = BitVector::new(256, Some(0));
+        let mut out = BitVector::new(64, Some(0));
+        for _ in 0..8 {
+            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, phase: 0 }, &mut out, &mut rng);
+        }
+        // Hebbian moves went to on lines inside the tile (72, 73), never to 10 or 200
+        assert_eq!(k.agreement(&input), 4);
+        let m = k.input_mask.as_words();
+        assert_eq!(m[0] & !tile_word(32, 64, 0), 0);
+        assert_eq!(m[1] & !tile_word(32, 64, 1), 0);
     }
 
     #[test]

@@ -186,6 +186,11 @@ pub struct EdgeSpec {
     /// its kernels are sparse: each visits only the words its lines are in (and its lines move
     /// only within them), so one spread across a wide field costs its lines, not the field
     pub sparse: bool,
+    /// full coverage: 0, kernels sit where they are placed (the window); k > 0, the edge reads
+    /// its whole source in tiles of 2^k bits every 2^(k-1) bits (half-overlapping), its kernels
+    /// are born in the tile with the most input no firing kernel covers, and each writes at the
+    /// same relative place in the destination (topographic)
+    pub tile: u8,
 }
 
 impl EdgeSpec {
@@ -226,6 +231,7 @@ impl EdgeSpec {
             noise: 0,
             tonic: 0,
             sparse: false,
+            tile: 0,
         }
     }
 }

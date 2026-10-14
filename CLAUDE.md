@@ -104,8 +104,16 @@ what it can build. We do not add special-purpose modules to get a task done.
     bits). A channel that holds starts each step with its last frame, so only clearing writes
     (CLEAR, AND, NOR, ...) take lines away; otherwise it starts each step empty;
   - `Pop { from, to, ... }`: a population of kernels (or a wire) from one channel to another,
-    with all its own properties inline: op, lag, span, field, place, spread, starting kernels,
-    fan-in and fan-out, threshold, tonic activity, inhibition, births, gate, rates.
+    with all its own properties inline: op, lag, span, scale, starting kernels, fan-in and
+    fan-out, threshold, tonic activity, inhibition, births, gate, rates.
+  - **Populations cover their whole source.** A population has a scale (tiles of 2^k bits,
+    one every half tile, so neighbours overlap by half), not a location. Its kernels are born in
+    the tile with the most input no firing kernel reads, their lines move only within their
+    tile, and each writes at the same relative place in the destination (topographic). A wire
+    copies the whole source. (The older placed field, `at`/`field`/`place`/`spread`, stays only
+    for earlier seeds.)
+  - Starting cells are drawn fresh each lifetime: the genome sets the kind of cell, not the
+    cell.
   A population's `from` and `to` are tags, each resolved to the declared channel nearest in
   Hamming distance. The senses' tag is 0x00 and the act's 0xFF. Any string of tokens builds a
   network.

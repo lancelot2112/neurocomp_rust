@@ -86,3 +86,10 @@ needs.
   edge reads past frames only, so edges into different vectors are independent and could run
   in parallel. New random populations pick any of the twelve op families evenly (before, OR half
   the time). The residue circuit still cancels; 227 of 300 single mutants keep cancelling.
+- **Full coverage, no location.** Populations read their whole source in half-overlapping
+  tiles at one scale (a gene), are born where input is not yet read, and write topographically.
+  Before, a population read a placed field (`at`, `field`), and evolution kept finding eye
+  readers on one fixed word: the lights' codes move each lifetime, so those bets won on training
+  lifetimes and lost held out (experiment 11 and the 24-lifetime run after it). Starting cells
+  are also drawn per lifetime now; before, they were the same in every lifetime of a genome, so
+  a lucky draw could be selected like a gene.

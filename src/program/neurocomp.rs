@@ -68,6 +68,8 @@ pub struct EdgeInfo<'a> {
     /// the destination is the output node
     pub to_output: bool,
     pub spec: &'a EdgeSpec,
+    /// the lifetime's seed (so starting cells can differ from lifetime to lifetime)
+    pub seed: u64,
 }
 
 /// Per-edge runtime unit: group of kernel classes plus a default kernel.
@@ -201,7 +203,7 @@ impl RuntimeNetwork {
         let mut edges: Vec<RuntimeEdgeGroup> = Vec::with_capacity(g.edge_count());
         for (index, e) in g.edge_references().enumerate() {
             let (src, dst) = (e.source().index(), e.target().index());
-            let info = EdgeInfo { index, src, dst, src_bits: bits_of(src), dst_bits: bits_of(dst), to_output: dst == last, spec: e.weight() };
+            let info = EdgeInfo { index, src, dst, src_bits: bits_of(src), dst_bits: bits_of(dst), to_output: dst == last, spec: e.weight(), seed };
             edges.push(RuntimeEdgeGroup {
                 src: RuntimeEdgeTarget { idx: src, read_back: e.weight().input_read_back.max(1), span: e.weight().span.max(1) },
                 dst,
@@ -356,6 +358,59 @@ impl RuntimeNetwork {
             };
             let ones = ones_of;
             let dest = nodes[eg.dst].current();
+            if sp.tile > 0 {
+                // full coverage: a kernel is born in the tile (2^tile bits, every half tile) with
+                // the most active input lines no firing kernel reads, on those lines, writing at
+                // the same relative place in the destination
+                let sw = src.as_words();
+                let mut covered = vec![0u64; sw.len()];
+                for &k in &fired[i] {
+                    let kk = &class.kernels()[k];
+                    for (j, m) in kk.input_mask.as_words().iter().enumerate() {
+                        if let Some(c) = covered.get_mut(kk.input_idx + j) { *c |= m; }
+                    }
+                }
+                let bits = src.bit_len();
+                let t = (1usize << sp.tile.min(20)).min(bits).max(1);
+                let stride = (t / 2).max(1);
+                let tiles = if t >= bits { 1 } else { (bits - t) / stride + 1 };
+                let count = |s: usize| -> u32 { (s / 64..=(s + t - 1) / 64).map(|w| (sw[w] & !covered[w] & SimpleKernel::tile_word(s, t, w)).count_ones()).sum() };
+                let (start, n) = (0..tiles).map(|j| (j * stride, count(j * stride))).max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).unwrap_or((0, 0));
+                if n == 0 {
+                    continue;
+                }
+                let lines: Vec<usize> = (start / 64..=(start + t - 1) / 64)
+                    .flat_map(|w| ones(sw[w] & !covered[w] & SimpleKernel::tile_word(start, t, w)).into_iter().map(move |b| w * 64 + b))
+                    .collect();
+                let syn: Vec<usize> = lines.choose_multiple(rng, (sp.birth_syn as usize).min(lines.len())).copied().collect();
+                let threshold = (sp.birth_quarters as usize * syn.len()).div_ceil(4).max(1);
+                let (out, dw) = if eg.repeat {
+                    let prev = nodes[eg.dst].get_frame(eg.repeat_lag);
+                    let (dw, dn) = busiest_word(prev.as_words());
+                    if (dn as usize) < sp.out_min as usize {
+                        continue;
+                    }
+                    (ones(prev.as_words()[dw]), dw)
+                } else {
+                    let dwords = dest.word_len().max(1);
+                    let dw = (start * dwords / sw.len().max(1)).min(dwords - 1);
+                    let wrote = fired[i].iter().map(|&k| &class.kernels()[k]).filter(|kk| kk.output_idx == dw).fold(0u64, |a, kk| a | kk.output_mask.as_words()[0]);
+                    let left = ones(dest.as_words()[dw] & !wrote);
+                    if left.len() >= sp.out_min as usize {
+                        (left.choose_multiple(rng, (sp.out_max as usize).min(left.len())).copied().collect(), dw)
+                    } else {
+                        let all: Vec<usize> = (0..64).collect();
+                        (all.choose_multiple(rng, sp.code_lines as usize).copied().collect(), dw)
+                    }
+                };
+                let out_mask = BitVector::from_bits(&out, 64);
+                if eg.new_code {
+                    let d = nodes[eg.dst].current_mut();
+                    apply(&mut d.as_words_mut()[dw..dw + 1], out_mask.as_words(), eg.op);
+                }
+                class.add(SimpleKernel::tile(start, t, &syn, out_mask, dw, threshold, eg.op));
+                continue;
+            }
             // what it writes: a fresh random code into an empty destination (`new_code`), or the
             // destination word with the most lines its firing kernels left uncovered
             let (out, dw) = if eg.repeat {

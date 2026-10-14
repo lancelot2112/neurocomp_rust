@@ -30,6 +30,8 @@ use crate::world::{self, World};
 
 /// The widest channel: 2^11 words (131,072 bits). Fields and spreads go as wide.
 pub const MAX_WIDTH: u8 = 11;
+/// The widest tile: 2^17 bits (a whole widest channel).
+pub const MAX_TILE: u8 = 17;
 
 /// How far a mutation moves an offset: one word, or a whole field (so a wide population can step
 /// to its neighbour's lines in one move).
@@ -95,6 +97,12 @@ pub struct Pop {
     pub rotate: u16,
     /// sparse kernels: each visits only the words its lines are in
     pub sparse: bool,
+    /// full coverage: it reads its whole source (no `at`/`field`) in tiles of 2^tile bits
+    /// every half tile, its kernels are born where input is not yet read, and each writes at the
+    /// same relative place in its destination (no `place`/`spread`). A wire copies the whole
+    /// source onto the destination.
+    pub cover: bool,
+    pub tile: u8,
 }
 
 impl Pop {
@@ -106,7 +114,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6,
         }
     }
 
@@ -190,10 +198,14 @@ impl TagGenome {
                 Token::Pop(p) => {
                     let (a, b) = (ch.resolve(p.from, false), ch.resolve(p.to, true));
                     out += &format!(
-                        "   {} -> {} {} {:?} lag {}{} field {}w@{} -> {}w@{}{}{}{}{}{}{}{}\n",
+                        "   {} -> {} {} {:?} lag {}{} {}{}{}{}{}{}{}{}\n",
                         name(a), name(b), if p.wire { "wire" } else { "kernels" }, p.op, p.lag,
                         if p.span > 1 { format!(" span {}", p.span) } else { String::new() },
-                        1usize << p.field.min(MAX_WIDTH), p.at, 1usize << p.spread.min(MAX_WIDTH), p.place,
+                        if p.cover {
+                            if p.wire { "whole".to_string() } else { format!("cover, tiles of {} bits", 1usize << p.tile.clamp(3, MAX_TILE)) }
+                        } else {
+                            format!("field {}w@{} -> {}w@{}", 1usize << p.field.min(MAX_WIDTH), p.at, 1usize << p.spread.min(MAX_WIDTH), p.place)
+                        },
                         if p.wire { String::new() } else { format!(" n{} in{} out{} q{}/4", p.count, p.fan_in, p.fan_out, p.quarters) },
                         if p.tonic > 0 { format!(" tonic 1/{}", 1u32 << p.tonic) } else { String::new() },
                         if p.share { " share" } else { "" },
@@ -239,10 +251,10 @@ impl TagGenome {
                 gate,
                 new_code: p.new_code,
                 // births sample across the whole field when it is wider than a word
-                wide: field > 1,
+                wide: field > 1 && !p.cover,
                 span,
-                window: Some((p.at as usize, field)),
-                dst_word: p.place as usize,
+                window: if p.cover { None } else { Some((p.at as usize, field)) },
+                dst_word: if p.cover { 0 } else { p.place as usize },
                 repeat: p.repeat,
                 repeat_lag: (p.repeat_lag as usize).max(1),
                 start_kernels: p.count,
@@ -259,7 +271,8 @@ impl TagGenome {
                 fade: p.fade,
                 gate_lag: (p.gate_lag as usize).max(1),
                 salt: p.id,
-                out_words: 1 << p.spread.min(MAX_WIDTH),
+                out_words: if p.cover { 0 } else { 1 << p.spread.min(MAX_WIDTH) },
+                tile: if p.cover && !p.wire { p.tile.clamp(3, MAX_TILE) } else { 0 },
                 tonic: p.tonic,
                 sparse: p.sparse,
                 ..EdgeSpec::plain()
@@ -316,6 +329,9 @@ impl TagGenome {
         let mut p = Pop::new(id, rng.r#gen(), rng.r#gen());
         p.wire = rng.gen_bool(0.25);
         p.sparse = rng.gen_bool(0.5);
+        // full coverage, at a random scale from a byte to two words
+        p.cover = true;
+        p.tile = rng.gen_range(3..=7);
         // any of the ops, evenly (OR is one of twelve)
         p.op = KernelOp::random(rng);
         p.count = rng.gen_range(1..=8);
@@ -424,28 +440,51 @@ impl TagGenome {
 /// spread (into the act: one of the body's motor primitives); tonic ones also fire spontaneously.
 pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
     let sp = e.spec;
-    let mut r = StdRng::seed_from_u64((sp.salt as u64 + 1).wrapping_mul(0x2545_F491_4F6C_DD1D));
+    // drawn fresh each lifetime: the genome sets the kind of cell, not the cell
+    let mut r = StdRng::seed_from_u64((sp.salt as u64 + 1).wrapping_mul(0x2545_F491_4F6C_DD1D) ^ e.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15));
     let src_words = (e.src_bits / 64).max(1);
     let field = sp.window.map_or(src_words, |(o, n)| { let o = o % src_words; n.max(1).min(src_words - o) });
     let dst_words = (e.dst_bits / 64).max(1);
     let from = sp.dst_word % dst_words;
     let span = (sp.out_words as usize).max(1).min(dst_words - from);
+    let motor = |r: &mut StdRng| {
+        let p = primitives.choose(r).unwrap();
+        let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
+        (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
+    };
     let kernels = (0..sp.start_kernels)
         .map(|_| {
-            let syn = sparse(field * 64, sp.start_syn as usize, &mut r);
-            let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
-                let p = primitives.choose(&mut r).unwrap();
-                let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
-                (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
+            let mut k = if sp.tile > 0 {
+                // full coverage: a random tile, lines inside it, output at the same relative place
+                let bits = src_words * 64;
+                let t = (1usize << sp.tile.min(20)).min(bits);
+                let stride = (t / 2).max(1);
+                let tiles = if t >= bits { 1 } else { (bits - t) / stride + 1 };
+                let start = r.gen_range(0..tiles) * stride;
+                let all: Vec<usize> = (start..start + t).collect();
+                let syn: Vec<usize> = all.choose_multiple(&mut r, (sp.start_syn as usize).min(t)).copied().collect();
+                let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
+                    motor(&mut r)
+                } else {
+                    (sparse(64, sp.start_out as usize, &mut r), (start * dst_words / src_words).min(dst_words - 1), sp.op)
+                };
+                let threshold = (sp.start_quarters as usize * syn.len()).div_ceil(4).max(1);
+                SimpleKernel::tile(start, t, &syn, out, out_word, threshold, op)
             } else {
-                (sparse(64, sp.start_out as usize, &mut r), from + r.gen_range(0..span), sp.op)
+                let syn = sparse(field * 64, sp.start_syn as usize, &mut r);
+                let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
+                    motor(&mut r)
+                } else {
+                    (sparse(64, sp.start_out as usize, &mut r), from + r.gen_range(0..span), sp.op)
+                };
+                let threshold = (sp.start_quarters as usize * syn.count_ones()).div_ceil(4).max(1);
+                let mut k = SimpleKernel::new(syn, 0, out, out_word, threshold, op);
+                if sp.sparse {
+                    k.sparsify();
+                }
+                k
             };
-            let threshold = (sp.start_quarters as usize * syn.count_ones()).div_ceil(4).max(1);
-            let mut k = SimpleKernel::new(syn, 0, out, out_word, threshold, op);
             k.tonic = sp.tonic;
-            if sp.sparse {
-                k.sparsify();
-            }
             k
         })
         .collect();
@@ -542,7 +581,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..31) {
+                    Token::Pop(p) => match rng.gen_range(0..33) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -573,7 +612,9 @@ impl Evolvable for TagGenome {
                         27 => p.out_learn = step(p.out_learn, 0, 8),
                         28 => p.fade = step(p.fade, 0, 8),
                         29 => p.rotate = if up { p.rotate.wrapping_add(61) } else { p.rotate.wrapping_sub(61) },
-                        _ => p.sparse = !p.sparse,
+                        30 => p.sparse = !p.sparse,
+                        31 => p.cover = !p.cover,
+                        _ => p.tile = step(p.tile, 3, MAX_TILE),
                     },
                 }
             }
@@ -708,6 +749,33 @@ mod tests {
         // wires read one frame back, so H sees step t's input at step t+1
         assert_eq!(run(true), vec![0, 8, 8, 8, 8, 0]);
         assert_eq!(run(false), vec![0, 8, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn a_covering_population_finds_input_wherever_it_lands() {
+        // one growing population over the whole senses, tiles of 64 bits: shown a code in a
+        // different word each lifetime, it is born on that code and fires on it again
+        for word in [0usize, 5, 17, 30] {
+            let c = 0x3C;
+            let p = Pop { cover: true, tile: 6, grow: true, new_code: true, ..Pop::new(1, SENSES, c) };
+            let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Pop(p)], next_id: 2 };
+            let mut net = g.build(&World::new(1, 4), word as u64);
+            let mut on = vec![0u64; world::SENSE_BITS / 64];
+            on[word] = 0x0F0F_0000_0000_F0F0;
+            let mut seen = Vec::new();
+            for t in 0..8 {
+                let x = if t % 2 == 0 { on.clone() } else { vec![0u64; world::SENSE_BITS / 64] };
+                net.tick(crate::bitvec::bithistory::AdvanceMode::Clear, 0);
+                net.write_input(&BitVector::from_words(x), 0);
+                seen.push(net.read_node(1).count_ones());
+            }
+            // the code shown at even steps is read at odd ones (lag 1): born at step 1, then the
+            // kernel fires at each odd step
+            assert!(seen[3] > 0 && seen[5] > 0 && seen[7] > 0, "word {word}: {seen:?}");
+            assert_eq!((seen[2], seen[4], seen[6]), (0, 0, 0), "word {word}: {seen:?}");
+            let n = net.edges[0].group.kernel_count();
+            assert!(n >= 1 && n <= 3, "word {word}: {n} kernels");
+        }
     }
 
     #[test]

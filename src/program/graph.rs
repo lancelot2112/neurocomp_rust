@@ -191,6 +191,9 @@ pub struct EdgeSpec {
     /// are born in the tile with the most input no firing kernel covers, and each writes at the
     /// same relative place in the destination (topographic)
     pub tile: u8,
+    /// an execution gate: it runs (reads, writes, learns) only while this node had lines on
+    /// (true) or none (false) a frame ago; otherwise it is paused and costs nothing
+    pub pause: Option<(usize, bool)>,
 }
 
 impl EdgeSpec {
@@ -232,6 +235,7 @@ impl EdgeSpec {
             tonic: 0,
             sparse: false,
             tile: 0,
+            pause: None,
         }
     }
 }

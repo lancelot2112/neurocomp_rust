@@ -103,6 +103,9 @@ pub struct Pop {
     /// source onto the destination.
     pub cover: bool,
     pub tile: u8,
+    /// an execution gate: it runs only while the channel nearest this tag had lines on (true)
+    /// or none (false) a frame ago; paused, it reads, writes and learns nothing and costs nothing
+    pub pause: Option<(u8, bool)>,
 }
 
 impl Pop {
@@ -114,7 +117,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None,
         }
     }
 
@@ -210,7 +213,8 @@ impl TagGenome {
                         if p.tonic > 0 { format!(" tonic 1/{}", 1u32 << p.tonic) } else { String::new() },
                         if p.share { " share" } else { "" },
                         if p.grow { format!(" grow(syn {}, out {}-{}{}{})", p.birth_syn, p.out_min, p.out_max, if p.new_code { ", new" } else { "" }, if p.repeat { format!(", repeat {}", p.repeat_lag) } else { String::new() }) } else { String::new() },
-                        p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false)))),
+                        p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false))))
+                            + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false)))),
                         if p.sparse { " sparse" } else { "" },
                         if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() },
                     );
@@ -240,6 +244,7 @@ impl TagGenome {
             if let Some((g, _)) = gate {
                 depth[g] = depth[g].max((p.gate_lag as usize).max(1));
             }
+            let pause = p.pause.map(|(t, on)| (ch.resolve(t, false), on));
             let field = 1usize << p.field.min(MAX_WIDTH);
             edges.push((a, b, EdgeSpec {
                 input_read_back: lag,
@@ -275,6 +280,7 @@ impl TagGenome {
                 tile: if p.cover && !p.wire { p.tile.clamp(3, MAX_TILE) } else { 0 },
                 tonic: p.tonic,
                 sparse: p.sparse,
+                pause,
                 ..EdgeSpec::plain()
             }));
         }
@@ -581,7 +587,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..33) {
+                    Token::Pop(p) => match rng.gen_range(0..34) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -614,7 +620,8 @@ impl Evolvable for TagGenome {
                         29 => p.rotate = if up { p.rotate.wrapping_add(61) } else { p.rotate.wrapping_sub(61) },
                         30 => p.sparse = !p.sparse,
                         31 => p.cover = !p.cover,
-                        _ => p.tile = step(p.tile, 3, MAX_TILE),
+                        32 => p.tile = step(p.tile, 3, MAX_TILE),
+                        _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                     },
                 }
             }
@@ -790,6 +797,28 @@ mod tests {
         let babble = TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic: 1, ..Pop::new(1, ACT, ACT) })], next_id: 2 };
         let (f, _, silent) = fitness_detail(&babble, task, Physics::Varied, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(silent < 8 && f > -1024, "{f} {silent}");
+    }
+
+    #[test]
+    fn a_paused_population_does_nothing_and_costs_nothing() {
+        // C copies the senses, with an execution gate on G (which nothing writes, so G is empty):
+        // "runs while G" never runs, "runs while !G" always does
+        let run = |on: bool| -> (usize, u64) {
+            let (c, gt) = (0x3C, 0xC3);
+            let copy = Pop { pause: Some((gt, on)), count: 4, ..Pop::new(1, SENSES, c) };
+            let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Channel { tag: gt, width: 0, hold: false }, Token::Pop(copy)], next_id: 2 };
+            let mut net = g.build(&World::new(1, 4), 1);
+            let mut lines = 0;
+            for _ in 0..6 {
+                net.tick(crate::bitvec::bithistory::AdvanceMode::Clear, 0);
+                net.write_input(&BitVector::new(world::SENSE_BITS, Some(u64::MAX)), 0);
+                lines += net.read_node(1).count_ones();
+            }
+            (lines, net.work)
+        };
+        assert_eq!(run(true), (0, 0));
+        let (lines, work) = run(false);
+        assert!(lines > 0 && work >= 4 * 5, "{lines} {work}");
     }
 
     #[test]

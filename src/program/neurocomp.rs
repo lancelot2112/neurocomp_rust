@@ -27,6 +27,9 @@ pub struct RuntimeNetwork {
     pub noise: Vec<usize>,
     /// per node: it holds its lines from step to step instead of starting empty
     pub hold: Vec<bool>,
+    /// work done since it was built: kernels matched plus words a wire or noise edge wrote (a
+    /// paused or idle population adds nothing)
+    pub work: u64,
 }
 
 /// What an edge reads: frames `read_back .. read_back + span` of a node ORed together, only the
@@ -181,7 +184,7 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(i as u64 ^ 0xA0A0)).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output, noise, hold }
+        Self { nodes, edges, node_rngs, output, noise, hold, work: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -228,7 +231,7 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, work: 0 }
     }
 
     /// Advance histories and process all edges once.
@@ -254,8 +257,17 @@ impl RuntimeNetwork {
         }
         let mut fired: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
         let mut seen: Vec<Option<BitVector>> = vec![None; edges.len()];
+        let mut paused: Vec<bool> = vec![false; edges.len()];
+        let mut work = 0u64;
         {
             for (i, eg) in edges.iter_mut().enumerate() {
+                // an execution gate shut: the edge does nothing this step
+                if let Some((g, on)) = eg.spec.pause {
+                    if nodes[g].get_frame(1).as_words().iter().any(|&w| w != 0) != on {
+                        paused[i] = true;
+                        continue;
+                    }
+                }
                 let mut src_view = view(&nodes[eg.src.idx], eg.src.read_back, eg.src.span, eg.window);
                 let dst_curr = nodes[eg.dst].current_mut();
                 match eg.kind {
@@ -264,6 +276,7 @@ impl RuntimeNetwork {
                         let dw = dst_curr.word_len().max(1);
                         let from = eg.spec.dst_word % dw;
                         let n = if eg.spec.out_words == 0 { dw - from } else { (eg.spec.out_words as usize).min(dw - from) };
+                        work += eg.spec.noise as u64;
                         for _ in 0..eg.spec.noise {
                             let b = from * 64 + eg.rng.gen_range(0..n * 64);
                             let d = &mut dst_curr.as_words_mut()[b / 64];
@@ -279,6 +292,7 @@ impl RuntimeNetwork {
                         // touches only the words it lands on (a wider source folds in by OR)
                         let dw = dst_curr.word_len().max(1);
                         let src = src_view.as_words();
+                        work += src.len() as u64;
                         if src.len() <= dw {
                             let d = dst_curr.as_words_mut();
                             for (j, w) in src.iter().enumerate() {
@@ -301,15 +315,21 @@ impl RuntimeNetwork {
                             seen[i] = Some(src_view);
                             continue;
                         }
+                        work += eg.group.kernel_count() as u64;
                         fired[i] = eg.group.process(&src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
                         seen[i] = Some(src_view);
                     }
                 }
             }
         }
+        self.work += work;
+        let Self { nodes, edges, .. } = self;
         // After the tick: cancelling kernels learn their outputs, and growing edges give birth
-        // where their destination was left uncovered
+        // where their destination was left uncovered (a paused edge does not learn)
         for (i, eg) in edges.iter_mut().enumerate() {
+            if paused[i] {
+                continue;
+            }
             let sp = eg.spec.clone();
             let rng = &mut eg.rng;
             if eg.kind != EdgeKind::Kernels {

@@ -114,6 +114,12 @@ what it can build. We do not add special-purpose modules to get a task done.
     for earlier seeds.)
   - Starting cells are drawn fresh each lifetime: the genome sets the kind of cell, not the
     cell.
+  - **Execution gates.** A population may run only while a channel (by tag) had lines on, or
+    none, a frame ago; paused, it reads, writes and learns nothing and costs nothing. A
+    population whose input is all off is paused the same way. So a CLEAR population that empties
+    a channel switches off what reads it.
+  - **Work** is counted (kernels matched plus words wired), and evolution can prefer less of it
+    (`PRB_THRIFT=1`: one lexicase case for less work per step).
   A population's `from` and `to` are tags, each resolved to the declared channel nearest in
   Hamming distance. The senses' tag is 0x00 and the act's 0xFF. Any string of tokens builds a
   network.

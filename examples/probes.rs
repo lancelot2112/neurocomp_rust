@@ -12,8 +12,10 @@
 //! few worlds can be a parent. The probes are read by the observer from the event log; the
 //! network never sees them.
 //!
-//! Every `PRB_EVERY` generations: the best genome's probe means on its training worlds and on
-//! held-out worlds, the population's means, and the genome size; `PRB_SHOW=1` prints the network.
+//! Every `PRB_EVERY` generations: of the `PRB_SHORTLIST` genomes with the highest training scores,
+//! the one best on a held-out set (its probe means there), reported on a second held-out set; the
+//! population's means on its training worlds; how many genomes read and write each port; and the
+//! genome size. `PRB_SHOW=1` prints the network.
 //!
 //! `PRB_POP` (32), `PRB_ELITE` (8), `PRB_GENS` (100), `PRB_LIVES` (16 training worlds),
 //! `PRB_HELD` (16), `PRB_TRIALS` (200 a lifetime), `PRB_CHANNELS` (4), `PRB_EVERY` (10),
@@ -48,20 +50,38 @@ fn main() {
     // (`PRB_GAP=n`: 0 to n empty steps between trials, so a light's time cannot be counted)
     let gap: usize = env("PRB_GAP", 0);
     let train: Vec<u64> = (0..lives).collect();
+    // held-out worlds: one set picks the genome shown (among the top of the population), another
+    // reports it, so the number shown is not the best of several draws
     let held: Vec<u64> = (10_000..10_000 + held_n).collect();
+    let report_set: Vec<u64> = (30_000..30_000 + held_n).collect();
+    let shortlist: usize = env("PRB_SHORTLIST", 8);
     let tokens = (0..channels).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3, hold: false }).collect();
     let start = TagGenome { tokens, next_id: 1 };
     println!("probes: tag genome from a naked start ({channels} empty channels); pop {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials a lifetime, gaps 0-{gap}, thrift {thrift}");
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
-    println!("{:>4}  {:>5}  {:<35}  {:<35}  {:<35}  {:>13}", "gen", "size", "best, training", "best, held out", "population mean", "work: best pop");
+    println!("{:>4}  {:>5}  {:<35}  {:<35}  {:<35}  {:>13}", "gen", "size", "shown: held-out pick", "shown: second held-out set", "population mean (training)", "work: shown pop");
     println!("{:>4}  {:>5}  {names}  {names}  {names}", "", "");
     let last = evolve_lexicase(vec![start; pop], trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, |g, r| {
         if g % every == 0 || g + 1 == gens {
-            let h = probe_all(vec![r.best.clone()], trials, Physics::Varied, &held, gap);
-            let hm = probe_means(&h[0].probes);
-            println!("{g:>4}  {:>5}  {}  {}  {}  {:>6} {:>6}", r.best.tokens.len(), row(&r.best_means), row(&hm), row(&r.pop_means), r.best_work, r.pop_work);
+            // the top of the population by training score, judged on held-out worlds
+            let top: Vec<TagGenome> = r.ranked.iter().take(shortlist).cloned().collect();
+            let judged = probe_all(top, trials, Physics::Varied, &held, gap);
+            let pick = judged.iter().max_by_key(|j| probe_means(&j.probes).iter().map(|&x| x as i64).sum::<i64>()).unwrap();
+            let shown = probe_all(vec![pick.genome.clone()], trials, Physics::Varied, &report_set, gap);
+            let hm = probe_means(&shown[0].probes);
+            // how many genomes read each input port and write each output port
+            let mut reads: std::collections::BTreeMap<String, usize> = Default::default();
+            let mut writes: std::collections::BTreeMap<String, usize> = Default::default();
+            for x in &r.ranked {
+                let (a, b) = x.ports();
+                for p in a { *reads.entry(p).or_default() += 1 }
+                for p in b { *writes.entry(p).or_default() += 1 }
+            }
+            let fmt = |m: &std::collections::BTreeMap<String, usize>| m.iter().map(|(k, v)| format!("{k} {v}")).collect::<Vec<_>>().join(", ");
+            println!("{g:>4}  {:>5}  {}  {}  {}  {:>6} {:>6}", pick.genome.tokens.len(), row(&probe_means(&pick.probes)), row(&hm), row(&r.pop_means), shown[0].work, r.pop_work);
+            println!("      genomes reading: {}; writing: {}", fmt(&reads), fmt(&writes));
             if show {
-                print!("{}", r.best.describe());
+                print!("{}", pick.genome.describe());
             }
         }
     });

@@ -428,6 +428,8 @@ pub fn probe_means(s: &[[i32; 5]]) -> [i32; 5] {
 /// A generation of probe evolution: the genome with the highest summed probe means, its means
 /// and work per step, and the population's means and work per step.
 pub struct ProbeGeneration<G> {
+    /// the whole population, highest summed probe means (on the training worlds) first
+    pub ranked: Vec<G>,
     pub best: G,
     pub best_means: [i32; 5],
     pub best_work: u64,
@@ -488,7 +490,7 @@ pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Phys
         let pop_means = probe_means(&means);
         let pop_work = scored.iter().map(|s| s.work.min(u64::MAX / 4)).sum::<u64>() / n.max(1) as u64;
         let b = ranked[0];
-        report(generation, &ProbeGeneration { best: scored[b].genome.clone(), best_means: means[b], best_work: scored[b].work, pop_means, pop_work });
+        report(generation, &ProbeGeneration { ranked: ranked.iter().map(|&g| scored[g].genome.clone()).collect(), best: scored[b].genome.clone(), best_means: means[b], best_work: scored[b].work, pop_means, pop_work });
         last = ranked.iter().map(|&g| scored[g].genome.clone()).collect();
         let mut kept: Vec<usize> = Vec::new();
         for _ in 0..elite * 4 {

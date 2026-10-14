@@ -20,6 +20,10 @@ fn main() {
         ("eye -> hand, cover, 4 kernels", TagGenome { tokens: vec![Token::Pop(to_hand(Pop { count: 4, cover: true, from: EYE, from_port: true, ..Pop::new(1, EYE, HAND) }))], next_id: 2 }),
         ("eye -> hand, cover, growing", TagGenome { tokens: vec![Token::Pop(to_hand(Pop { count: 4, cover: true, grow: true, new_code: true, from: EYE, from_port: true, ..Pop::new(1, EYE, HAND) }))], next_id: 2 }),
         ("eye -> hand, cover, growing, tonic", TagGenome { tokens: vec![Token::Pop(to_hand(Pop { count: 4, tonic: 4, cover: true, grow: true, new_code: true, from: EYE, from_port: true, ..Pop::new(1, EYE, HAND) }))], next_id: 2 }),
+        ("eye -> hand growing + a clicker on self", TagGenome { tokens: vec![
+            Token::Pop(to_hand(Pop { count: 4, cover: true, grow: true, from: EYE, from_port: true, ..Pop::new(1, EYE, HAND) })),
+            Token::Pop(to_hand(Pop { count: 4, tonic: 3, ..Pop::new(2, SELF, HAND) })),
+        ], next_id: 3 }),
         ("touch -> hand, cover, 4 kernels", TagGenome { tokens: vec![Token::Pop(to_hand(Pop { count: 4, cover: true, from: TOUCH, from_port: true, op: KernelOp::Or, ..Pop::new(1, TOUCH, HAND) }))], next_id: 2 }),
     ];
     let _ = ACT;

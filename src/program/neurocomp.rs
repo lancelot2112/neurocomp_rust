@@ -114,9 +114,11 @@ pub struct RuntimeEdgeGroup {
     pub spec: EdgeSpec,
     /// this edge's own random stream
     pub rng: StdRng,
-    /// births are allowed (not on edges into the act node, whose kernels write the body's
-    /// primitives)
+    /// births are allowed (on edges into the act node only when they repeat acts or write into
+    /// a port of it, where they copy the move being made)
     pub can_grow: bool,
+    /// it writes the act node
+    pub into_act: bool,
 }
 
 impl RuntimeEdgeGroup {
@@ -183,6 +185,7 @@ impl RuntimeNetwork {
                 spec: es.clone(),
                 rng: StdRng::seed_from_u64((es.salt as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                 can_grow: true,
+                into_act: false,
             });
         }
 
@@ -232,7 +235,8 @@ impl RuntimeNetwork {
                 repeat_lag: e.weight().repeat_lag.max(1),
                 spec: e.weight().clone(),
                 rng: StdRng::seed_from_u64(seed ^ (e.weight().salt as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
-                can_grow: dst != last || e.weight().repeat,
+                can_grow: dst != last || e.weight().repeat || e.weight().dst_len > 0,
+                into_act: dst == last,
             });
         }
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
@@ -485,6 +489,16 @@ impl RuntimeNetwork {
                         continue;
                     }
                     (ones(prev.as_words()[dw]), dw)
+                } else if eg.into_act {
+                    // into a port of the act: the move being made now (the busiest word of the
+                    // port), copied onto what is seen: a reflex from this input to that move
+                    let dwords = dest.word_len().max(1);
+                    let (base, len) = if sp.dst_len > 0 { (sp.dst_word % dwords, sp.dst_len.min(dwords - sp.dst_word % dwords)) } else { (0, dwords) };
+                    let (w, n) = busiest_word(&dest.as_words()[base..base + len]);
+                    if (n as usize) < sp.out_min as usize {
+                        continue;
+                    }
+                    (ones(dest.as_words()[base + w]), base + w)
                 } else {
                     let dwords = dest.word_len().max(1);
                     let (base, len) = if sp.dst_len > 0 { (sp.dst_word % dwords, sp.dst_len.min(dwords - sp.dst_word % dwords)) } else { (0, dwords) };
@@ -517,7 +531,8 @@ impl RuntimeNetwork {
                 }
                 (ones(prev.as_words()[dw]), dw)
             } else if eg.new_code {
-                if (dest.count_ones() as usize) >= sp.out_min as usize {
+                // (not into the act: a random code there is no move)
+                if eg.into_act || (dest.count_ones() as usize) >= sp.out_min as usize {
                     continue;
                 }
                 let dw = rng.gen_range(0..dest.word_len().max(1));

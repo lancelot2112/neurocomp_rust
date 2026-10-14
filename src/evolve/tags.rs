@@ -546,6 +546,23 @@ impl TagGenome {
         self.tokens.extend(plasmid);
     }
 
+    /// The ports its populations read and write (each named once): "eye", "hand", ...
+    pub fn ports(&self) -> (Vec<String>, Vec<String>) {
+        let ch = Channels::of(&self.tokens);
+        let (mut r, mut w) = (Vec::new(), Vec::new());
+        for p in self.pops() {
+            if let (Some(a), Some(b)) = (ch.from(p), ch.to(p)) {
+                if p.from_port && !r.contains(&ch.name(a)) {
+                    r.push(ch.name(a));
+                }
+                if p.to_port && !w.contains(&ch.name(b)) {
+                    w.push(ch.name(b));
+                }
+            }
+        }
+        (r, w)
+    }
+
     /// How many channels are declared.
     pub fn channels(&self) -> usize {
         self.tokens.iter().filter(|t| matches!(t, Token::Channel { .. })).count()
@@ -764,9 +781,9 @@ impl Evolvable for TagGenome {
     fn mutate(&self, rng: &mut StdRng) -> Self {
         let mut g = self.clone();
         let n = g.tokens.len();
-        match rng.gen_range(0..15) {
-            // a new token
-            0 => {
+        match rng.gen_range(0..16) {
+            // a new token (two chances in sixteen: new populations are the raw material)
+            0 | 15 => {
                 let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..=MAX_WIDTH), hold: rng.gen_bool(0.25) } } else { Token::Pop(g.random_pop(rng)) };
                 let at = rng.gen_range(0..=n);
                 g.tokens.insert(at, t);

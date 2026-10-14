@@ -1,0 +1,73 @@
+//! Evolution through a curriculum: smaller tasks first, the population carried from each stage to
+//! the next, and the best always also checked on the original task (serial reversal, the paying
+//! light swapping every 100 trials of a 400-trial lifetime) on held-out lifetimes.
+//!
+//! Stages (`CUR_STAGES`, comma-separated `name:generations`):
+//! - `instrumental`: click while the light is on (one light, paying every time it shows);
+//! - `reversal1`: serial reversal with one swap per lifetime (every 200 trials);
+//! - `reversal`: the original (every 100 trials).
+//!
+//! `CUR_GENOME=edges|tags` (the context circuit as edge genes, the start that learned in experiment
+//! 06, or as tag tokens), `CUR_TRIALS`, `CUR_LIVES`, `CUR_HELD`, `CUR_POP`, `CUR_ELITE`,
+//! `CUR_EVERY` (held-out check interval), `CUR_SEED`.
+
+use neurocomp::evolve::genes::GeneGenome;
+use neurocomp::evolve::tags::TagGenome;
+use neurocomp::evolve::{evolve_population, fitness, Evolvable, Physics, Task};
+use neurocomp::world::Conditioning;
+
+fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
+    std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
+}
+
+fn task(name: &str, trials: usize) -> Task {
+    match name {
+        "instrumental" => Task::Conditioning(Conditioning::Instrumental, trials),
+        "reversal1" => Task::Reversal { trials, period: trials / 2 },
+        _ => Task::Reversal { trials, period: trials / 4 },
+    }
+}
+
+fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize) {
+    let trials: usize = env("CUR_TRIALS", 400);
+    let lives: u64 = env("CUR_LIVES", 16);
+    let held_n: u64 = env("CUR_HELD", 16);
+    let (pop, elite, every, seed) = (env("CUR_POP", 48usize), env("CUR_ELITE", 12usize), env("CUR_EVERY", 10usize), env("CUR_SEED", 7u64));
+    let stages = std::env::var("CUR_STAGES").unwrap_or_else(|_| "instrumental:20,reversal1:20,reversal:30".into());
+    let original = task("reversal", trials);
+    let train: Vec<u64> = (0..lives).collect();
+    let held: Vec<u64> = (10_000..10_000 + held_n).collect();
+    let check = |g: &G, t: Task| (fitness(g, t, Physics::Varied, &held).0, fitness(g, original, Physics::Varied, &held).0);
+    let mut population: Vec<G> = vec![start; pop];
+    println!("pop {pop}, elite {elite}, {lives} lifetimes a genome, {held_n} held out, {trials} trials a lifetime; stages {stages}");
+    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {:>14}  {:>14}", "stage", "gen", "best", "mean", "size", "held:stage", "held:original");
+    let (s0, o0) = check(&population[0], task(stages.split(',').next().unwrap().split(':').next().unwrap(), trials));
+    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {s0:>14}  {o0:>14}", "start", "-", "", "", size(&population[0]));
+    for (k, st) in stages.split(',').enumerate() {
+        let mut it = st.split(':');
+        let name = it.next().unwrap().to_string();
+        let gens: usize = it.next().and_then(|g| g.parse().ok()).unwrap_or(20);
+        let t = task(&name, trials);
+        population = evolve_population(population, t, Physics::Varied, &train, elite, gens, seed + k as u64, |g, r| {
+            if g % every == 0 || g + 1 == gens {
+                let (h, o) = check(&r.best, t);
+                println!("{name:<13} {g:>4}  {:>5} {:>5}  {:>5}  {h:>14}  {o:>14}", r.best_fitness, r.mean_fitness, size(&r.best));
+            }
+        });
+    }
+    let (h, o) = check(&population[0], original);
+    println!("final best: held out on the original {o}/1024 (stage check {h})");
+}
+
+fn main() {
+    match std::env::var("CUR_GENOME").unwrap_or_else(|_| "edges".into()).as_str() {
+        "tags" => {
+            println!("curriculum, tag genome from the context circuit");
+            run(TagGenome::context_seed(), |g| g.tokens.len());
+        }
+        _ => {
+            println!("curriculum, edge genome from the context circuit");
+            run(GeneGenome::context_seed(8), |g| g.edges.len());
+        }
+    }
+}

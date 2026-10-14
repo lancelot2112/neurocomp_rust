@@ -264,6 +264,56 @@ impl TagGenome {
         Self { tokens: t, next_id: 5 }
     }
 
+    /// The context circuit as tokens: the start that learned with the edge genome (experiment 06).
+    /// Channels (tags far apart, so they resolve exactly):
+    /// - Y: eye and affect of the last three steps, side by side;
+    /// - Z: conjunction codes on Y (fresh codes born where nothing matches);
+    /// - R: Z less what the context C expects (expectations learned while young);
+    /// - C: the context, held by a self-wire, cleared by surprises when settled, restored by
+    ///   what a context expected, set to a fresh code when empty;
+    /// - N, YG: C's onset, held 32 frames ("young");
+    /// - AFF: the affect channel; A: the eye beside C.
+    ///
+    /// Acts: a tonic population babbling into the act, and acts a stroke followed repeated on what
+    /// A held before them (fading when no stroke follows).
+    pub fn context_seed() -> Self {
+        let ch = (world::CH_BITS / 64) as u8;
+        let (y, z, r, c, n, yg, aff, a) = (0x33u8, 0x55, 0x66, 0x99, 0xAA, 0xCC, 0xF0, 0x0F);
+        let mut t = vec![
+            Token::Channel { tag: y, width: 6 },
+            Token::Channel { tag: z, width: 3 },
+            Token::Channel { tag: r, width: 3 },
+            Token::Channel { tag: c, width: 3 },
+            Token::Channel { tag: n, width: 3 },
+            Token::Channel { tag: yg, width: 3 },
+            Token::Channel { tag: aff, width: 3 },
+            Token::Channel { tag: a, width: 4 },
+        ];
+        let mut id = 1u32;
+        let mut pop = |p: Pop, t: &mut Vec<Token>| { t.push(Token::Pop(Pop { id, ..p })); id += 1; };
+        for lag in 1..=3u8 {
+            for (k, chan) in [world::EYE, world::AFFECT].into_iter().enumerate() {
+                pop(Pop { lag, at: chan as u8 * ch, field: 3, place: ((lag - 1) * 2 + k as u8) * ch, ..Pop::wire(0, SENSES, y) }, &mut t);
+            }
+        }
+        pop(Pop { field: 6, spread: 3, grow: true, new_code: true, ..Pop::new(0, y, z) }, &mut t);
+        pop(Pop { field: 3, ..Pop::wire(0, z, r) }, &mut t);
+        pop(Pop { field: 3, op: KernelOp::Clear, grow: true, share: true, gate: Some((yg, true)), ..Pop::new(0, c, r) }, &mut t);
+        pop(Pop { field: 3, spread: 3, op: KernelOp::Clear, grow: true, gate: Some((yg, false)), ..Pop::new(0, r, c) }, &mut t);
+        pop(Pop { field: 3, grow: true, gate: Some((yg, true)), ..Pop::new(0, r, c) }, &mut t);
+        pop(Pop { field: 3, grow: true, new_code: true, ..Pop::new(0, r, c) }, &mut t);
+        pop(Pop { field: 3, ..Pop::wire(0, c, c) }, &mut t);
+        pop(Pop { field: 3, ..Pop::wire(0, c, n) }, &mut t);
+        pop(Pop { field: 3, lag: 2, op: KernelOp::Clear, ..Pop::wire(0, c, n) }, &mut t);
+        pop(Pop { field: 3, span: 32, ..Pop::wire(0, n, yg) }, &mut t);
+        pop(Pop { at: world::AFFECT as u8 * ch, field: 3, ..Pop::wire(0, SENSES, aff) }, &mut t);
+        pop(Pop { at: world::EYE as u8 * ch, field: 3, ..Pop::wire(0, SENSES, a) }, &mut t);
+        pop(Pop { field: 3, place: ch, ..Pop::wire(0, c, a) }, &mut t);
+        pop(Pop { count: 8, tonic: 3, ..Pop::new(0, a, ACT) }, &mut t);
+        pop(Pop { field: 4, grow: true, repeat: true, repeat_lag: 4, gate: Some((aff, true)), ..Pop::new(0, a, ACT) }, &mut t);
+        Self { tokens: t, next_id: id }
+    }
+
     /// A bare start: one tonic population on the act, nothing else.
     pub fn bare_seed() -> Self {
         let mut b = Pop::new(1, SENSES, ACT);
@@ -482,6 +532,18 @@ mod tests {
         }
         // the window holds the bytes before the newest, newest lowest (it reads the senses a frame back)
         assert_eq!(last, 0x11_22_33);
+    }
+
+    #[test]
+    fn the_context_seed_resolves_every_tag_exactly() {
+        let g = TagGenome::context_seed();
+        let ch = Channels::of(&g.tokens);
+        for p in g.pops() {
+            let (a, b) = (ch.resolve(p.from, false), ch.resolve(p.to, true));
+            assert_eq!(ch.list[a].0, p.from);
+            assert_eq!(ch.list[b].0, p.to);
+        }
+        let _ = live(&g, Task::Conditioning(Conditioning::Reversal, 8), Physics::Varied, 1);
     }
 
     #[test]

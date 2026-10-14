@@ -157,7 +157,10 @@ fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
 /// The task a genome is scored on.
 #[derive(Clone, Copy, Debug)]
 pub enum Task {
+    /// a conditioning scene of this many trials (a reversal swaps every quarter)
     Conditioning(Conditioning, usize),
+    /// serial reversal: this many trials, the paying light swapping every `period`
+    Reversal { trials: usize, period: usize },
 }
 
 /// Where a lifetime's world physics comes from.
@@ -181,6 +184,10 @@ pub fn live<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> Vec
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
             w.conditioning(kind, trials)
+        }
+        Task::Reversal { trials, period } => {
+            w.reversal_period = period.max(1);
+            w.conditioning(Conditioning::Reversal, trials)
         }
     }
     let mut net = g.build(&w, seed ^ 0x5EED);
@@ -253,19 +260,25 @@ pub fn evolve(task: Task, physics: Physics, seeds: &[u64], pop: usize, elite: us
 
 /// The same evolution from a given starting population (for example copies of a hand-written
 /// seed genome).
-pub fn evolve_from<G: Evolvable>(start: Vec<G>, task: Task, physics: Physics, seeds: &[u64], elite: usize, generations: usize, seed: u64, mut report: impl FnMut(usize, &Generation<G>)) -> G {
+pub fn evolve_from<G: Evolvable>(start: Vec<G>, task: Task, physics: Physics, seeds: &[u64], elite: usize, generations: usize, seed: u64, report: impl FnMut(usize, &Generation<G>)) -> G {
+    evolve_population(start, task, physics, seeds, elite, generations, seed, report).remove(0)
+}
+
+/// The same evolution, returning the whole final population, best first (so a curriculum can
+/// carry the population from one task to the next).
+pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physics, seeds: &[u64], elite: usize, generations: usize, seed: u64, mut report: impl FnMut(usize, &Generation<G>)) -> Vec<G> {
     let mut rng = StdRng::seed_from_u64(seed ^ 0xE0E0);
     let pop = start.len();
     let mut population = start;
-    let mut best = population[0].clone();
+    let mut last: Vec<G> = population.clone();
     for generation in 0..generations {
         let mut scored: Vec<(i32, observe::Responding, G)> = score_all(population.drain(..).collect(), task, physics, seeds);
         // ties go to the smaller genome, then to the earlier one
         scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.size().cmp(&b.2.size())));
         let mean = scored.iter().map(|s| s.0).sum::<i32>() / scored.len() as i32;
-        best = scored[0].2.clone();
-        report(generation, &Generation { best: best.clone(), best_fitness: scored[0].0, mean_fitness: mean, responding: scored[0].1 });
+        report(generation, &Generation { best: scored[0].2.clone(), best_fitness: scored[0].0, mean_fitness: mean, responding: scored[0].1 });
         let parents: Vec<G> = scored.iter().map(|s| s.2.clone()).collect();
+        last = parents.clone();
         population = parents[..elite.min(parents.len())].to_vec();
         while population.len() < pop {
             let a = rng.gen_range(0..parents.len());
@@ -280,7 +293,7 @@ pub fn evolve_from<G: Evolvable>(start: Vec<G>, task: Task, physics: Physics, se
             population.push(child);
         }
     }
-    best
+    last
 }
 
 #[cfg(test)]

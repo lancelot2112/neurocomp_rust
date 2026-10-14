@@ -15,11 +15,15 @@
 //!   competing for the same lines share their interneurons; cells on different parts of the
 //!   input both fire. The held-down cells, which matched, unlearn the input (anti-Hebbian: their
 //!   synapses on its lines go, each at random), so overlapping inputs come apart.
-//! - **Hebbian**: a winner's mask moves toward the input (its synapses on the input's lines set,
-//!   those off it cleared, each at random).
+//! - **Hebbian**: a winner's synapses on lines that are off move to lines of the input it has
+//!   none on yet, each at random; **anti-Hebbian** moves a held-down cell's synapses on the
+//!   input's lines to lines that were not active. Learning only moves synapses: every cell keeps
+//!   as many as it was born with (its density is kept), so none shrinks into firing for
+//!   anything.
 //! - **Births**: an input no cell fires for (as an input that overlaps a known one only in part
 //!   fires none of its cells: they need three quarters of their own synapses) gets `k` new cells,
-//!   each wired to a random half of its lines and writing its own random output bits. So a new
+//!   its lines dealt among them (so cells born together share no lines and do not inhibit each
+//!   other), each writing its own random output bits. So a new
 //!   pattern gets cells of its own, and what it shares with an old one does not absorb it.
 //!
 //! All bitwise: masks, popcounts, compares.
@@ -61,7 +65,7 @@ pub struct Kernel {
     pub births: u64,
 }
 
-/// The fewest synapses a cell lives with.
+/// The fewest new lines a candidate assembly's cells are wired to (else the whole input).
 const MIN_SYN: u32 = 8;
 
 fn words(bits: usize) -> usize {
@@ -103,10 +107,24 @@ impl Kernel {
     /// Give birth to a cell wired to a random half of the input's lines (at least one), writing
     /// `out_k` random output bits; returns its index.
     pub fn birth(&mut self, input: &[u64], label: Option<usize>) -> usize {
-        let mut syn: Vec<u64> = input.iter().map(|&w| w & self.rng.next_u64()).collect();
-        if pop(&syn) == 0 {
-            syn = input.to_vec();
+        self.birth_on(input.to_vec(), label)
+    }
+
+    /// Give birth to `n` cells for an input, its lines dealt among them at random (each line to
+    /// one cell), so cells born together share no lines and do not inhibit each other; returns
+    /// their indices.
+    pub fn births_for(&mut self, input: &[u64], n: usize, label: Option<usize>) -> Vec<usize> {
+        let lines = Self::ones(input);
+        let mut parts: Vec<Vec<u64>> = vec![vec![0u64; input.len()]; n.max(1)];
+        for b in lines {
+            let j = (self.rng.next_u64() % parts.len() as u64) as usize;
+            parts[j][b / 64] |= 1u64 << (b % 64);
         }
+        parts.into_iter().filter(|m| pop(m) > 0).map(|m| self.birth_on(m, label)).collect()
+    }
+
+    /// A cell wired to exactly `syn`, writing `out_k` random output bits.
+    fn birth_on(&mut self, syn: Vec<u64>, label: Option<usize>) -> usize {
         let mut out = vec![0u64; words(self.out_bits)];
         let mut n = 0;
         while n < self.out_k {
@@ -121,28 +139,63 @@ impl Kernel {
         self.cells.len() - 1
     }
 
-    /// Hebbian: cell `c`'s mask moves toward the input (on its lines set, off them cleared, each
-    /// with probability 2^-p).
-    pub fn hebbian(&mut self, c: usize, input: &[u64], p: u32) {
-        for w in 0..input.len() {
-            let (r1, r2) = (self.rand_mask(p), self.rand_mask(p));
-            let s = &mut self.cells[c].syn[w];
-            *s = (*s | (input[w] & r1)) & !(!input[w] & *s & r2);
+    /// The bit positions set in `mask`.
+    fn ones(mask: &[u64]) -> Vec<usize> {
+        let mut v = Vec::new();
+        for (w, &x) in mask.iter().enumerate() {
+            let mut x = x;
+            while x != 0 {
+                v.push(w * 64 + x.trailing_zeros() as usize);
+                x &= x - 1;
+            }
+        }
+        v
+    }
+
+    /// Move synapses of cell `c`: each synapse in `from` (a mask) moves, with probability 2^-p,
+    /// to a random line in `to` (a mask) where the cell has none yet. The cell keeps as many
+    /// synapses as it had (its density is kept): learning only moves them.
+    fn move_synapses(&mut self, c: usize, from: &[u64], to: &[u64], p: u32) {
+        let syn = self.cells[c].syn.clone();
+        let movable: Vec<u64> = syn.iter().zip(from).map(|(s, f)| s & f).collect();
+        let free: Vec<u64> = syn.iter().zip(to).map(|(s, t)| !s & t).collect();
+        let mut dest = Self::ones(&free);
+        if dest.is_empty() {
+            return;
+        }
+        for b in Self::ones(&movable) {
+            if self.rand_mask(p) & 1 == 0 || dest.is_empty() {
+                continue;
+            }
+            let i = (self.rng.next_u64() % dest.len() as u64) as usize;
+            let d = dest.swap_remove(i);
+            let syn = &mut self.cells[c].syn;
+            syn[b / 64] &= !(1u64 << (b % 64));
+            syn[d / 64] |= 1u64 << (d % 64);
         }
     }
 
-    /// Anti-Hebbian: cell `c`'s synapses on the input's lines go, each with probability 2^-p. A
-    /// cell left with fewer than `MIN_SYN` synapses dies (its mask is cleared: it never fires
-    /// again), as a cell that has lost its inputs is pruned; else, needing three quarters of a
-    /// few synapses, it would fire for nearly anything.
+    /// Hebbian: cell `c`'s synapses on lines that are off move to lines of the input it has
+    /// none on yet (each with probability 2^-p): its mask moves toward the input, as many
+    /// synapses as before.
+    pub fn hebbian(&mut self, c: usize, input: &[u64], p: u32) {
+        let off: Vec<u64> = input.iter().map(|x| !x).collect();
+        self.move_synapses(c, &off, input, p);
+    }
+
+    /// Anti-Hebbian: cell `c`'s synapses on the input's lines move to lines that were not active
+    /// (each with probability 2^-p): it stops answering to this input, as many synapses as
+    /// before, so it does not come to fire for everything.
     pub fn anti_hebbian(&mut self, c: usize, input: &[u64], p: u32) {
-        for w in 0..input.len() {
-            let r = self.rand_mask(p);
-            self.cells[c].syn[w] &= !(input[w] & r);
+        let mut off: Vec<u64> = input.iter().map(|x| !x).collect();
+        // (only lines inside the input's width)
+        let bits = self.bits;
+        if bits % 64 != 0 {
+            if let Some(last) = off.last_mut() {
+                *last &= (1u64 << (bits % 64)) - 1;
+            }
         }
-        if pop(&self.cells[c].syn) < MIN_SYN {
-            self.cells[c].syn.iter_mut().for_each(|w| *w = 0);
-        }
+        self.move_synapses(c, input, &off, p);
     }
 
     /// Write cell `c`'s output into `out` by its operation.
@@ -197,7 +250,7 @@ impl Kernel {
         }
         if learn && pop(&inw) > 0 {
             if winners.is_empty() {
-                winners = (0..self.k).map(|_| self.birth(&inw, None)).collect();
+                winners = self.births_for(&inw, self.k, None);
             } else {
                 for &c in &winners {
                     self.hebbian(c, &inw, 3);
@@ -309,9 +362,7 @@ impl Holder {
                     self.explained[a] = self.explained[a].saturating_add(1);
                 } else if young {
                     // young: it learns what comes
-                    for _ in 0..4 {
-                        self.kernel.birth(&inw, Some(a));
-                    }
+                    self.kernel.births_for(&inw, 4, Some(a));
                 } else if novel {
                     // settled, and something new: it seeds a candidate assembly of its own (a
                     // possible new cause), stored beside the active one, with that input as its
@@ -331,14 +382,10 @@ impl Holder {
                     let l = self.explained.len();
                     self.explained.push(0);
                     self.rival.push(1);
-                    for _ in 0..4 {
-                        self.kernel.birth(&wire, Some(l));
-                    }
+                    self.kernel.births_for(&wire, 4, Some(l));
                 } else if !(0..e.len()).any(|l| l != a && e[l]) {
                     // familiar, and tied to no context: background, learned into the active one
-                    for _ in 0..4 {
-                        self.kernel.birth(&inw, Some(a));
-                    }
+                    self.kernel.births_for(&inw, 4, Some(a));
                 }
                 // only rivals contradict: a stored assembly that explains an input the active one
                 // does not gains drive against it (an input both explain carries no context);
@@ -374,9 +421,7 @@ impl Holder {
                     let l = self.explained.len();
                     self.explained.push(0);
                     self.rival.push(0);
-                    for _ in 0..4 {
-                        self.kernel.birth(&inw, Some(l));
-                    }
+                    self.kernel.births_for(&inw, 4, Some(l));
                     self.enter(l);
                 }
             }

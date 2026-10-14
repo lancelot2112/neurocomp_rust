@@ -21,7 +21,7 @@
 //!   as many as it was born with (its density is kept), so none shrinks into firing for
 //!   anything.
 //! - **Births**: the part of an input no winner covers (the input AND NOT their masks), when it
-//!   is more than a quarter of the input (all of it when no cell fires), gets `k` new cells,
+//!   meets one cell's popcount (all of it when no cell fires), gets `k` new cells,
 //!   its lines dealt among them (so cells born together share no lines and do not inhibit each
 //!   other), each writing its own random output bits. So a new
 //!   pattern gets cells of its own, and what it shares with an old one does not absorb it.
@@ -359,15 +359,16 @@ impl Kernel {
             }
         }
         if learn && pop(&inw) > 0 {
-            // what of the input no winner covers (the input AND NOT their masks): if more than a
-            // quarter of it, that part gets cells of its own (every part of an input is coded)
+            // what of the input no winner covers (the input AND NOT their masks): if it meets the
+            // popcount of one cell's output, that part gets cells of its own (every part of an
+            // input is coded)
             let mut uncovered = inw.clone();
             for &c in &winners {
                 for (u, m) in uncovered.iter_mut().zip(&self.cells[c].syn) {
                     *u &= !m;
                 }
             }
-            if 4 * pop(&uncovered) > pop(&inw) {
+            if pop(&uncovered) >= ONE_CELL.min(pop(&inw)) && !winners.is_empty() {
                 for &c in &winners {
                     self.hebbian(c, &inw, 3);
                 }

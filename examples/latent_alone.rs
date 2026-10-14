@@ -24,7 +24,7 @@ use neurocomp::program::assembly::Assembly;
 use neurocomp::program::kernel_cells::{Holder, Kernel};
 use neurocomp::program::latent::{LatentCause, Scale};
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng};
 
 const BITS: usize = 3;
 const BACKGROUND: usize = 2;
@@ -73,6 +73,15 @@ fn main() {
         let mut kh = Holder::new(1024, seed ^ 0xF00D);
         let noise: usize = env("LATENT_NOISE", 0);
         let seq = std::env::var("LATENT_SEQ").is_ok();
+        // (`LATENT_TRACE=p`: a trace, rotated and thinned at 2^-p a step, is what the kernel codes)
+        let trace_p: u32 = env("LATENT_TRACE", 0);
+        let mut trace = vec![0u64; 16];
+        // (the thinning is a fixed mask, the same every step: each bit kept unless all of p
+        // fixed random words have it set, so the same recent sequence leaves the same trace)
+        let keep: Vec<u64> = {
+            let mut r = StdRng::seed_from_u64(0x7EA5);
+            (0..16).map(|_| { let mut d = !0u64; for _ in 0..trace_p.max(1) { d &= r.next_u64(); } !d }).collect()
+        };
         let mut prev = BitVector::new(1024, Some(0));
         kh.debug = debug;
         // the circuit's input: layer 4's code of what came together (the light shown and what
@@ -159,7 +168,36 @@ fn main() {
                     // (`LATENT_SEQ=1`: the act is a sequence of two steps, the light and then what
                     // followed, paid or not, the same code whichever light; the kernel's input is
                     // each step with the step before it, rotated (a transition))
-                    let ev = if seq && hist > 0 {
+                    let ev = if seq && trace_p > 0 {
+                        // the cheapest recursion: one trace, each step rotated by a fixed amount,
+                        // thinned by a fixed mask (each old bit dropped where the mask says, a share
+                        // 2^-p), and the new input ORed in; the kernel codes the trace
+                        let mut step = |now: &BitVector, trace: &mut Vec<u64>, rng: &mut StdRng| -> BitVector {
+                            let mut t = vec![0u64; 16];
+                            for b in 0..1024 {
+                                if trace[b / 64] >> (b % 64) & 1 == 1 {
+                                    let d = (b + 97) % 1024;
+                                    t[d / 64] |= 1 << (d % 64);
+                                }
+                            }
+                            for (w, k) in t.iter_mut().zip(&keep) {
+                                *w &= k;
+                            }
+                            for (w, x) in t.iter_mut().zip(now.as_words()) {
+                                *w |= x;
+                            }
+                            *trace = t.clone();
+                            BitVector::from_words(t)
+                        };
+                        for first in [cue[light].clone(), click.clone()] {
+                            let v = step(&first, &mut trace, &mut rng);
+                            let b0 = ksep.births;
+                            let (c1, _) = ksep.code(&v, true);
+                            kh.hold(&c1, ksep.births > b0);
+                        }
+                        let out = outcome[(got > 0) as usize].clone();
+                        step(&out, &mut trace, &mut rng)
+                    } else if seq && hist > 0 {
                         // light, then the click (the same whichever light), then what followed;
                         // each coded as it is, the kernel's history holding what came before
                         for first in [cue[light].clone(), click.clone()] {

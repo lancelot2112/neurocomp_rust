@@ -81,6 +81,7 @@ fn main() {
         let mut chain: Vec<Vec<u64>> = Vec::new();
         let gate = std::env::var("LATENT_GATE").is_ok();
         let mut pred = Predictor::new(1024, 1024, seed ^ 0x9E3D);
+        pred.fail_p = std::env::var("LATENT_FAILP").ok().and_then(|v| v.parse().ok()).unwrap_or(4);
         // (the thinning is a fixed mask, the same every step: each bit kept unless all of p
         // fixed random words have it set, so the same recent sequence leaves the same trace)
         let keep: Vec<u64> = {

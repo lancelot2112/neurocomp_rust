@@ -621,12 +621,14 @@ impl Holder {
 pub struct Predictor {
     pub kernel: Kernel,
     in_bits: usize,
+    /// a cell whose output did not come moves each synapse off the context with chance 2^-fail_p
+    pub fail_p: u32,
 }
 
 impl Predictor {
     /// Cells over `ctx_bits` context lines predicting `in_bits` input lines.
     pub fn new(ctx_bits: usize, in_bits: usize, seed: u64) -> Self {
-        Self { kernel: Kernel::new(ctx_bits, in_bits, 4, 8, seed), in_bits }
+        Self { kernel: Kernel::new(ctx_bits, in_bits, 4, 8, seed), in_bits, fail_p: 4 }
     }
 
     /// One step: the context before and the input that came; returns the error (input XOR
@@ -654,7 +656,7 @@ impl Predictor {
             if 2 * came >= pop(out) {
                 self.kernel.hebbian(c, &cw, 3);
             } else {
-                self.kernel.anti_hebbian(c, &cw, 3);
+                self.kernel.anti_hebbian(c, &cw, self.fail_p);
             }
         }
         let unpredicted: Vec<u64> = iw.iter().zip(&pred).map(|(x, p)| x & !p).collect();

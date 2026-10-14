@@ -197,6 +197,8 @@ pub enum Task {
     Reversal { trials: usize, period: usize, worst_phase: bool },
     /// reading: this many random tokens shown on the eye, one a step
     Sequence(usize),
+    /// reading with a teacher: as `Sequence`, about half the tokens also said aloud
+    Reading(usize),
 }
 
 /// Where a lifetime's world physics comes from.
@@ -233,9 +235,10 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
             w.reversal_period = period.max(1);
             w.conditioning(Conditioning::Reversal, trials)
         }
-        Task::Sequence(n) => {
+        Task::Sequence(n) | Task::Reading(n) => {
             let mut r = StdRng::seed_from_u64(seed ^ 0x5E9);
             let toks: Vec<usize> = (0..n).map(|_| r.gen_range(0..8)).collect();
+            w.teacher = matches!(task, Task::Reading(_));
             w.sequence(&toks)
         }
     }
@@ -380,7 +383,8 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
 
 /// The probes of one genome in one world seed (see `observe::probes`), and its work per step.
 /// Only the lifetimes the `wanted` probes need are lived (a serial-reversal lifetime for respond,
-/// tell, discriminate, reverse and win-stay; a delayed one for remember; a sequence for copy),
+/// tell, discriminate, reverse and win-stay; a delayed one for remember; reading with a teacher
+/// for copy),
 /// `trials` trials or tokens each, with gaps of 0 to `gap` steps between trials; the other
 /// probes read 0.
 pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize]) -> (observe::ProbeRow, u64) {
@@ -388,7 +392,7 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
     let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
     let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap) } else { (vec![], 0) };
     let (del, w2) = if want(&[4]) { live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap) } else { (vec![], 0) };
-    let (seq, w3) = if want(&[6]) { live_work(g, Task::Sequence(trials), physics, seed ^ 0x5E0, 0) } else { (vec![], 0) };
+    let (seq, w3) = if want(&[6]) { live_work(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0) } else { (vec![], 0) };
     let steps = (rev.len() + del.len() + seq.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq);
     for (p, x) in row.iter_mut().enumerate() {
@@ -576,10 +580,12 @@ pub struct IslandGeneration<G> {
 /// other islands (`transfer(recipient, donor, rng)` makes the child and says what moved): a
 /// circuit that does well under one island's pressure gets tried under another's. The donors
 /// are the top `elite` of a random other island; the recipients are this island's new
-/// children (not its kept genomes).
+/// children (not its kept genomes). `start` gives each island's starting population (resized to
+/// `pop`), and generations run from `first` to `generations` (so a checkpoint can be resumed).
 pub fn evolve_islands<G: Evolvable>(
     islands: &[Island],
-    start: G,
+    start: Vec<Vec<G>>,
+    first: usize,
     pop: usize,
     trials: usize,
     physics: Physics,
@@ -596,9 +602,21 @@ pub fn evolve_islands<G: Evolvable>(
 ) -> Vec<Vec<G>> {
     let k = islands.len();
     let mut rng = StdRng::seed_from_u64(seed ^ 0x1514);
-    let mut pops: Vec<Vec<G>> = (0..k).map(|_| vec![start.clone(); pop]).collect();
+    let mut pops: Vec<Vec<G>> = start
+        .into_iter()
+        .map(|mut p| {
+            let n = p.len().max(1);
+            while p.len() < pop {
+                let g = p[p.len() % n].clone();
+                p.push(g);
+            }
+            p.truncate(pop);
+            p
+        })
+        .collect();
+    assert_eq!(pops.len(), k, "one starting population an island");
     let mut last: Vec<Vec<G>> = pops.clone();
-    for generation in 0..generations {
+    for generation in first..generations {
         let mut ranked: Vec<Vec<G>> = Vec::with_capacity(k);
         let mut means = Vec::with_capacity(k);
         let mut work = Vec::with_capacity(k);
@@ -614,7 +632,7 @@ pub fn evolve_islands<G: Evolvable>(
         }
         // the exchange: plasmids from the best of other islands into new children
         let mut moved = Vec::new();
-        if k > 1 && generation > 0 && every > 0 && generation % every == 0 {
+        if k > 1 && generation > first && every > 0 && generation % every == 0 {
             for i in 0..k {
                 for _ in 0..plasmids {
                     let j = (i + rng.gen_range(1..k)) % k;

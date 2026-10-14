@@ -60,6 +60,44 @@ impl KernelOp {
         }
     }
 
+    /// As text: `or`, `add:4`, `rotl:13`, ... (read back by `parse`).
+    pub fn text(self) -> String {
+        match self {
+            KernelOp::Or => "or".into(),
+            KernelOp::And => "and".into(),
+            KernelOp::Xor => "xor".into(),
+            KernelOp::Clear => "clear".into(),
+            KernelOp::Nand => "nand".into(),
+            KernelOp::Nor => "nor".into(),
+            KernelOp::Add(k) => format!("add:{k}"),
+            KernelOp::Sub(k) => format!("sub:{k}"),
+            KernelOp::Shl(n) => format!("shl:{n}"),
+            KernelOp::Shr(n) => format!("shr:{n}"),
+            KernelOp::Rotl(n) => format!("rotl:{n}"),
+            KernelOp::Rotr(n) => format!("rotr:{n}"),
+        }
+    }
+
+    /// The op `text` wrote.
+    pub fn parse(s: &str) -> Option<Self> {
+        let (name, arg) = s.split_once(':').map_or((s, None), |(a, b)| (a, b.parse::<u8>().ok()));
+        Some(match (name, arg) {
+            ("or", _) => KernelOp::Or,
+            ("and", _) => KernelOp::And,
+            ("xor", _) => KernelOp::Xor,
+            ("clear", _) => KernelOp::Clear,
+            ("nand", _) => KernelOp::Nand,
+            ("nor", _) => KernelOp::Nor,
+            ("add", Some(k)) => KernelOp::Add(k),
+            ("sub", Some(k)) => KernelOp::Sub(k),
+            ("shl", Some(n)) => KernelOp::Shl(n),
+            ("shr", Some(n)) => KernelOp::Shr(n),
+            ("rotl", Some(n)) => KernelOp::Rotl(n),
+            ("rotr", Some(n)) => KernelOp::Rotr(n),
+            _ => return None,
+        })
+    }
+
     /// A random op, with a random lane width or amount where it takes one.
     pub fn random<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
         let n: u8 = rng.gen_range(0..64);

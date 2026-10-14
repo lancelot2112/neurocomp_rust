@@ -190,10 +190,12 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence)]
 }
 
-/// Reading aloud: of the tokens said in a sequence of random tokens shown one a step, how many
-/// match a token shown 1 to 4 steps before, minus how many match one shown 9 to 12 steps before
-/// (chance: the shown tokens are independent), per token said. Saying nothing, or saying tokens
-/// at random, scores 0; saying each token seen a couple of steps later scores about 900.
+/// Reading aloud: of the tokens said while tokens are shown one a step, how many match a token
+/// shown 1 to 4 steps before, minus how many match one shown 9 to 12 steps before (chance: the
+/// shown tokens are independent), per token said. Only tokens shown without a teacher saying them
+/// count (with a teacher, echoing the ear would be copying the sound, not reading). Saying
+/// nothing, or saying tokens at random, scores 0; reading each untaught token aloud two steps
+/// later scores about 900 (half that with a teacher on half the tokens).
 pub fn copy(events: &[Event]) -> i32 {
     let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
     let said = ev.iter().filter(|e| e.said.is_some()).count() as i64;
@@ -201,7 +203,7 @@ pub fn copy(events: &[Event]) -> i32 {
         return 0;
     }
     let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
-        lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t].said == ev[t - l].shown).count() as i64).sum()
+        lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && !ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
     };
     ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
 }
@@ -391,6 +393,31 @@ mod tests {
         assert!(reads > 800, "{reads}");
         assert!(random.abs() < 100, "{random}");
         assert_eq!(silent, 0);
+    }
+
+    #[test]
+    fn with_a_teacher_echoing_does_not_count_as_reading() {
+        // a test-only policy that sees the world's events: it repeats a token two steps later
+        // either always (reading) or only when the teacher said it (echoing)
+        let run = |echo_only: bool| -> i32 {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(4);
+            let toks: Vec<usize> = (0..400).map(|_| rand::Rng::gen_range(&mut rng, 0..8)).collect();
+            let mut w = World::new(6, 8);
+            w.teacher = true;
+            w.sequence(&toks);
+            let mut t = 0;
+            while !w.done() {
+                let say = if t >= 2 && (!echo_only || w.events[t - 2].taught) { Some(toks[t - 2]) } else { None };
+                let a = w.act(say, None);
+                w.step(&a);
+                t += 1;
+            }
+            assert!(w.events.iter().filter(|e| e.taught).count() > 150);
+            copy(&w.events)
+        };
+        let (reads, echoes) = (run(false), run(true));
+        assert!(reads > 350, "{reads}");
+        assert!(echoes.abs() < 100, "{echoes}");
     }
 
     #[test]

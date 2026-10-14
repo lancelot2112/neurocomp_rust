@@ -107,6 +107,8 @@ pub struct Event {
     pub stroked: bool,
     /// someone is there
     pub present: bool,
+    /// reading: a teacher said the shown token aloud this step
+    pub taught: bool,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -179,6 +181,9 @@ pub struct World {
     /// nothing shown, so when the next light comes cannot be counted from the last; 0 (the
     /// default): trials follow each other directly
     pub gap_max: usize,
+    /// reading: with a teacher, about half the tokens shown are also said aloud (heard as the
+    /// network hears its own voice saying them), so a glyph's sound can be learned
+    pub teacher: bool,
     scene: Scene,
     stroke_next: bool,
     present: bool,
@@ -241,6 +246,7 @@ impl World {
             cond_total: 0,
             reversal_period: 500,
             gap_max: 0,
+            teacher: false,
             scene: Scene::Idle,
             stroke_next: false,
             present: false,
@@ -286,7 +292,7 @@ impl World {
     pub fn step(&mut self, act: &BitVector) -> BitVector {
         let said = self.voice.articulate(&channel(act, VOICE));
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if let Some(w) = said {
@@ -378,6 +384,10 @@ impl World {
                 if let Some(tok) = q.pop_front() {
                     put(&mut senses, EYE, &self.glyphs[tok].clone());
                     ev.shown = Some(tok);
+                    if self.teacher && self.rng.gen_bool(0.5) {
+                        put(&mut senses, EAR, &self.sounds[tok].clone());
+                        ev.taught = true;
+                    }
                 }
                 if q.is_empty() { Scene::Idle } else { Scene::Sequence(q) }
             }

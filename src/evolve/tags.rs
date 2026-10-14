@@ -591,6 +591,75 @@ impl TagGenome {
         self.tokens[before..].to_vec()
     }
 
+    /// The genome as text, one token a line (`next_id` first), read back by `from_text`: a
+    /// checkpoint can be saved and an evolution resumed from it.
+    pub fn to_text(&self) -> String {
+        let b = |x: bool| x as u8;
+        let opt = |o: Option<(u8, bool)>| o.map_or("-".to_string(), |(t, on)| format!("{t}:{}", b(on)));
+        let mut out = format!("genome {}\n", self.next_id);
+        for t in &self.tokens {
+            match t {
+                Token::Channel { tag, width, hold } => out += &format!("channel {tag} {width} {}\n", b(*hold)),
+                Token::Pop(p) => {
+                    out += &format!(
+                        "pop id={} from={} from_port={} to={} to_port={} wire={} op={} lag={} span={} at={} field={} place={} spread={} count={} fan_in={} fan_out={} quarters={} tonic={} share={} grow={} new_code={} repeat={} repeat_lag={} gate={} gate_lag={} birth_syn={} birth_quarters={} out_min={} out_max={} cap={} code_lines={} out_learn={} fade={} rotate={} sparse={} cover={} tile={} pause={} replicate={} replicate_shift={}\n",
+                        p.id, p.from, b(p.from_port), p.to, b(p.to_port), b(p.wire), p.op.text(), p.lag, p.span, p.at, p.field, p.place, p.spread,
+                        p.count, p.fan_in, p.fan_out, p.quarters, p.tonic, b(p.share), b(p.grow), b(p.new_code), b(p.repeat), p.repeat_lag,
+                        opt(p.gate), p.gate_lag, p.birth_syn, p.birth_quarters, p.out_min, p.out_max, p.cap, p.code_lines, p.out_learn, p.fade,
+                        p.rotate, b(p.sparse), b(p.cover), p.tile, opt(p.pause), p.replicate, b(p.replicate_shift)
+                    );
+                }
+            }
+        }
+        out
+    }
+
+    /// The genomes in `text` (as `to_text` wrote them, one after another).
+    pub fn from_text(text: &str) -> Result<Vec<TagGenome>, String> {
+        let mut out: Vec<TagGenome> = Vec::new();
+        for (n, line) in text.lines().enumerate() {
+            let line = line.trim();
+            let bad = |what: &str| format!("line {}: {what}: {line}", n + 1);
+            let mut w = line.split_whitespace();
+            match w.next() {
+                None => continue,
+                Some("genome") => out.push(TagGenome { tokens: vec![], next_id: w.next().and_then(|x| x.parse().ok()).ok_or_else(|| bad("next id"))? }),
+                Some("channel") => {
+                    let v: Vec<u8> = w.map(|x| x.parse().map_err(|_| bad("channel"))).collect::<Result<_, _>>()?;
+                    let [tag, width, hold] = v[..] else { return Err(bad("channel")) };
+                    out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Channel { tag, width, hold: hold == 1 });
+                }
+                Some("pop") => {
+                    let kv: std::collections::HashMap<&str, &str> = w.filter_map(|x| x.split_once('=')).collect();
+                    let get = |k: &str| kv.get(k).copied().ok_or_else(|| bad(k));
+                    macro_rules! num { ($k:expr) => { get($k)?.parse().map_err(|_| bad($k))? }; }
+                    let flag = |k: &str| -> Result<bool, String> { Ok(get(k)? == "1") };
+                    let opt = |k: &str| -> Result<Option<(u8, bool)>, String> {
+                        let v = get(k)?;
+                        if v == "-" { return Ok(None) }
+                        let (t, on) = v.split_once(':').ok_or_else(|| bad(k))?;
+                        Ok(Some((t.parse().map_err(|_| bad(k))?, on == "1")))
+                    };
+                    let p = Pop {
+                        id: num!("id"), from: num!("from"), from_port: flag("from_port")?, to: num!("to"), to_port: flag("to_port")?,
+                        wire: flag("wire")?, op: KernelOp::parse(get("op")?).ok_or_else(|| bad("op"))?, lag: num!("lag"), span: num!("span"),
+                        at: num!("at"), field: num!("field"), place: num!("place"), spread: num!("spread"), count: num!("count"),
+                        fan_in: num!("fan_in"), fan_out: num!("fan_out"), quarters: num!("quarters"), tonic: num!("tonic"),
+                        share: flag("share")?, grow: flag("grow")?, new_code: flag("new_code")?, repeat: flag("repeat")?,
+                        repeat_lag: num!("repeat_lag"), gate: opt("gate")?, gate_lag: num!("gate_lag"), birth_syn: num!("birth_syn"),
+                        birth_quarters: num!("birth_quarters"), out_min: num!("out_min"), out_max: num!("out_max"), cap: num!("cap"),
+                        code_lines: num!("code_lines"), out_learn: num!("out_learn"), fade: num!("fade"), rotate: num!("rotate"),
+                        sparse: flag("sparse")?, cover: flag("cover")?, tile: num!("tile"), pause: opt("pause")?,
+                        replicate: num!("replicate"), replicate_shift: flag("replicate_shift")?,
+                    };
+                    out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
+                }
+                Some(_) => return Err(bad("unknown line")),
+            }
+        }
+        Ok(out)
+    }
+
     /// How many populations it has.
     pub fn populations(&self) -> usize {
         self.pops().count()
@@ -1272,6 +1341,20 @@ mod tests {
         assert_eq!((moved.len(), h.channels(), h.populations()), (1, 0, 1));
         let Token::Pop(p) = &h.tokens[0] else { panic!() };
         assert!(p.from_port && p.to_port && p.id >= 4);
+    }
+
+    #[test]
+    fn a_genome_survives_text_and_back() {
+        let mut rng = StdRng::seed_from_u64(11);
+        let mut gs = vec![TagGenome::context_seed(), TagGenome::act_seed()];
+        let mut g = TagGenome { tokens: vec![], next_id: 1 };
+        for _ in 0..300 {
+            g = g.mutate(&mut rng);
+        }
+        gs.push(g);
+        let text: String = gs.iter().map(|g| g.to_text()).collect();
+        let back = TagGenome::from_text(&text).unwrap();
+        assert_eq!(back, gs);
     }
 
     #[test]

@@ -826,7 +826,7 @@ impl Mind {
                     o.set_persistence(4);
                 }
                 if assembly {
-                    o.col.set_assembly(1024, 16, 256, 8, seed ^ 0xA55E);
+                    o.col.set_assembly(1024, 16, 256, 16, seed ^ 0xA55E);
                 }
                 o
             },

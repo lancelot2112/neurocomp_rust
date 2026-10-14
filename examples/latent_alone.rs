@@ -58,7 +58,7 @@ fn main() {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut lc = LatentCause::new(BITS, scale);
         lc.debug = debug;
-        let mut cc = Assembly::holding(256, 8, 1024);
+        let mut cc = Assembly::holding(env("LATENT_N", 256), env("LATENT_K", 16), 1024, seed ^ 0x5EED);
         cc.debug = debug;
         // the circuit's input: layer 4's code of what came together (the light shown and what
         // followed), a random sparse code per conjunction, as layer 4 recruits one for each

@@ -325,7 +325,7 @@ impl Column {
     /// layer 4's code, and a population of `assembly_cells` (`assembly_k` active) holding.
     pub fn set_assembly(&mut self, cells: usize, k: usize, assembly_cells: usize, assembly_k: usize, seed: u64) {
         let sep = Assembly::coding(cells, k, self.bits, 32, seed);
-        let circuit = Assembly::holding(assembly_cells, assembly_k, cells);
+        let circuit = Assembly::holding(assembly_cells, assembly_k, cells, seed ^ 0x5EED);
         self.assembly = Some(Box::new((sep, circuit, 0)));
     }
 

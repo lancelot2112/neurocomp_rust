@@ -1,63 +1,58 @@
-//! One kind of population for coding and for holding: cells with counting synapses, learned
-//! Hebbian and anti-Hebbian, under inhibition (`Assembly`). The same cells and rules serve two
-//! uses, as the cortex uses one circuit for both:
+//! One kind of population for coding and for holding: cells with binary synapses, learned
+//! Hebbian and anti-Hebbian at random, under inhibition (`Assembly`). The same cells and rules
+//! serve two uses, as the cortex uses one circuit for both:
 //!
 //! - **Coding** (`Assembly::coding`; layer 4, the dentate gyrus): each input fires the `k` cells
-//!   it drives most (feedback inhibition), and learning separates overlapping inputs (below);
-//!   the code is the cells that fired.
+//!   it drives most (feedback inhibition), and learning separates overlapping inputs; the code
+//!   is the cells that fired.
 //! - **Holding** (`Assembly::holding`; layer 2/3's held population): `k` cells recruited
 //!   together form an assembly that sustains itself through recurrent synapses with no input
 //!   (persistent activity), and falls silent when inhibition reaches its recurrent strength;
 //!   which assembly holds is the area's state (its context).
 //!
-//! **Synapses.** Input synapses are small counts, from each input line to each cell: Hebbian
-//! learning adds one (a cell whose synapse saturates halves all of them, keeping their
-//! proportions), anti-Hebbian learning takes one off. So the counts follow how often each input
-//! comes while a cell fires: graded synapses carry the frequencies a binary cell cannot.
-//! Recurrent synapses (holding) count up to 15 between cells active together.
+//! **No counters in the synapses.** Every synapse is one bit, as a single synapse is close to
+//! all-or-none (Petersen et al. 1998), and learning flips it at random: a random mask with
+//! probability 2^-p per bit is the AND of p random words. How strongly an input reaches a
+//! population is how many of its cells have the synapse (connectivity): a synapse set with
+//! probability q whenever its line comes as the cell fires, and cleared with the same
+//! probability whenever the cell fires without it, is on about as often as the line comes with
+//! the cell (Fusi's binary synapses), so over an assembly's cells the count of synapses from a
+//! line follows how often the line comes while the assembly holds. How often a cell has fired
+//! lately is a window into a bitfield: each cell keeps its last 64 inputs as a shift register
+//! (fired or not), and its rate is that register's popcount.
 //!
-//! **The two learning rules.** Hebbian: a cell that fires strengthens its synapses from the
-//! input's lines. Anti-Hebbian: a cell the input drove (it matched and would fire) but
-//! inhibition held down weakens them (long-term depression). Inputs that overlap drive the same
-//! cells at first; each time one wins and the others are held down, the losers lose exactly
-//! what the inputs share, and cells come to answer to what is distinctive in each (pattern
-//! separation). The inhibition is local in the input's own terms: only cells that matched are
-//! depressed.
+//! **Coding.** A cell has potential synapses (silent: a random fan, as a young cell's
+//! connections) and learned ones (active). Its drive is twice its active synapses on the input
+//! plus its silent ones, less how far its window says it fires above its share
+//! (homeostasis: a cell that would fire for everything is held back until cells for one input
+//! alone win). The winners learn the input (Hebbian: set) and let go of what they fire without
+//! (cleared); cells that matched and were held down are depressed on it (anti-Hebbian). Its
+//! plasticity closes as its experience doubles (a critical period); a novel input, more than a
+//! quarter of whose lines none of its winners has learned, recruits cells of its own for the new
+//! part and depresses the winners there (so what it shares does not absorb it).
 //!
-//! **Homeostasis** (coding). A cell's drive is divided by how far it fires above its share of
-//! inputs, so a cell that would fire for everything (as one for what overlapping inputs share
-//! would) is held back until cells for one input alone win.
-//!
-//! **Net drive** (holding). Every input line also drives the interneurons (feedforward
-//! inhibition): an input excites a set of cells through their synapses from its lines and
-//! inhibits them as their synapses from all lines seen do on average. In bit lengths: the bit
-//! length of their mean synapse from each of its lines, averaged, less that of their mean
-//! synapse over every line seen (a log-likelihood against a flat expectation; the log before the
-//! mean, so a few familiar lines do not vouch for the rest).
-//!
-//! **Release** (holding). The dendrite-targeting interneurons sum the active assembly's negative
-//! net drive through facilitating synapses, and positive net drive takes it back off (an
-//! opponent count, at least zero, less one bit each input: only an input at least twice as
-//! unlikely as expected counts, as a change detector allows half the change it is to find).
-//! Each stored rival assembly gets the same input; one it drives more, net, gathers drive against
-//! the active one through the shared interneurons (an opponent count per rival, with the same
-//! allowance). When either count reaches the active assembly's recurrent strength (its mean
-//! recurrent synapse: a young assembly falls easily, a long-held one needs more), it falls
+//! **Holding.** An input's net drive on a set of cells, in bit lengths: per input line, the bit
+//! length of how many of the cells have the synapse, averaged over the input's lines (the log
+//! before the mean: a few familiar lines do not vouch for the rest), less the bit length of the
+//! mean over every line seen (a log-likelihood against a flat expectation: feedforward
+//! inhibition). The dendrite-targeting interneurons sum the active assembly's negative net drive,
+//! positive drive taking it back off (an opponent count, at least zero, less one bit each
+//! input: only an input at least twice as unlikely as expected counts); each stored rival
+//! assembly the input drives more, net, gathers drive against the active one the same way. When
+//! either reaches the active assembly's recurrent strength (the bit length of how many of its cells'
+//! pairs are connected: a young assembly falls easily, a long-held one needs more) it falls
 //! silent and its cells adapt for as many inputs; a rival that won takes over at once. Silent,
-//! the free cell the input drives most, net, seeds a settle and recurrence completes its
-//! assembly (an old state comes back on one input that only it predicts); when nothing seeds by
-//! the time the silenced cells recover, the least-used cells form a new assembly. The active
-//! assembly learns an input that drives it (within the allowance) and not one that inhibits it;
-//! a rival the input drove while the active one held it down is depressed (anti-Hebbian).
+//! the stored assembly the input drives most, net, over its cells seeds a settle and
+//! recurrence completes it (an old state comes back on one input that only it predicts); when nothing seeds by
+//! the time the silenced cells recover, the least recently used cells form a new assembly. The
+//! active assembly learns an input that drives it (within the allowance), not one that
+//! inhibits it; a rival the input drove while the active one held it down is depressed.
 //!
-//! All integer: counts, bit lengths, compares.
+//! All integer and bitwise: masks, popcounts, bit lengths, compares.
 
 use crate::bitvec::BitVector;
 use rand::rngs::StdRng;
-use rand::{Rng, SeedableRng};
-
-/// A coding cell's first, weak synapses (before it has learned anything).
-const FIRST: u8 = 4;
+use rand::{RngCore, SeedableRng};
 
 fn bitlen(x: u32) -> i32 {
     32 - x.leading_zeros() as i32
@@ -66,12 +61,12 @@ fn bitlen(x: u32) -> i32 {
 /// What holding adds: recurrent synapses and the assemblies they make.
 #[derive(Clone)]
 struct Hold {
-    /// recurrent synapses, `rec[i * n + j]`: from j onto i (0..=15)
-    rec: Vec<u8>,
+    /// recurrent synapses: per cell, a mask over the cells it is connected from
+    rec: Vec<u64>,
     /// the assembly each cell was recruited into
     label: Vec<Option<usize>>,
-    /// inputs each cell has been active for, and inputs until its adaptation wears off
-    used: Vec<u32>,
+    /// when each cell was last active (the input count), and inputs until its adaptation wears off
+    last: Vec<u64>,
     adapted: Vec<u32>,
     /// the inhibition on the active assembly from the unknown, and each rival's drive against it
     sst: i32,
@@ -91,49 +86,48 @@ pub struct Assembly {
     n: usize,
     k: usize,
     bits: usize,
-    /// input synapses, `w[i * bits + b]`, and per cell their sum
-    w: Vec<u8>,
-    sum: Vec<u32>,
+    words: usize,
+    /// learned synapses (active) and potential ones (silent), per cell a mask over the input
+    syn: Vec<u64>,
+    pot: Vec<u64>,
     /// the input lines seen so far, and how many
-    seen: BitVector,
+    seen: Vec<u64>,
     n_seen: u32,
-    /// each cell's recent firing (0..=256: its share of inputs lately, times 256): homeostasis
-    rate: Vec<u32>,
+    /// per cell, its last 64 inputs (fired or not), newest in bit 0
+    fired: Vec<u64>,
     /// the cells active now
     active: Vec<usize>,
-    /// coding: inputs coded so far (plasticity closes as they double: a critical period; a
-    /// novel input reopens it, as acetylcholine does)
-    coded: u64,
+    /// inputs so far (coding: plasticity closes as they double)
+    clock: u64,
     hold: Option<Hold>,
+    rng: StdRng,
     pub debug: bool,
 }
 
 impl Assembly {
-    fn base(n: usize, k: usize, bits: usize) -> Self {
-        Self { n, k, bits, w: vec![0; n * bits], sum: vec![0; n], seen: BitVector::new(bits, Some(0)), n_seen: 0, rate: vec![0; n], active: Vec::new(), coded: 0, hold: None, debug: false }
+    fn base(n: usize, k: usize, bits: usize, seed: u64) -> Self {
+        let words = bits.div_ceil(64);
+        Self { n, k, bits, words, syn: vec![0; n * words], pot: vec![0; n * words], seen: vec![0; words], n_seen: 0, fired: vec![0; n], active: Vec::new(), clock: 0, hold: None, rng: StdRng::seed_from_u64(seed), debug: false }
     }
 
-    /// For coding: `n` cells over `bits` input lines, `k` firing; each cell starts with weak
+    /// For coding: `n` cells over `bits` input lines, `k` firing; each cell starts with potential
     /// synapses from a random `fan` of the lines.
     pub fn coding(n: usize, k: usize, bits: usize, fan: usize, seed: u64) -> Self {
-        let mut a = Self::base(n, k, bits);
-        let mut rng = StdRng::seed_from_u64(seed);
+        let mut a = Self::base(n, k, bits, seed);
         for i in 0..n {
             for _ in 0..fan {
-                let b = rng.gen_range(0..bits);
-                if a.w[i * bits + b] == 0 {
-                    a.w[i * bits + b] = FIRST;
-                    a.sum[i] += FIRST as u32;
-                }
+                let b = (a.rng.next_u64() % bits as u64) as usize;
+                a.pot[i * a.words + b / 64] |= 1u64 << (b % 64);
             }
         }
         a
     }
 
     /// For holding: `n` cells over `bits` input lines, assemblies of `k`.
-    pub fn holding(n: usize, k: usize, bits: usize) -> Self {
-        let mut a = Self::base(n, k, bits);
-        a.hold = Some(Hold { rec: vec![0; n * n], label: vec![None; n], used: vec![0; n], adapted: vec![0; n], sst: 0, rival: Vec::new(), silent: 0, last_strength: 0, now: 0, contexts: 0, switches: 0, resets: 0 });
+    pub fn holding(n: usize, k: usize, bits: usize, seed: u64) -> Self {
+        let mut a = Self::base(n, k, bits, seed);
+        let rw = n.div_ceil(64);
+        a.hold = Some(Hold { rec: vec![0; n * rw], label: vec![None; n], last: vec![0; n], adapted: vec![0; n], sst: 0, rival: Vec::new(), silent: 0, last_strength: 0, now: 0, contexts: 0, switches: 0, resets: 0 });
         a
     }
 
@@ -160,46 +154,58 @@ impl Assembly {
         self.active.is_empty()
     }
 
-    fn lines(&mut self, input: &BitVector) -> Vec<usize> {
-        let on: Vec<usize> = (0..self.bits).filter(|&b| input.bit_get(b)).collect();
-        for &b in &on {
-            if !self.seen.bit_get(b) {
-                self.seen.bit_set(b);
-                self.n_seen += 1;
-            }
+    /// A random mask, each bit set with probability 2^-p.
+    fn rand_mask(&mut self, p: u32) -> u64 {
+        let mut m = !0u64;
+        for _ in 0..p {
+            m &= self.rng.next_u64();
         }
-        on
+        m
     }
 
-    /// Hebbian: the cells' synapses from the lines strengthen by one (a saturated cell halves
-    /// all of its synapses first).
-    fn potentiate(&mut self, cells: &[usize], on: &[usize]) {
-        for &i in cells {
-            for &b in on {
-                if self.w[i * self.bits + b] == u8::MAX {
-                    let row = &mut self.w[i * self.bits..(i + 1) * self.bits];
-                    for w in row.iter_mut() {
-                        *w /= 2;
-                    }
-                    self.sum[i] = row.iter().map(|&w| w as u32).sum();
-                }
-                self.w[i * self.bits + b] += 1;
-                self.sum[i] += 1;
-            }
+    fn lines(&mut self, input: &BitVector) -> (Vec<usize>, Vec<u64>) {
+        let mut w: Vec<u64> = input.as_words().to_vec();
+        w.resize(self.words, 0);
+        let on: Vec<usize> = (0..self.bits).filter(|&b| w[b / 64] >> (b % 64) & 1 == 1).collect();
+        for (s, x) in self.seen.iter_mut().zip(&w) {
+            self.n_seen += (x & !*s).count_ones();
+            *s |= x;
         }
+        (on, w)
     }
 
-    /// Anti-Hebbian: the cells' synapses from the lines weaken by one.
-    fn depress(&mut self, cells: &[usize], on: &[usize]) {
+    fn has(&self, i: usize, b: usize) -> bool {
+        self.syn[i * self.words + b / 64] >> (b % 64) & 1 == 1
+    }
+
+    /// Hebbian: each cell's synapses on the lines of `mask` are set, each with probability 2^-p.
+    fn set(&mut self, cells: &[usize], mask: &[u64], p: u32) {
         for &i in cells {
-            for &b in on {
-                let w = &mut self.w[i * self.bits + b];
-                if *w > 0 {
-                    *w -= 1;
-                    self.sum[i] -= 1;
+            for w in 0..self.words {
+                if mask[w] != 0 {
+                    let r = self.rand_mask(p);
+                    self.syn[i * self.words + w] |= mask[w] & r;
                 }
             }
         }
+    }
+
+    /// Anti-Hebbian: each cell's synapses on the lines of `mask` are cleared, each with
+    /// probability 2^-p.
+    fn clear(&mut self, cells: &[usize], mask: &[u64], p: u32) {
+        for &i in cells {
+            for w in 0..self.words {
+                if mask[w] & self.syn[i * self.words + w] != 0 {
+                    let r = self.rand_mask(p);
+                    self.syn[i * self.words + w] &= !(mask[w] & r);
+                }
+            }
+        }
+    }
+
+    /// The lines seen that are not in the input.
+    fn absent(&self, input: &[u64]) -> Vec<u64> {
+        self.seen.iter().zip(input).map(|(s, x)| s & !x).collect()
     }
 
     /// The input's net drive on a set of cells (see the module notes).
@@ -207,67 +213,57 @@ impl Assembly {
         if cells.is_empty() || on.is_empty() {
             return 0;
         }
-        let k = cells.len() as u32;
-        let from: i32 = on.iter().map(|&b| bitlen(cells.iter().map(|&i| self.w[i * self.bits + b] as u32).sum::<u32>() / k)).sum::<i32>() / on.len() as i32;
-        let mean: u32 = cells.iter().map(|&i| self.sum[i]).sum::<u32>() / (k * self.n_seen.max(1));
-        from - bitlen(mean)
+        let from: i32 = on.iter().map(|&b| bitlen(cells.iter().filter(|&&i| self.has(i, b)).count() as u32)).sum::<i32>() / on.len() as i32;
+        let total: u32 = cells.iter().map(|&i| (0..self.words).map(|w| (self.syn[i * self.words + w] & self.seen[w]).count_ones()).sum::<u32>()).sum();
+        from - bitlen(total / self.n_seen.max(1))
     }
 
-    /// Coding: the cells `input` fires (as bits of an `n`-bit vector). With `learn`, it learns
-    /// while its plasticity is open: every input for the first 2048, then every 2nd, 4th, ... as
-    /// its experience doubles (a critical period). A novel input (more than a quarter of its lines
-    /// learned by none of its winners: part of it nothing codes yet) always learns, by recruiting
-    /// cells of its own for the new part (as the dentate gyrus recruits), so it is not absorbed by
-    /// the cells of what it shares.
+    /// Coding: the cells `input` fires (as bits of an `n`-bit vector), learning with `learn`
+    /// while its plasticity is open (see the module notes).
     pub fn code(&mut self, input: &BitVector, learn: bool) -> BitVector {
-        let on = self.lines(input);
-        // the drive, divided by how far the cell fires above its share (homeostasis)
-        let share = (256 * self.k / self.n).max(1) as u64;
-        let mut drive: Vec<(u32, usize)> = (0..self.n)
-            .map(|i| {
-                let d = on.iter().map(|&b| self.w[i * self.bits + b] as u32).sum::<u32>() as u64;
-                ((d * share / (share + self.rate[i] as u64)) as u32, i)
-            })
-            .collect();
-        // the most driven fire (ties to the lower index, a fixed order)
+        let (on, inw) = self.lines(input);
+        self.clock += 1;
+        // the drive: twice the active synapses on the input plus the silent ones, less how far
+        // the cell's window says it fires above its share
+        let share = (64 * self.k / self.n).max(1) as u64;
+        let drive_of = |a: &Self, i: usize, mask: &[u64]| -> u32 {
+            let mut d = 0u64;
+            for w in 0..a.words {
+                d += 2 * (mask[w] & a.syn[i * a.words + w]).count_ones() as u64 + (mask[w] & a.pot[i * a.words + w] & !a.syn[i * a.words + w]).count_ones() as u64;
+            }
+            d.saturating_sub((a.fired[i].count_ones() as u64).saturating_sub(share)) as u32
+        };
+        let mut drive: Vec<(u32, usize)> = (0..self.n).map(|i| (drive_of(self, i, &inw), i)).collect();
         drive.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        let winners: Vec<usize> = drive.iter().take(self.k).filter(|d| d.0 > 0).map(|d| d.1).collect();
+        let mut winners: Vec<usize> = drive.iter().take(self.k).filter(|d| d.0 > 0).map(|d| d.1).collect();
         let weakest = drive.get(self.k.saturating_sub(1)).map_or(0, |d| d.0);
-        // novel: more than a quarter of the input's lines are learned by none of the winners
-        // (no winner's synapse there beyond its first weak one): part of the input nothing codes
-        let uncoded = on.iter().filter(|&&b| winners.iter().all(|&i| self.w[i * self.bits + b] <= FIRST)).count();
-        let novel = 4 * uncoded > on.len();
-        self.coded += 1;
-        let every = 1u64 << (64 - (self.coded / 2048).leading_zeros()).min(20);
-        let open = learn && self.coded % every == 0;
-        // firing-rate adaptation follows every input (it is not plasticity)
-        for (i, r) in self.rate.iter_mut().enumerate() {
-            *r = if winners.contains(&i) { *r + (256 - (*r).min(256)) / 16 } else { *r - *r / 16 };
-        }
-        let mut winners = winners;
+        // novel: more than a quarter of the input's lines learned by none of the winners
+        let new_lines: Vec<u64> = (0..self.words).map(|w| winners.iter().fold(inw[w], |m, &i| m & !self.syn[i * self.words + w])).collect();
+        let uncoded: u32 = new_lines.iter().map(|w| w.count_ones()).sum();
+        let novel = 4 * uncoded as usize > on.len();
+        let every = 1u64 << (64 - (self.clock / 2048).leading_zeros()).min(20);
+        let open = learn && self.clock % every == 0;
         if learn && novel && !on.is_empty() {
-            // a novel input: the part nothing codes recruits its own cells (the cells its
-            // uncoded lines drive most, homeostasis applied, other than the winners), which learn
-            // the whole input and are its code; the winners, which matched only the familiar
-            // part, are depressed on the new part (they do not absorb it)
-            let new_lines: Vec<usize> = on.iter().copied().filter(|&b| winners.iter().all(|&i| self.w[i * self.bits + b] <= FIRST)).collect();
-            let mut fresh: Vec<(u32, usize)> = (0..self.n)
-                .filter(|i| !winners.contains(i))
-                .map(|i| {
-                    let d = new_lines.iter().map(|&b| self.w[i * self.bits + b] as u32).sum::<u32>() as u64;
-                    ((d * share / (share + self.rate[i] as u64)) as u32, i)
-                })
-                .collect();
+            // the new part recruits cells of its own (other than the winners), which learn the
+            // whole input and are its code; the winners are depressed on the new part
+            let mut fresh: Vec<(u32, usize)> = (0..self.n).filter(|i| !winners.contains(i)).map(|i| (drive_of(self, i, &new_lines), i)).collect();
             fresh.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
             let recruits: Vec<usize> = fresh.iter().take(self.k).map(|d| d.1).collect();
-            self.potentiate(&recruits, &on);
-            self.depress(&winners, &new_lines);
+            self.set(&recruits, &inw, 1);
+            self.clear(&winners, &new_lines, 1);
             winners = recruits;
         } else if open && !on.is_empty() {
-            self.potentiate(&winners, &on);
-            // the cells that matched (at least half the weakest winner's drive) and were held down
+            // Hebbian for the winners (and they let go of what they fire without); anti-Hebbian
+            // for the cells that matched (at least half the weakest winner's drive) and lost
+            self.set(&winners, &inw, 1);
+            let absent = self.absent(&inw);
+            self.clear(&winners, &absent, 3);
             let losers: Vec<usize> = drive.iter().skip(self.k).take_while(|&&(d, _)| d > 0 && d * 2 >= weakest).map(|&(_, i)| i).collect();
-            self.depress(&losers, &on);
+            self.clear(&losers, &inw, 2);
+        }
+        // each cell's window shifts in whether it fired
+        for (i, f) in self.fired.iter_mut().enumerate() {
+            *f = *f << 1 | winners.contains(&i) as u64;
         }
         self.active = winners;
         let mut v = BitVector::new(self.n, Some(0));
@@ -277,38 +273,48 @@ impl Assembly {
         v
     }
 
-    /// The active assembly's recurrent strength: its mean recurrent synapse (0..=15).
+    /// The active assembly's recurrent strength, in bits as the evidence against it is: the bit
+    /// length of how many of its cells' ordered pairs are connected.
     fn strength(&self) -> i32 {
         let h = self.hold.as_ref().unwrap();
         let k = self.active.len();
         if k < 2 {
             return 0;
         }
-        let mut sum = 0u32;
+        let rw = self.n.div_ceil(64);
+        let mut pairs = 0u32;
         for &i in &self.active {
             for &j in &self.active {
-                if i != j {
-                    sum += h.rec[i * self.n + j] as u32;
+                if i != j && h.rec[i * rw + j / 64] >> (j % 64) & 1 == 1 {
+                    pairs += 1;
                 }
             }
         }
-        (sum / (k * (k - 1)) as u32) as i32
+        bitlen(pairs)
     }
 
-    /// Holding, Hebbian: the active cells learn the input and each other.
-    fn learn_held(&mut self, on: &[usize]) {
+    /// Holding, Hebbian: the active cells learn the input (set at 1/8, and let go of lines seen
+    /// without them at 1/8, so each synapse is on about as often as its line comes with them)
+    /// and connect to each other (each pair at 1/4).
+    fn learn_held(&mut self, inw: &[u64]) {
         let act = self.active.clone();
-        self.potentiate(&act, on);
-        let n = self.n;
-        let h = self.hold.as_mut().unwrap();
+        self.set(&act, inw, 3);
+        let absent = self.absent(inw);
+        self.clear(&act, &absent, 3);
+        let rw = self.n.div_ceil(64);
+        let clock = self.clock;
+        let mut am = vec![0u64; rw];
+        for &j in &act {
+            am[j / 64] |= 1u64 << (j % 64);
+        }
         for &i in &act {
-            h.used[i] += 1;
-            for &j in &act {
-                if i != j {
-                    let r = &mut h.rec[i * n + j];
-                    *r = (*r + 1).min(15);
-                }
+            for w in 0..rw {
+                let r = self.rand_mask(2);
+                let own = if w == i / 64 { 1u64 << (i % 64) } else { 0 };
+                let h = self.hold.as_mut().unwrap();
+                h.rec[i * rw + w] |= am[w] & r & !own;
             }
+            self.hold.as_mut().unwrap().last[i] = clock;
         }
     }
 
@@ -342,7 +348,8 @@ impl Assembly {
 
     /// Holding: one input (its active lines); returns the assembly now active (or last active).
     pub fn hold(&mut self, input: &BitVector) -> usize {
-        let on = self.lines(input);
+        let (on, inw) = self.lines(input);
+        self.clock += 1;
         for a in self.hold.as_mut().unwrap().adapted.iter_mut() {
             *a = a.saturating_sub(1);
         }
@@ -356,7 +363,6 @@ impl Assembly {
                 h.rival.resize(contexts, 0);
             }
             let mut winner: Option<(i32, usize)> = None;
-            // the rivals this input drives (they matched it and would fire)
             let mut matched: Vec<usize> = Vec::new();
             for l in 0..contexts {
                 if l == now {
@@ -379,25 +385,24 @@ impl Assembly {
             }
             let sst = self.hold.as_ref().unwrap().sst;
             if let Some((_, l)) = winner {
-                // the rival wins: it comes on as the active one falls silent
                 self.silence(strength);
                 self.active = self.cells_of(l);
                 self.enter(l);
-                self.learn_held(&on);
+                self.learn_held(&inw);
             } else if strength > 0 && sst >= strength {
                 self.silence(strength);
             } else {
                 if net >= -1 {
-                    self.learn_held(&on);
+                    self.learn_held(&inw);
                 }
                 for l in matched {
                     let cells = self.cells_of(l);
-                    self.depress(&cells, &on);
+                    self.clear(&cells, &inw, 3);
                 }
             }
         }
         if self.active.is_empty() {
-            self.settle(&on);
+            self.settle(&on, &inw);
         }
         if self.debug {
             let h = self.hold.as_ref().unwrap();
@@ -406,53 +411,55 @@ impl Assembly {
         self.now()
     }
 
-    fn settle(&mut self, on: &[usize]) {
+    fn settle(&mut self, on: &[usize], inw: &[u64]) {
         let n = self.n;
-        // the free cell this input drives most, if it drives it net
-        let seed = {
-            let h = self.hold.as_ref().unwrap();
-            (0..n).filter(|&i| h.adapted[i] == 0 && h.label[i].is_some()).map(|i| (self.net(&[i], on), i)).filter(|&(r, _)| r > 0).max()
-        };
-        if let Some((_, s)) = seed {
-            // recurrence completes the seed's assembly: the k free cells it excites most
+        let rw = n.div_ceil(64);
+        // the stored assembly this input drives most over its free cells, if it drives it net (a
+        // single binary cell is too coarse a reading: the input reaches the assembly's cells)
+        let seed = (0..self.contexts()).map(|l| (self.net(&self.cells_of(l), on), l)).filter(|&(r, _)| r > 0).max().and_then(|(_, l)| self.cells_of(l).first().copied());
+        if let Some(s) = seed {
+            // recurrence completes the seed's assembly: the free cells of its assembly it is
+            // connected with
             let (cells, to) = {
                 let h = self.hold.as_ref().unwrap();
-                let mut by: Vec<(u8, usize)> = (0..n).filter(|&i| h.adapted[i] == 0).map(|i| (if i == s { 16 } else { h.rec[i * n + s] }, i)).collect();
-                by.sort_unstable_by(|a, b| b.cmp(a));
-                (by.into_iter().take(self.k).filter(|&(r, _)| r > 0).map(|(_, i)| i).collect::<Vec<_>>(), h.label[s].unwrap_or(0))
+                let l = h.label[s];
+                let mut c: Vec<usize> = vec![s];
+                c.extend((0..n).filter(|&i| i != s && h.adapted[i] == 0 && h.label[i] == l && (h.rec[i * rw + s / 64] >> (s % 64) & 1 == 1 || h.rec[s * rw + i / 64] >> (i % 64) & 1 == 1)).take(self.k - 1));
+                (c, l.unwrap_or(0))
             };
             self.active = cells;
             self.enter(to);
-            self.learn_held(on);
+            self.learn_held(inw);
             return;
         }
         let h = self.hold.as_mut().unwrap();
         h.silent += 1;
-        // nothing seeds: once the silenced assembly's adaptation has worn off (so it too could
-        // have come back), the least-used free cells form a new assembly
+        // nothing seeds: once the silenced assembly's adaptation has worn off, the least recently
+        // used free cells form a new assembly
         if h.silent >= h.last_strength.max(1) {
-            let mut by: Vec<(u32, usize)> = (0..n).filter(|&i| h.adapted[i] == 0).map(|i| (h.used[i], i)).collect();
+            let mut by: Vec<(u64, usize)> = (0..n).filter(|&i| h.adapted[i] == 0).map(|i| (if h.label[i].is_some() { h.last[i] + 1 } else { 0 }, i)).collect();
             by.sort_unstable();
             let cells: Vec<usize> = by.into_iter().take(self.k).map(|(_, i)| i).collect();
             let to = h.contexts;
             h.contexts += 1;
             for &i in &cells {
                 // a recycled cell leaves its old assembly
+                for w in 0..rw {
+                    h.rec[i * rw + w] = 0;
+                }
                 for j in 0..n {
-                    h.rec[i * n + j] = 0;
-                    h.rec[j * n + i] = 0;
+                    h.rec[j * rw + i / 64] &= !(1u64 << (i % 64));
                 }
                 h.label[i] = Some(to);
             }
             for &i in &cells {
-                for w in self.w[i * self.bits..(i + 1) * self.bits].iter_mut() {
-                    *w = 0;
+                for w in 0..self.words {
+                    self.syn[i * self.words + w] = 0;
                 }
-                self.sum[i] = 0;
             }
             self.active = cells;
             self.enter(to);
-            self.learn_held(on);
+            self.learn_held(inw);
         }
     }
 }

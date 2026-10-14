@@ -60,6 +60,12 @@ what it can build. We do not add special-purpose modules to get a task done.
 
 ## Rules
 
+- **No globals.** Every number that shapes behaviour belongs to a gene: a node (its width, its
+  spontaneous activity) or an edge (its starting kernels, their synapses, threshold and output,
+  its births, its learning rates, its gate's lag, its random stream). The grammar has starting
+  values for a new gene; after that each gene carries its own copy, and evolution changes them
+  one gene at a time. Nothing is network-wide or genome-wide.
+
 - **Bits and integers only** in the network: no floats, no probabilities, no log-likelihoods.
   A small `u8` counter is allowed where a count is truly needed. A rate is a pattern of bits
   (a recursion, a history window), not a number.

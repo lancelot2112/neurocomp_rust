@@ -218,9 +218,10 @@ impl SimpleKernel {
     /// `dest` its destination as the tick left it: each line it wrote that is still on (its
     /// cancel failed: what it predicted did not come) moves to a line of the
     /// destination still on that it does not write. It learns to cancel what is left; its output
-    /// keeps its number of lines. Each failed line moves with chance 1/16: slower than success,
+    /// keeps its number of lines. Each failed line moves with chance 2^-chance_shift (1/16 by
+    /// the grammar's starting value): slower than success,
     /// so a prediction that comes true half the time is kept while one that never comes fades.
-    pub fn learn_output<R: rand::Rng + ?Sized>(&mut self, dest: &BitVector, rng: &mut R) {
+    pub fn learn_output<R: rand::Rng + ?Sized>(&mut self, dest: &BitVector, chance_shift: u8, rng: &mut R) {
         let words = self.output_mask.word_len();
         let d = dest.as_slice(self.output_idx, words);
         let o = self.output_mask.as_words();
@@ -235,7 +236,7 @@ impl SimpleKernel {
             if left.is_empty() {
                 break;
             }
-            if rng.gen_range(0..16) == 0 {
+            if rng.gen_range(0..1u32 << chance_shift.min(31)) == 0 {
                 let i = rng.gen_range(0..left.len());
                 let to = left.swap_remove(i);
                 self.output_mask.bit_clear(b);

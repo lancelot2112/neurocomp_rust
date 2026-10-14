@@ -25,14 +25,13 @@ fn main() {
     let physics = if std::env::var("EVO_PHYSICS").map_or(false, |v| v == "fixed") { Physics::Fixed(7) } else { Physics::Varied };
     let (pop, elite, gens, seed) = (env("EVO_POP", 48), env("EVO_ELITE", 8), env("EVO_GENS", 60), env("EVO_SEED", 1u64));
     println!("evolve: {kind:?}, {trials} trials a lifetime, {nseeds} world seeds, {physics:?} physics, pop {pop}, elite {elite}, {gens} generations");
-    println!("gen  best  mean  paying-clicked  other-clicked  len kern syn thr out op");
+    println!("gen  best  mean  paying-clicked  other-clicked  len");
     let best = evolve(task, physics, &seeds, pop, elite, gens, seed, |g, r| {
         let b = &r.best;
         let s = &r.responding;
         if g % 5 == 0 || g + 1 == gens {
-            println!("{g:>3}  {:>4}  {:>4}  {:>7}/{:<6}  {:>6}/{:<6}  {:>3} {:>4} {:>3} {:>3} {:>3} {:?}",
-                r.best_fitness, r.mean_fitness, s.paying_clicked, s.paying_trials, s.other_clicked, s.other_trials,
-                b.code.len(), b.kernels, b.syn, b.threshold, b.out, b.op);
+            println!("{g:>3}  {:>4}  {:>4}  {:>7}/{:<6}  {:>6}/{:<6}  {:>3}",
+                r.best_fitness, r.mean_fitness, s.paying_clicked, s.paying_trials, s.other_clicked, s.other_trials, b.code.len());
         }
     });
     let test: u64 = env("EVO_TEST", 5);

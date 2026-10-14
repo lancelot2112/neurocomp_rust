@@ -19,33 +19,12 @@ use rand::Rng;
 pub struct RuntimeNetwork {
     pub nodes: Vec<BitVecHistory>,
     pub edges: Vec<RuntimeEdgeGroup>,
-    /// the network's own random stream (learning moves), so runs are deterministic
-    pub rng: StdRng,
-    /// how kernels are born on growing edges
-    pub births: Births,
+    /// each node's own random stream (its spontaneous activity)
+    pub node_rngs: Vec<StdRng>,
     /// the act node
     pub output: usize,
     /// spontaneous lines per step, per node
     pub noise: Vec<usize>,
-}
-
-/// How a kernel is born on a growing edge. It reads one word: the source word with the most
-/// active lines, wired to `syn` of them (all if fewer), firing at `quarters`/4 of its synapses.
-/// It writes one word: the destination word with the most lines left uncovered (at most
-/// `out_max` of them), when at least `out_min` are. At most `cap` kernels an edge.
-#[derive(Clone, Copy, Debug)]
-pub struct Births {
-    pub syn: usize,
-    pub quarters: usize,
-    pub out_min: usize,
-    pub out_max: usize,
-    pub cap: usize,
-}
-
-impl Default for Births {
-    fn default() -> Self {
-        Self { syn: 16, quarters: 3, out_min: 8, out_max: 64, cap: 512 }
-    }
 }
 
 /// The order writes land in within a tick: what sets lines first, then what keeps, then what
@@ -115,6 +94,10 @@ pub struct RuntimeEdgeGroup {
     /// births write what the destination held a frame ago
     pub repeat: bool,
     pub repeat_lag: usize,
+    /// all of this edge's own parameters (births, rates, its gate's lag, ...)
+    pub spec: EdgeSpec,
+    /// this edge's own random stream
+    pub rng: StdRng,
     /// births are allowed (not on edges into the act node, whose kernels write the body's
     /// primitives)
     pub can_grow: bool,
@@ -181,13 +164,16 @@ impl RuntimeNetwork {
                 dst_word: es.dst_word,
                 repeat: es.repeat,
                 repeat_lag: es.repeat_lag,
+                spec: es.clone(),
+                rng: StdRng::seed_from_u64((es.salt as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                 can_grow: true,
             });
         }
 
         let output = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("output")).map_or(g.node_count() - 1, |n| n.index());
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
-        Self { nodes, edges, rng: StdRng::seed_from_u64(0), births: Births::default(), output, noise }
+        let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(i as u64 ^ 0xA0A0)).collect();
+        Self { nodes, edges, node_rngs, output, noise }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -226,11 +212,14 @@ impl RuntimeNetwork {
                 dst_word: e.weight().dst_word,
                 repeat: e.weight().repeat,
                 repeat_lag: e.weight().repeat_lag.max(1),
+                spec: e.weight().clone(),
+                rng: StdRng::seed_from_u64(seed ^ (e.weight().salt as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                 can_grow: dst != last || e.weight().repeat,
             });
         }
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
-        Self { nodes, edges, rng: StdRng::seed_from_u64(seed), births: Births::default(), output: last, noise }
+        let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
+        Self { nodes, edges, node_rngs, output: last, noise }
     }
 
     /// Advance histories and process all edges once.
@@ -242,12 +231,12 @@ impl RuntimeNetwork {
 
         // Execute edges, writes in phase order (set, keep, toggle/clear); each edge reads its
         // source as it was `read_back` frames ago
-        let Self { nodes, edges, rng, births, noise, .. } = self;
-        // spontaneous activity: random lines on, in the nodes that have it
+        let Self { nodes, edges, node_rngs, noise, .. } = self;
+        // spontaneous activity: random lines on, in the nodes that have it (each its own stream)
         for (i, &k) in noise.iter().enumerate() {
             let bits = nodes[i].current().bit_len();
             for _ in 0..k {
-                let b = rng.gen_range(0..bits.max(1));
+                let b = node_rngs[i].gen_range(0..bits.max(1));
                 nodes[i].current_mut().bit_set(b);
             }
         }
@@ -275,7 +264,7 @@ impl RuntimeNetwork {
                     EdgeKind::Wire => {
                         if eg.rotate > 0 {
                             let n = src_view.bit_len();
-                            src_view.rotr_mut((eg.rotate as usize * 61) % n.max(1));
+                            src_view.rotr_mut(eg.rotate as usize % n.max(1));
                         }
                         // fold (or pad) the source to the destination's width
                         let dw = dst_curr.word_len();
@@ -286,7 +275,7 @@ impl RuntimeNetwork {
                         apply(dst_curr.as_words_mut(), &t, eg.op);
                     }
                     EdgeKind::Kernels => {
-                        fired[i] = eg.group.process(&src_view, dst_curr, 0, adj_temperature, eg.inhibit, rng).into_iter().flatten().collect();
+                        fired[i] = eg.group.process(&src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
                         seen[i] = Some(src_view);
                     }
                 }
@@ -295,6 +284,8 @@ impl RuntimeNetwork {
         // After the tick: cancelling kernels learn their outputs, and growing edges give birth
         // where their destination was left uncovered
         for (i, eg) in edges.iter_mut().enumerate() {
+            let sp = eg.spec.clone();
+            let rng = &mut eg.rng;
             if eg.kind != EdgeKind::Kernels {
                 continue;
             }
@@ -312,7 +303,7 @@ impl RuntimeNetwork {
             }
             // a gate: it learns only while the gate node had lines on (or none) a frame ago
             if let Some((g, on)) = eg.gate {
-                let open = (nodes[g].get_frame(1).count_ones() > 0) == on;
+                let open = (nodes[g].get_frame(sp.gate_lag.max(1)).count_ones() > 0) == on;
                 // extinction on a repeat edge: a kernel that acted `repeat_lag` steps ago, with
                 // the gate still shut, fades (chance 1/4)
                 if !open && eg.repeat {
@@ -323,7 +314,7 @@ impl RuntimeNetwork {
                     };
                     if let Some(class) = eg.group.classes_mut().first_mut() {
                         for k in class.kernels_mut() {
-                            if k.age as usize == eg.repeat_lag && rng.gen_range(0..4) == 0 {
+                            if k.age as usize == eg.repeat_lag && rng.gen_range(0..1u32 << sp.fade.min(31)) == 0 {
                                 k.fade(&then, rng);
                             }
                         }
@@ -336,10 +327,10 @@ impl RuntimeNetwork {
             let Some(class) = eg.group.classes_mut().first_mut() else { continue };
             if matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
                 for &k in &fired[i] {
-                    class.kernels_mut()[k].learn_output(&dest, rng);
+                    class.kernels_mut()[k].learn_output(&dest, sp.out_learn, rng);
                 }
             }
-            if !(eg.grow && eg.can_grow) || class.len() >= births.cap {
+            if !(eg.grow && eg.can_grow) || class.len() >= sp.cap as usize {
                 continue;
             }
             // a repeat birth reads its source as it was when the repeated act was made
@@ -363,17 +354,17 @@ impl RuntimeNetwork {
                 // what the destination held a frame ago (the act just made)
                 let prev = nodes[eg.dst].get_frame(eg.repeat_lag);
                 let (dw, dn) = busiest_word(prev.as_words());
-                if (dn as usize) < births.out_min {
+                if (dn as usize) < sp.out_min as usize {
                     continue;
                 }
                 (ones(prev.as_words()[dw]), dw)
             } else if eg.new_code {
-                if (dest.count_ones() as usize) >= births.out_min {
+                if (dest.count_ones() as usize) >= sp.out_min as usize {
                     continue;
                 }
                 let dw = rng.gen_range(0..dest.word_len().max(1));
                 let lines: Vec<usize> = (0..64).collect();
-                (lines.choose_multiple(rng, 16).copied().collect::<Vec<usize>>(), dw)
+                (lines.choose_multiple(rng, sp.code_lines as usize).copied().collect::<Vec<usize>>(), dw)
             } else {
                 let mut uncovered = dest.clone();
                 for &k in &fired[i] {
@@ -381,11 +372,11 @@ impl RuntimeNetwork {
                     uncovered.mask_mut(class.kernels()[k].output_idx, out, |a, m| a & !m);
                 }
                 let (dw, dn) = busiest_word(uncovered.as_words());
-                if (dn as usize) < births.out_min {
+                if (dn as usize) < sp.out_min as usize {
                     continue;
                 }
                 let lines = ones(uncovered.as_words()[dw]);
-                (lines.choose_multiple(rng, births.out_max.min(lines.len())).copied().collect(), dw)
+                (lines.choose_multiple(rng, (sp.out_max as usize).min(lines.len())).copied().collect(), dw)
             };
             // what it reads: the source word with the most active lines, or (`wide`) all of the
             // source's active lines
@@ -394,7 +385,7 @@ impl RuntimeNetwork {
                 if active.is_empty() {
                     continue;
                 }
-                let syn: Vec<usize> = active.choose_multiple(rng, births.syn.min(active.len())).copied().collect();
+                let syn: Vec<usize> = active.choose_multiple(rng, (sp.birth_syn as usize).min(active.len())).copied().collect();
                 (BitVector::from_bits(&syn, src.bit_len()), 0)
             } else {
                 let (sw, sn) = busiest_word(src.as_words());
@@ -402,10 +393,10 @@ impl RuntimeNetwork {
                     continue;
                 }
                 let active = ones(src.as_words()[sw]);
-                let syn: Vec<usize> = active.choose_multiple(rng, births.syn.min(active.len())).copied().collect();
+                let syn: Vec<usize> = active.choose_multiple(rng, (sp.birth_syn as usize).min(active.len())).copied().collect();
                 (BitVector::from_bits(&syn, 64), sw)
             };
-            let threshold = (births.quarters * syn_mask.count_ones()).div_ceil(4).max(1);
+            let threshold = (sp.birth_quarters as usize * syn_mask.count_ones()).div_ceil(4).max(1);
             let out_mask = BitVector::from_bits(&out, 64);
             if eg.new_code {
                 // a new code fires as it is born (the input that recruited it is here now)

@@ -52,7 +52,7 @@ pub struct EdgeGene {
     pub dst_word: usize,
     pub kind: EdgeKind,
     pub op: KernelOp,
-    /// a wire's rotation, in steps of 61 bits
+    /// a wire's rotation, in bits
     pub rotate: u16,
     pub grow: bool,
     /// kernels hold each other down where their masks overlap
@@ -64,13 +64,37 @@ pub struct EdgeGene {
     pub repeat: bool,
     /// frames back of the act a repeat birth copies
     pub repeat_lag: usize,
-    /// random kernels it starts with
+    /// random kernels it starts with, and their synapses, threshold (quarters) and output lines
     pub kernels: u8,
+    pub start_syn: u8,
+    pub start_quarters: u8,
+    pub start_out: u8,
+    /// births: synapses, threshold (quarters), fewest and most output lines, most kernels
+    pub birth_syn: u8,
+    pub birth_quarters: u8,
+    pub out_min: u8,
+    pub out_max: u8,
+    pub cap: u16,
+    /// lines of a fresh code
+    pub code_lines: u8,
+    /// output learning chance 2^-out_learn; extinction chance 2^-fade
+    pub out_learn: u8,
+    pub fade: u8,
+    /// frames back its gate is read
+    pub gate_lag: usize,
 }
 
 impl EdgeGene {
+    /// A wire, with the grammar's starting values for everything else (`EdgeSpec::plain`).
     pub fn wire(id: u32, src: u32, dst: u32) -> Self {
-        Self { id, src, dst, lag: 1, span: 1, window: None, dst_word: 0, kind: EdgeKind::Wire, op: KernelOp::Or, rotate: 0, grow: false, inhibit: true, gate: None, new_code: false, wide: false, repeat: false, repeat_lag: 1, kernels: 0 }
+        let p = EdgeSpec::plain();
+        Self {
+            id, src, dst, lag: 1, span: 1, window: None, dst_word: 0, kind: EdgeKind::Wire, op: KernelOp::Or, rotate: 0, grow: false,
+            inhibit: true, gate: None, new_code: false, wide: false, repeat: false, repeat_lag: 1, kernels: 0,
+            start_syn: p.start_syn, start_quarters: p.start_quarters, start_out: p.start_out, birth_syn: p.birth_syn,
+            birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
+            out_learn: p.out_learn, fade: p.fade, gate_lag: p.gate_lag,
+        }
     }
 
     pub fn kernels(id: u32, src: u32, dst: u32, op: KernelOp) -> Self {
@@ -82,12 +106,7 @@ impl EdgeGene {
 pub struct GeneGenome {
     pub nodes: Vec<NodeGene>,
     pub edges: Vec<EdgeGene>,
-    /// synapses of a starting kernel, its threshold in quarters, its output lines
-    pub syn: u8,
-    pub quarters: u8,
-    pub out: u8,
-    /// the starting kernels' random stream
-    pub seed: u64,
+    /// the next permanent id
     pub next_id: u32,
 }
 
@@ -137,6 +156,21 @@ impl GeneGenome {
                 dst_word: e.dst_word,
                 repeat: e.repeat,
                 repeat_lag: e.repeat_lag.max(1),
+                start_kernels: e.kernels,
+                start_syn: e.start_syn,
+                start_quarters: e.start_quarters,
+                start_out: e.start_out,
+                birth_syn: e.birth_syn,
+                birth_quarters: e.birth_quarters,
+                out_min: e.out_min,
+                out_max: e.out_max,
+                cap: e.cap,
+                code_lines: e.code_lines,
+                out_learn: e.out_learn,
+                fade: e.fade,
+                gate_lag: e.gate_lag.max(1),
+                // its own random stream comes from its permanent id
+                salt: e.id,
             });
         }
         g
@@ -271,8 +305,34 @@ impl GeneGenome {
         e.gate = Some((7, true));
         push(e, &mut edges);
         id += 1;
-        Self { nodes, edges, syn: 4, quarters: 2, out: 16, seed: 1, next_id: id }
+        Self { nodes, edges, next_id: id }
     }
+}
+
+/// An edge's starting kernels, made from its own parameters and its own random stream: each
+/// reads one word of what the edge reads and writes one word (into the act node: one of the
+/// body's motor primitives).
+pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
+    let sp = e.spec;
+    let mut r = StdRng::seed_from_u64((sp.salt as u64 + 1).wrapping_mul(0x2545_F491_4F6C_DD1D));
+    let kernels = (0..sp.start_kernels)
+        .map(|_| {
+            let syn = sparse(64, sp.start_syn as usize, &mut r);
+            let src_words = (e.src_bits / 64).max(1);
+            let read = sp.window.map_or(src_words, |(o, n)| n.min(src_words.saturating_sub(o)).max(1));
+            let in_word = r.gen_range(0..read);
+            let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
+                let p = primitives.choose(&mut r).unwrap();
+                let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
+                (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
+            } else {
+                (sparse(64, sp.start_out as usize, &mut r), r.gen_range(0..(e.dst_bits / 64).max(1)), sp.op)
+            };
+            let threshold = (sp.start_quarters as usize * sp.start_syn as usize).div_ceil(4).max(1);
+            SimpleKernel::new(syn, in_word, out, out_word, threshold, op)
+        })
+        .collect();
+    KernelGroup::from_classes(vec![KernelClass::with_kernels(kernels)])
 }
 
 impl Evolvable for GeneGenome {
@@ -283,31 +343,7 @@ impl Evolvable for GeneGenome {
             .map(|i| w.act(Some(i), None))
             .chain((0..body.hand.len()).map(|i| w.act(None, Some(i))))
             .collect();
-        // starting kernels per edge, in the graph's edge order (edges with a missing end are left out)
-        let counts: Vec<u8> = self.edges.iter().filter(|e| self.nodes.iter().any(|n| n.id == e.src) && self.nodes.iter().any(|n| n.id == e.dst)).map(|e| e.kernels).collect();
-        RuntimeNetwork::from_graph_with(&g, world::SENSE_BITS, world::ACT_BITS, seed, |e: &EdgeInfo| {
-            let n = counts.get(e.index).copied().unwrap_or(0);
-            let mut r = StdRng::seed_from_u64(self.seed ^ (e.index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            let kernels = (0..n)
-                .map(|_| {
-                    let syn = sparse(64, self.syn as usize, &mut r);
-                    // the words the edge actually reads (a window narrows the source)
-                    let src_words = (e.src_bits / 64).max(1);
-                    let read = e.spec.window.map_or(src_words, |(o, n)| n.min(src_words.saturating_sub(o)).max(1));
-                    let in_word = r.gen_range(0..read);
-                    let (out, out_word, op) = if e.to_output {
-                        let p = primitives.choose(&mut r).unwrap();
-                        let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
-                        (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
-                    } else {
-                        (sparse(64, self.out as usize, &mut r), r.gen_range(0..(e.dst_bits / 64).max(1)), e.spec.op)
-                    };
-                    let threshold = (self.quarters as usize * self.syn as usize).div_ceil(4).max(1);
-                    SimpleKernel::new(syn, in_word, out, out_word, threshold, op)
-                })
-                .collect();
-            KernelGroup::from_classes(vec![KernelClass::with_kernels(kernels)])
-        })
+        RuntimeNetwork::from_graph_with(&g, world::SENSE_BITS, world::ACT_BITS, seed, |e: &EdgeInfo| start_kernels(e, &primitives))
     }
 
     fn mutate(&self, rng: &mut StdRng) -> Self {
@@ -363,27 +399,44 @@ impl Evolvable for GeneGenome {
                     1 => e.kind = if e.kind == EdgeKind::Wire { EdgeKind::Kernels } else { EdgeKind::Wire },
                     2 => e.lag = if rng.gen_bool(0.5) { (e.lag + 1).min(8) } else { e.lag.saturating_sub(1).max(1) },
                     3 => e.span = if rng.gen_bool(0.5) { (e.span * 2).min(64) } else { (e.span / 2).max(1) },
-                    4 => e.rotate = e.rotate.wrapping_add(1) % 8,
+                    4 => e.rotate = e.rotate.wrapping_add(61),
                     5 => e.grow = !e.grow,
                     6 => e.inhibit = !e.inhibit,
                     7 => e.new_code = !e.new_code,
                     8 => e.wide = !e.wide,
                     9 => e.repeat = !e.repeat,
                     10 => e.gate = if e.gate.is_some() && rng.gen_bool(0.5) { None } else { hidden.choose(rng).map(|&n| (n, rng.gen_bool(0.5))) },
-                    11 => e.kernels = if rng.gen_bool(0.5) { e.kernels.saturating_add(1).min(32) } else { e.kernels.saturating_sub(1) },
+                    11 => {
+                        // one of its numbers, up or down
+                        let up = rng.gen_bool(0.5);
+                        let step = |v: u8, lo: u8, hi: u8| if up { v.saturating_add(1).min(hi) } else { v.saturating_sub(1).max(lo) };
+                        match rng.gen_range(0..12) {
+                            0 => e.kernels = step(e.kernels, 0, 32),
+                            1 => e.start_syn = step(e.start_syn, 1, 64),
+                            2 => e.start_quarters = step(e.start_quarters, 1, 4),
+                            3 => e.start_out = step(e.start_out, 1, 64),
+                            4 => e.birth_syn = step(e.birth_syn, 1, 64),
+                            5 => e.birth_quarters = step(e.birth_quarters, 1, 4),
+                            6 => e.out_min = step(e.out_min, 1, 64),
+                            7 => e.out_max = step(e.out_max, 1, 64),
+                            8 => e.code_lines = step(e.code_lines, 1, 64),
+                            9 => e.out_learn = step(e.out_learn, 0, 8),
+                            10 => e.fade = step(e.fade, 0, 8),
+                            _ => e.gate_lag = if up { (e.gate_lag + 1).min(8) } else { e.gate_lag.saturating_sub(1).max(1) },
+                        }
+                    }
                     12 if e.repeat => e.repeat_lag = if rng.gen_bool(0.5) { (e.repeat_lag + 1).min(8) } else { e.repeat_lag.saturating_sub(1).max(1) },
                     _ => e.dst_word = (if rng.gen_bool(0.5) { e.dst_word + 1 } else { e.dst_word.saturating_sub(1) }) % 32,
                 }
             }
-            10 if rng.gen_bool(0.5) => g.quarters = (g.quarters as i8 + if rng.gen_bool(0.5) { 1 } else { -1 }).clamp(1, 4) as u8,
-            10 => {
+            10 | 11 => {
                 let ids = g.hidden_ids();
                 if let Some(&id) = ids.choose(rng) {
                     let n = g.nodes.iter_mut().find(|n| n.id == id).unwrap();
                     n.noise = if rng.gen_bool(0.5) { (n.noise * 2).max(1).min(n.bits / 2) } else { n.noise / 2 };
                 }
             }
-            _ => g.seed = rng.r#gen(),
+            _ => {}
         }
         g
     }

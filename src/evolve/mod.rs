@@ -21,13 +21,13 @@ use rand::{Rng, SeedableRng};
 
 use crate::bitvec::bithistory::AdvanceMode;
 use crate::bitvec::BitVector;
-use crate::kernel::{KernelClass, KernelGroup, KernelOp, SimpleKernel};
+use crate::kernel::KernelOp;
 use crate::program::graph::{GraphInstruction, GraphProgram, ProgramDefaults};
 use crate::program::neurocomp::{EdgeInfo, RuntimeNetwork};
 use crate::world::{self, observe, Conditioning, World};
 
 /// Every graph instruction, for mutation.
-pub const INSTRUCTIONS: [GraphInstruction; 28] = [
+pub const INSTRUCTIONS: [GraphInstruction; 31] = [
     GraphInstruction::Stay(),
     GraphInstruction::Create(),
     GraphInstruction::Pop(),
@@ -56,6 +56,9 @@ pub const INSTRUCTIONS: [GraphInstruction; 28] = [
     GraphInstruction::EdgeWide(),
     GraphInstruction::EdgeSpan(),
     GraphInstruction::Noise(),
+    GraphInstruction::EdgeKernels(),
+    GraphInstruction::EdgeSynapses(),
+    GraphInstruction::EdgeQuarter(),
 ];
 
 pub mod genes;
@@ -85,44 +88,25 @@ const OPS: [KernelOp; 4] = [KernelOp::Or, KernelOp::And, KernelOp::Xor, KernelOp
 /// Bits of a hidden node (the program can double or halve it).
 pub const NODE_BITS: usize = 512;
 
+/// A stack-grammar genome: only its program. Everything an edge does (its kernels, their
+/// synapses, threshold and op) is set by the program's own instructions on that edge; there are
+/// no genome-wide numbers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Genome {
     pub code: Vec<GraphInstruction>,
-    /// kernels per edge
-    pub kernels: u8,
-    /// input synapses per kernel
-    pub syn: u8,
-    /// quarters of its synapses a kernel needs active to fire (1 to 4)
-    pub threshold: u8,
-    /// output lines a hidden kernel writes
-    pub out: u8,
-    /// how hidden kernels write
-    pub op: KernelOp,
-    /// the wiring's random seed
-    pub seed: u64,
 }
 
 impl Genome {
     pub fn random(rng: &mut StdRng) -> Self {
-        let n = rng.gen_range(0..6);
-        let syn = rng.gen_range(4..=32u8);
-        let _ = syn;
-        Self {
-            code: (0..n).map(|_| *INSTRUCTIONS.choose(rng).unwrap()).collect(),
-            kernels: rng.gen_range(1..=16),
-            syn,
-            threshold: rng.gen_range(1..=4),
-            out: rng.gen_range(4..=32),
-            op: *OPS.choose(rng).unwrap(),
-            seed: rng.r#gen(),
-        }
+        let n = rng.gen_range(0..8);
+        Self { code: (0..n).map(|_| *INSTRUCTIONS.choose(rng).unwrap()).collect() }
     }
 
-    /// One local change.
+    /// One local change: an instruction inserted, removed or replaced.
     pub fn mutate(&self, rng: &mut StdRng) -> Self {
         let mut g = self.clone();
-        match rng.gen_range(0..9) {
-            0 if g.code.len() < 48 => {
+        match rng.gen_range(0..3) {
+            0 if g.code.len() < 64 => {
                 let at = rng.gen_range(0..=g.code.len());
                 g.code.insert(at, *INSTRUCTIONS.choose(rng).unwrap());
             }
@@ -130,23 +114,20 @@ impl Genome {
                 let at = rng.gen_range(0..g.code.len());
                 g.code.remove(at);
             }
-            2 if !g.code.is_empty() => {
+            _ if !g.code.is_empty() => {
                 let at = rng.gen_range(0..g.code.len());
                 g.code[at] = *INSTRUCTIONS.choose(rng).unwrap();
             }
-            3 => g.kernels = step(g.kernels, rng, 1, 32),
-            4 => g.syn = step(g.syn, rng, 2, 64),
-            5 => g.threshold = step(g.threshold, rng, 1, 4),
-            6 => g.out = step(g.out, rng, 1, 64),
-            7 => g.op = *OPS.choose(rng).unwrap(),
-            _ => g.seed = rng.r#gen(),
+            _ => g.code.push(*INSTRUCTIONS.choose(rng).unwrap()),
         }
         g
     }
 
     /// The network this genome builds for a world with these senses and acts.
     pub fn build(&self, w: &World, seed: u64) -> RuntimeNetwork {
-        let defaults = ProgramDefaults { default_bits: NODE_BITS, min_bits: 64, default_threshold: self.threshold as usize, default_history_depth: 1, default_op: self.op };
+        // the grammar's starting values for a new node or edge (not evolved numbers: each node
+        // and edge then carries its own copy, which the program changes)
+        let defaults = ProgramDefaults { default_bits: NODE_BITS, min_bits: 64, default_threshold: 1, default_history_depth: 1, default_op: KernelOp::Or };
         let prog = GraphProgram { code: self.code.clone() };
         let graph = prog.build_graph(&defaults);
         let body = w.body();
@@ -154,34 +135,8 @@ impl Genome {
             .map(|i| w.act(Some(i), None))
             .chain((0..body.hand.len()).map(|i| w.act(None, Some(i))))
             .collect();
-        RuntimeNetwork::from_graph_with(&graph, world::SENSE_BITS, world::ACT_BITS, seed, |e: &EdgeInfo| {
-            let mut r = StdRng::seed_from_u64(self.seed ^ (e.index as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            // each kernel reads one word of its source and writes one word of its destination;
-            // it fires at `threshold` quarters of its synapses
-            let kernels = (0..self.kernels)
-                .map(|_| {
-                    let syn = sparse(64, self.syn as usize, &mut r);
-                    let in_word = r.gen_range(0..(e.src_bits / 64).max(1));
-                    let (out, out_word, op) = if e.to_output {
-                        // a motor primitive lives in one word of its channel
-                        let p = primitives.choose(&mut r).unwrap();
-                        let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
-                        (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
-                    } else {
-                        (sparse(64, self.out as usize, &mut r), r.gen_range(0..(e.dst_bits / 64).max(1)), e.spec.op)
-                    };
-                    let threshold = (self.threshold as usize * self.syn as usize).div_ceil(4).max(1);
-                    SimpleKernel::new(syn, in_word, out, out_word, threshold, op)
-                })
-                .collect();
-            KernelGroup::from_classes(vec![KernelClass::with_kernels(kernels)])
-        })
+        RuntimeNetwork::from_graph_with(&graph, world::SENSE_BITS, world::ACT_BITS, seed, |e: &EdgeInfo| genes::start_kernels(e, &primitives))
     }
-}
-
-fn step(v: u8, rng: &mut StdRng, lo: u8, hi: u8) -> u8 {
-    let d: i16 = if rng.gen_bool(0.5) { 1 } else { -1 } * rng.gen_range(1..=2);
-    (v as i16 + d).clamp(lo as i16, hi as i16) as u8
 }
 
 fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
@@ -310,12 +265,12 @@ mod tests {
     }
 
     #[test]
-    fn mutation_keeps_the_threshold_a_fraction() {
-        let mut rng = StdRng::seed_from_u64(4);
-        let mut g = Genome::random(&mut rng);
-        for _ in 0..500 {
-            g = g.mutate(&mut rng);
-            assert!((1..=4).contains(&g.threshold) && g.syn <= 64 && g.out <= 64);
-        }
+    fn starting_kernels_come_from_the_edge_alone() {
+        use crate::program::graph::GraphInstruction as I;
+        let w = World::new(1, 4);
+        let plain = Genome { code: vec![I::Create()] }.build(&w, 1);
+        assert!(plain.edges.iter().all(|e| e.group_len() == 0), "no kernels unless an edge asks for them");
+        let asked = Genome { code: vec![I::Create(), I::EdgeKernels(), I::EdgeKernels()] }.build(&w, 1);
+        assert_eq!(asked.edges.iter().map(|e| e.group_len()).sum::<usize>(), 2, "the last edge made starts with two");
     }
 }

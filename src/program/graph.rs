@@ -82,6 +82,9 @@ pub enum GraphInstruction {
     EdgeWide(),   // births sample synapses across the whole source, not one word
     EdgeSpan(),   // it reads the OR of twice as many past frames
     Noise(),      // the current node gets spontaneous activity: random lines each step (doubles)
+    EdgeKernels(),  // the last edge starts with more kernels (0, 1, 2, 4, ... 32)
+    EdgeSynapses(), // its starting kernels have more synapses (4, 8, 16, 32, then 2)
+    EdgeQuarter(),  // its starting kernels need one more quarter of their synapses (1 to 4, round)
 }
 
 /// What an edge carries.
@@ -134,34 +137,37 @@ pub struct EdgeSpec {
     /// how many frames back the repeated act is (the birth reads its source as many frames
     /// further back, when that act was made)
     pub repeat_lag: usize,
+    /// everything below is this edge's own; there is nothing network-wide
+    /// kernels it starts with, their synapses (in one source word), threshold (quarters of their
+    /// synapses) and output lines (in one destination word)
+    pub start_kernels: u8,
+    pub start_syn: u8,
+    pub start_quarters: u8,
+    pub start_out: u8,
+    /// births: synapses, threshold (quarters), fewest and most output lines, most kernels
+    pub birth_syn: u8,
+    pub birth_quarters: u8,
+    pub out_min: u8,
+    pub out_max: u8,
+    pub cap: u16,
+    /// lines of a fresh code (`new_code` births)
+    pub code_lines: u8,
+    /// output learning of cancelling kernels: a failed line moves with chance 2^-out_learn
+    pub out_learn: u8,
+    /// extinction on repeat edges: chance 2^-fade a step
+    pub fade: u8,
+    /// frames back the gate node is read
+    pub gate_lag: usize,
+    /// this edge's random stream
+    pub salt: u32,
 }
 
 impl EdgeSpec {
-    pub fn from_defaults(defaults: &ProgramDefaults) -> Self {
+    /// The grammar's starting values for every per-edge parameter (each edge then carries its
+    /// own copy).
+    pub fn plain() -> Self {
         Self {
-            input_read_back: defaults.default_history_depth, // default to reading snapshot of previous frame
-            threshold: defaults.default_threshold,
-            op: defaults.default_op,
-            kind: EdgeKind::Kernels,
-            rotate: 0,
-            grow: false,
-            inhibit: true,
-            gate: None,
-            new_code: false,
-            wide: false,
-            span: 1,
-            window: None,
-            dst_word: 0,
-            repeat: false,
-            repeat_lag: 1,
-        }
-    }
-}
-
-impl Default for EdgeSpec {
-    fn default() -> Self {
-        Self {
-            input_read_back: 1, // default to reading snapshot of previous frame
+            input_read_back: 1,
             threshold: 16,
             op: KernelOp::Or,
             kind: EdgeKind::Kernels,
@@ -176,7 +182,38 @@ impl Default for EdgeSpec {
             dst_word: 0,
             repeat: false,
             repeat_lag: 1,
+            start_kernels: 0,
+            start_syn: 4,
+            start_quarters: 2,
+            start_out: 16,
+            birth_syn: 16,
+            birth_quarters: 3,
+            out_min: 8,
+            out_max: 64,
+            cap: 512,
+            code_lines: 16,
+            out_learn: 4,
+            fade: 2,
+            gate_lag: 1,
+            salt: 0,
         }
+    }
+}
+
+impl EdgeSpec {
+    pub fn from_defaults(defaults: &ProgramDefaults) -> Self {
+        Self {
+            input_read_back: defaults.default_history_depth, // default to reading snapshot of previous frame
+            threshold: defaults.default_threshold,
+            op: defaults.default_op,
+            ..EdgeSpec::plain()
+        }
+    }
+}
+
+impl Default for EdgeSpec {
+    fn default() -> Self {
+        Self::plain()
     }
 }
 
@@ -411,7 +448,8 @@ impl GraphProgram {
                 GraphInstruction::EdgeOr() | GraphInstruction::EdgeAnd() | GraphInstruction::EdgeXor() | GraphInstruction::EdgeClear()
                 | GraphInstruction::EdgeWire() | GraphInstruction::EdgeRotate() | GraphInstruction::EdgeLag() | GraphInstruction::EdgeGrow()
                 | GraphInstruction::EdgeShare() | GraphInstruction::EdgeGate() | GraphInstruction::EdgeGateNot()
-                | GraphInstruction::EdgeNew() | GraphInstruction::EdgeWide() | GraphInstruction::EdgeSpan() => {
+                | GraphInstruction::EdgeNew() | GraphInstruction::EdgeWide() | GraphInstruction::EdgeSpan()
+                | GraphInstruction::EdgeKernels() | GraphInstruction::EdgeSynapses() | GraphInstruction::EdgeQuarter() => {
                     // a gate takes its node off the stack (nothing happens without one)
                     let popped = if matches!(instr, GraphInstruction::EdgeGate() | GraphInstruction::EdgeGateNot()) { stack.pop() } else { None };
                     if last_edge != EdgeIndex::end() {
@@ -423,7 +461,10 @@ impl GraphProgram {
                             GraphInstruction::EdgeXor() => e.op = KernelOp::Xor,
                             GraphInstruction::EdgeClear() => e.op = KernelOp::Clear,
                             GraphInstruction::EdgeWire() => e.kind = EdgeKind::Wire,
-                            GraphInstruction::EdgeRotate() => e.rotate = e.rotate.wrapping_add(1),
+                            GraphInstruction::EdgeRotate() => e.rotate = e.rotate.wrapping_add(61),
+                            GraphInstruction::EdgeKernels() => e.start_kernels = (e.start_kernels * 2).max(1).min(32),
+                            GraphInstruction::EdgeSynapses() => e.start_syn = if e.start_syn >= 32 { 2 } else { e.start_syn * 2 },
+                            GraphInstruction::EdgeQuarter() => e.start_quarters = e.start_quarters % 4 + 1,
                             GraphInstruction::EdgeGrow() => e.grow = true,
                             GraphInstruction::EdgeShare() => e.inhibit = false,
                             GraphInstruction::EdgeGate() => e.gate = popped.map(|n| (n.index(), true)),

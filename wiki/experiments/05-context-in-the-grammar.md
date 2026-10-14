@@ -76,3 +76,39 @@ per genome, population 24, 40 generations.
   - a gate reads its node one frame back only;
   - extinction exists only on repeat edges;
   - the absorb-versus-switch decision of the context circuit is still not right.
+
+## Update: no globals
+
+Every parameter that was shared across the network or genome is now a field of each edge (or
+node), with the grammar's starting value copied into every new gene.
+
+**What moved onto each edge:**
+- starting kernels: count, synapses, threshold quarters, output lines;
+- births: synapses, threshold quarters, fewest and most output lines, cap;
+- new-code size;
+- learning rates (output learning 2^-k, extinction 2^-k), given as exponents;
+- the gate's lag;
+- rotation, now in bits;
+- a random stream keyed by the edge's permanent id.
+
+**Elsewhere:**
+- Nodes keep their own noise streams.
+- The stack genome is now only its program. Three new instructions set an edge's starting
+  kernels: `EdgeKernels`, `EdgeSynapses`, `EdgeQuarter`.
+
+**Effect on the seed.** Same circuit; different random streams for the babbling kernels (now per
+edge):
+- Phase 0 went from 230 to 22, and the act-path control from 265 to 98. The babblers now click on
+  about 60% of trials, which buries what is learned.
+- One random wiring moving discrimination by 200 points is the noise that makes selection on a
+  few lifetimes meaningless (above).
+- The residue circuit is unchanged.
+
+**Left as rule constants, not genes:**
+- one Hebbian move per firing;
+- the overlap-inhibition rule (more than half of the smaller mask);
+- the write-phase order;
+- the near-miss search drift (an option that is off).
+
+The base kernel class still initialises a "temperature" from `common::config`. It is 0 and
+unused, and should go.

@@ -154,18 +154,35 @@ impl BitVector {
     }
 }
 
-// Helper: return the position (0..63) of the n-th set bit in w (0-based).
+/// The position (0..63) of the n-th (0-based) set bit of `w`; `w` must have more than `n` ones.
+/// With BMI2 this is one `pdep` (deposit the single bit `1 << n` onto `w`'s ones) and a
+/// trailing-zero count; without, it clears the lowest `n` ones.
 #[inline]
-fn select_nth_bit(mut w: u64, mut n: usize) -> usize {
-    loop {
-        let tz = w.trailing_zeros() as usize;
-        if n == 0 {
-            return tz;
+pub fn select_nth_bit(w: u64, n: usize) -> usize {
+    #[cfg(all(target_arch = "x86_64", target_feature = "bmi2"))]
+    {
+        // SAFETY: the bmi2 target feature is enabled at compile time
+        unsafe { core::arch::x86_64::_pdep_u64(1u64 << n, w).trailing_zeros() as usize }
+    }
+    #[cfg(not(all(target_arch = "x86_64", target_feature = "bmi2")))]
+    {
+        let mut w = w;
+        for _ in 0..n {
+            w &= w - 1;
         }
-        n -= 1;
-        // clear lowest set bit
+        w.trailing_zeros() as usize
+    }
+}
+
+/// The set lines of a word, lowest first, by skipping through its ones.
+#[inline]
+pub fn ones_of(mut w: u64) -> Vec<usize> {
+    let mut v = Vec::with_capacity(w.count_ones() as usize);
+    while w != 0 {
+        v.push(w.trailing_zeros() as usize);
         w &= w - 1;
     }
+    v
 }
 
 #[cfg(test)]
@@ -173,6 +190,17 @@ mod tests {
     use super::*;
     use rand::rngs::StdRng;
     use rand::SeedableRng;
+
+    #[test]
+    fn select_nth_bit_finds_each_one() {
+        for &w in &[1u64, 0x8000_0000_0000_0001, 0xF0F0_F0F0_F0F0_F0F0, u64::MAX, 0x0123_4567_89AB_CDEF] {
+            let ones = ones_of(w);
+            assert_eq!(ones.len(), w.count_ones() as usize);
+            for (n, &b) in ones.iter().enumerate() {
+                assert_eq!(select_nth_bit(w, n), b);
+            }
+        }
+    }
 
     #[test]
     fn test_mask_and_count_matches_mask_and_count_ones() {

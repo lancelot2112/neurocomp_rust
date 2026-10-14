@@ -2,7 +2,7 @@ use petgraph::graph::{Graph, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Directed;
 
-use crate::bitvec::BitVector;
+use crate::bitvec::{ones_of, select_nth_bit, BitVector};
 use crate::bitvec::bithistory::{AdvanceMode, BitVecHistory};
 use crate::kernel::class::KernelOp;
 use crate::kernel::group::KernelGroup;
@@ -43,16 +43,6 @@ fn view(node: &BitVecHistory, read_back: usize, span: usize, window: Option<(usi
         }
     }
     BitVector::from_words(w)
-}
-
-/// The set lines of a word, by skipping through its ones.
-fn ones_of(mut w: u64) -> Vec<usize> {
-    let mut v = Vec::with_capacity(w.count_ones() as usize);
-    while w != 0 {
-        v.push(w.trailing_zeros() as usize);
-        w &= w - 1;
-    }
-    v
 }
 
 /// The word with the most lines on, and how many.
@@ -402,11 +392,25 @@ impl RuntimeNetwork {
             // what it reads: the source word with the most active lines, or (`wide`) all of the
             // source's active lines
             let (syn_mask, sw) = if eg.wide {
-                let active: Vec<usize> = src.as_words().iter().enumerate().flat_map(|(w, x)| ones_of(*x).into_iter().map(move |b| w * 64 + b)).collect();
-                if active.is_empty() {
+                // k of its n active lines, drawn by rank (the same draw as choosing from the list
+                // of active lines, without making the list): each rank is found by walking word
+                // popcounts and selecting the bit within the word
+                let words = src.as_words();
+                let n: usize = words.iter().map(|x| x.count_ones() as usize).sum();
+                if n == 0 {
                     continue;
                 }
-                let syn: Vec<usize> = active.choose_multiple(rng, (sp.birth_syn as usize).min(active.len())).copied().collect();
+                let mut syn: Vec<usize> = Vec::with_capacity(sp.birth_syn as usize);
+                for mut r in rand::seq::index::sample(rng, n, (sp.birth_syn as usize).min(n)).into_iter() {
+                    for (w, x) in words.iter().enumerate() {
+                        let c = x.count_ones() as usize;
+                        if r < c {
+                            syn.push(w * 64 + select_nth_bit(*x, r));
+                            break;
+                        }
+                        r -= c;
+                    }
+                }
                 (BitVector::from_bits(&syn, src.bit_len()), 0)
             } else {
                 let (sw, sn) = busiest_word(src.as_words());

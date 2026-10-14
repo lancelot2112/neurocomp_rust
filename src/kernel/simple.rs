@@ -1,4 +1,4 @@
-use crate::bitvec::BitVector;
+use crate::bitvec::{ones_of, select_nth_bit, BitVector};
 use crate::kernel::class::{KernelTrait, KernelOp, KernelContext};
 
 
@@ -44,11 +44,19 @@ pub struct SimpleKernel {
     /// and learning then visit only these words, so a kernel spread across a wide field costs its
     /// lines, not the field; its lines move only within these words. None: every mask word.
     pub words: Option<Vec<u32>>,
+    /// how many lines its mask has (learning moves lines, so this stays fixed); counted once
+    lines: usize,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0 }.counted()
+    }
+
+    /// Count its mask's lines once.
+    fn counted(mut self) -> Self {
+        self.lines = self.input_mask.count_ones();
+        self
     }
 
     /// A two-mask kernel: `care` lines, expecting `pattern` on them.
@@ -56,6 +64,14 @@ impl SimpleKernel {
         let mut k = Self::new(care, input_idx, output_mask, output_idx, threshold, op);
         k.pattern = Some(pattern);
         k
+    }
+
+    /// Its strength given its match count: the share of its lines that agree (in 1/4096), then
+    /// its width, then how often it was confirmed.
+    fn strength_of(&self, count: usize) -> usize {
+        let care = self.care().max(1);
+        let share = count * 4096 / care;
+        (share << 24) | (care.min(65535) << 8) | self.confirmed as usize
     }
 
     /// Make it sparse: from now on it visits only the mask words that have lines.
@@ -71,11 +87,9 @@ impl SimpleKernel {
     }
 
     /// How many lines its mask has.
+    #[inline]
     pub fn care(&self) -> usize {
-        match &self.words {
-            Some(ws) => { let m = self.input_mask.as_words(); ws.iter().map(|&w| m[w as usize].count_ones() as usize).sum() }
-            None => self.input_mask.count_ones(),
-        }
+        self.lines
     }
 
     /// A sparse kernel's learning move: one line from a candidate `src(a, m)` to a candidate
@@ -91,9 +105,7 @@ impl SimpleKernel {
             for c in &cand {
                 let x = sel(c);
                 if k < x.count_ones() {
-                    let mut x = x;
-                    for _ in 0..k { x &= x - 1; }
-                    return Some((c.0 as usize, x.trailing_zeros()));
+                    return Some((c.0 as usize, select_nth_bit(x, k as usize) as u32));
                 }
                 k -= x.count_ones();
             }
@@ -139,9 +151,7 @@ impl SimpleKernel {
             for (i, w) in words.iter().enumerate() {
                 let c = w.count_ones();
                 if k < c {
-                    let mut w = *w;
-                    for _ in 0..k { w &= w - 1; }
-                    return Some(i * 64 + w.trailing_zeros() as usize);
+                    return Some(i * 64 + select_nth_bit(*w, k as usize));
                 }
                 k -= c;
             }
@@ -178,13 +188,13 @@ impl SimpleKernel {
             age: u8::MAX,
             tonic: 0,
             words: None,
+            lines: 32,
         }
     }
 
     #[inline]
-    fn input_stats(&self, ctx: &KernelContext) -> InputStats {
-        // Single pass popcount (reuse existing API)
-        let count = self.agreement(ctx.input);
+    fn input_stats(&self, ctx: &KernelContext, count: Option<usize>) -> InputStats {
+        let count = count.unwrap_or_else(|| self.agreement(ctx.input));
         
         //The firing threshold is a function of "temperature" (as in simulated annealing)
         // - Higher temperature means we are more likely to fire (lower threshold)
@@ -297,8 +307,8 @@ impl SimpleKernel {
         let mut left: Vec<usize> = Vec::new();
         for w in 0..words {
             let (f, l) = (o[w] & d[w], d[w] & !o[w]);
-            failed.extend((0..64).filter(|b| f >> b & 1 == 1).map(|b| w * 64 + b));
-            left.extend((0..64).filter(|b| l >> b & 1 == 1).map(|b| w * 64 + b));
+            failed.extend(ones_of(f).into_iter().map(|b| w * 64 + b));
+            left.extend(ones_of(l).into_iter().map(|b| w * 64 + b));
         }
         for b in failed {
             if left.is_empty() {
@@ -326,7 +336,22 @@ impl KernelTrait for SimpleKernel {
         out: &mut BitVector,
         rng: &mut R,
     ) -> bool {
-        let stats = self.input_stats(ctx);
+        self.try_fire_counted(ctx, None, out, rng)
+    }
+
+    fn rank(&self, input: &BitVector) -> (usize, Option<usize>) {
+        let count = self.agreement(input);
+        (self.strength_of(count), Some(count))
+    }
+
+    fn try_fire_counted<R: rand::Rng + ?Sized>(
+        &mut self,
+        ctx: &KernelContext,
+        count: Option<usize>,
+        out: &mut BitVector,
+        rng: &mut R,
+    ) -> bool {
+        let stats = self.input_stats(ctx, count);
         if stats.count < stats.threshold {
             // tonic: a spontaneous firing (no input, so nothing to learn)
             if self.tonic > 0 && rng.gen_range(0..1u32 << self.tonic.min(31)) == 0 && !self.is_inhibited(ctx, &stats) {
@@ -360,6 +385,7 @@ impl KernelTrait for SimpleKernel {
         } else {
             self.strengthen(ctx, &stats, rng);
         }
+        debug_assert_eq!(self.lines, self.input_mask.count_ones(), "learning keeps a mask's lines");
         self.apply_output(out);
         self.age = 0;
         true
@@ -369,9 +395,7 @@ impl KernelTrait for SimpleKernel {
     /// confirmed: a better match is a larger share; among equal shares, the wider (more
     /// context), then the more often right.
     fn strength(&self, input: &BitVector) -> usize {
-        let care = self.care().max(1);
-        let share = self.agreement(input) * 4096 / care;
-        (share << 24) | (care.min(65535) << 8) | self.confirmed as usize
+        self.strength_of(self.agreement(input))
     }
 
     fn mark_inhibit(&self, inhibit: &mut BitVector) {
@@ -384,6 +408,21 @@ impl KernelTrait for SimpleKernel {
             return;
         }
         inhibit.mask_mut(self.input_idx, &self.input_mask, |a, m| a | m);
+    }
+
+    fn clear_inhibit(&self, inhibit: &mut BitVector) {
+        let iw = inhibit.as_words_mut();
+        match &self.words {
+            Some(ws) => {
+                for &w in ws {
+                    if let Some(x) = iw.get_mut(self.input_idx + w as usize) { *x = 0; }
+                }
+            }
+            None => {
+                let end = (self.input_idx + self.input_mask.word_len()).min(iw.len());
+                if self.input_idx < end { iw[self.input_idx..end].fill(0); }
+            }
+        }
     }
 
     fn word_range(&self) -> (usize, usize) {

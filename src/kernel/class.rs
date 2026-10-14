@@ -180,22 +180,40 @@ pub trait KernelTrait {
     fn word_range(&self) -> (usize, usize);
     /// Mark the input lines this kernel takes when it fires (for overlap inhibition).
     fn mark_inhibit(&self, inhibit: &mut BitVector);
+    /// Clear what `mark_inhibit` marked (the words it touched), so the class can reuse the
+    /// vector next step without clearing all of it. Default: clear everything.
+    fn clear_inhibit(&self, inhibit: &mut BitVector) {
+        inhibit.as_words_mut().fill(0);
+    }
     /// How many of its lines agree with the input (the better match goes first).
     fn strength(&self, input: &BitVector) -> usize;
+    /// Its strength and its match count, from one pass over its mask (the count is handed back
+    /// to `try_fire_counted`, so the match is computed once a step). Default: no count.
+    fn rank(&self, input: &BitVector) -> (usize, Option<usize>) {
+        (self.strength(input), None)
+    }
+    /// `try_fire` with its match count already known (from `rank`, on the same input).
+    fn try_fire_counted<R: rand::Rng + ?Sized>(&mut self, ctx: &KernelContext, _count: Option<usize>, out: &mut BitVector, rng: &mut R) -> bool {
+        self.try_fire(ctx, out, rng)
+    }
 }
 
 pub struct KernelClass<K: KernelTrait> {
     active_kernels: Vec<K>,
     temperature: KernelClassTemperature,
+    /// reused each step: the lines fired kernels took (cleared word by word after), and the
+    /// order kernels go in
+    inhibit: BitVector,
+    order: Vec<(usize, usize, Option<usize>)>,
 }
 
 impl<K: KernelTrait> KernelClass<K> {
     pub fn default() -> Self {
-        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0) }
+        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new() }
     }
 
     pub fn with_kernels(kernels: Vec<K>) -> Self {
-        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0) }
+        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new() }
     }
 
     pub fn add(&mut self, k: K) {
@@ -211,25 +229,35 @@ impl<K: KernelTrait> KernelClass<K> {
 
     /// As `process_all`; with `inhibit` off, kernels do not hold each other down.
     pub fn process<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, inhibit_on: bool, rng: &mut R) -> Vec<usize> {
-        let mut inhibit = BitVector::new(input.bit_len(), Some(0));
+        if self.inhibit.word_len() != input.word_len() {
+            self.inhibit = BitVector::new(input.bit_len(), Some(0));
+        }
         let mut fired = Vec::new();
         // the better-matched kernels go first, so where masks overlap the best match fires and
         // the others are held down (ties: the older kernel)
-        let mut order: Vec<(usize, usize)> = self.active_kernels.iter().enumerate().map(|(i, k)| (k.strength(input), i)).collect();
+        let mut order = std::mem::take(&mut self.order);
+        order.clear();
+        order.extend(self.active_kernels.iter().enumerate().map(|(i, k)| { let (s, c) = k.rank(input); (s, i, c) }));
         order.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        for (_, i) in order {
+        for &(_, i, count) in &order {
             let k = &mut self.active_kernels[i];
             let ctx = KernelContext {
                 input,
-                inhibit: &inhibit,
+                inhibit: &self.inhibit,
                 temperature: self.temperature.current + adj_temperature,
                 phase,
             };
-            if k.try_fire(&ctx, output, rng) {
+            if k.try_fire_counted(&ctx, count, output, rng) {
                 if inhibit_on {
-                    k.mark_inhibit(&mut inhibit);
+                    k.mark_inhibit(&mut self.inhibit);
                 }
                 fired.push(i);
+            }
+        }
+        self.order = order;
+        if inhibit_on {
+            for &i in &fired {
+                self.active_kernels[i].clear_inhibit(&mut self.inhibit);
             }
         }
         fired

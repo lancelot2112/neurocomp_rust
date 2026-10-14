@@ -1,0 +1,4 @@
+# Hardware popcount, BMI2 (pdep/tzcnt) and AVX2 for the word loops. x86-64-v3 covers CPUs from
+# about 2013 on (Haswell, Zen); on an older machine, remove this.
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-cpu=x86-64-v3"]

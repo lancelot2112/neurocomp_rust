@@ -33,3 +33,4 @@ pub use bitslice::*;
 pub use bitdensity::*;
 pub use bithistory::*;
 pub use bitgen::*;
+pub use bitmask::{ones_of, select_nth_bit};

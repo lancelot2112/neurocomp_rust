@@ -57,3 +57,17 @@ scores move a little (9 vs -6 on this short run) because sparse lines learn only
 words; that is a learning difference, not a speed one.
 - Discrimination does not change with width here (the circuit's score is near zero on this
   short run at every width); this is a cost check, not a learning result.
+
+**Word-level speedups** (later). Same results bit for bit (representability, clock, a short
+curriculum and this benchmark compared against the previous build); instructions counted with
+callgrind on `WIDE_LIVES=1 cargo run --release --example wide`:
+
+| change | instructions |
+|---|---|
+| before | 2.28 G |
+| hardware popcount, BMI2, AVX2 (`target-cpu=x86-64-v3` in `.cargo/config.toml`), match computed once per step (rank then fire), `pdep` to select the n-th set bit, births drawn by rank without listing every active line | 1.09 G |
+| inhibition and order buffers reused per class, cleared word by word | 1.00 G |
+| a kernel's line count kept (learning moves lines, never adds or drops them) | 0.86 G |
+
+2.65x fewer instructions. Before this the build had no hardware popcount at all: every
+`count_ones` was a software routine.

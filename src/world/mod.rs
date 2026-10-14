@@ -394,6 +394,11 @@ impl World {
         senses
     }
 
+    /// The two lights' codes (for tests outside the program; a program only sees them).
+    pub fn lights_for_test(&self) -> &[BitVector] {
+        &self.lights
+    }
+
     /// The act vector that drives voice token `say` and hand move `hand` (either may be None).
     pub fn act(&self, say: Option<usize>, hand: Option<usize>) -> BitVector {
         let mut a = BitVector::new(ACT_BITS, Some(0));

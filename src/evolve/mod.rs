@@ -191,8 +191,10 @@ fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
 pub enum Task {
     /// a conditioning scene of this many trials (a reversal swaps every quarter)
     Conditioning(Conditioning, usize),
-    /// serial reversal: this many trials, the paying light swapping every `period`
-    Reversal { trials: usize, period: usize },
+    /// serial reversal: this many trials, the paying light swapping every `period`; with
+    /// `worst_phase`, a lifetime scores its worst phase (discrimination within each phase between
+    /// swaps), so a genome must do well before and after each swap, not on average
+    Reversal { trials: usize, period: usize, worst_phase: bool },
 }
 
 /// Where a lifetime's world physics comes from.
@@ -217,7 +219,7 @@ pub fn live<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> Vec
             w.reversal_period = (trials / 4).max(1);
             w.conditioning(kind, trials)
         }
-        Task::Reversal { trials, period } => {
+        Task::Reversal { trials, period, .. } => {
             w.reversal_period = period.max(1);
             w.conditioning(Conditioning::Reversal, trials)
         }
@@ -239,8 +241,12 @@ pub fn fitness<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64])
     let mut total = 0i32;
     let mut sum = observe::Responding::default();
     for &s in seeds {
-        let r = observe::responding(&live(g, task, physics, s));
-        total += r.discrimination();
+        let events = live(g, task, physics, s);
+        let r = observe::responding(&events);
+        total += match task {
+            Task::Reversal { period, worst_phase: true, .. } => observe::worst_phase(&events, period),
+            _ => r.discrimination(),
+        };
         sum.paying_trials += r.paying_trials;
         sum.paying_clicked += r.paying_clicked;
         sum.other_trials += r.other_trials;

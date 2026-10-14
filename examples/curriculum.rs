@@ -8,12 +8,14 @@
 //! - `reversal1`: serial reversal with one swap per lifetime (every 200 trials);
 //! - `reversal`: the original (every 100 trials).
 //!
+//! `CUR_SCORE=phase` (reversal stages score a lifetime's worst phase), `CUR_LIVES_REV` (lifetimes a
+//! genome on reversal stages), `CUR_CHANNELS` (empty channels in a naked tag genome),
 //! `CUR_GENOME=edges|tags|stack`, `CUR_START=context|bare|naked` (the context circuit; a bare start,
 //! a single tonic population on the act; or naked, an empty genome), `CUR_TRIALS`, `CUR_LIVES`, `CUR_HELD`, `CUR_POP`, `CUR_ELITE`,
 //! `CUR_EVERY` (held-out check interval), `CUR_SEED`.
 
 use neurocomp::evolve::genes::GeneGenome;
-use neurocomp::evolve::tags::TagGenome;
+use neurocomp::evolve::tags::{TagGenome, Token};
 use neurocomp::evolve::{evolve_population, fitness, Evolvable, Genome, Physics, Task};
 use neurocomp::world::Conditioning;
 
@@ -22,11 +24,13 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 }
 
 fn task(name: &str, trials: usize) -> Task {
+    // (`CUR_SCORE=phase`: reversal stages score each lifetime's worst phase)
+    let worst = std::env::var("CUR_SCORE").map_or(false, |v| v == "phase");
     match name {
         "instrumental" => Task::Conditioning(Conditioning::Instrumental, trials),
         "delayed" => Task::Conditioning(Conditioning::Delayed, trials),
-        "reversal1" => Task::Reversal { trials, period: trials / 2 },
-        _ => Task::Reversal { trials, period: trials / 4 },
+        "reversal1" => Task::Reversal { trials, period: trials / 2, worst_phase: worst },
+        _ => Task::Reversal { trials, period: trials / 4, worst_phase: worst },
     }
 }
 
@@ -36,29 +40,34 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize) {
     let held_n: u64 = env("CUR_HELD", 16);
     let (pop, elite, every, seed) = (env("CUR_POP", 48usize), env("CUR_ELITE", 12usize), env("CUR_EVERY", 10usize), env("CUR_SEED", 7u64));
     let stages = std::env::var("CUR_STAGES").unwrap_or_else(|_| "instrumental:20,reversal1:20,reversal:30".into());
-    let original = task("reversal", trials);
+    let original = Task::Reversal { trials, period: trials / 4, worst_phase: false };
+    let original_worst = Task::Reversal { trials, period: trials / 4, worst_phase: true };
+    // (`CUR_LIVES_REV`: lifetimes a genome on reversal stages; default CUR_LIVES)
+    let lives_rev: u64 = env("CUR_LIVES_REV", lives);
+    let train_rev: Vec<u64> = (0..lives_rev).collect();
     let train: Vec<u64> = (0..lives).collect();
     let held: Vec<u64> = (10_000..10_000 + held_n).collect();
-    let check = |g: &G, t: Task| (fitness(g, t, Physics::Varied, &held).0, fitness(g, original, Physics::Varied, &held).0);
+    let check = |g: &G, t: Task| (fitness(g, t, Physics::Varied, &held).0, fitness(g, original, Physics::Varied, &held).0, fitness(g, original_worst, Physics::Varied, &held).0);
     let mut population: Vec<G> = vec![start; pop];
     println!("pop {pop}, elite {elite}, {lives} lifetimes a genome, {held_n} held out, {trials} trials a lifetime; stages {stages}");
-    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {:>14}  {:>14}", "stage", "gen", "best", "mean", "size", "held:stage", "held:original");
-    let (s0, o0) = check(&population[0], task(stages.split(',').next().unwrap().split(':').next().unwrap(), trials));
-    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {s0:>14}  {o0:>14}", "start", "-", "", "", size(&population[0]));
+    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {:>11}  {:>14}  {:>14}", "stage", "gen", "best", "mean", "size", "held:stage", "held:original", "held:orig-worst");
+    let (s0, o0, w0) = check(&population[0], task(stages.split(',').next().unwrap().split(':').next().unwrap(), trials));
+    println!("{:<13} {:>4}  {:>5} {:>5}  {:>5}  {s0:>11}  {o0:>14}  {w0:>14}", "start", "-", "", "", size(&population[0]));
     for (k, st) in stages.split(',').enumerate() {
         let mut it = st.split(':');
         let name = it.next().unwrap().to_string();
         let gens: usize = it.next().and_then(|g| g.parse().ok()).unwrap_or(20);
         let t = task(&name, trials);
-        population = evolve_population(population, t, Physics::Varied, &train, elite, gens, seed + k as u64, |g, r| {
+        let tr = if name.starts_with("reversal") { &train_rev } else { &train };
+        population = evolve_population(population, t, Physics::Varied, tr, elite, gens, seed + k as u64, |g, r| {
             if g % every == 0 || g + 1 == gens {
-                let (h, o) = check(&r.best, t);
-                println!("{name:<13} {g:>4}  {:>5} {:>5}  {:>5}  {h:>14}  {o:>14}", r.best_fitness, r.mean_fitness, size(&r.best));
+                let (h, o, w) = check(&r.best, t);
+                println!("{name:<13} {g:>4}  {:>5} {:>5}  {:>5}  {h:>11}  {o:>14}  {w:>14}", r.best_fitness, r.mean_fitness, size(&r.best));
             }
         });
     }
-    let (h, o) = check(&population[0], original);
-    println!("final best: held out on the original {o}/1024 (stage check {h})");
+    let (_, o, w) = check(&population[0], original);
+    println!("final best: held out on the original {o}/1024 pooled, {w}/1024 worst phase");
 }
 
 fn main() {
@@ -69,8 +78,12 @@ fn main() {
         "tags" => {
             println!("curriculum, tag genome from {}", if bare { "a bare start" } else { "the context circuit" });
             if naked {
-                println!("(naked: an empty string)");
-                return run(TagGenome { tokens: vec![], next_id: 1 }, |g| g.tokens.len());
+                // (`CUR_CHANNELS=n`: the empty string plus n empty channels, room for populations
+                // to resolve to instead of crowding onto the senses and the act)
+                let n: usize = env("CUR_CHANNELS", 0);
+                println!("(naked: an empty string, {n} empty channels)");
+                let tokens = (0..n).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3 }).collect();
+                return run(TagGenome { tokens, next_id: 1 }, |g| g.tokens.len());
             }
             run(if bare { TagGenome::bare_seed() } else { TagGenome::context_seed() }, |g| g.tokens.len());
         }

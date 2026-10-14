@@ -65,6 +65,20 @@ pub fn responding(events: &[Event]) -> Responding {
     r
 }
 
+/// Discrimination within each phase of a reversal (trials `k*period` to `(k+1)*period`), the
+/// worst of them: a genome scores well only if it does well both before and after every swap.
+pub fn worst_phase(events: &[Event], period: usize) -> i32 {
+    let period = period.max(1);
+    let phases = events.iter().filter_map(|e| e.trial.map(|t| t.0 / period)).max().map_or(0, |m| m + 1);
+    (0..phases)
+        .map(|ph| {
+            let evs: Vec<Event> = events.iter().filter(|e| e.trial.map_or(false, |t| t.0 / period == ph)).cloned().collect();
+            responding(&evs).discrimination()
+        })
+        .min()
+        .unwrap_or(0)
+}
+
 /// Sequence: steps where a next token was due, and those where the program said it on the
 /// step before it was shown.
 pub fn anticipation(events: &[Event]) -> (u32, u32) {
@@ -107,6 +121,28 @@ mod tests {
         assert_eq!(r.other_clicked, 0);
         assert_eq!(r.discrimination(), 1024);
         assert_eq!(r.strokes, r.paying_trials);
+    }
+
+    #[test]
+    fn worst_phase_punishes_clicking_one_light_through_a_reversal() {
+        // click whenever light A is on: right before the swap, wrong after it
+        let mut w = World::new(7, 4);
+        w.reversal_period = 20;
+        w.conditioning(Conditioning::Reversal, 40);
+        let mut prev = BitVector::new(SENSE_BITS, Some(0));
+        let light_a = {
+            let mut probe = World::new(7, 4);
+            probe.conditioning(Conditioning::Reversal, 1);
+            probe.lights_for_test()[0].clone()
+        };
+        while !w.done() {
+            let eye = channel(&prev, EYE);
+            let sees_a = eye.as_words().iter().zip(light_a.as_words()).any(|(a, b)| a & b != 0);
+            let a = w.act(None, if sees_a { Some(CLICK) } else { None });
+            prev = w.step(&a);
+        }
+        assert!(responding(&w.events).discrimination().abs() < 400, "pooled, it looks like half right");
+        assert!(worst_phase(&w.events, 20) < -500, "its worst phase shows it never switched");
     }
 
     #[test]

@@ -57,6 +57,8 @@ pub trait KernelTrait {
     fn word_range(&self) -> (usize, usize);
     /// Mark the input lines this kernel takes when it fires (for overlap inhibition).
     fn mark_inhibit(&self, inhibit: &mut BitVector);
+    /// How many of its lines agree with the input (the better match goes first).
+    fn strength(&self, input: &BitVector) -> usize;
 }
 
 pub struct KernelClass<K: KernelTrait> {
@@ -88,7 +90,12 @@ impl<K: KernelTrait> KernelClass<K> {
     pub fn process<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, inhibit_on: bool, rng: &mut R) -> Vec<usize> {
         let mut inhibit = BitVector::new(input.bit_len(), Some(0));
         let mut fired = Vec::new();
-        for (i, k) in self.active_kernels.iter_mut().enumerate() {
+        // the better-matched kernels go first, so where masks overlap the best match fires and
+        // the others are held down (ties: the older kernel)
+        let mut order: Vec<(usize, usize)> = self.active_kernels.iter().enumerate().map(|(i, k)| (k.strength(input), i)).collect();
+        order.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+        for (_, i) in order {
+            let k = &mut self.active_kernels[i];
             let ctx = KernelContext {
                 input,
                 inhibit: &inhibit,

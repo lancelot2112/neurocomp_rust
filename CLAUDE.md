@@ -35,6 +35,23 @@ what it can build. We do not add special-purpose modules to get a task done.
 - **Births**: when part of an input is covered by no firing kernel and that part meets one
   kernel's popcount, new kernels are born on it (its lines dealt among them).
 
+## Encoding and decoding
+
+- **Input is raw.** Bytes are written as they are. The network finds its own codes.
+- **Sliding windows.** An input vector holds the recent past: each step it shifts by one symbol
+  (8 bits for a byte) and the new one is written at the front. A kernel at a fixed offset then
+  always sees the same lag, and a wider kernel sees a longer context.
+- **Kernels at several scales.** A kernel's window is 8, 16, 32, 64 bits, ... up to the whole
+  vector, aligned to its width. Under a word it is a sub-word mask, so it costs one word.
+- **Two-mask kernels for dense input.** A care mask and the pattern expected on it; the kernel
+  counts cared lines that agree, ones and zeros alike. Sparse kernels (count lines that are on)
+  are the special case. Learning moves care lines, setting their expected value.
+- **The best match fires first**; kernels whose masks overlap are held down.
+- **Decoding: the winner writes the slot.** A predicted symbol is written by the best-matched
+  kernel into its slot; predicted XOR actual is the residue.
+- **Kernels write anywhere.** An edge's kernels write its destination vector; the program
+  builds the map of vectors.
+
 ## Rules
 
 - **Bits and integers only** in the network: no floats, no probabilities, no log-likelihoods.

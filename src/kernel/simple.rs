@@ -17,11 +17,70 @@ pub struct SimpleKernel {
     /// synapse onto an active line; a window with nothing on drifts one word left or right
     /// (chance 1/64 a step)
     pub search: bool,
+    /// a two-mask kernel: the value it expects on each of its lines (`input_mask` is then its
+    /// care mask). It counts the cared lines that agree with the pattern, ones and zeros alike,
+    /// so it can match dense input (raw bytes). None: it counts cared lines that are on.
+    pub pattern: Option<BitVector>,
+    /// learn anti-Hebbian when matched but held down (on by default)
+    pub learn_held: bool,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true }
+    }
+
+    /// A two-mask kernel: `care` lines, expecting `pattern` on them.
+    pub fn with_pattern(care: BitVector, pattern: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
+        let mut k = Self::new(care, input_idx, output_mask, output_idx, threshold, op);
+        k.pattern = Some(pattern);
+        k
+    }
+
+    /// How many of its lines agree with the input (on lines that are on; or, with a pattern,
+    /// cared lines whose value matches).
+    pub fn agreement(&self, input: &BitVector) -> usize {
+        match &self.pattern {
+            None => input.mask_and_count(self.input_idx, &self.input_mask, |a, m| a & m),
+            Some(p) => {
+                let x = input.as_slice(self.input_idx, self.input_mask.word_len());
+                x.iter().zip(self.input_mask.as_words()).zip(p.as_words()).map(|((a, m), q)| (!(a ^ q) & m).count_ones() as usize).sum()
+            }
+        }
+    }
+
+    /// Move one cared line: from a line where the input `agrees` (true) or disagrees (false)
+    /// with the pattern, to an uncared line of the same words, whose expected value is set so
+    /// that it now disagrees (anti-Hebbian) or agrees (Hebbian) with the input.
+    fn move_pattern_line<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, from_agreeing: bool, rng: &mut R) {
+        let Some(p) = self.pattern.as_mut() else { return };
+        let x = input.as_slice(self.input_idx, self.input_mask.word_len()).to_vec();
+        let m = self.input_mask.as_words().to_vec();
+        let q = p.as_words().to_vec();
+        let pick = |words: Vec<u64>, rng: &mut R| -> Option<usize> {
+            let n: u32 = words.iter().map(|w| w.count_ones()).sum();
+            if n == 0 { return None; }
+            let mut k = rng.gen_range(0..n);
+            for (i, w) in words.iter().enumerate() {
+                let c = w.count_ones();
+                if k < c {
+                    let mut w = *w;
+                    for _ in 0..k { w &= w - 1; }
+                    return Some(i * 64 + w.trailing_zeros() as usize);
+                }
+                k -= c;
+            }
+            None
+        };
+        let agree: Vec<u64> = x.iter().zip(&m).zip(&q).map(|((a, m), q)| !(a ^ q) & m).collect();
+        let from: Vec<u64> = agree.iter().zip(&m).map(|(g, m)| if from_agreeing { *g } else { !g & m }).collect();
+        let free: Vec<u64> = m.iter().map(|m| !m).collect();
+        let (Some(a), Some(b)) = (pick(from, rng), pick(free, rng)) else { return };
+        self.input_mask.bit_clear(a);
+        self.input_mask.bit_set(b);
+        let xb = x[b / 64] >> (b % 64) & 1 == 1;
+        // Hebbian: expect what is there; anti-Hebbian: expect the opposite
+        if xb == from_agreeing { p.bit_clear(b) } else { p.bit_set(b) }
     }
 
     pub fn default(output_bit: usize) -> Self {
@@ -33,6 +92,8 @@ impl SimpleKernel {
             threshold: 16,
             op: KernelOp::Or,
             search: false,
+            pattern: None,
+            learn_held: true,
         }
     }
 
@@ -49,7 +110,7 @@ impl SimpleKernel {
     #[inline]
     fn input_stats(&self, ctx: &KernelContext) -> InputStats {
         // Single pass popcount (reuse existing API)
-        let count = ctx.input.mask_and_count(self.input_idx, &self.input_mask, |a,m| a & m);
+        let count = self.agreement(ctx.input);
         
         //The firing threshold is a function of "temperature" (as in simulated annealing)
         // - Higher temperature means we are more likely to fire (lower threshold)
@@ -150,12 +211,26 @@ impl KernelTrait for SimpleKernel {
             return false;
         }
         if self.is_inhibited(ctx, &stats) {
-            self.search_remap(ctx, &stats, rng);
+            if self.learn_held {
+                if self.pattern.is_some() {
+                    self.move_pattern_line(ctx.input, true, rng);
+                } else {
+                    self.search_remap(ctx, &stats, rng);
+                }
+            }
             return false;
         }
-        self.strengthen(ctx, &stats, rng);
+        if self.pattern.is_some() {
+            self.move_pattern_line(ctx.input, false, rng);
+        } else {
+            self.strengthen(ctx, &stats, rng);
+        }
         self.apply_output(out);
         true
+    }
+
+    fn strength(&self, input: &BitVector) -> usize {
+        self.agreement(input)
     }
 
     fn mark_inhibit(&self, inhibit: &mut BitVector) {

@@ -56,7 +56,8 @@ fn main() {
     // per phase index: the outcome of the swap into it
     let mut per: Vec<Swap> = vec![Swap::default(); phases];
     let mut first_phase_false = 0u32;
-    for seed in 0..seeds {
+    let from: u64 = env("LATENT_FROM", 0);
+    for seed in from..from + seeds {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut lc = LatentCause::new(BITS, scale);
         lc.debug = debug;

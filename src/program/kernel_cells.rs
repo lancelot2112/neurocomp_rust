@@ -20,8 +20,8 @@
 //!   input's lines to lines that were not active. Learning only moves synapses: every cell keeps
 //!   as many as it was born with (its density is kept), so none shrinks into firing for
 //!   anything.
-//! - **Births**: an input no cell fires for (as an input that overlaps a known one only in part
-//!   fires none of its cells: they need three quarters of their own synapses) gets `k` new cells,
+//! - **Births**: the part of an input no winner covers (the input AND NOT their masks), when it
+//!   is more than a quarter of the input (all of it when no cell fires), gets `k` new cells,
 //!   its lines dealt among them (so cells born together share no lines and do not inhibit each
 //!   other), each writing its own random output bits. So a new
 //!   pattern gets cells of its own, and what it shares with an old one does not absorb it.
@@ -249,7 +249,21 @@ impl Kernel {
             }
         }
         if learn && pop(&inw) > 0 {
-            if winners.is_empty() {
+            // what of the input no winner covers (the input AND NOT their masks): if more than a
+            // quarter of it, that part gets cells of its own (every part of an input is coded)
+            let mut uncovered = inw.clone();
+            for &c in &winners {
+                for (u, m) in uncovered.iter_mut().zip(&self.cells[c].syn) {
+                    *u &= !m;
+                }
+            }
+            if 4 * pop(&uncovered) > pop(&inw) {
+                for &c in &winners {
+                    self.hebbian(c, &inw, 3);
+                }
+                let born = self.births_for(&uncovered, self.k, None);
+                winners.extend(born);
+            } else if winners.is_empty() {
                 winners = self.births_for(&inw, self.k, None);
             } else {
                 for &c in &winners {
@@ -274,7 +288,8 @@ impl Kernel {
 /// cell's own synapses on the input).
 ///
 /// - While the active assembly is young (its first 16 explained inputs: a context is learned at
-///   its start), an input it does not explain gets cells of its own born into it.
+///   its start), an input it does not explain gets cells of its own born into it, and no rival
+///   takes over from it.
 /// - Once settled, only rivals contradict it. A stored assembly that explains an input the active
 ///   one does not gains drive against it; an input both explain carries no context and moves
 ///   nothing. Every rival's drive leaks, one at random in sixteen inputs, so only what comes
@@ -403,7 +418,8 @@ impl Holder {
                     if leak {
                         self.rival[l] = self.rival[l].saturating_sub(1);
                     }
-                    if strength > 0 && self.rival[l] >= strength && winner.map_or(true, |w| self.rival[l] > self.rival[w]) {
+                    // (a young assembly is still learning what comes: no rival takes over from it)
+                    if !young && self.rival[l] >= strength && winner.map_or(true, |w| self.rival[l] > self.rival[w]) {
                         winner = Some(l);
                     }
                 }

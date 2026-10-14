@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo"];
 /// How many probes there are.
-pub const NPROBES: usize = 7;
+pub const NPROBES: usize = 8;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -187,7 +187,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // repeat rate; one that never clicks scores 0)
     let r = |c: i64, n: i64| if n == 0 { 0 } else { c * 1024 / n };
     let win_stay = (r(won, won_n) - r(lost, lost_n)) as i32;
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence)]
 }
 
 /// Reading aloud: of the tokens said while tokens are shown one a step, how many match a token
@@ -204,6 +204,24 @@ pub fn copy(events: &[Event]) -> i32 {
     }
     let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
         lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && !ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
+    };
+    ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
+}
+
+/// Echoing: of the tokens said while tokens are shown one a step, how many match a token the
+/// teacher said 1 to 4 steps before, minus how many match one it said 9 to 12 steps before, per
+/// token said. The stepping stone to reading: the network hears a sound and must find the motor
+/// code that makes it (its own voice is heard as the same sound), with no glyph involved. Saying
+/// nothing or at random scores 0; reading every token aloud scores about as much as echoing (it
+/// says the taught ones too); echoing every taught token two steps later scores about 900.
+pub fn echo(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    let said = ev.iter().filter(|e| e.said.is_some()).count() as i64;
+    if said == 0 {
+        return 0;
+    }
+    let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
+        lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
     };
     ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
 }
@@ -418,6 +436,39 @@ mod tests {
         let (reads, echoes) = (run(false), run(true));
         assert!(reads > 350, "{reads}");
         assert!(echoes.abs() < 100, "{echoes}");
+        // and the echo probe the other way round: echoing scores, and so does reading everything
+        // (it says the taught tokens too), while a blind random speaker does not
+        let echo_of = |echo_only: bool| -> i32 {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(4);
+            let toks: Vec<usize> = (0..400).map(|_| rand::Rng::gen_range(&mut rng, 0..8)).collect();
+            let mut w = World::new(6, 8);
+            w.teacher = true;
+            w.sequence(&toks);
+            let mut t = 0;
+            while !w.done() {
+                let say = if t >= 2 && (!echo_only || w.events[t - 2].taught) { Some(toks[t - 2]) } else { None };
+                let a = w.act(say, None);
+                w.step(&a);
+                t += 1;
+            }
+            echo(&w.events)
+        };
+        let (e_echo, e_read) = (echo_of(true), echo_of(false));
+        assert!(e_echo > 800, "{e_echo}");
+        assert!(e_read > 350, "{e_read}");
+        let random = {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(9);
+            let toks: Vec<usize> = (0..400).map(|_| rand::Rng::gen_range(&mut rng, 0..8)).collect();
+            let mut w = World::new(6, 8);
+            w.teacher = true;
+            w.sequence(&toks);
+            while !w.done() {
+                let a = w.act(Some(rand::Rng::gen_range(&mut rng, 0..8)), None);
+                w.step(&a);
+            }
+            echo(&w.events)
+        };
+        assert!(random.abs() < 150, "{random}");
     }
 
     #[test]

@@ -384,7 +384,7 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
 /// The probes of one genome in one world seed (see `observe::probes`), and its work per step.
 /// Only the lifetimes the `wanted` probes need are lived (a serial-reversal lifetime for respond,
 /// tell, discriminate, reverse and win-stay; a delayed one for remember; reading with a teacher
-/// for copy),
+/// for copy and echo),
 /// `trials` trials or tokens each, with gaps of 0 to `gap` steps between trials; the other
 /// probes read 0.
 pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize]) -> (observe::ProbeRow, u64) {
@@ -392,7 +392,7 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
     let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
     let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap) } else { (vec![], 0) };
     let (del, w2) = if want(&[4]) { live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap) } else { (vec![], 0) };
-    let (seq, w3) = if want(&[6]) { live_work(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0) } else { (vec![], 0) };
+    let (seq, w3) = if want(&[6, 7]) { live_work(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0) } else { (vec![], 0) };
     let steps = (rev.len() + del.len() + seq.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq);
     for (p, x) in row.iter_mut().enumerate() {
@@ -404,7 +404,7 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6];
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.

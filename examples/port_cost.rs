@@ -31,10 +31,10 @@ fn main() {
     ];
     let _ = ACT;
     let seeds: Vec<u64> = (20_000..20_000 + n).collect();
-    println!("{:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", "genome", "respond", "tell", "discr", "reverse", "rememb", "winstay", "copy", "work");
+    println!("{:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", "genome", "respond", "tell", "discr", "reverse", "rememb", "winstay", "copy", "echo", "work");
     for (name, g) in genomes {
         let r = probe_all(vec![g], 200, Physics::Varied, &seeds, 6, &ALL_PROBES);
         let m = probe_means(&r[0].probes);
-        println!("{name:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", m[0], m[1], m[2], m[3], m[4], m[5], m[6], r[0].work);
+        println!("{name:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], r[0].work);
     }
 }

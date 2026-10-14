@@ -4,8 +4,9 @@
 //! probes (`observe::probes`):
 //! - switching: respond, tell, discriminate, reverse, win-stay (serial reversal);
 //! - recall: respond, remember (a light gone a few steps ago);
-//! - reading: copy (say the token shown on the eye a few steps before);
-//! - generalist: all seven.
+//! - reading: copy (say the token shown on the eye a few steps before) and echo (say the token
+//!   the teacher said a few steps before: the stepping stone, sound to voice with no glyph);
+//! - generalist: all eight.
 //! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (one population of a
 //! donor with the circuit of any channel it touches, made private; or the population alone if it
 //! only reads and writes ports) from the best genomes of other islands into its new children, so a circuit grown under one pressure is tried under another. Each plasmid is
@@ -67,7 +68,7 @@ fn main() {
     let islands = vec![
         Island { name: "switching".into(), probes: vec![0, 1, 2, 3, 5] },
         Island { name: "recall".into(), probes: vec![0, 4] },
-        Island { name: "reading".into(), probes: vec![6] },
+        Island { name: "reading".into(), probes: vec![6, 7] },
         Island { name: "generalist".into(), probes: ALL_PROBES.to_vec() },
     ];
     let tokens = (0..4).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3, hold: false }).collect();

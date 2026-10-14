@@ -1,7 +1,7 @@
 //! A baseline for the conditioning scores: what does a network that cannot see score?
 //!
-//! A single tonic population on the act (it fires at random, reading nothing that tells the
-//! lights apart) and a covering population on the senses with no learning that matters. Scored
+//! A single tonic population on the act reading the self channel (it fires at random, reading
+//! nothing that tells the lights apart) and a covering population on the senses with no learning that matters. Scored
 //! on the curriculum's training seeds (0..24) and held-out seeds (10000..10016), and on a large
 //! set (20000..20000+`BASE_N`), per task. A network that cannot see should score about 0 on all.
 //!
@@ -9,7 +9,7 @@
 //!
 //! `BASE_N` (default 256), `BASE_TONIC` (default 3: fires 1 step in 8).
 
-use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, SENSES};
+use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, SELF, SENSES};
 use neurocomp::evolve::{fitness, Physics, Task};
 use neurocomp::world::Conditioning;
 
@@ -20,7 +20,7 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 fn main() {
     let n: u64 = env("BASE_N", 256);
     let tonic: u8 = env("BASE_TONIC", 3);
-    let blind = TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic, ..Pop::new(1, ACT, ACT) })], next_id: 2 };
+    let blind = TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic, ..Pop::new(1, SELF, ACT) })], next_id: 2 };
     let seeing = TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic, cover: true, tile: 6, ..Pop::new(1, SENSES, ACT) })], next_id: 2 };
     let sets: [(&str, Vec<u64>); 3] = [("train 0..24", (0..24).collect()), ("held 10000..16", (10_000..10_016).collect()), ("large", (20_000..20_000 + n).collect())];
     let tasks = [

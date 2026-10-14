@@ -302,18 +302,28 @@ impl RuntimeNetwork {
                         let dw = dst_curr.word_len().max(1);
                         let src = src_view.as_words();
                         work += src.len() as u64;
-                        if src.len() <= dw {
+                        // into a port (part of the node), it wraps inside the port
+                        let (base, len) = if eg.spec.dst_len > 0 { (eg.dst_word % dw, eg.spec.dst_len.min(dw - eg.dst_word % dw)) } else { (0, dw) };
+                        let land = |j: usize| if eg.spec.dst_len > 0 { base + j % len } else { (j + eg.dst_word) % dw };
+                        if src.len() <= len {
                             let d = dst_curr.as_words_mut();
                             for (j, w) in src.iter().enumerate() {
-                                let k = (j + eg.dst_word) % dw;
+                                let k = land(j);
                                 d[k] = eg.op.word(d[k], *w);
                             }
                         } else {
                             let mut t = vec![0u64; dw];
+                            let mut touched = vec![false; dw];
                             for (j, w) in src.iter().enumerate() {
-                                t[(j + eg.dst_word) % dw] |= w;
+                                t[land(j)] |= w;
+                                touched[land(j)] = true;
                             }
-                            apply(dst_curr.as_words_mut(), &t, eg.op);
+                            let d = dst_curr.as_words_mut();
+                            for k in 0..dw {
+                                if touched[k] {
+                                    d[k] = eg.op.word(d[k], t[k]);
+                                }
+                            }
                         }
                     }
                     EdgeKind::Kernels => {
@@ -415,7 +425,8 @@ impl RuntimeNetwork {
                             let span = view.bit_len() - bits + 1;
                             let to = if rng.gen_bool(0.5) { (start + bits) % span } else { (start + span - bits % span) % span };
                             let dwords = nodes[eg.dst].current().word_len().max(1);
-                            let out = if eg.can_grow { (to * dwords / view.word_len().max(1)).min(dwords - 1) } else { parent.output_idx };
+                            let (base, len) = if sp.dst_len > 0 { (sp.dst_word % dwords, sp.dst_len.min(dwords - sp.dst_word % dwords)) } else { (0, dwords) };
+                            let out = if eg.can_grow { base + (to * len / view.word_len().max(1)).min(len - 1) } else { parent.output_idx };
                             parent.moved_to(to, out)
                         }
                         _ => {
@@ -476,7 +487,8 @@ impl RuntimeNetwork {
                     (ones(prev.as_words()[dw]), dw)
                 } else {
                     let dwords = dest.word_len().max(1);
-                    let dw = (start * dwords / sw.len().max(1)).min(dwords - 1);
+                    let (base, len) = if sp.dst_len > 0 { (sp.dst_word % dwords, sp.dst_len.min(dwords - sp.dst_word % dwords)) } else { (0, dwords) };
+                    let dw = base + (start * len / sw.len().max(1)).min(len - 1);
                     let wrote = fired[i].iter().map(|&k| &class.kernels()[k]).filter(|kk| kk.output_idx == dw).fold(0u64, |a, kk| a | kk.output_mask.as_words()[0]);
                     let left = ones(dest.as_words()[dw] & !wrote);
                     if left.len() >= sp.out_min as usize {

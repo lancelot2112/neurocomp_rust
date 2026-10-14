@@ -202,6 +202,9 @@ pub struct EdgeSpec {
     /// elsewhere), else it stays in place (the two then hold each other down and separate).
     pub replicate: u8,
     pub replicate_shift: bool,
+    /// the destination is a part of its node (a port, such as the hand): `dst_len` words from
+    /// `dst_word`; wires wrap inside it and topographic outputs land inside it (0: the whole node)
+    pub dst_len: usize,
 }
 
 impl EdgeSpec {
@@ -246,6 +249,7 @@ impl EdgeSpec {
             pause: None,
             replicate: 0,
             replicate_shift: false,
+            dst_len: 0,
         }
     }
 }

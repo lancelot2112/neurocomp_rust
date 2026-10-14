@@ -4,10 +4,13 @@
 //! - `Pop { from, to, .. }`: a population of kernels (or a wire) reading the channel whose tag is
 //!   nearest `from` and writing the one nearest `to`, with every property inline.
 //!
-//! The senses and the act are channels that always exist (tags `SENSES` and `ACT`). A tag always
-//! resolves to the nearest channel (Hamming distance; ties to the earlier one), so there are no
-//! dangling references: inserting, deleting, moving or copying any part of the string still makes a
-//! network. Wiring changes gradually (a flipped tag bit may move a population to a neighbouring
+//! Tags name the genome's own channels only: a tag resolves to the nearest declared channel
+//! (Hamming distance; ties to the earlier one). The world's side has ports with a tag space of
+//! their own: a population with `from_port` reads the input port nearest its `from` tag (all the
+//! senses, the eye, ear, touch or affect, or the self channel), and one with `to_port` writes the
+//! output port nearest its `to` (the whole act, the voice or the hand). A population with no
+//! declared channel to resolve to is left out until one exists. Inserting, deleting, moving or
+//! copying any part of the string still makes a network. Wiring changes gradually (a flipped tag bit may move a population to a neighbouring
 //! channel, or change nothing), and dead ends (channels nobody reads) are kept as raw material.
 //!
 //! Two density knobs per population:
@@ -51,13 +54,44 @@ pub const SELF: u8 = 0x80;
 /// The self channel's width: 4 words.
 pub const SELF_BITS: usize = 256;
 
+/// Input ports: where a population reading from outside (`from_port`) can read, each with its own
+/// tag in a tag space of its own (a population's `from` tag picks the nearest): all the senses,
+/// one sense channel, or the self channel.
+pub const EYE: u8 = 0x07;
+pub const EAR: u8 = 0x38;
+pub const TOUCH: u8 = 0xC1;
+pub const AFFECT: u8 = 0xE0;
+const INPUTS: [(u8, &str); 6] = [(SENSES, "S"), (EYE, "eye"), (EAR, "ear"), (TOUCH, "touch"), (AFFECT, "affect"), (SELF, "M")];
+/// Output ports: where a population writing outward (`to_port`) can write: the whole act, the
+/// voice or the hand.
+pub const VOICE: u8 = 0x1F;
+pub const HAND: u8 = 0xF8;
+const OUTPUTS: [(u8, &str); 3] = [(ACT, "A"), (VOICE, "voice"), (HAND, "hand")];
+
+/// Where an endpoint lands: a node, its first word and how many words (a port may be part of a
+/// node, as the eye is part of the senses).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Place {
+    node: usize,
+    off: usize,
+    len: usize,
+    /// the whole node
+    whole: bool,
+}
+
 /// A population: kernels (or a wire) from one channel to another, with all its properties.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Pop {
     /// a permanent id: keys its random stream (a copy gets a new one)
     pub id: u32,
+    /// where it reads: with `from_port`, the input port nearest `from` (senses, one sense, self);
+    /// otherwise the declared channel nearest `from` (tags name the genome's own channels only)
     pub from: u8,
+    pub from_port: bool,
+    /// where it writes: with `to_port`, the output port nearest `to` (act, voice, hand); otherwise
+    /// the declared channel nearest `to`
     pub to: u8,
+    pub to_port: bool,
     /// a wire copies what it reads (no kernels)
     pub wire: bool,
     pub op: KernelOp,
@@ -122,7 +156,7 @@ impl Pop {
     pub fn new(id: u32, from: u8, to: u8) -> Self {
         let p = EdgeSpec::plain();
         Self {
-            id, from, to, wire: false, op: KernelOp::Or, lag: 1, span: 1, at: 0, field: 0, place: 0, spread: 0,
+            id, from, from_port: from == SENSES || from == SELF, to, to_port: to == ACT, wire: false, op: KernelOp::Or, lag: 1, span: 1, at: 0, field: 0, place: 0, spread: 0,
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
@@ -152,7 +186,8 @@ pub struct TagGenome {
 
 /// What the string's channels resolve to.
 struct Channels {
-    /// (tag, words), the senses first and the act last
+    /// (tag, words) per node: the senses first, then the declared channels, the self channel, the
+    /// act last
     list: Vec<(u8, usize)>,
     /// whether each holds its lines from step to step
     hold: Vec<bool>,
@@ -180,14 +215,68 @@ impl Channels {
         self.list.len() - 2
     }
 
-    /// The channel nearest a tag (ties: the earlier); `writable` skips the senses and the self
-    /// channel, which only the world and the runtime write.
-    fn resolve(&self, tag: u8, writable: bool) -> usize {
-        let me = self.self_index();
-        (0..self.list.len())
-            .filter(|&i| !(writable && (i == 0 || i == me)))
-            .min_by_key(|&i| ((self.list[i].0 ^ tag).count_ones(), i))
-            .unwrap()
+    fn act_index(&self) -> usize {
+        self.list.len() - 1
+    }
+
+    /// The declared channel nearest a tag (ties: the earlier), if any is declared.
+    fn internal(&self, tag: u8) -> Option<usize> {
+        (1..self.self_index()).min_by_key(|&i| ((self.list[i].0 ^ tag).count_ones(), i))
+    }
+
+    fn whole(&self, node: usize) -> Place {
+        Place { node, off: 0, len: self.list[node].1, whole: true }
+    }
+
+    /// The input port nearest a tag.
+    fn input(&self, tag: u8) -> Place {
+        let k = (0..INPUTS.len()).min_by_key(|&i| ((INPUTS[i].0 ^ tag).count_ones(), i)).unwrap();
+        match k {
+            0 => self.whole(0),
+            5 => self.whole(self.self_index()),
+            c => {
+                let ch = world::CH_BITS / 64;
+                let sense = [world::EYE, world::EAR, world::TOUCH, world::AFFECT][c - 1];
+                Place { node: 0, off: sense * ch, len: ch, whole: false }
+            }
+        }
+    }
+
+    /// The output port nearest a tag.
+    fn output(&self, tag: u8) -> Place {
+        let k = (0..OUTPUTS.len()).min_by_key(|&i| ((OUTPUTS[i].0 ^ tag).count_ones(), i)).unwrap();
+        let a = self.act_index();
+        let ch = world::CH_BITS / 64;
+        match k {
+            0 => self.whole(a),
+            1 => Place { node: a, off: world::VOICE * ch, len: ch, whole: false },
+            _ => Place { node: a, off: world::HAND * ch, len: ch, whole: false },
+        }
+    }
+
+    /// Where a population reads, if anywhere.
+    fn from(&self, p: &Pop) -> Option<Place> {
+        if p.from_port { Some(self.input(p.from)) } else { self.internal(p.from).map(|i| self.whole(i)) }
+    }
+
+    /// Where a population writes, if anywhere.
+    fn to(&self, p: &Pop) -> Option<Place> {
+        if p.to_port { Some(self.output(p.to)) } else { self.internal(p.to).map(|i| self.whole(i)) }
+    }
+
+    /// A short name for a place.
+    fn name(&self, at: Place) -> String {
+        if at.node == 0 {
+            if at.whole { return "S".into() }
+            let ch = world::CH_BITS / 64;
+            return ["eye", "ear", "touch", "affect"][at.off / ch].into();
+        }
+        if at.node == self.self_index() { return "M".into() }
+        if at.node == self.act_index() {
+            if at.whole { return "A".into() }
+            return if at.off == world::VOICE * world::CH_BITS / 64 { "voice".into() } else { "hand".into() };
+        }
+        format!("C{}", at.node)
     }
 }
 
@@ -206,9 +295,7 @@ impl TagGenome {
     /// its properties.
     pub fn describe(&self) -> String {
         let ch = Channels::of(&self.tokens);
-        let last = ch.list.len() - 1;
-        let me = ch.self_index();
-        let name = |i: usize| if i == 0 { "S".to_string() } else if i == last { "A".to_string() } else if i == me { "M".to_string() } else { format!("C{i}") };
+        let gname = |t: u8| ch.internal(t).map_or("-".to_string(), |i| format!("C{i}"));
         let mut out = String::new();
         let mut c = 0;
         for t in &self.tokens {
@@ -218,10 +305,13 @@ impl TagGenome {
                     out += &format!("C{c} channel {tag:08b}  {} bits{}\n", 64usize << (*width).min(MAX_WIDTH), if *hold { "  holds" } else { "" });
                 }
                 Token::Pop(p) => {
-                    let (a, b) = (ch.resolve(p.from, false), ch.resolve(p.to, true));
+                    let (Some(a), Some(b)) = (ch.from(p), ch.to(p)) else {
+                        out += "   (a population with no channel to read or write)\n";
+                        continue;
+                    };
                     out += &format!(
                         "   {} -> {} {} {:?} lag {}{} {}{}{}{}{}{}{}{}\n",
-                        name(a), name(b), if p.wire { "wire" } else { "kernels" }, p.op, p.lag,
+                        ch.name(a), ch.name(b), if p.wire { "wire" } else { "kernels" }, p.op, p.lag,
                         if p.span > 1 { format!(" span {}", p.span) } else { String::new() },
                         if p.cover {
                             if p.wire { "whole".to_string() } else { format!("cover, tiles of {} bits", 1usize << p.tile.clamp(3, MAX_TILE)) }
@@ -232,8 +322,8 @@ impl TagGenome {
                         if p.tonic > 0 { format!(" tonic 1/{}", 1u32 << p.tonic) } else { String::new() },
                         if p.share { " share" } else { "" },
                         if p.grow { format!(" grow(syn {}, out {}-{}{}{})", p.birth_syn, p.out_min, p.out_max, if p.new_code { ", new" } else { "" }, if p.repeat { format!(", repeat {}", p.repeat_lag) } else { String::new() }) } else { String::new() },
-                        p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false))))
-                            + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false)))),
+                        p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, gname(g)))
+                            + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, gname(g))),
                         if p.sparse { " sparse".to_string() } else { String::new() }
                             + &if p.replicate > 0 { format!(" replicate at {} ({})", 1u32 << p.replicate.min(7), if p.replicate_shift { "to a neighbour tile" } else { "in place" }) } else { String::new() },
                         if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() },
@@ -252,21 +342,30 @@ impl TagGenome {
         let mut depth = vec![1usize; n];
         let mut edges: Vec<(usize, usize, EdgeSpec)> = Vec::new();
         for p in self.pops() {
-            let (a, b) = (ch.resolve(p.from, false), ch.resolve(p.to, true));
+            let (Some(a), Some(b)) = (ch.from(p), ch.to(p)) else { continue };
             let lag = (p.lag as usize).max(1);
             let span = (p.span as usize).max(1);
-            depth[a] = depth[a].max(lag + span - 1);
+            depth[a.node] = depth[a.node].max(lag + span - 1);
             if p.repeat {
-                depth[a] = depth[a].max(lag + p.repeat_lag as usize + 1);
-                depth[b] = depth[b].max(p.repeat_lag as usize);
+                depth[a.node] = depth[a.node].max(lag + p.repeat_lag as usize + 1);
+                depth[b.node] = depth[b.node].max(p.repeat_lag as usize);
             }
-            let gate = p.gate.map(|(t, on)| (ch.resolve(t, false), on));
+            let gate = p.gate.and_then(|(t, on)| ch.internal(t).map(|i| (i, on)));
             if let Some((g, _)) = gate {
                 depth[g] = depth[g].max((p.gate_lag as usize).max(1));
             }
-            let pause = p.pause.map(|(t, on)| (ch.resolve(t, false), on));
+            let pause = p.pause.and_then(|(t, on)| ch.internal(t).map(|i| (i, on)));
             let field = 1usize << p.field.min(MAX_WIDTH);
-            edges.push((a, b, EdgeSpec {
+            // what it reads: all of its port or channel (cover), or a field placed inside it
+            let window = if p.cover {
+                if a.whole { None } else { Some((a.off, a.len)) }
+            } else {
+                let at = p.at as usize % a.len.max(1);
+                Some((a.off + at, field.min(a.len - at)))
+            };
+            // where it writes: inside its port (a part of the act), or its channel
+            let place = if p.cover { 0 } else { p.place as usize % b.len.max(1) };
+            edges.push((a.node, b.node, EdgeSpec {
                 input_read_back: lag,
                 op: p.op,
                 kind: if p.wire { EdgeKind::Wire } else { EdgeKind::Kernels },
@@ -278,8 +377,9 @@ impl TagGenome {
                 // births sample across the whole field when it is wider than a word
                 wide: field > 1 && !p.cover,
                 span,
-                window: if p.cover { None } else { Some((p.at as usize, field)) },
-                dst_word: if p.cover { 0 } else { p.place as usize },
+                window,
+                dst_word: b.off + place,
+                dst_len: if b.whole { 0 } else { b.len },
                 repeat: p.repeat,
                 repeat_lag: (p.repeat_lag as usize).max(1),
                 start_kernels: p.count,
@@ -296,7 +396,7 @@ impl TagGenome {
                 fade: p.fade,
                 gate_lag: (p.gate_lag as usize).max(1),
                 salt: p.id,
-                out_words: if p.cover { 0 } else { 1 << p.spread.min(MAX_WIDTH) },
+                out_words: if p.cover { 0 } else { (1usize << p.spread.min(MAX_WIDTH)).min(if b.whole { usize::MAX } else { b.len - place }) as u16 },
                 tile: if p.cover && !p.wire { p.tile.clamp(3, MAX_TILE) } else { 0 },
                 tonic: p.tonic,
                 sparse: p.sparse,
@@ -325,13 +425,16 @@ impl TagGenome {
     pub fn split(&mut self, at: usize, bit: u8) {
         let Some(Token::Pop(p)) = self.tokens.get(at) else { return };
         let ch = Channels::of(&self.tokens);
-        let (old, words) = ch.list[ch.resolve(p.to, true)];
-        let width = words.trailing_zeros() as u8;
+        let Some(b) = ch.to(p) else { return };
+        let width = b.len.max(1).trailing_zeros() as u8;
+        let (old, old_port) = (p.to, p.to_port);
         let new = old ^ (1u8 << (bit & 7));
-        let carry = Pop { field: width, spread: width, ..Pop::wire(self.next_id, new, old) };
+        // the carry copies the whole new channel on to the old destination (inside its port)
+        let carry = Pop { cover: true, from_port: false, to: old, to_port: old_port, ..Pop::wire(self.next_id, new, old) };
         self.next_id += 1;
         if let Token::Pop(p) = &mut self.tokens[at] {
             p.to = new;
+            p.to_port = false;
         }
         self.tokens.insert(at, Token::Channel { tag: new, width, hold: false });
         self.tokens.insert(at + 2, Token::Pop(carry));
@@ -357,10 +460,11 @@ impl TagGenome {
         }
         for (i, t) in self.tokens.iter().enumerate() {
             if let Token::Pop(p) = t {
-                let touches = ch.resolve(p.from, false) == channel
-                    || ch.resolve(p.to, true) == channel
-                    || p.gate.is_some_and(|(g, _)| ch.resolve(g, false) == channel)
-                    || p.pause.is_some_and(|(g, _)| ch.resolve(g, false) == channel);
+                let here = |t: u8| ch.internal(t) == Some(channel);
+                let touches = (!p.from_port && here(p.from))
+                    || (!p.to_port && here(p.to))
+                    || p.gate.is_some_and(|(g, _)| here(g))
+                    || p.pause.is_some_and(|(g, _)| here(g));
                 if touches {
                     out.push(i);
                 }
@@ -380,10 +484,11 @@ impl TagGenome {
                 Token::Channel { width, hold, .. } => Token::Channel { tag: fresh, width: *width, hold: *hold },
                 Token::Pop(p) => {
                     let mut q = p.clone();
-                    if ch.resolve(p.from, false) == channel { q.from = fresh }
-                    if ch.resolve(p.to, true) == channel { q.to = fresh }
-                    if let Some((g, on)) = p.gate { if ch.resolve(g, false) == channel { q.gate = Some((fresh, on)) } }
-                    if let Some((g, on)) = p.pause { if ch.resolve(g, false) == channel { q.pause = Some((fresh, on)) } }
+                    let here = |t: u8| ch.internal(t) == Some(channel);
+                    if !p.from_port && here(p.from) { q.from = fresh }
+                    if !p.to_port && here(p.to) { q.to = fresh }
+                    if let Some((g, on)) = p.gate { if here(g) { q.gate = Some((fresh, on)) } }
+                    if let Some((g, on)) = p.pause { if here(g) { q.pause = Some((fresh, on)) } }
                     q.id = *next_id;
                     *next_id += 1;
                     Token::Pop(q)
@@ -406,18 +511,19 @@ impl TagGenome {
     /// Circuit copy (gene duplication): the circuit around a declared channel, copied whole with
     /// a private channel, appended. With `rewire`, the copy's populations that read from outside
     /// read another channel instead (the same machinery on other data).
-    pub fn copy_circuit(&mut self, channel: usize, rewire: Option<u8>, rng: &mut StdRng) {
+    pub fn copy_circuit(&mut self, channel: usize, rewire: Option<(u8, bool)>, rng: &mut StdRng) {
         let fresh = self.fresh_tag(rng);
         let mut next = self.next_id;
         let mut copy = self.private_circuit(channel, fresh, &mut next);
         if copy.is_empty() {
             return;
         }
-        if let Some(src) = rewire {
+        if let Some((src, port)) = rewire {
             for t in &mut copy {
                 if let Token::Pop(p) = t {
-                    if p.to == fresh && p.from != fresh {
+                    if p.to == fresh && !p.to_port && (p.from != fresh || p.from_port) {
                         p.from = src;
+                        p.from_port = port;
                     }
                 }
             }
@@ -450,9 +556,12 @@ impl TagGenome {
     pub fn self_loop(&mut self, at: usize) {
         let ch = Channels::of(&self.tokens);
         if let Some(Token::Pop(p)) = self.tokens.get_mut(at) {
-            let src = ch.resolve(p.from, false);
-            if src != 0 && src != ch.self_index() {
-                p.to = ch.list[src].0;
+            if p.from_port {
+                return;
+            }
+            if let Some(i) = ch.internal(p.from) {
+                p.to = ch.list[i].0;
+                p.to_port = false;
             }
         }
     }
@@ -463,6 +572,10 @@ impl TagGenome {
         // a new population is born active: some kernels, a random field and fan-in, sometimes
         // tonic, sometimes growing (an inert gene would need several more mutations to matter)
         let mut p = Pop::new(id, rng.r#gen(), rng.r#gen());
+        // reading from outside (a sense or the self channel) or a channel; writing outward (the
+        // act, voice or hand) or a channel
+        p.from_port = rng.gen_bool(0.4);
+        p.to_port = rng.gen_bool(0.4);
         p.wire = rng.gen_bool(0.25);
         p.sparse = rng.gen_bool(0.5);
         // full coverage, at a random scale from a byte to two words
@@ -588,8 +701,11 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
     let dst_words = (e.dst_bits / 64).max(1);
     let from = sp.dst_word % dst_words;
     let span = (sp.out_words as usize).max(1).min(dst_words - from);
+    // the body's moves and tokens inside its port (the hand's, the voice's, or all of them)
+    let (lo, hi) = if sp.dst_len > 0 { (from, from + sp.dst_len) } else { (0, dst_words) };
+    let mine: Vec<&BitVector> = primitives.iter().filter(|p| p.as_words().iter().position(|&x| x != 0).is_some_and(|w| (lo..hi).contains(&w))).collect();
     let motor = |r: &mut StdRng| {
-        let p = primitives.choose(r).unwrap();
+        let p = mine.choose(r).unwrap();
         let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
         (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
     };
@@ -597,23 +713,25 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
         .map(|_| {
             let mut k = if sp.tile > 0 {
                 // full coverage: a random tile, lines inside it, output at the same relative place
-                let bits = src_words * 64;
+                let bits = field * 64;
                 let t = (1usize << sp.tile.min(20)).min(bits);
                 let stride = (t / 2).max(1);
                 let tiles = if t >= bits { 1 } else { (bits - t) / stride + 1 };
                 let start = r.gen_range(0..tiles) * stride;
                 let all: Vec<usize> = (start..start + t).collect();
                 let syn: Vec<usize> = all.choose_multiple(&mut r, (sp.start_syn as usize).min(t)).copied().collect();
-                let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
+                let (out, out_word, op) = if e.to_output && !mine.is_empty() {
                     motor(&mut r)
                 } else {
-                    (sparse(64, sp.start_out as usize, &mut r), (start * dst_words / src_words).min(dst_words - 1), sp.op)
+                    let len = if sp.dst_len > 0 { sp.dst_len.min(dst_words - from) } else { dst_words };
+                    let base = if sp.dst_len > 0 { from } else { 0 };
+                    (sparse(64, sp.start_out as usize, &mut r), base + (start * len / field.max(1)).min(len - 1), sp.op)
                 };
                 let threshold = (sp.start_quarters as usize * syn.len()).div_ceil(4).max(1);
                 SimpleKernel::tile(start, t, &syn, out, out_word, threshold, op)
             } else {
                 let syn = sparse(field * 64, sp.start_syn as usize, &mut r);
-                let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
+                let (out, out_word, op) = if e.to_output && !mine.is_empty() {
                     motor(&mut r)
                 } else {
                     (sparse(64, sp.start_out as usize, &mut r), from + r.gen_range(0..span), sp.op)
@@ -707,8 +825,7 @@ impl Evolvable for TagGenome {
             // a circuit copied whole (gene duplication), half the time reading another channel
             14 if g.channels() > 0 => {
                 let c = rng.gen_range(1..=g.channels());
-                let ch = Channels::of(&g.tokens);
-                let rewire = if rng.gen_bool(0.5) { Some(ch.list[rng.gen_range(0..ch.list.len() - 1)].0) } else { None };
+                let rewire = if rng.gen_bool(0.5) { Some((rng.r#gen(), rng.gen_bool(0.5))) } else { None };
                 g.copy_circuit(c, rewire, rng);
             }
             // a stage split into a population's path, or a population turned back on its source
@@ -729,7 +846,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..36) {
+                    Token::Pop(p) => match rng.gen_range(0..38) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -765,6 +882,8 @@ impl Evolvable for TagGenome {
                         32 => p.tile = step(p.tile, 3, MAX_TILE),
                         33 => p.replicate = step(p.replicate, 0, 7),
                         34 => p.replicate_shift = !p.replicate_shift,
+                        36 => p.from_port = !p.from_port,
+                        37 => p.to_port = !p.to_port,
                         _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                     },
                 }
@@ -801,16 +920,30 @@ mod tests {
     use crate::world::Conditioning;
 
     #[test]
-    fn a_tag_resolves_to_the_nearest_channel() {
+    fn tags_name_channels_and_ports_have_their_own_tags() {
         let ch = Channels::of(&[Token::Channel { tag: 0b1010_0000, width: 0, hold: false }, Token::Channel { tag: 0b0000_0101, width: 1, hold: false }]);
-        assert_eq!(ch.resolve(0b1010_0001, false), 1);
-        assert_eq!(ch.resolve(0b0000_0111, false), 2);
-        assert_eq!(ch.resolve(SENSES, false), 0);
-        // nothing writes the senses: the nearest writable channel instead
-        assert_ne!(ch.resolve(SENSES, true), 0);
-        // the act is last, after the self channel
-        assert_eq!(ch.resolve(ACT, true), 4);
-        assert_eq!(ch.resolve(SELF, false), 3);
+        // an ordinary tag resolves among the declared channels only
+        assert_eq!(ch.internal(0b1010_0001), Some(1));
+        assert_eq!(ch.internal(0b0000_0111), Some(2));
+        // 0x00 is two bits from both channels (ties go to the earlier): just a channel tag here
+        assert_eq!(ch.internal(SENSES), Some(1), "the senses are not in the channels' tag space");
+        assert_eq!(Channels::of(&[]).internal(0x42), None);
+        // ports: each sense, the self channel, and parts of the act, by their own tags
+        let w = world::CH_BITS / 64;
+        assert_eq!(ch.input(SENSES), Place { node: 0, off: 0, len: 4 * w, whole: true });
+        assert_eq!(ch.input(EYE), Place { node: 0, off: world::EYE * w, len: w, whole: false });
+        assert_eq!(ch.input(AFFECT), Place { node: 0, off: world::AFFECT * w, len: w, whole: false });
+        assert_eq!(ch.input(SELF).node, ch.self_index());
+        assert_eq!(ch.output(ACT), Place { node: ch.act_index(), off: 0, len: 2 * w, whole: true });
+        assert_eq!(ch.output(HAND), Place { node: ch.act_index(), off: world::HAND * w, len: w, whole: false });
+        // every input port is reachable from some tag, and so is every output port
+        let mut seen_in = std::collections::HashSet::new();
+        let mut seen_out = std::collections::HashSet::new();
+        for t in 0..=255u8 {
+            seen_in.insert(ch.name(ch.input(t)));
+            seen_out.insert(ch.name(ch.output(t)));
+        }
+        assert_eq!((seen_in.len(), seen_out.len()), (6, 3));
     }
 
     #[test]
@@ -856,9 +989,9 @@ mod tests {
         let g = TagGenome::context_seed();
         let ch = Channels::of(&g.tokens);
         for p in g.pops() {
-            let (a, b) = (ch.resolve(p.from, false), ch.resolve(p.to, true));
-            assert_eq!(ch.list[a].0, p.from);
-            assert_eq!(ch.list[b].0, p.to);
+            let (a, b) = (ch.from(p).unwrap(), ch.to(p).unwrap());
+            assert_eq!(ch.list[a.node].0, p.from);
+            assert_eq!(ch.list[b.node].0, p.to);
         }
         let _ = live(&g, Task::Conditioning(Conditioning::Reversal, 8), Physics::Varied, 1);
     }
@@ -874,7 +1007,7 @@ mod tests {
         let Token::Pop(p) = &g.tokens[3] else { panic!() };
         assert_eq!((p.from, p.to), (a, 0xF1));
         let Token::Pop(w) = &g.tokens[4] else { panic!() };
-        assert!(w.wire && w.from == 0xF1 && w.to == b && w.field == 5);
+        assert!(w.wire && w.from == 0xF1 && w.to == b && w.cover && !w.from_port && !w.to_port);
         assert_eq!(g.graph().edge_count(), 2);
         g.self_loop(3);
         let Token::Pop(p) = &g.tokens[3] else { panic!() };
@@ -948,7 +1081,7 @@ mod tests {
         let (f, _, silent) = fitness_detail(&empty, task, Physics::Varied, &[1, 2, 3]);
         assert_eq!((f, silent), (observe::SILENT, 3));
         // a tonic population on the act clicks in some lifetimes: no death, silent ones count 0
-        let babble = TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic: 1, ..Pop::new(1, ACT, ACT) })], next_id: 2 };
+        let babble = TagGenome { tokens: vec![Token::Pop(Pop { count: 8, tonic: 1, ..Pop::new(1, SELF, ACT) })], next_id: 2 };
         let (f, _, silent) = fitness_detail(&babble, task, Physics::Varied, &[1, 2, 3, 4, 5, 6, 7, 8]);
         assert!(silent < 8 && f > -1024, "{f} {silent}");
     }
@@ -984,8 +1117,8 @@ mod tests {
         let busy = Pop { count: 4, ..Pop::new(2, SENSES, ACT) };
         let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 2, hold: false }, Token::Pop(look), Token::Pop(busy)], next_id: 3 };
         let ch = Channels::of(&g.tokens);
-        assert_eq!(ch.resolve(SELF, false), ch.self_index());
-        assert_ne!(ch.resolve(SELF, true), ch.self_index(), "nothing writes the self channel");
+        assert_eq!(ch.input(SELF).node, ch.self_index());
+        assert!((0..=255u8).all(|t| ch.output(t).node != ch.self_index()), "nothing writes the self channel");
         let mut net = g.build(&World::new(1, 4), 1);
         for _ in 0..6 {
             net.tick(crate::bitvec::bithistory::AdvanceMode::Clear, 0);
@@ -1043,6 +1176,32 @@ mod tests {
         };
         let (plain, copied) = (run(0), run(2));
         assert!(copied > plain, "{plain} -> {copied}");
+    }
+
+    #[test]
+    fn a_port_reads_one_sense_and_writes_one_effector() {
+        // C gets the eye only (a covering wire from the eye port); the hand gets C (a covering wire
+        // into the hand port); the voice is never touched
+        let c = 0x3C;
+        let see = Pop { cover: true, from: EYE, from_port: true, ..Pop::wire(1, EYE, c) };
+        let act = Pop { cover: true, to: HAND, to_port: true, ..Pop::wire(2, c, HAND) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Pop(see), Token::Pop(act)], next_id: 3 };
+        let mut net = g.build(&World::new(1, 4), 1);
+        let w = world::CH_BITS / 64;
+        let mut senses = vec![u64::MAX; world::SENSE_BITS / 64];
+        for x in &mut senses[world::EYE * w..(world::EYE + 1) * w] {
+            *x = 0;
+        }
+        senses[world::EYE * w] = 0b1011;
+        for _ in 0..3 {
+            net.tick(crate::bitvec::bithistory::AdvanceMode::Clear, 0);
+            net.write_input(&BitVector::from_words(senses.clone()), 0);
+        }
+        // C holds the eye's word (nothing from the other senses, which were all on)
+        assert_eq!(net.read_node(1).count_ones(), 3);
+        let a = net.read_output().as_words().to_vec();
+        assert_eq!(a[world::HAND * w], 0b1011);
+        assert!(a[world::VOICE * w..(world::VOICE + 1) * w].iter().all(|&x| x == 0));
     }
 
     #[test]

@@ -37,11 +37,14 @@ pub struct SimpleKernel {
     pub confirmed: u8,
     /// steps since it last fired (saturating)
     pub age: u8,
+    /// activity: 0, it fires only when its input matches (responsive); k > 0, it also fires
+    /// spontaneously with chance 2^-k a step (tonic), writing its output without learning
+    pub tonic: u8,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0 }
     }
 
     /// A two-mask kernel: `care` lines, expecting `pattern` on them.
@@ -113,6 +116,7 @@ impl SimpleKernel {
             confirm_mask: None,
             confirmed: 0,
             age: u8::MAX,
+            tonic: 0,
         }
     }
 
@@ -260,6 +264,12 @@ impl KernelTrait for SimpleKernel {
     ) -> bool {
         let stats = self.input_stats(ctx);
         if stats.count < stats.threshold {
+            // tonic: a spontaneous firing (no input, so nothing to learn)
+            if self.tonic > 0 && rng.gen_range(0..1u32 << self.tonic.min(31)) == 0 && !self.is_inhibited(ctx, &stats) {
+                self.apply_output(out);
+                self.age = 0;
+                return true;
+            }
             if self.search {
                 if stats.count > 0 && 2 * stats.count >= stats.threshold {
                     self.strengthen(ctx, &stats, rng);

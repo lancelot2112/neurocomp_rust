@@ -1,0 +1,476 @@
+//! A tag-addressed grammar: the genome is a string of tokens, and every string builds a network.
+//!
+//! - `Channel { tag, width }`: a bit vector of 2^width words.
+//! - `Pop { from, to, .. }`: a population of kernels (or a wire) reading the channel whose tag is
+//!   nearest `from` and writing the one nearest `to`, with every property inline.
+//!
+//! The senses and the act are channels that always exist (tags `SENSES` and `ACT`). A tag always
+//! resolves to the nearest channel (Hamming distance; ties to the earlier one), so there are no
+//! dangling references: inserting, deleting, moving or copying any part of the string still makes a
+//! network. Wiring changes gradually (a flipped tag bit may move a population to a neighbouring
+//! channel, or change nothing), and dead ends (channels nobody reads) are kept as raw material.
+//!
+//! Two density knobs per population:
+//! - **connectivity**: `fan_in` lines per kernel, drawn from its `field` (2^field source words, from
+//!   word `at`);
+//! - **activity**: `tonic` 0 fires only on a match (responsive); k > 0 also fires spontaneously with
+//!   chance 2^-k a step (tonic: babbling is a tonic population on the act).
+
+use petgraph::graph::Graph;
+use petgraph::Directed;
+use rand::rngs::StdRng;
+use rand::seq::SliceRandom;
+use rand::{Rng, SeedableRng};
+
+use crate::bitvec::BitVector;
+use crate::kernel::{KernelClass, KernelGroup, KernelOp, SimpleKernel};
+use crate::program::graph::{EdgeKind, EdgeSpec, NodeSpec};
+use crate::program::neurocomp::{EdgeInfo, RuntimeNetwork};
+use crate::world::{self, World};
+
+use super::Evolvable;
+
+/// The senses' tag.
+pub const SENSES: u8 = 0x00;
+/// The act's tag.
+pub const ACT: u8 = 0xFF;
+
+/// A population: kernels (or a wire) from one channel to another, with all its properties.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pop {
+    /// a permanent id: keys its random stream (a copy gets a new one)
+    pub id: u32,
+    pub from: u8,
+    pub to: u8,
+    /// a wire copies what it reads (no kernels)
+    pub wire: bool,
+    pub op: KernelOp,
+    /// frames back it reads, and how many frames it ORs together
+    pub lag: u8,
+    pub span: u8,
+    /// its field: 2^field source words from word `at` (wrapping)
+    pub at: u8,
+    pub field: u8,
+    /// where it writes: from destination word `place` (wrapping), over 2^spread words
+    pub place: u8,
+    pub spread: u8,
+    /// starting kernels; lines each reads (fan-in) and writes (fan-out); threshold in quarters
+    pub count: u8,
+    pub fan_in: u8,
+    pub fan_out: u8,
+    pub quarters: u8,
+    /// activity: 0 responsive; k > 0 tonic, firing spontaneously with chance 2^-k
+    pub tonic: u8,
+    /// its kernels do not hold each other down
+    pub share: bool,
+    /// births where its destination is left uncovered; with a fresh code into an empty one
+    pub grow: bool,
+    pub new_code: bool,
+    /// births repeating the act `repeat_lag` frames back, read on what came before it
+    pub repeat: bool,
+    pub repeat_lag: u8,
+    /// learns only while the channel nearest this tag had lines on (true) or none, `gate_lag` back
+    pub gate: Option<(u8, bool)>,
+    pub gate_lag: u8,
+    /// births: synapses, threshold quarters, fewest and most output lines, cap; fresh code size
+    pub birth_syn: u8,
+    pub birth_quarters: u8,
+    pub out_min: u8,
+    pub out_max: u8,
+    pub cap: u16,
+    pub code_lines: u8,
+    /// output learning chance 2^-out_learn; extinction chance 2^-fade
+    pub out_learn: u8,
+    pub fade: u8,
+    /// a wire's rotation, in bits
+    pub rotate: u16,
+}
+
+impl Pop {
+    /// A population with the grammar's starting values.
+    pub fn new(id: u32, from: u8, to: u8) -> Self {
+        let p = EdgeSpec::plain();
+        Self {
+            id, from, to, wire: false, op: KernelOp::Or, lag: 1, span: 1, at: 0, field: 0, place: 0, spread: 0,
+            count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
+            grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
+            birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0,
+        }
+    }
+
+    pub fn wire(id: u32, from: u8, to: u8) -> Self {
+        Self { wire: true, ..Self::new(id, from, to) }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Token {
+    /// a channel: 2^width words
+    Channel { tag: u8, width: u8 },
+    Pop(Pop),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TagGenome {
+    pub tokens: Vec<Token>,
+    pub next_id: u32,
+}
+
+const OPS: [KernelOp; 4] = [KernelOp::Or, KernelOp::And, KernelOp::Xor, KernelOp::Clear];
+
+/// What the string's channels resolve to.
+struct Channels {
+    /// (tag, words), the senses first and the act last
+    list: Vec<(u8, usize)>,
+}
+
+impl Channels {
+    fn of(tokens: &[Token]) -> Self {
+        let mut list = vec![(SENSES, world::SENSE_BITS / 64)];
+        for t in tokens {
+            if let Token::Channel { tag, width } = t {
+                list.push((*tag, 1usize << (*width).min(6)));
+            }
+        }
+        list.push((ACT, world::ACT_BITS / 64));
+        Self { list }
+    }
+
+    /// The channel nearest a tag (ties: the earlier); `writable` skips the senses.
+    fn resolve(&self, tag: u8, writable: bool) -> usize {
+        (0..self.list.len())
+            .filter(|&i| !(writable && i == 0))
+            .min_by_key(|&i| ((self.list[i].0 ^ tag).count_ones(), i))
+            .unwrap()
+    }
+}
+
+fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
+    let all: Vec<usize> = (0..bits).collect();
+    BitVector::from_bits(&all.choose_multiple(rng, k.min(bits)).copied().collect::<Vec<_>>(), bits)
+}
+
+impl TagGenome {
+    fn pops(&self) -> impl Iterator<Item = &Pop> {
+        self.tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p) } else { None })
+    }
+
+    /// The runtime graph: one node per channel (senses first, act last), one edge per population.
+    pub fn graph(&self) -> Graph<NodeSpec, EdgeSpec, Directed> {
+        let ch = Channels::of(&self.tokens);
+        let n = ch.list.len();
+        // history depth: the deepest frame read from each channel
+        let mut depth = vec![1usize; n];
+        let mut edges: Vec<(usize, usize, EdgeSpec)> = Vec::new();
+        for p in self.pops() {
+            let (a, b) = (ch.resolve(p.from, false), ch.resolve(p.to, true));
+            let lag = (p.lag as usize).max(1);
+            let span = (p.span as usize).max(1);
+            depth[a] = depth[a].max(lag + span - 1);
+            if p.repeat {
+                depth[a] = depth[a].max(lag + p.repeat_lag as usize + 1);
+                depth[b] = depth[b].max(p.repeat_lag as usize);
+            }
+            let gate = p.gate.map(|(t, on)| (ch.resolve(t, false), on));
+            if let Some((g, _)) = gate {
+                depth[g] = depth[g].max((p.gate_lag as usize).max(1));
+            }
+            let field = 1usize << p.field.min(6);
+            edges.push((a, b, EdgeSpec {
+                input_read_back: lag,
+                op: p.op,
+                kind: if p.wire { EdgeKind::Wire } else { EdgeKind::Kernels },
+                rotate: p.rotate,
+                grow: p.grow,
+                inhibit: !p.share,
+                gate,
+                new_code: p.new_code,
+                // births sample across the whole field when it is wider than a word
+                wide: field > 1,
+                span,
+                window: Some((p.at as usize, field)),
+                dst_word: p.place as usize,
+                repeat: p.repeat,
+                repeat_lag: (p.repeat_lag as usize).max(1),
+                start_kernels: p.count,
+                start_syn: p.fan_in,
+                start_quarters: p.quarters,
+                start_out: p.fan_out,
+                birth_syn: p.birth_syn,
+                birth_quarters: p.birth_quarters,
+                out_min: p.out_min,
+                out_max: p.out_max,
+                cap: p.cap,
+                code_lines: p.code_lines,
+                out_learn: p.out_learn,
+                fade: p.fade,
+                gate_lag: (p.gate_lag as usize).max(1),
+                salt: p.id,
+                out_words: 1 << p.spread.min(6),
+                tonic: p.tonic,
+                ..EdgeSpec::plain()
+            }));
+        }
+        let mut g: Graph<NodeSpec, EdgeSpec, Directed> = Graph::new();
+        let idx: Vec<_> = (0..n)
+            .map(|i| {
+                let name = if i == 0 { Some("input".to_string()) } else if i == n - 1 { Some("output".to_string()) } else { None };
+                g.add_node(NodeSpec { name, bits: ch.list[i].1 * 64, history_depth: depth[i], noise: 0 })
+            })
+            .collect();
+        for (a, b, spec) in edges {
+            g.add_edge(idx[a], idx[b], spec);
+        }
+        g
+    }
+
+    fn random_pop(&mut self, rng: &mut StdRng) -> Pop {
+        let id = self.next_id;
+        self.next_id += 1;
+        let mut p = Pop::new(id, rng.r#gen(), rng.r#gen());
+        p.wire = rng.gen_bool(0.3);
+        p.op = *OPS.choose(rng).unwrap();
+        p.count = rng.gen_range(0..4);
+        p.field = rng.gen_range(0..4);
+        p.at = rng.r#gen();
+        p
+    }
+
+    /// The act path (experiment 06 starting point): a tonic population babbling into the act, and
+    /// a growing population repeating acts a stroke followed, on what the eye saw before them.
+    pub fn act_seed() -> Self {
+        let ch = (world::CH_BITS / 64) as u8;
+        let (eye, aff) = (0x0F, 0xF0);
+        let mut t = vec![Token::Channel { tag: eye, width: 3 }, Token::Channel { tag: aff, width: 3 }];
+        let mut w = Pop::wire(1, SENSES, eye);
+        w.at = world::EYE as u8 * ch;
+        w.field = 3;
+        t.push(Token::Pop(w));
+        let mut w = Pop::wire(2, SENSES, aff);
+        w.at = world::AFFECT as u8 * ch;
+        w.field = 3;
+        t.push(Token::Pop(w));
+        let mut b = Pop::new(3, eye, ACT);
+        b.count = 8;
+        b.tonic = 3;
+        t.push(Token::Pop(b));
+        let mut r = Pop::new(4, eye, ACT);
+        r.field = 3;
+        r.grow = true;
+        r.repeat = true;
+        r.repeat_lag = 4;
+        r.gate = Some((aff, true));
+        t.push(Token::Pop(r));
+        Self { tokens: t, next_id: 5 }
+    }
+
+    /// A bare start: one tonic population on the act, nothing else.
+    pub fn bare_seed() -> Self {
+        let mut b = Pop::new(1, SENSES, ACT);
+        b.count = 8;
+        b.tonic = 3;
+        Self { tokens: vec![Token::Pop(b)], next_id: 2 }
+    }
+}
+
+/// A population's starting kernels, from its own properties and its own random stream: each reads
+/// `fan_in` lines across the field (the window) and writes `fan_out` lines in one word of its
+/// spread (into the act: one of the body's motor primitives); tonic ones also fire spontaneously.
+pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
+    let sp = e.spec;
+    let mut r = StdRng::seed_from_u64((sp.salt as u64 + 1).wrapping_mul(0x2545_F491_4F6C_DD1D));
+    let src_words = (e.src_bits / 64).max(1);
+    let field = sp.window.map_or(src_words, |(o, n)| { let o = o % src_words; n.max(1).min(src_words - o) });
+    let dst_words = (e.dst_bits / 64).max(1);
+    let from = sp.dst_word % dst_words;
+    let span = (sp.out_words as usize).max(1).min(dst_words - from);
+    let kernels = (0..sp.start_kernels)
+        .map(|_| {
+            let syn = sparse(field * 64, sp.start_syn as usize, &mut r);
+            let (out, out_word, op) = if e.to_output && !primitives.is_empty() {
+                let p = primitives.choose(&mut r).unwrap();
+                let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
+                (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
+            } else {
+                (sparse(64, sp.start_out as usize, &mut r), from + r.gen_range(0..span), sp.op)
+            };
+            let threshold = (sp.start_quarters as usize * syn.count_ones()).div_ceil(4).max(1);
+            let mut k = SimpleKernel::new(syn, 0, out, out_word, threshold, op);
+            k.tonic = sp.tonic;
+            k
+        })
+        .collect();
+    KernelGroup::from_classes(vec![KernelClass::with_kernels(kernels)])
+}
+
+impl Evolvable for TagGenome {
+    fn build(&self, w: &World, seed: u64) -> RuntimeNetwork {
+        let g = self.graph();
+        let body = w.body();
+        let primitives: Vec<BitVector> = (0..body.voice.len())
+            .map(|i| w.act(Some(i), None))
+            .chain((0..body.hand.len()).map(|i| w.act(None, Some(i))))
+            .collect();
+        RuntimeNetwork::from_graph_with(&g, world::SENSE_BITS, world::ACT_BITS, seed, |e: &EdgeInfo| start_kernels(e, &primitives))
+    }
+
+    fn mutate(&self, rng: &mut StdRng) -> Self {
+        let mut g = self.clone();
+        let n = g.tokens.len();
+        match rng.gen_range(0..12) {
+            // a new token
+            0 => {
+                let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..4) } } else { Token::Pop(g.random_pop(rng)) };
+                let at = rng.gen_range(0..=n);
+                g.tokens.insert(at, t);
+            }
+            // a token removed
+            1 if n > 0 => {
+                let at = rng.gen_range(0..n);
+                g.tokens.remove(at);
+            }
+            // a segment copied elsewhere; sometimes privately (channels declared inside get fresh
+            // tags, and the copy's references to them follow, so its inner wiring is its own)
+            2 | 3 if n > 0 => {
+                let a = rng.gen_range(0..n);
+                let len = rng.gen_range(1..=4.min(n - a));
+                let mut seg: Vec<Token> = g.tokens[a..a + len].to_vec();
+                if rng.gen_bool(0.5) {
+                    let mut map: Vec<(u8, u8)> = Vec::new();
+                    for t in &mut seg {
+                        if let Token::Channel { tag, .. } = t {
+                            let new: u8 = rng.r#gen();
+                            map.push((*tag, new));
+                            *tag = new;
+                        }
+                    }
+                    for t in &mut seg {
+                        if let Token::Pop(p) = t {
+                            for (old, new) in &map {
+                                if p.from == *old { p.from = *new }
+                                if p.to == *old { p.to = *new }
+                                if let Some((gt, on)) = p.gate { if gt == *old { p.gate = Some((*new, on)) } }
+                            }
+                        }
+                    }
+                }
+                for t in &mut seg {
+                    if let Token::Pop(p) = t {
+                        p.id = g.next_id;
+                        g.next_id += 1;
+                    }
+                }
+                let at = rng.gen_range(0..=n);
+                for (k, t) in seg.into_iter().enumerate() {
+                    g.tokens.insert(at + k, t);
+                }
+            }
+            // a segment moved
+            4 if n > 1 => {
+                let a = rng.gen_range(0..n);
+                let len = rng.gen_range(1..=4.min(n - a));
+                let seg: Vec<Token> = g.tokens.drain(a..a + len).collect();
+                let at = rng.gen_range(0..=g.tokens.len());
+                for (k, t) in seg.into_iter().enumerate() {
+                    g.tokens.insert(at + k, t);
+                }
+            }
+            // one property of one token
+            _ if n > 0 => {
+                let at = rng.gen_range(0..n);
+                let up = rng.gen_bool(0.5);
+                let step = |v: u8, lo: u8, hi: u8| if up { v.saturating_add(1).min(hi) } else { v.saturating_sub(1).max(lo) };
+                let bit = 1u8 << rng.gen_range(0..8);
+                match &mut g.tokens[at] {
+                    Token::Channel { tag, width } => {
+                        if rng.gen_bool(0.5) { *tag ^= bit } else { *width = step(*width, 0, 6) }
+                    }
+                    Token::Pop(p) => match rng.gen_range(0..30) {
+                        0 => p.from ^= bit,
+                        1 => p.to ^= bit,
+                        2 => p.wire = !p.wire,
+                        3 => p.op = *OPS.choose(rng).unwrap(),
+                        4 => p.lag = step(p.lag, 1, 8),
+                        5 => p.span = if up { (p.span * 2).min(64) } else { (p.span / 2).max(1) },
+                        6 => p.at = if up { p.at.wrapping_add(1) } else { p.at.wrapping_sub(1) },
+                        7 => p.field = step(p.field, 0, 6),
+                        8 => p.place = if up { p.place.wrapping_add(1) } else { p.place.wrapping_sub(1) },
+                        9 => p.spread = step(p.spread, 0, 6),
+                        10 => p.count = step(p.count, 0, 32),
+                        11 => p.fan_in = step(p.fan_in, 1, 64),
+                        12 => p.fan_out = step(p.fan_out, 1, 64),
+                        13 => p.quarters = step(p.quarters, 1, 4),
+                        14 => p.tonic = step(p.tonic, 0, 12),
+                        15 => p.share = !p.share,
+                        16 => p.grow = !p.grow,
+                        17 => p.new_code = !p.new_code,
+                        18 => p.repeat = !p.repeat,
+                        19 => p.repeat_lag = step(p.repeat_lag, 1, 8),
+                        20 => p.gate = match p.gate { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
+                        21 => p.gate_lag = step(p.gate_lag, 1, 8),
+                        22 => p.birth_syn = step(p.birth_syn, 1, 64),
+                        23 => p.birth_quarters = step(p.birth_quarters, 1, 4),
+                        24 => p.out_min = step(p.out_min, 1, 64),
+                        25 => p.out_max = step(p.out_max, 1, 64),
+                        26 => p.code_lines = step(p.code_lines, 1, 64),
+                        27 => p.out_learn = step(p.out_learn, 0, 8),
+                        28 => p.fade = step(p.fade, 0, 8),
+                        _ => p.rotate = if up { p.rotate.wrapping_add(61) } else { p.rotate.wrapping_sub(61) },
+                    },
+                }
+            }
+            _ => g.tokens.push(Token::Pop(g.clone().random_pop(rng))),
+        }
+        g
+    }
+
+    fn size(&self) -> usize {
+        self.tokens.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evolve::{live, Physics, Task};
+    use crate::world::Conditioning;
+
+    #[test]
+    fn a_tag_resolves_to_the_nearest_channel() {
+        let ch = Channels::of(&[Token::Channel { tag: 0b1010_0000, width: 0 }, Token::Channel { tag: 0b0000_0101, width: 1 }]);
+        assert_eq!(ch.resolve(0b1010_0001, false), 1);
+        assert_eq!(ch.resolve(0b0000_0111, false), 2);
+        assert_eq!(ch.resolve(SENSES, false), 0);
+        // nothing writes the senses: the nearest writable channel instead
+        assert_ne!(ch.resolve(SENSES, true), 0);
+        assert_eq!(ch.resolve(ACT, true), 3);
+    }
+
+    #[test]
+    fn any_string_builds_a_network_that_lives() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let mut g = TagGenome::act_seed();
+        for i in 0..400u64 {
+            g = g.mutate(&mut rng);
+            let _ = g.graph();
+            if i % 20 == 0 {
+                let _ = live(&g, Task::Conditioning(Conditioning::Reversal, 6), Physics::Varied, i);
+            }
+        }
+        // and an empty string is a network too
+        let _ = live(&TagGenome { tokens: vec![], next_id: 0 }, Task::Conditioning(Conditioning::Reversal, 4), Physics::Varied, 1);
+    }
+
+    #[test]
+    fn a_tonic_population_babbles_and_a_responsive_one_does_not() {
+        let t = Task::Conditioning(Conditioning::Instrumental, 30);
+        let mut g = TagGenome::bare_seed();
+        let acts = |g: &TagGenome| live(g, t, Physics::Varied, 3).iter().filter(|e| e.moved.is_some() || e.said.is_some()).count();
+        assert!(acts(&g) > 0);
+        if let Token::Pop(p) = &mut g.tokens[0] {
+            p.tonic = 0;
+        }
+        assert_eq!(acts(&g), 0);
+    }
+}

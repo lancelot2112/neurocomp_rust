@@ -62,6 +62,7 @@ pub const INSTRUCTIONS: [GraphInstruction; 31] = [
 ];
 
 pub mod genes;
+pub mod tags;
 
 /// What evolution works on: something that builds a network for a world and mutates locally.
 pub trait Evolvable: Clone + Send + Sync {

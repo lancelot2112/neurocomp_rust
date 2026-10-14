@@ -167,6 +167,8 @@ pub struct EdgeSpec {
     pub out_words: u8,
     /// a noise edge's random lines a step
     pub noise: u16,
+    /// its starting kernels' activity: 0 responsive; k > 0 tonic (chance 2^-k a step)
+    pub tonic: u8,
 }
 
 impl EdgeSpec {
@@ -205,6 +207,7 @@ impl EdgeSpec {
             salt: 0,
             out_words: 0,
             noise: 0,
+            tonic: 0,
         }
     }
 }

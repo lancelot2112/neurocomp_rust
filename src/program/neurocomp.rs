@@ -11,6 +11,7 @@ use crate::program::graph::{EdgeKind, EdgeSpec, GraphProgram, NodeSpec, ProgramD
 use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
+use rand::Rng;
 
 /// A runnable network: node histories plus per-edge kernel groups.
 /// For now, each edge also carries a simple default kernel used for execution
@@ -22,6 +23,10 @@ pub struct RuntimeNetwork {
     pub rng: StdRng,
     /// how kernels are born on growing edges
     pub births: Births,
+    /// the act node
+    pub output: usize,
+    /// spontaneous lines per step, per node
+    pub noise: Vec<usize>,
 }
 
 /// How a kernel is born on a growing edge. It reads one word: the source word with the most
@@ -85,6 +90,7 @@ pub struct EdgeInfo<'a> {
 pub struct RuntimeEdgeTarget {
     pub idx: usize, // target node index
     pub read_back: usize, // how many frames back to read from
+    pub span: usize,      // frames read (ORed), from read_back back
 }
 pub struct RuntimeEdgeGroup {
     pub src: RuntimeEdgeTarget,
@@ -96,6 +102,19 @@ pub struct RuntimeEdgeGroup {
     pub grow: bool,
     /// kernels hold each other down where their masks overlap
     pub inhibit: bool,
+    /// it learns only while this node had lines on (true) or none (false) a frame ago
+    pub gate: Option<(usize, bool)>,
+    /// births into an empty destination write a fresh random code
+    pub new_code: bool,
+    /// births sample synapses across the whole source
+    pub wide: bool,
+    /// read only these source words
+    pub window: Option<(usize, usize)>,
+    /// a wire lands its copy from this destination word
+    pub dst_word: usize,
+    /// births write what the destination held a frame ago
+    pub repeat: bool,
+    pub repeat_lag: usize,
     /// births are allowed (not on edges into the act node, whose kernels write the body's
     /// primitives)
     pub can_grow: bool,
@@ -146,6 +165,7 @@ impl RuntimeNetwork {
                 src: RuntimeEdgeTarget {
                     idx: src,
                     read_back: es.input_read_back,
+                    span: es.span.max(1),
                 },
                 dst,
                 group: KernelGroup::default(), // placeholder; later: pick group per edge
@@ -154,11 +174,20 @@ impl RuntimeNetwork {
                 rotate: es.rotate,
                 grow: es.grow,
                 inhibit: es.inhibit,
+                gate: es.gate,
+                new_code: es.new_code,
+                wide: es.wide,
+                window: es.window,
+                dst_word: es.dst_word,
+                repeat: es.repeat,
+                repeat_lag: es.repeat_lag,
                 can_grow: true,
             });
         }
 
-        Self { nodes, edges, rng: StdRng::seed_from_u64(0), births: Births::default() }
+        let output = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("output")).map_or(g.node_count() - 1, |n| n.index());
+        let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
+        Self { nodes, edges, rng: StdRng::seed_from_u64(0), births: Births::default(), output, noise }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -168,7 +197,8 @@ impl RuntimeNetwork {
     where
         F: FnMut(&EdgeInfo) -> KernelGroup,
     {
-        let last = g.node_count() - 1;
+        // the act node: the one named "output" (else the last)
+        let last = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("output")).map_or(g.node_count() - 1, |n| n.index());
         let bits_of = |i: usize| if i == 0 { in_bits } else if i == last { out_bits } else { g.node_weight(NodeIndex::new(i)).unwrap().bits };
         let mut nodes: Vec<BitVecHistory> = Vec::with_capacity(g.node_count());
         for ni in g.node_indices() {
@@ -181,7 +211,7 @@ impl RuntimeNetwork {
             let (src, dst) = (e.source().index(), e.target().index());
             let info = EdgeInfo { index, src, dst, src_bits: bits_of(src), dst_bits: bits_of(dst), to_output: dst == last, spec: e.weight() };
             edges.push(RuntimeEdgeGroup {
-                src: RuntimeEdgeTarget { idx: src, read_back: e.weight().input_read_back.max(1) },
+                src: RuntimeEdgeTarget { idx: src, read_back: e.weight().input_read_back.max(1), span: e.weight().span.max(1) },
                 dst,
                 group: factory(&info),
                 kind: e.weight().kind,
@@ -189,10 +219,18 @@ impl RuntimeNetwork {
                 rotate: e.weight().rotate,
                 grow: e.weight().grow,
                 inhibit: e.weight().inhibit,
-                can_grow: dst != last,
+                gate: e.weight().gate,
+                new_code: e.weight().new_code,
+                wide: e.weight().wide,
+                window: e.weight().window,
+                dst_word: e.weight().dst_word,
+                repeat: e.weight().repeat,
+                repeat_lag: e.weight().repeat_lag.max(1),
+                can_grow: dst != last || e.weight().repeat,
             });
         }
-        Self { nodes, edges, rng: StdRng::seed_from_u64(seed), births: Births::default() }
+        let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
+        Self { nodes, edges, rng: StdRng::seed_from_u64(seed), births: Births::default(), output: last, noise }
     }
 
     /// Advance histories and process all edges once.
@@ -204,7 +242,15 @@ impl RuntimeNetwork {
 
         // Execute edges, writes in phase order (set, keep, toggle/clear); each edge reads its
         // source as it was `read_back` frames ago
-        let Self { nodes, edges, rng, births } = self;
+        let Self { nodes, edges, rng, births, noise, .. } = self;
+        // spontaneous activity: random lines on, in the nodes that have it
+        for (i, &k) in noise.iter().enumerate() {
+            let bits = nodes[i].current().bit_len();
+            for _ in 0..k {
+                let b = rng.gen_range(0..bits.max(1));
+                nodes[i].current_mut().bit_set(b);
+            }
+        }
         let mut fired: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
         let mut seen: Vec<Option<BitVector>> = vec![None; edges.len()];
         for phase in 0..3u8 {
@@ -213,6 +259,17 @@ impl RuntimeNetwork {
                     continue;
                 }
                 let mut src_view = nodes[eg.src.idx].snapshot(eg.src.read_back);
+                for f in 1..eg.src.span {
+                    let older = nodes[eg.src.idx].get_frame(eg.src.read_back + f).clone();
+                    for (a, b) in src_view.as_words_mut().iter_mut().zip(older.as_words()) {
+                        *a |= b;
+                    }
+                }
+                if let Some((off, n)) = eg.window {
+                    let w = src_view.as_words();
+                    let end = (off + n).min(w.len());
+                    src_view = BitVector::from_words(w[off.min(end)..end].to_vec());
+                }
                 let dst_curr = nodes[eg.dst].current_mut();
                 match eg.kind {
                     EdgeKind::Wire => {
@@ -224,7 +281,7 @@ impl RuntimeNetwork {
                         let dw = dst_curr.word_len();
                         let mut t = vec![0u64; dw];
                         for (j, w) in src_view.as_words().iter().enumerate() {
-                            t[j % dw] |= w;
+                            t[(j + eg.dst_word) % dw] |= w;
                         }
                         apply(dst_curr.as_words_mut(), &t, eg.op);
                     }
@@ -242,6 +299,40 @@ impl RuntimeNetwork {
                 continue;
             }
             let dest = nodes[eg.dst].current().clone();
+            // kernels count the steps since they fired
+            if let Some(class) = eg.group.classes_mut().first_mut() {
+                for k in class.kernels_mut() {
+                    if !fired[i].is_empty() || k.age < u8::MAX {
+                        k.age = k.age.saturating_add(1);
+                    }
+                }
+                for &k in &fired[i] {
+                    class.kernels_mut()[k].age = 0;
+                }
+            }
+            // a gate: it learns only while the gate node had lines on (or none) a frame ago
+            if let Some((g, on)) = eg.gate {
+                let open = (nodes[g].get_frame(1).count_ones() > 0) == on;
+                // extinction on a repeat edge: a kernel that acted `repeat_lag` steps ago, with
+                // the gate still shut, fades (chance 1/4)
+                if !open && eg.repeat {
+                    let then = nodes[eg.src.idx].get_frame(eg.src.read_back + eg.repeat_lag).clone();
+                    let then = match eg.window {
+                        Some((off, n)) => { let w = then.as_words(); let end = (off + n).min(w.len()); BitVector::from_words(w[off.min(end)..end].to_vec()) }
+                        None => then,
+                    };
+                    if let Some(class) = eg.group.classes_mut().first_mut() {
+                        for k in class.kernels_mut() {
+                            if k.age as usize == eg.repeat_lag && rng.gen_range(0..4) == 0 {
+                                k.fade(&then, rng);
+                            }
+                        }
+                    }
+                }
+                if !open {
+                    continue;
+                }
+            }
             let Some(class) = eg.group.classes_mut().first_mut() else { continue };
             if matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
                 for &k in &fired[i] {
@@ -251,26 +342,77 @@ impl RuntimeNetwork {
             if !(eg.grow && eg.can_grow) || class.len() >= births.cap {
                 continue;
             }
-            let mut uncovered = dest.clone();
-            for &k in &fired[i] {
-                let out = &class.kernels()[k].output_mask;
-                uncovered.mask_mut(class.kernels()[k].output_idx, out, |a, m| a & !m);
-            }
-            // one word each side: the source word with the most active lines (the new kernel's
-            // window) and the destination word with the most uncovered lines (what it writes)
-            let src = seen[i].as_ref().unwrap();
-            let (sw, sn) = busiest_word(src.as_words());
-            let (dw, dn) = busiest_word(uncovered.as_words());
-            if (dn as usize) < births.out_min || sn == 0 {
-                continue;
-            }
+            // a repeat birth reads its source as it was when the repeated act was made
+            let older;
+            let src = if eg.repeat && eg.repeat_lag > 1 {
+                let mut v = nodes[eg.src.idx].get_frame(eg.src.read_back + eg.repeat_lag).clone();
+                if let Some((off, n)) = eg.window {
+                    let w = v.as_words();
+                    let end = (off + n).min(w.len());
+                    v = BitVector::from_words(w[off.min(end)..end].to_vec());
+                }
+                older = v;
+                &older
+            } else {
+                seen[i].as_ref().unwrap()
+            };
             let ones = |w: u64| -> Vec<usize> { (0..64).filter(|b| w >> b & 1 == 1).collect() };
-            let active = ones(src.as_words()[sw]);
-            let lines = ones(uncovered.as_words()[dw]);
-            let syn: Vec<usize> = active.choose_multiple(rng, births.syn.min(active.len())).copied().collect();
-            let out: Vec<usize> = lines.choose_multiple(rng, births.out_max.min(lines.len())).copied().collect();
-            let threshold = (births.quarters * syn.len()).div_ceil(4).max(1);
-            class.add(SimpleKernel::new(BitVector::from_bits(&syn, 64), sw, BitVector::from_bits(&out, 64), dw, threshold, eg.op));
+            // what it writes: a fresh random code into an empty destination (`new_code`), or the
+            // destination word with the most lines its firing kernels left uncovered
+            let (out, dw) = if eg.repeat {
+                // what the destination held a frame ago (the act just made)
+                let prev = nodes[eg.dst].get_frame(eg.repeat_lag);
+                let (dw, dn) = busiest_word(prev.as_words());
+                if (dn as usize) < births.out_min {
+                    continue;
+                }
+                (ones(prev.as_words()[dw]), dw)
+            } else if eg.new_code {
+                if (dest.count_ones() as usize) >= births.out_min {
+                    continue;
+                }
+                let dw = rng.gen_range(0..dest.word_len().max(1));
+                let lines: Vec<usize> = (0..64).collect();
+                (lines.choose_multiple(rng, 16).copied().collect::<Vec<usize>>(), dw)
+            } else {
+                let mut uncovered = dest.clone();
+                for &k in &fired[i] {
+                    let out = &class.kernels()[k].output_mask;
+                    uncovered.mask_mut(class.kernels()[k].output_idx, out, |a, m| a & !m);
+                }
+                let (dw, dn) = busiest_word(uncovered.as_words());
+                if (dn as usize) < births.out_min {
+                    continue;
+                }
+                let lines = ones(uncovered.as_words()[dw]);
+                (lines.choose_multiple(rng, births.out_max.min(lines.len())).copied().collect(), dw)
+            };
+            // what it reads: the source word with the most active lines, or (`wide`) all of the
+            // source's active lines
+            let (syn_mask, sw) = if eg.wide {
+                let active: Vec<usize> = (0..src.bit_len()).filter(|&b| src.bit_get(b)).collect();
+                if active.is_empty() {
+                    continue;
+                }
+                let syn: Vec<usize> = active.choose_multiple(rng, births.syn.min(active.len())).copied().collect();
+                (BitVector::from_bits(&syn, src.bit_len()), 0)
+            } else {
+                let (sw, sn) = busiest_word(src.as_words());
+                if sn == 0 {
+                    continue;
+                }
+                let active = ones(src.as_words()[sw]);
+                let syn: Vec<usize> = active.choose_multiple(rng, births.syn.min(active.len())).copied().collect();
+                (BitVector::from_bits(&syn, 64), sw)
+            };
+            let threshold = (births.quarters * syn_mask.count_ones()).div_ceil(4).max(1);
+            let out_mask = BitVector::from_bits(&out, 64);
+            if eg.new_code {
+                // a new code fires as it is born (the input that recruited it is here now)
+                let d = nodes[eg.dst].current_mut();
+                apply(&mut d.as_words_mut()[dw..dw + 1], out_mask.as_words(), eg.op);
+            }
+            class.add(SimpleKernel::new(syn_mask, sw, out_mask, dw, threshold, eg.op));
         }
     }
 
@@ -290,7 +432,7 @@ impl RuntimeNetwork {
     }
 
     pub fn read_output(&self) -> &BitVector {
-        self.node_current(self.nodes.len() - 1)
+        self.node_current(self.output)
     }
 
     pub fn read_node(&self, node_idx: usize) -> &BitVector {

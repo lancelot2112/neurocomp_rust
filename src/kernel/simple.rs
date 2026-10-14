@@ -35,11 +35,13 @@ pub struct SimpleKernel {
     /// how often its prediction came true lately: up one when confirmed, down one when not
     /// (a u8, saturating); breaks ties between equally good matches
     pub confirmed: u8,
+    /// steps since it last fired (saturating)
+    pub age: u8,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0 }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX }
     }
 
     /// A two-mask kernel: `care` lines, expecting `pattern` on them.
@@ -110,6 +112,7 @@ impl SimpleKernel {
             match_code: None,
             confirm_mask: None,
             confirmed: 0,
+            age: u8::MAX,
         }
     }
 
@@ -171,6 +174,12 @@ impl SimpleKernel {
 }
 
 impl SimpleKernel {
+    /// Extinction: it acted (fired) and what should follow did not. One synapse moves off the
+    /// lines it read then (`then`, the input of that time) onto a silent line (anti-Hebbian).
+    pub fn fade<R: rand::Rng + ?Sized>(&mut self, then: &BitVector, rng: &mut R) {
+        then.mask_move_random_connected_and_set(self.input_idx, &mut self.input_mask, rng);
+    }
+
     /// A small code and its extra lines for a nested match code: `small` random lines in one
     /// random word of a `bits`-wide match vector, and `extra` more lines in the same word.
     pub fn nested_code<R: rand::Rng + ?Sized>(bits: usize, small: usize, extra: usize, rng: &mut R) -> (BitVector, BitVector) {
@@ -277,6 +286,7 @@ impl KernelTrait for SimpleKernel {
             self.strengthen(ctx, &stats, rng);
         }
         self.apply_output(out);
+        self.age = 0;
         true
     }
 

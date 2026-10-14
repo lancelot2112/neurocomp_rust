@@ -15,6 +15,8 @@ pub struct NodeSpec {
     pub name: Option<String>,
     pub bits: usize,
     pub history_depth: usize, // frames (conceptual) for this node
+    /// random lines switched on each step (spontaneous activity)
+    pub noise: usize,
 }
 
 impl NodeSpec {
@@ -23,6 +25,7 @@ impl NodeSpec {
             name: None,
             bits: defaults.default_bits,
             history_depth: defaults.default_history_depth,
+            noise: 0,
         }
     }
 }
@@ -33,6 +36,7 @@ impl Default for NodeSpec {
             name: None,
             bits: 128,
             history_depth: 1,
+            noise: 0,
         }
     }
 }
@@ -72,6 +76,12 @@ pub enum GraphInstruction {
     EdgeLag(),    // it reads its source one frame further back
     EdgeGrow(),   // kernels are born on it where its destination is left uncovered
     EdgeShare(),  // its kernels do not hold each other down (all that match fire)
+    EdgeGate(),   // pop a node: it learns (births, output learning) only while that node had lines on
+    EdgeGateNot(),// pop a node: it learns only while that node had no lines on
+    EdgeNew(),    // births into an empty destination write a fresh random code
+    EdgeWide(),   // births sample synapses across the whole source, not one word
+    EdgeSpan(),   // it reads the OR of twice as many past frames
+    Noise(),      // the current node gets spontaneous activity: random lines each step (doubles)
 }
 
 /// What an edge carries.
@@ -107,6 +117,23 @@ pub struct EdgeSpec {
     pub grow: bool,
     /// kernels whose masks overlap hold each other down (off: all that match fire)
     pub inhibit: bool,
+    /// it learns only while this node had lines on (true) or none (false) a frame ago
+    pub gate: Option<(usize, bool)>,
+    /// births into an empty destination write a fresh random code
+    pub new_code: bool,
+    /// births sample synapses across the whole source
+    pub wide: bool,
+    /// frames read (ORed), from `input_read_back` back
+    pub span: usize,
+    /// read only these words of the source (offset, count): a channel or a slice
+    pub window: Option<(usize, usize)>,
+    /// a wire lands its copy starting at this word of the destination (side by side: concat)
+    pub dst_word: usize,
+    /// births write what the destination held a frame ago (repeat the last act)
+    pub repeat: bool,
+    /// how many frames back the repeated act is (the birth reads its source as many frames
+    /// further back, when that act was made)
+    pub repeat_lag: usize,
 }
 
 impl EdgeSpec {
@@ -119,6 +146,14 @@ impl EdgeSpec {
             rotate: 0,
             grow: false,
             inhibit: true,
+            gate: None,
+            new_code: false,
+            wide: false,
+            span: 1,
+            window: None,
+            dst_word: 0,
+            repeat: false,
+            repeat_lag: 1,
         }
     }
 }
@@ -133,6 +168,14 @@ impl Default for EdgeSpec {
             rotate: 0,
             grow: false,
             inhibit: true,
+            gate: None,
+            new_code: false,
+            wide: false,
+            span: 1,
+            window: None,
+            dst_word: 0,
+            repeat: false,
+            repeat_lag: 1,
         }
     }
 }
@@ -246,7 +289,7 @@ impl GraphProgram {
         }
 
         // Create the output vector node to make it available to connect to
-        let output_node = graph.add_node(NodeSpec::from_defaults(&defaults));
+        let output_node = graph.add_node(NodeSpec { name: Some("output".into()), ..NodeSpec::from_defaults(&defaults) });
 
         //Execute with a manual program counter so we can do jumps and marks
         let mut code = self.code.clone(); // so we can disable a jump after using it (replace with NOP in the clone)
@@ -265,7 +308,7 @@ impl GraphProgram {
                         curr,
                         curr,
                         EdgeSpec {
-                            input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
+                            input_read_back: graph.node_weight(curr).unwrap().history_depth - 1, // each self-loop reads one frame further back, the first the previous frame
                             ..EdgeSpec::from_defaults(&defaults)
                         },
                     );
@@ -292,7 +335,7 @@ impl GraphProgram {
                                 curr,
                                 curr,
                                 EdgeSpec {
-                                    input_read_back: graph.node_weight(curr).unwrap().history_depth, // self-loop reads previous frame
+                                    input_read_back: graph.node_weight(curr).unwrap().history_depth - 1, // each self-loop reads one frame further back, the first the previous frame
                                     ..EdgeSpec::from_defaults(&defaults)
                                 },
                             );
@@ -361,9 +404,16 @@ impl GraphProgram {
                     last_mark = Some(pc);
                 }
                 GraphInstruction::Nop() => {}
+                GraphInstruction::Noise() => {
+                    let n = graph.node_weight_mut(curr).expect("current node must exist");
+                    n.noise = (n.noise * 2).max(1).min(n.bits / 2);
+                }
                 GraphInstruction::EdgeOr() | GraphInstruction::EdgeAnd() | GraphInstruction::EdgeXor() | GraphInstruction::EdgeClear()
                 | GraphInstruction::EdgeWire() | GraphInstruction::EdgeRotate() | GraphInstruction::EdgeLag() | GraphInstruction::EdgeGrow()
-                | GraphInstruction::EdgeShare() => {
+                | GraphInstruction::EdgeShare() | GraphInstruction::EdgeGate() | GraphInstruction::EdgeGateNot()
+                | GraphInstruction::EdgeNew() | GraphInstruction::EdgeWide() | GraphInstruction::EdgeSpan() => {
+                    // a gate takes its node off the stack (nothing happens without one)
+                    let popped = if matches!(instr, GraphInstruction::EdgeGate() | GraphInstruction::EdgeGateNot()) { stack.pop() } else { None };
                     if last_edge != EdgeIndex::end() {
                         let src = graph.edge_endpoints(last_edge).unwrap().0;
                         let e = graph.edge_weight_mut(last_edge).unwrap();
@@ -376,10 +426,20 @@ impl GraphProgram {
                             GraphInstruction::EdgeRotate() => e.rotate = e.rotate.wrapping_add(1),
                             GraphInstruction::EdgeGrow() => e.grow = true,
                             GraphInstruction::EdgeShare() => e.inhibit = false,
+                            GraphInstruction::EdgeGate() => e.gate = popped.map(|n| (n.index(), true)),
+                            GraphInstruction::EdgeGateNot() => e.gate = popped.map(|n| (n.index(), false)),
+                            GraphInstruction::EdgeNew() => e.new_code = true,
+                            GraphInstruction::EdgeWide() => e.wide = true,
+                            GraphInstruction::EdgeSpan() => {
+                                e.span = (e.span * 2).min(64);
+                                let reach = e.input_read_back + e.span - 1;
+                                let n = graph.node_weight_mut(src).unwrap();
+                                n.history_depth = n.history_depth.max(reach);
+                            }
                             _ => {
                                 // lag: read one frame further back; the source keeps enough frames
                                 e.input_read_back += 1;
-                                let rb = e.input_read_back;
+                                let rb = e.input_read_back + e.span - 1;
                                 let n = graph.node_weight_mut(src).unwrap();
                                 n.history_depth = n.history_depth.max(rb);
                             }

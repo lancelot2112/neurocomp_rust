@@ -27,7 +27,7 @@ use crate::program::neurocomp::{EdgeInfo, RuntimeNetwork};
 use crate::world::{self, observe, Conditioning, World};
 
 /// Every graph instruction, for mutation.
-pub const INSTRUCTIONS: [GraphInstruction; 22] = [
+pub const INSTRUCTIONS: [GraphInstruction; 28] = [
     GraphInstruction::Stay(),
     GraphInstruction::Create(),
     GraphInstruction::Pop(),
@@ -50,7 +50,35 @@ pub const INSTRUCTIONS: [GraphInstruction; 22] = [
     GraphInstruction::EdgeLag(),
     GraphInstruction::EdgeGrow(),
     GraphInstruction::EdgeShare(),
+    GraphInstruction::EdgeGate(),
+    GraphInstruction::EdgeGateNot(),
+    GraphInstruction::EdgeNew(),
+    GraphInstruction::EdgeWide(),
+    GraphInstruction::EdgeSpan(),
+    GraphInstruction::Noise(),
 ];
+
+pub mod genes;
+
+/// What evolution works on: something that builds a network for a world and mutates locally.
+pub trait Evolvable: Clone {
+    fn build(&self, w: &World, seed: u64) -> RuntimeNetwork;
+    fn mutate(&self, rng: &mut StdRng) -> Self;
+    /// A size, for breaking ties toward the smaller genome.
+    fn size(&self) -> usize;
+}
+
+impl Evolvable for Genome {
+    fn build(&self, w: &World, seed: u64) -> RuntimeNetwork {
+        Genome::build(self, w, seed)
+    }
+    fn mutate(&self, rng: &mut StdRng) -> Self {
+        Genome::mutate(self, rng)
+    }
+    fn size(&self) -> usize {
+        self.code.len()
+    }
+}
 
 const OPS: [KernelOp; 4] = [KernelOp::Or, KernelOp::And, KernelOp::Xor, KernelOp::Clear];
 
@@ -178,7 +206,7 @@ pub enum Physics {
 
 /// One lifetime: the genome's network lives in a world with seed `seed`; returns the world's
 /// events.
-pub fn live(g: &Genome, task: Task, physics: Physics, seed: u64) -> Vec<world::Event> {
+pub fn live<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> Vec<world::Event> {
     let p = match physics {
         Physics::Fixed(p) => p,
         Physics::Varied => seed.wrapping_mul(0xA24B_AED4_963E_E407),
@@ -203,7 +231,7 @@ pub fn live(g: &Genome, task: Task, physics: Physics, seed: u64) -> Vec<world::E
 
 /// Fitness: the observer's discrimination (parts per 1024: click rate on paying trials minus on
 /// the others), the mean over `seeds` world seeds.
-pub fn fitness(g: &Genome, task: Task, physics: Physics, seeds: &[u64]) -> (i32, observe::Responding) {
+pub fn fitness<G: Evolvable>(g: &G, task: Task, physics: Physics, seeds: &[u64]) -> (i32, observe::Responding) {
     let mut total = 0i32;
     let mut sum = observe::Responding::default();
     for &s in seeds {
@@ -219,28 +247,37 @@ pub fn fitness(g: &Genome, task: Task, physics: Physics, seeds: &[u64]) -> (i32,
 }
 
 /// A generation's report.
-pub struct Generation {
-    pub best: Genome,
+pub struct Generation<G> {
+    pub best: G,
     pub best_fitness: i32,
     pub mean_fitness: i32,
     pub responding: observe::Responding,
 }
 
-/// A plain (mu + lambda) evolution: `pop` genomes, the best `elite` kept each generation, the
-/// rest children of tournament winners (one mutation each, sometimes more). `report` sees every
-/// generation.
-pub fn evolve(task: Task, physics: Physics, seeds: &[u64], pop: usize, elite: usize, generations: usize, seed: u64, mut report: impl FnMut(usize, &Generation)) -> Genome {
+/// A plain (mu + lambda) evolution from random stack genomes: `pop` genomes, the best `elite`
+/// kept each generation, the rest children of tournament winners (one mutation each, sometimes
+/// more). `report` sees every generation.
+pub fn evolve(task: Task, physics: Physics, seeds: &[u64], pop: usize, elite: usize, generations: usize, seed: u64, report: impl FnMut(usize, &Generation<Genome>)) -> Genome {
     let mut rng = StdRng::seed_from_u64(seed);
-    let mut population: Vec<Genome> = (0..pop).map(|_| Genome::random(&mut rng)).collect();
+    let start: Vec<Genome> = (0..pop).map(|_| Genome::random(&mut rng)).collect();
+    evolve_from(start, task, physics, seeds, elite, generations, seed, report)
+}
+
+/// The same evolution from a given starting population (for example copies of a hand-written
+/// seed genome).
+pub fn evolve_from<G: Evolvable>(start: Vec<G>, task: Task, physics: Physics, seeds: &[u64], elite: usize, generations: usize, seed: u64, mut report: impl FnMut(usize, &Generation<G>)) -> G {
+    let mut rng = StdRng::seed_from_u64(seed ^ 0xE0E0);
+    let pop = start.len();
+    let mut population = start;
     let mut best = population[0].clone();
     for generation in 0..generations {
-        let mut scored: Vec<(i32, observe::Responding, Genome)> = population.drain(..).map(|g| { let (f, r) = fitness(&g, task, physics, seeds); (f, r, g) }).collect();
-        // ties go to the shorter program, then to the earlier one
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.code.len().cmp(&b.2.code.len())));
+        let mut scored: Vec<(i32, observe::Responding, G)> = population.drain(..).map(|g| { let (f, r) = fitness(&g, task, physics, seeds); (f, r, g) }).collect();
+        // ties go to the smaller genome, then to the earlier one
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.size().cmp(&b.2.size())));
         let mean = scored.iter().map(|s| s.0).sum::<i32>() / scored.len() as i32;
         best = scored[0].2.clone();
         report(generation, &Generation { best: best.clone(), best_fitness: scored[0].0, mean_fitness: mean, responding: scored[0].1 });
-        let parents: Vec<Genome> = scored.iter().map(|s| s.2.clone()).collect();
+        let parents: Vec<G> = scored.iter().map(|s| s.2.clone()).collect();
         population = parents[..elite.min(parents.len())].to_vec();
         while population.len() < pop {
             let a = rng.gen_range(0..parents.len());

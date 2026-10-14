@@ -59,3 +59,11 @@ needs.
 - **Credit horizons are short.** Reward 25 or more steps away was not learnable within a
   lifetime (107). Evolution can bridge longer horizons than learning can, but the observer
   should still score behaviour where it happens.
+
+## On this branch
+
+- The stack grammar could not express a re-entrant circuit (experiment 05), confirming the
+  earlier lesson. `src/evolve/genes.rs` is the gene-list genome: permanent ids, edges naming
+  their ends, local mutations. Both front ends compile to the same graph.
+- Selecting on reversal needs many lifetimes per genome: with 4, gains on training lifetimes
+  (about 180/1024) did not hold out (9–51).

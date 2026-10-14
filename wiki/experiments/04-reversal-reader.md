@@ -1,5 +1,11 @@
 # 04. A reader of the match vector holding context through a reversal
 
+> **Withdrawn harness.** The reader here was the earlier branch's holder rewritten as plain code
+> in the harness (assemblies as line sets, u8 drive counters, a switch rule), not kernels. It
+> broke this branch's rules, so `examples/reversal.rs` was deleted. The finding about what the
+> match vector carries (confirmations hold context, matches alone do not) stands as a property
+> of the codes. The reader is being rebuilt in the graph grammar (experiment 05).
+
 **Question.** Does the match vector, with nested codes (small = matched, big = matched and
 prediction came true), carry enough for a reader to hold a context through a reversal?
 Especially in the case where the old reader failed: a click between light and outcome.

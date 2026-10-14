@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble"];
 /// How many probes there are.
-pub const NPROBES: usize = 8;
+pub const NPROBES: usize = 9;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -187,7 +187,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // repeat rate; one that never clicks scores 0)
     let r = |c: i64, n: i64| if n == 0 { 0 } else { c * 1024 / n };
     let win_stay = (r(won, won_n) - r(lost, lost_n)) as i32;
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence)]
 }
 
 /// Reading aloud: of the tokens said while tokens are shown one a step, how many match a token
@@ -224,6 +224,27 @@ pub fn echo(events: &[Event]) -> i32 {
         lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
     };
     ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
+}
+
+/// Babbling: how many of the tokens shown while reading the network has said at least once, in
+/// parts per 1024. The first stone on the way to speech: a voice that makes many different sounds
+/// (its own are heard) gives echoing something to learn from. It needs no sense at all; it only
+/// asks for a varied voice. Saying nothing scores 0, one token over and over 1024 / tokens.
+pub fn babble(events: &[Event]) -> i32 {
+    let ev = events.iter().filter(|e| e.scene == SceneKind::Sequence);
+    let (mut shown, mut said) = (0u64, 0u64);
+    for e in ev {
+        if let Some(t) = e.shown {
+            shown |= 1 << t.min(63);
+        }
+        if let Some(t) = e.said {
+            said |= 1 << t.min(63);
+        }
+    }
+    if shown == 0 {
+        return 0;
+    }
+    ((said & shown).count_ones() as i64 * 1024 / shown.count_ones() as i64) as i32
 }
 
 /// Sequence: steps where a next token was due, and those where the program said it on the
@@ -469,6 +490,21 @@ mod tests {
             echo(&w.events)
         };
         assert!(random.abs() < 150, "{random}");
+        // babbling: how many of the shown tokens were ever said
+        let babbled = |say: &dyn Fn(usize) -> Option<usize>| -> i32 {
+            let mut w = World::new(6, 8);
+            w.sequence(&(0..64).map(|i| i % 8).collect::<Vec<_>>());
+            let mut t = 0;
+            while !w.done() {
+                let a = w.act(say(t), None);
+                w.step(&a);
+                t += 1;
+            }
+            babble(&w.events)
+        };
+        assert_eq!(babbled(&|_| None), 0);
+        assert_eq!(babbled(&|_| Some(3)), 128);
+        assert_eq!(babbled(&|t| Some(t % 8)), 1024);
     }
 
     #[test]

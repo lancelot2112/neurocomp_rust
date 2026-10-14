@@ -21,6 +21,16 @@
 //! `ISL_HELD` (12), `ISL_TRIALS` (200), `ISL_GAP` (6), `ISL_EVERY` (20), `ISL_PLASMIDS` (2),
 //! `ISL_REPORT` (10), `ISL_LOG` (plasmids.txt), `ISL_SEED` (7), `ISL_THRIFT` (1).
 //!
+//! Curricula (`ISL_LADDERS=1`): an island can climb a ladder of stages, each its own probes, its
+//! own world (`Lesson`: tokens and how often the teacher speaks) and a goal; it moves to the next
+//! stage once its population's training mean meets the goal for `hold` generations in a row
+//! (`evolve_islands`). The default ladder is reading's: babble, then echo with 2, 4 and 8 tokens
+//! with the teacher on every token, then the teacher fading (6, 4, 2, 1 in 8) so the glyph must
+//! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
+//! `;`, each `name key=value ...` with keys `probes` (probe names joined by `+`), `tokens`,
+//! `teach` (eighths), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
+//! at each exchange is always in the plain world, on every probe.
+//!
 //! Checkpoints: at every exchange each island's whole population is written to `ISL_CHECKPOINT`
 //! (checkpoint.txt, as text); `ISL_RESUME=<file>` starts every island named in it from its saved
 //! population and generation (islands not in it start naked), so a change to the world or the
@@ -29,7 +39,7 @@
 use std::io::Write;
 
 use neurocomp::evolve::tags::{TagGenome, Token};
-use neurocomp::evolve::{evolve_islands, probe_all, probe_means, Island, Physics, ALL_PROBES};
+use neurocomp::evolve::{evolve_islands, probe_all, probe_all_in, probe_means, Island, Lesson, Physics, Stage, ALL_PROBES};
 use neurocomp::world::observe::{ProbeRow, PROBES};
 use rand::rngs::StdRng;
 use rand::Rng;
@@ -41,6 +51,46 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 fn row(m: &ProbeRow, only: &[usize]) -> String {
     (0..m.len()).map(|p| if only.contains(&p) { format!("{:>7}", m[p]) } else { format!("{:>7}", ".") }).collect::<Vec<_>>().join("")
 }
+
+/// A probe by (the start of) its name.
+fn probe_named(n: &str) -> usize {
+    PROBES.iter().position(|p| p.starts_with(n)).unwrap_or_else(|| panic!("no probe named {n}"))
+}
+
+/// A ladder from its text (see the header).
+fn ladder(text: &str) -> Vec<Stage> {
+    text.split(';').filter(|x| !x.trim().is_empty()).map(|st| {
+        let mut it = st.split_whitespace();
+        let name = it.next().unwrap_or("stage").to_string();
+        let mut stage = Stage { name, probes: vec![], lesson: Lesson::default(), goal: vec![], hold: 3 };
+        for kv in it {
+            let (k, v) = kv.split_once('=').expect("key=value");
+            match k {
+                "probes" => stage.probes = v.split('+').map(probe_named).collect(),
+                "tokens" => stage.lesson.tokens = v.parse().expect("tokens"),
+                "teach" => stage.lesson.teach = v.parse().expect("teach"),
+                "hold" => stage.hold = v.parse().expect("hold"),
+                "goal" => stage.goal = v.split('+').map(|g| {
+                    let (p, x) = g.split_once('@').expect("probe@score");
+                    (probe_named(p), x.parse().expect("score"))
+                }).collect(),
+                _ => panic!("unknown key {k}"),
+            }
+        }
+        stage
+    }).collect()
+}
+
+/// Reading's ladder: a varied voice, then echoing (sound to voice, no glyph) with more and more
+/// tokens, then the teacher fading so the glyph must carry more of the work.
+const READING_LADDER: &str = "babble probes=babble tokens=2 teach=8 goal=babble@768; \
+    echo2 probes=babble+echo tokens=2 teach=8 goal=echo@150; \
+    echo4 probes=babble+echo tokens=4 teach=8 goal=echo@150; \
+    echo8 probes=babble+echo tokens=8 teach=8 goal=echo@150; \
+    fade6 probes=echo+copy tokens=8 teach=6 goal=copy@100; \
+    fade4 probes=echo+copy tokens=8 teach=4 goal=copy@100; \
+    fade2 probes=echo+copy tokens=8 teach=2 goal=copy@100; \
+    read probes=echo+copy tokens=8 teach=1";
 
 fn main() {
     let pop: usize = env("ISL_POP", 16);
@@ -65,17 +115,27 @@ fn main() {
     let ck_path = std::env::var("ISL_CHECKPOINT").unwrap_or_else(|_| "checkpoint.txt".into());
     let train: Vec<u64> = (0..lives).collect();
     let held: Vec<u64> = (10_000..10_000 + held_n).collect();
-    let islands = vec![
-        Island { name: "switching".into(), probes: vec![0, 1, 2, 3, 5] },
-        Island { name: "recall".into(), probes: vec![0, 4] },
-        Island { name: "reading".into(), probes: vec![6, 7] },
-        Island { name: "generalist".into(), probes: ALL_PROBES.to_vec() },
+    let mut islands = vec![
+        Island::plain("switching", vec![0, 1, 2, 3, 5]),
+        Island::plain("recall", vec![0, 4]),
+        Island::plain("reading", vec![6, 7]),
+        Island::plain("generalist", ALL_PROBES.to_vec()),
     ];
+    // (`ISL_LADDERS=1`: the default ladders; `ISL_LADDER_<island>`: one's own)
+    let ladders = env("ISL_LADDERS", 0u8) == 1;
+    for isl in islands.iter_mut() {
+        if let Ok(text) = std::env::var(format!("ISL_LADDER_{}", isl.name)) {
+            isl.stages = ladder(&text);
+        } else if ladders && isl.name == "reading" {
+            isl.stages = ladder(READING_LADDER);
+        }
+    }
     let tokens = (0..4).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3, hold: false }).collect();
     let naked = TagGenome { tokens, next_id: 1 };
     // starting populations: naked, or a checkpoint's (by island name)
     let mut start: Vec<Vec<TagGenome>> = vec![vec![naked.clone()]; islands.len()];
     let mut first = 0usize;
+    let mut stages = vec![0usize; islands.len()];
     if let Some(path) = &resume {
         let text = std::fs::read_to_string(path).expect("checkpoint");
         for part in text.split("island ").skip(1) {
@@ -83,16 +143,23 @@ fn main() {
             let mut h = head.split_whitespace();
             let name = h.next().unwrap_or("");
             let g: usize = h.nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+            // (and its stage, if it was climbing a ladder: `stage n`)
+            let st: usize = h.nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
             if let Some(i) = islands.iter().position(|isl| isl.name == name) {
                 start[i] = TagGenome::from_text(body).expect("checkpoint genomes");
                 first = first.max(g + 1);
-                println!("resumed {name} from {path}: {} genomes, generation {g}", start[i].len());
+                stages[i] = st.min(islands[i].stages.len() - 1);
+                println!("resumed {name} from {path}: {} genomes, generation {g}, stage {} ({})", start[i].len(), stages[i], islands[i].stages[stages[i]].name);
             }
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}",
         islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "));
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
+    for isl in islands.iter().filter(|i| i.stages.len() > 1) {
+        println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
+    }
+    let mut was = stages.clone();
     // a plasmid: one circuit of the donor (a random declared channel and what touches it)
     let transfer = |recipient: &TagGenome, donor: &TagGenome, rng: &mut StdRng| -> (TagGenome, String) {
         if donor.populations() == 0 {
@@ -104,7 +171,7 @@ fn main() {
         let text = TagGenome { tokens: moved, next_id: 0 }.describe();
         (child, text)
     };
-    evolve_islands(&islands, start, first, pop, trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
+    evolve_islands(&islands, start, stages, first, pop, trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
         for (from, to, what) in &r.moved {
             let _ = writeln!(log, "generation {g}: {} -> {}\n{what}", islands[*from].name, islands[*to].name);
         }
@@ -112,12 +179,19 @@ fn main() {
         if (every > 0 && g % every == 0) || g + 1 == gens {
             let mut ck = String::new();
             for (i, isl) in islands.iter().enumerate() {
-                ck += &format!("island {} generation {g}\n", isl.name);
+                ck += &format!("island {} generation {g} stage {}\n", isl.name, r.stage[i]);
                 for x in &r.ranked[i] {
                     ck += &x.to_text();
                 }
             }
             let _ = std::fs::write(&ck_path, ck);
+        }
+        // an island that met its stage's goal: it is scored on the next stage from this generation
+        for (i, isl) in islands.iter().enumerate() {
+            if r.stage[i] != was[i] {
+                println!("{g:>4}  {} moves to stage {} ({}): goal met", isl.name, r.stage[i], isl.stages[r.stage[i]].name);
+                was[i] = r.stage[i];
+            }
         }
         if !r.moved.is_empty() {
             println!("{g:>4}  plasmids moved: {}", r.moved.iter().map(|(f, t, w)| format!("{}->{} ({} populations)", islands[*f].name, islands[*t].name, w.lines().filter(|l| l.contains("->")).count())).collect::<Vec<_>>().join(", "));
@@ -133,10 +207,12 @@ fn main() {
             println!("{g:>4}  {:<11}{names}   work   size  ports", "");
             for (i, isl) in islands.iter().enumerate() {
                 let best = &r.ranked[i][0];
-                let h = probe_all(vec![best.clone()], trials, Physics::Varied, &held, gap, &isl.probes);
+                let st = &isl.stages[r.stage[i]];
+                let h = probe_all_in(vec![best.clone()], trials, Physics::Varied, &held, gap, &st.probes, st.lesson);
                 let (rd, wr) = best.ports();
-                println!("      {:<11}{}  {:>5}  {:>5}  reads {} writes {}  (population, training)", isl.name, row(&r.means[i], &isl.probes), r.work[i], best.tokens.len(), rd.join("+"), wr.join("+"));
-                println!("      {:<11}{}  (its best, held out)", "", row(&probe_means(&h[0].probes), &isl.probes));
+                let at = if isl.stages.len() > 1 { format!("  [stage {} {}, {} generations]", r.stage[i], st.name, r.held[i]) } else { String::new() };
+                println!("      {:<11}{}  {:>5}  {:>5}  reads {} writes {}  (population, training){at}", isl.name, row(&r.means[i], &st.probes), r.work[i], best.tokens.len(), rd.join("+"), wr.join("+"));
+                println!("      {:<11}{}  (its best, held out)", "", row(&probe_means(&h[0].probes), &st.probes));
             }
         }
     });

@@ -184,6 +184,8 @@ pub struct World {
     /// reading: with a teacher, about half the tokens shown are also said aloud (heard as the
     /// network hears its own voice saying them), so a glyph's sound can be learned
     pub teacher: bool,
+    /// how often the teacher says a shown token, in eighths (4: half of them)
+    pub teacher_rate: u32,
     scene: Scene,
     stroke_next: bool,
     present: bool,
@@ -247,6 +249,7 @@ impl World {
             reversal_period: 500,
             gap_max: 0,
             teacher: false,
+            teacher_rate: 4,
             scene: Scene::Idle,
             stroke_next: false,
             present: false,
@@ -384,7 +387,7 @@ impl World {
                 if let Some(tok) = q.pop_front() {
                     put(&mut senses, EYE, &self.glyphs[tok].clone());
                     ev.shown = Some(tok);
-                    if self.teacher && self.rng.gen_bool(0.5) {
+                    if self.teacher && self.rng.gen_ratio(self.teacher_rate.min(8), 8) {
                         put(&mut senses, EAR, &self.sounds[tok].clone());
                         ev.taught = true;
                     }

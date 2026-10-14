@@ -220,12 +220,37 @@ pub fn live<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64) -> Vec
 /// wires and noise wrote; see `RuntimeNetwork::work`); with `gap` > 0, conditioning trials are
 /// separated by 0 to `gap` empty steps (see `World::gap_max`).
 pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, gap: usize) -> (Vec<world::Event>, u64) {
+    live_lesson(g, task, physics, seed, gap, Lesson::default())
+}
+
+/// What a stage of a curriculum sets in the world (the harness's side only; the network is
+/// never told): how many distinct tokens a reading lifetime uses (2 to 8), and how often the
+/// teacher says a shown token aloud, in eighths. The default is the plain world: 8 tokens, the
+/// teacher on half of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Lesson {
+    pub tokens: usize,
+    pub teach: u32,
+}
+
+impl Default for Lesson {
+    fn default() -> Self {
+        Self { tokens: 8, teach: 4 }
+    }
+}
+
+/// `live_work` in a world set by a lesson.
+pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, gap: usize, lesson: Lesson) -> (Vec<world::Event>, u64) {
     let p = match physics {
         Physics::Fixed(p) => p,
         Physics::Varied => seed.wrapping_mul(0xA24B_AED4_963E_E407),
     };
-    let mut w = World::with_physics(p, seed, 8);
+    // (a lesson's token count changes only reading lifetimes; conditioning keeps its 8)
+    let reading = matches!(task, Task::Sequence(_) | Task::Reading(_));
+    let tokens = if reading { lesson.tokens.clamp(2, 8) } else { 8 };
+    let mut w = World::with_physics(p, seed, tokens);
     w.gap_max = gap;
+    w.teacher_rate = lesson.teach;
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
@@ -237,7 +262,7 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
         }
         Task::Sequence(n) | Task::Reading(n) => {
             let mut r = StdRng::seed_from_u64(seed ^ 0x5E9);
-            let toks: Vec<usize> = (0..n).map(|_| r.gen_range(0..8)).collect();
+            let toks: Vec<usize> = (0..n).map(|_| r.gen_range(0..tokens)).collect();
             w.teacher = matches!(task, Task::Reading(_));
             w.sequence(&toks)
         }
@@ -388,11 +413,16 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
 /// `trials` trials or tokens each, with gaps of 0 to `gap` steps between trials; the other
 /// probes read 0.
 pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize]) -> (observe::ProbeRow, u64) {
+    probe_scores_in(g, trials, physics, seed, gap, wanted, Lesson::default())
+}
+
+/// `probe_scores` in a world set by a lesson.
+pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize], lesson: Lesson) -> (observe::ProbeRow, u64) {
     let period = (trials / 4).max(1);
     let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
     let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap) } else { (vec![], 0) };
     let (del, w2) = if want(&[4]) { live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap) } else { (vec![], 0) };
-    let (seq, w3) = if want(&[6, 7]) { live_work(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0) } else { (vec![], 0) };
+    let (seq, w3) = if want(&[6, 7, 8]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, lesson) } else { (vec![], 0) };
     let steps = (rev.len() + del.len() + seq.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq);
     for (p, x) in row.iter_mut().enumerate() {
@@ -404,7 +434,7 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7];
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.
@@ -418,6 +448,11 @@ pub struct Probed<G> {
 /// Each genome's probes in each seed, spread over the machine's cores (a genome whose network
 /// panics scores worst on every probe).
 pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, wanted: &[usize]) -> Vec<Probed<G>> {
+    probe_all_in(population, trials, physics, seeds, gap, wanted, Lesson::default())
+}
+
+/// `probe_all` in a world set by a lesson.
+pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, wanted: &[usize], lesson: Lesson) -> Vec<Probed<G>> {
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).max(1);
     let chunk = population.len().div_ceil(threads).max(1);
     let mut out = Vec::with_capacity(population.len());
@@ -425,7 +460,7 @@ pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physi
         let handles: Vec<_> = population
             .chunks(chunk)
             .map(|part| sc.spawn(move || part.iter().map(|g| {
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores(g, trials, physics, s, gap, wanted)).collect::<Vec<_>>()))
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores_in(g, trials, physics, s, gap, wanted, lesson)).collect::<Vec<_>>()))
                     .unwrap_or_else(|_| vec![([-1024; observe::NPROBES], u64::MAX / 2); seeds.len()]);
                 let work = r.iter().map(|x| x.1).sum::<u64>() / seeds.len().max(1) as u64;
                 Probed { probes: r.iter().map(|x| x.0).collect(), works: r.iter().map(|x| x.1).collect(), work, genome: g.clone() }
@@ -562,13 +597,36 @@ fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: 
 /// An island: a population evolving on its own probes.
 pub struct Island {
     pub name: String,
+    pub stages: Vec<Stage>,
+}
+
+impl Island {
+    /// An island with one stage: these probes in the plain world, forever.
+    pub fn plain(name: &str, probes: Vec<usize>) -> Self {
+        Self { name: name.into(), stages: vec![Stage { name: "all".into(), probes, lesson: Lesson::default(), goal: vec![], hold: 0 }] }
+    }
+}
+
+/// One stage of an island's curriculum: the probes it is selected on (list the earlier stages'
+/// too, to keep them), the world it lives in, and its goal: the island moves to the next stage
+/// once its population's training mean on each goal probe reaches its score for `hold`
+/// generations in a row. A stage with no goal is the last. The network never sees the stage.
+#[derive(Clone, Debug)]
+pub struct Stage {
+    pub name: String,
     pub probes: Vec<usize>,
+    pub lesson: Lesson,
+    pub goal: Vec<(usize, i32)>,
+    pub hold: usize,
 }
 
 /// One generation of island evolution, per island: the population ranked (by its own probes,
 /// training worlds), its probe means and its work per step; and the plasmids moved this
 /// generation: (from island, to island, what moved).
 pub struct IslandGeneration<G> {
+    /// each island's stage this generation (what it was scored on), and generations on it so far
+    pub stage: Vec<usize>,
+    pub held: Vec<usize>,
     pub ranked: Vec<Vec<G>>,
     pub means: Vec<observe::ProbeRow>,
     pub work: Vec<u64>,
@@ -581,10 +639,13 @@ pub struct IslandGeneration<G> {
 /// circuit that does well under one island's pressure gets tried under another's. The donors
 /// are the top `elite` of a random other island; the recipients are this island's new
 /// children (not its kept genomes). `start` gives each island's starting population (resized to
-/// `pop`), and generations run from `first` to `generations` (so a checkpoint can be resumed).
+/// `pop`) and `stages` its starting stage, and generations run from `first` to `generations` (so
+/// a checkpoint can be resumed). An island whose population meets its stage's goal for the
+/// stage's `hold` generations in a row moves to the next stage.
 pub fn evolve_islands<G: Evolvable>(
     islands: &[Island],
     start: Vec<Vec<G>>,
+    stages: Vec<usize>,
     first: usize,
     pop: usize,
     trials: usize,
@@ -616,16 +677,34 @@ pub fn evolve_islands<G: Evolvable>(
         .collect();
     assert_eq!(pops.len(), k, "one starting population an island");
     let mut last: Vec<Vec<G>> = pops.clone();
+    let mut stage: Vec<usize> = (0..k).map(|i| stages.get(i).copied().unwrap_or(0).min(islands[i].stages.len().saturating_sub(1))).collect();
+    let mut met = vec![0usize; k];
+    let mut on = vec![0usize; k];
     for generation in first..generations {
+        let now = stage.clone();
+        let mut held = Vec::with_capacity(k);
         let mut ranked: Vec<Vec<G>> = Vec::with_capacity(k);
         let mut means = Vec::with_capacity(k);
         let mut work = Vec::with_capacity(k);
         let mut next: Vec<Vec<G>> = Vec::with_capacity(k);
         for (i, isl) in islands.iter().enumerate() {
-            let scored = probe_all(pops[i].drain(..).collect(), trials, physics, seeds, gap, &isl.probes);
-            let (order, children) = lexicase_breed(&scored, &isl.probes, thrift, pop, elite, &mut rng);
+            let st = &isl.stages[stage[i]];
+            let scored = probe_all_in(pops[i].drain(..).collect(), trials, physics, seeds, gap, &st.probes, st.lesson);
+            let (order, children) = lexicase_breed(&scored, &st.probes, thrift, pop, elite, &mut rng);
             let m: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
-            means.push(probe_means(&m));
+            let mean = probe_means(&m);
+            on[i] += 1;
+            held.push(on[i]);
+            // the curriculum: the goal met for `hold` generations in a row moves the island on
+            if !st.goal.is_empty() && stage[i] + 1 < isl.stages.len() {
+                met[i] = if st.goal.iter().all(|&(p, x)| mean[p] >= x) { met[i] + 1 } else { 0 };
+                if met[i] >= st.hold.max(1) {
+                    stage[i] += 1;
+                    met[i] = 0;
+                    on[i] = 0;
+                }
+            }
+            means.push(mean);
             work.push(scored.iter().map(|s| s.work.min(u64::MAX / 4)).sum::<u64>() / scored.len().max(1) as u64);
             ranked.push(order.iter().map(|&g| scored[g].genome.clone()).collect());
             next.push(children);
@@ -644,7 +723,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { ranked: ranked.clone(), means, work, moved });
+        report(generation, &IslandGeneration { stage: now, held, ranked: ranked.clone(), means, work, moved });
         last = ranked;
         pops = next;
     }
@@ -663,6 +742,22 @@ mod tests {
         let a: Vec<_> = live(&g, t, Physics::Varied, 1).iter().map(|e| e.moved).collect();
         let b: Vec<_> = live(&g, t, Physics::Varied, 1).iter().map(|e| e.moved).collect();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn a_lesson_sets_the_tokens_and_the_teacher() {
+        // a genome that does nothing: only the world's side shows
+        let g = Genome { code: vec![] };
+        let (ev, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson { tokens: 2, teach: 8 });
+        assert!(ev.iter().filter_map(|e| e.shown).all(|t| t < 2), "two tokens only");
+        assert!(ev.iter().filter(|e| e.shown.is_some()).all(|e| e.taught), "the teacher says every one");
+        let (ev, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson { tokens: 8, teach: 1 });
+        let taught = ev.iter().filter(|e| e.taught).count();
+        assert!(taught > 5 && taught < 60, "about one in eight: {taught}");
+        // the plain lesson is the old world
+        let (a, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson::default());
+        let (b, _) = live_work(&g, Task::Reading(200), Physics::Varied, 3, 0);
+        assert_eq!(a.iter().map(|e| (e.shown, e.taught)).collect::<Vec<_>>(), b.iter().map(|e| (e.shown, e.taught)).collect::<Vec<_>>());
     }
 
     #[test]

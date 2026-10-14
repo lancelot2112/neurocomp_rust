@@ -54,3 +54,23 @@ swaps.
 - **The tag grammar fits its training lifetimes but does not hold out.** Not yet diagnosed.
 - Run-to-run variance is large: the same bare start gave 665–717 once and 174–181 the next time.
   Several runs per condition are needed before comparing grammars.
+
+## The ladder from a naked edge genome
+
+Instrumental 40, delayed 30, reversal1 30 generations; population 32, 8 lifetimes a genome, 16
+held out.
+
+| Stage | Generation | Best (training) | Held out, stage | Held out, original |
+|---|---|---|---|---|
+| instrumental | 39 | 256 | 214 | −10 |
+| delayed | 20 | 368 | **267** | 0 |
+| delayed | 29 | 530 | 241 | −20 |
+| reversal1 | 10 | 133 | 29 | 12 |
+| reversal1 | 29 | 185 | **−60** | −24 |
+
+The genome grew from 0 to 27 edges.
+- The **delayed** click (3–5 steps after a light flash) was learned, and held out: 241–267.
+- The **one-swap** stage overfit: training rose to 185 while held out fell to −60. One swap per
+  lifetime makes each lifetime's score noisy, and 8 lifetimes a genome cannot average it out.
+  Reversal stages need many more lifetimes per genome, or a fitness less noisy per lifetime.
+- The original reversal never left chance.

@@ -68,6 +68,8 @@ fn main() {
         let mut ksep = Kernel::new(1024, 1024, 4, 8, seed ^ 0xC0DE);
         let mut kh = Holder::new(1024, seed ^ 0xF00D);
         let noise: usize = env("LATENT_NOISE", 0);
+        let seq = std::env::var("LATENT_SEQ").is_ok();
+        let mut prev = BitVector::new(1024, Some(0));
         kh.debug = debug;
         // the circuit's input: layer 4's code of what came together (the light shown and what
         // followed), a random sparse code per conjunction, as layer 4 recruits one for each
@@ -149,7 +151,30 @@ fn main() {
                         kh.hold(&code, ksep.births > born);
                     }
                     let born = ksep.births;
-                    let (code, _) = ksep.code(&codes[light * 2 + (got > 0) as usize], true);
+                    // (`LATENT_SEQ=1`: the act is a sequence of two steps, the light and then what
+                    // followed, paid or not, the same code whichever light; the kernel's input is
+                    // each step with the step before it, rotated (a transition))
+                    let ev = if seq {
+                        let step = |now: &BitVector, before: &BitVector| -> BitVector {
+                            let mut v = now.clone();
+                            for b in (0..1024).filter(|&b| before.bit_get(b)) {
+                                v.bit_set((b + 512) % 1024);
+                            }
+                            v
+                        };
+                        let first = step(&cue[light], &prev);
+                        let b0 = ksep.births;
+                        let (c1, _) = ksep.code(&first, true);
+                        kh.hold(&c1, ksep.births > b0);
+                        let out = &outcome[(got > 0) as usize];
+                        let second = step(out, &cue[light]);
+                        prev = out.clone();
+                        second
+                    } else {
+                        codes[light * 2 + (got > 0) as usize].clone()
+                    };
+                    let born = if seq { ksep.births } else { born };
+                    let (code, _) = ksep.code(&ev, true);
                     if debug {
                         eprintln!("event light {light} paid {} code {:?} new {}", got > 0, (0..1024).filter(|&b| code.bit_get(b)).take(6).collect::<Vec<_>>(), ksep.births > born);
                     }

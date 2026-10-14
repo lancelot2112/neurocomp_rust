@@ -45,7 +45,8 @@
 //!   against input); silent, the next surprise is loaded and completed by the autoassociative
 //!   map, so the state comes back if what broke the last one has broken one before.
 //!
-//! - **Held as an assembly** (`set_assembly`): layer 4's code is coded again by kernel cells
+//! - **Held as an assembly** (`set_assembly`): layer 4's code, with the code before it (a
+//!   transition: a sequence not seen is new though its parts are familiar), is coded again by kernel cells
 //!   (binary masks born as needed, Hebbian for winners, anti-Hebbian for overlapping cells they
 //!   hold down; `kernel_cells.rs`); layer 2/3's held population is an assembly of kernel cells that
 //!   holds with no input, explains an input when one of its cells fires for it, grows cells for
@@ -264,7 +265,7 @@ pub struct Column {
     record: Option<(u32, u32)>,
     /// held as an assembly (`set_assembly`): the separator, the recurrent assembly population,
     /// and the inputs the separator has seen
-    assembly: Option<Box<(Kernel, Holder)>>,
+    assembly: Option<Box<(Kernel, Holder, BitVector)>>,
     /// topographic output (keep the order): layer 2/3's activity is sent up in layer 4's own
     /// coordinates. Each cell has a home, the layer 4 code it first fired for, and a slot there
     /// (the lowest free: 0 for the first cell for that input, 1, 2, … for cells for the same
@@ -327,7 +328,7 @@ impl Column {
     pub fn set_assembly(&mut self, out_bits: usize, k: usize, seed: u64) {
         let sep = Kernel::new(self.bits, out_bits, k, 8, seed);
         let holder = Holder::new(out_bits, seed ^ 0x5EED);
-        self.assembly = Some(Box::new((sep, holder)));
+        self.assembly = Some(Box::new((sep, holder, BitVector::new(self.bits, Some(0)))));
     }
 
     /// With an assembly: the one active (the area's context), and whether one is.
@@ -346,8 +347,16 @@ impl Column {
     fn hold_assembly(&mut self, input: &BitVector, learn: bool) -> BitVector {
         let bits = self.bits;
         let a = self.assembly.as_mut().unwrap();
+        // the kernel codes a transition: this input with the one before it, rotated half the
+        // width (so what came before and what comes now use different lines): a sequence the
+        // area has not seen is new to it, though both its parts are familiar
+        let mut seq = input.clone();
+        for b in (0..bits).filter(|&b| a.2.bit_get(b)) {
+            seq.bit_set((b + bits / 2) % bits);
+        }
+        a.2 = input.clone();
         let born = a.0.births;
-        let (code, _) = a.0.code(input, learn);
+        let (code, _) = a.0.code(&seq, learn);
         if code.count_ones() > 0 {
             a.1.hold(&code, a.0.births > born);
         }

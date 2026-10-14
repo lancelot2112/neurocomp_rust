@@ -23,6 +23,8 @@ pub struct SimpleKernel {
     pub pattern: Option<BitVector>,
     /// learn anti-Hebbian when matched but held down (on by default)
     pub learn_held: bool,
+    /// learn Hebbian when it fires (on by default)
+    pub learn_fire: bool,
     /// the third mask: written (into a confirmation vector) when what this kernel predicted
     /// came true
     pub confirm_mask: Option<BitVector>,
@@ -33,7 +35,7 @@ pub struct SimpleKernel {
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, confirm_mask: None, confirmed: 0 }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, confirm_mask: None, confirmed: 0 }
     }
 
     /// A two-mask kernel: `care` lines, expecting `pattern` on them.
@@ -100,6 +102,7 @@ impl SimpleKernel {
             search: false,
             pattern: None,
             learn_held: true,
+            learn_fire: true,
             confirm_mask: None,
             confirmed: 0,
         }
@@ -241,7 +244,8 @@ impl KernelTrait for SimpleKernel {
             }
             return false;
         }
-        if self.pattern.is_some() {
+        if !self.learn_fire {
+        } else if self.pattern.is_some() {
             self.move_pattern_line(ctx.input, false, rng);
         } else {
             self.strengthen(ctx, &stats, rng);

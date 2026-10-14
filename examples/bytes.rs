@@ -17,6 +17,12 @@
 //! `BYTES_FILE` (default data/alice.txt), `BYTES_N` (bytes read), `BYTES_Q` (1-4, default 4:
 //! exact), `BYTES_HELD=1` (held-down kernels learn anti-Hebbian).
 //!
+//! `BYTES_SPARSE=1`: a sparsifying first layer. Layer 1 holds exact 8-bit kernels on the newest
+//! byte, born as each new byte value appears, each writing its own random code of `BYTES_K`
+//! lines (default 8) in a 64-bit slot. Those codes slide through a sparse window `S` (one word a
+//! byte, 128 bytes), and the predicting kernels read `S` instead of the raw window: they count
+//! the lines that are on, at scales of 1, 2, 4, ... 128 slots, firing at `BYTES_Q` quarters.
+//!
 //! `BYTES_CONFIRM=1`: the third mask. Every kernel that matched (fired or held down) checks its
 //! own prediction: confirmed, it writes
 //! its confirmation line into the confirmation vector and counts up; else it counts down. A wrong
@@ -66,9 +72,20 @@ fn main() {
     let held = std::env::var("BYTES_HELD").is_ok();
     let confirm = std::env::var("BYTES_CONFIRM").is_ok();
     let mut confirmations = BitVector::new(65536, Some(0));
+    let sparse = std::env::var("BYTES_SPARSE").is_ok();
+    let fuzzy_depth = std::env::var("BYTES_FUZZYDEPTH").is_ok();
+    // (`BYTES_EXACTCONFIRM=1`: only kernels that matched exactly check their prediction)
+    let exact_confirm = std::env::var("BYTES_EXACTCONFIRM").is_ok();
+    let or_slot = std::env::var("BYTES_ORSLOT").is_ok();
+    let no_hebb = std::env::var("BYTES_NOHEBB").is_ok();
+    let (mut wins, mut wins_right, mut fuzzy_scale) = ([0u32; 2], [0u32; 2], [0u32; 12]);
+    let kbits: usize = env("BYTES_K", 8);
+    let mut layer1: KernelClass<SimpleKernel> = KernelClass::with_kernels(Vec::new());
+    let mut sw = BitVector::new(BITS, Some(0));
+    let max_scale = if sparse { BITS / 64 } else { MAX_SCALE };
     let text = std::fs::read(&path).expect("corpus file");
     let text = &text[..n.min(text.len())];
-    println!("bytes: {path}, {} bytes, threshold {q}/4, held-down learn {}, confirmation {}", text.len(), if held { "on" } else { "off" }, if confirm { "on" } else { "off" });
+    println!("bytes: {path}, {} bytes, threshold {q}/4, held-down learn {}, confirmation {}, {}", text.len(), if held { "on" } else { "off" }, if confirm { "on" } else { "off" }, if sparse { format!("sparse first layer ({kbits} of 64 lines a byte)") } else { "raw window".into() });
 
     let mut rng = StdRng::seed_from_u64(1);
     let mut class: KernelClass<SimpleKernel> = KernelClass::with_kernels(Vec::new());
@@ -84,16 +101,28 @@ fn main() {
     for (t, &b) in text.iter().enumerate() {
         // the kernels predict the next byte from the window
         let mut p = BitVector::new(64, Some(0));
-        let fired = class.process(&w, &mut p, 0, 0, true, &mut rng);
+        let input = if sparse { &sw } else { &w };
+        let fired = class.process(input, &mut p, 0, 0, true, &mut rng);
         let winner = fired.first().copied();
-        let pred = winner.map(|_| (p.as_words()[0] & 0xFF) as u8);
+        // the winner writes the slot: its own byte (`BYTES_ORSLOT=1`: the OR of every kernel that
+        // fired, as the prediction vector holds it)
+        let pred = winner.map(|k| if or_slot { (p.as_words()[0] & 0xFF) as u8 } else { (class.kernels()[k].output_mask.as_words()[0] & 0xFF) as u8 });
         hit += (pred == Some(b)) as u32;
+        if let Some(k) = winner {
+            let kk = &class.kernels()[k];
+            let exact = kk.agreement(input) == kk.input_mask.count_ones();
+            let i = exact as usize;
+            wins[i] += 1;
+            wins_right[i] += (pred == Some(b)) as u32;
+            if !exact { fuzzy_scale[scale[k].trailing_zeros() as usize] += 1; }
+        }
         if confirm {
             // every kernel that matched (fired or held down) sees whether its own prediction came
             // true: confirmed, it writes its third mask and counts up; else it counts down
             confirmations.bit_clear_all();
             for k in class.kernels_mut().iter_mut() {
-                if k.agreement(&w) >= k.threshold {
+                let a = k.agreement(input);
+                if a >= k.threshold && (!exact_confirm || a == k.input_mask.count_ones()) {
                     let right = (k.output_mask.as_words()[0] & 0xFF) as u8 == b;
                     k.confirm(right, Some(&mut confirmations));
                 }
@@ -122,12 +151,19 @@ fn main() {
             s *= 2;
         }
         // births on a wrong or missing prediction (harness rule): one scale up from the winner
-        let mut scales: Vec<usize> = vec![winner.map_or(1, |k| (scale[k] * 2).min(MAX_SCALE)).min(t)];
+        // the next scale up from the widest kernel that matched exactly (a fuzzy match is not
+        // context known; `BYTES_FUZZYDEPTH=1`: from the winner, fuzzy or not)
+        let exact_scale = fired.iter().filter(|&&f| { let k = &class.kernels()[f]; k.agreement(input) == k.input_mask.count_ones() }).map(|&f| scale[f]).max();
+        let from = if fuzzy_depth { winner.map(|k| scale[k]) } else { exact_scale };
+        let mut scales: Vec<usize> = vec![from.map_or(1, |s| (s * 2).min(max_scale)).min(t)];
         if confirm {
             if let Some(k) = winner {
                 // a sibling at the winner's own scale for the byte that came, unless one exists
                 let s0 = scale[k];
-                let exists = fired.iter().any(|&f| scale[f] == s0 && (class.kernels()[f].output_mask.as_words()[0] & 0xFF) as u8 == b);
+                let exists = fired.iter().any(|&f| {
+                    let k = &class.kernels()[f];
+                    scale[f] == s0 && (k.output_mask.as_words()[0] & 0xFF) as u8 == b && k.agreement(input) == k.input_mask.count_ones()
+                });
                 if !exists {
                     scales.push(s0);
                 }
@@ -136,11 +172,20 @@ fn main() {
         if pred != Some(b) && t > 0 && b != 0 {
           for s in scales {
             if s >= 1 {
-                let (care, pat) = window(&w, s);
-                let lines = care.count_ones();
-                let thr = (q * lines).div_ceil(4).max(1);
-                let mut k = SimpleKernel::with_pattern(care, pat, 0, BitVector::from_words(vec![b as u64]), 0, thr, KernelOp::Or);
+                let mut k = if sparse {
+                    // a sparse kernel: the lines on in the last s slots
+                    let care = BitVector::from_words(sw.as_words()[..s].to_vec());
+                    let thr = (q * care.count_ones()).div_ceil(4).max(1);
+                    SimpleKernel::new(care, 0, BitVector::from_words(vec![b as u64]), 0, thr, KernelOp::Or)
+                } else {
+                    let (care, pat) = window(&w, s);
+                    let lines = care.count_ones();
+                    let thr = (q * lines).div_ceil(4).max(1);
+                    SimpleKernel::with_pattern(care, pat, 0, BitVector::from_words(vec![b as u64]), 0, thr, KernelOp::Or)
+                };
                 k.learn_held = held;
+                // (`BYTES_NOHEBB=1`: no Hebbian move when it fires)
+                k.learn_fire = !no_hebb;
                 // its confirmation line: one line of its own in the confirmation vector
                 k.confirm_mask = Some(BitVector::from_bits(&[class.len() % 65536], 65536));
                 class.add(k);
@@ -149,6 +194,28 @@ fn main() {
           }
         }
         slide(&mut w, b);
+        if sparse {
+            // layer 1 codes the newest byte: an exact 8-bit kernel per byte value, born with its
+            // own random code when none fires
+            let newest = BitVector::from_words(vec![b as u64]);
+            let mut code = BitVector::new(64, Some(0));
+            let f = layer1.process(&newest, &mut code, 0, 0, true, &mut rng);
+            if f.is_empty() {
+                use rand::seq::SliceRandom;
+                let lines: Vec<usize> = (0..64).collect();
+                let pick: Vec<usize> = lines.choose_multiple(&mut rng, kbits).copied().collect();
+                let out = BitVector::from_bits(&pick, 64);
+                code = out.clone();
+                let mut k = SimpleKernel::with_pattern(BitVector::from_words(vec![0xFF]), newest.clone(), 0, out, 0, 8, KernelOp::Or);
+                k.learn_held = false;
+                layer1.add(k);
+            }
+            let words = sw.as_words_mut();
+            for i in (1..words.len()).rev() {
+                words[i] = words[i - 1];
+            }
+            words[0] = code.as_words()[0];
+        }
         seen += 1;
         if (t + 1) % chunk == 0 || t + 1 == text.len() {
             let pc = |x: u32| 100.0 * x as f64 / seen as f64;
@@ -156,4 +223,5 @@ fn main() {
             hit = 0; base1 = 0; base2 = 0; seen = 0; fired_any = 0;
         }
     }
+    println!("winners: exact {} (right {}), fuzzy {} (right {}); fuzzy winners by scale (1, 2, 4, ...): {:?}", wins[1], wins_right[1], wins[0], wins_right[0], fuzzy_scale);
 }

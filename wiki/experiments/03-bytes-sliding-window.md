@@ -71,3 +71,45 @@ width, then its confirmations (it had been the plain count of agreeing lines).
 - **Tolerance on raw bytes stays broken, even ranked by share.** Chance agreement between ASCII
   bytes is too high for any fraction under 1 to separate them. Tolerant matching needs a sparse
   first layer.
+
+## A sparsifying first layer
+
+**Setup** (`BYTES_SPARSE=1`):
+- **Layer 1:** exact 8-bit two-mask kernels on the newest byte, born as each new byte value
+  appears. Each writes its own random code of `BYTES_K` lines in a 64-bit slot. These are learned
+  codes in the sense that a new kernel is born with a random output, not designed per byte.
+- **Sliding window S:** the codes slide through it, one word a byte, 128 bytes deep.
+- **Layer 2:** sparse kernels count lines that are on, at 1–128 slots, firing at q/4.
+
+Bugs and confounds found while testing, in order:
+1. **The prediction byte was read as the OR of every kernel that fired** (harness bug). In
+   tolerant mode, kernels matching mostly older slots overlap the winner by less than half, are
+   not held down, and OR their bytes in. Fixed: the winner writes the slot (as CLAUDE.md says).
+2. **Hebbian drift.** A kernel firing at 3/4 moves a synapse off a silent line each time, so its
+   context wanders. `BYTES_NOHEBB=1` turns that off.
+
+| Variant (last 2,000 of 20,000 bytes, confirmation on) | Right |
+|---|---|
+| raw window, exact | 50.1% |
+| sparse layer, exact (K = 4, 8 or 16 lines a byte) | 50.1% |
+| sparse, 3/4, OR-decoded slot (bug) | 37.2% |
+| sparse, 3/4, winner writes the slot | 46.8% |
+| sparse, 3/4, winner writes, no Hebbian on fire | **49.2%** |
+| sparse, 2/4, OR-decoded slot (bug) | 3.0% |
+| sparse, 2/4, winner writes the slot | 35.4% |
+| sparse, 2/4, winner writes, no Hebbian on fire | 45.8% |
+
+Not the cause (each tested, no change): code density (K = 4, 8, 16); birth scale taken from the
+widest exact match instead of the winner; sibling suppression by a fuzzy match; confirming only
+exact matches.
+
+**Meaning.**
+- The sparse first layer makes tolerant matching possible. On raw bytes 3/4 matching gave 11–16%;
+  on sparse codes it gives 49.2%.
+- It does not yet help. Fuzzy kernels win about 10 times in 20,000 steps and are rarely right.
+  Exact contexts at some scale almost always exist in text this size. Tolerance should matter on
+  novel text (held out), not yet tested.
+- **Decode from the winner only, never from the OR of what fired.** That is now a rule.
+- **Hebbian on firing hurts tolerant kernels that predict.** A kernel firing on a partial match
+  pulls its mask toward the partial context. Gating Hebbian by confirmation (strengthen only when
+  the prediction came true) is the natural next test.

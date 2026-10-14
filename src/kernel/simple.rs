@@ -40,11 +40,15 @@ pub struct SimpleKernel {
     /// activity: 0, it fires only when its input matches (responsive); k > 0, it also fires
     /// spontaneously with chance 2^-k a step (tonic), writing its output without learning
     pub tonic: u8,
+    /// a sparse kernel: the mask words it reads (offsets into `input_mask`). Matching, inhibition
+    /// and learning then visit only these words, so a kernel spread across a wide field costs its
+    /// lines, not the field; its lines move only within these words. None: every mask word.
+    pub words: Option<Vec<u32>>,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0 }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None }
     }
 
     /// A two-mask kernel: `care` lines, expecting `pattern` on them.
@@ -54,9 +58,63 @@ impl SimpleKernel {
         k
     }
 
+    /// Make it sparse: from now on it visits only the mask words that have lines.
+    pub fn sparsify(&mut self) {
+        let ws = self.input_mask.as_words().iter().enumerate().filter(|(_, m)| **m != 0).map(|(w, _)| w as u32).collect();
+        self.words = Some(ws);
+    }
+
+    /// Input word `w` of its mask (0 past the input's end).
+    #[inline]
+    fn at(&self, input: &BitVector, w: u32) -> u64 {
+        input.as_words().get(self.input_idx + w as usize).copied().unwrap_or(0)
+    }
+
+    /// How many lines its mask has.
+    pub fn care(&self) -> usize {
+        match &self.words {
+            Some(ws) => { let m = self.input_mask.as_words(); ws.iter().map(|&w| m[w as usize].count_ones() as usize).sum() }
+            None => self.input_mask.count_ones(),
+        }
+    }
+
+    /// A sparse kernel's learning move: one line from a candidate `src(a, m)` to a candidate
+    /// `dst(a, m)` (a the input word, m the mask word), both within its words.
+    fn sparse_move<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, src: impl Fn(u64, u64) -> u64, dst: impl Fn(u64, u64) -> u64, rng: &mut R) {
+        let Some(ws) = &self.words else { return };
+        let m = self.input_mask.as_words();
+        let cand: Vec<(u32, u64, u64)> = ws.iter().map(|&w| { let a = self.at(input, w); (w, src(a, m[w as usize]), dst(a, m[w as usize])) }).collect();
+        let pick = |sel: &dyn Fn(&(u32, u64, u64)) -> u64, rng: &mut R| -> Option<(usize, u32)> {
+            let n: u32 = cand.iter().map(|c| sel(c).count_ones()).sum();
+            if n == 0 { return None; }
+            let mut k = rng.gen_range(0..n);
+            for c in &cand {
+                let x = sel(c);
+                if k < x.count_ones() {
+                    let mut x = x;
+                    for _ in 0..k { x &= x - 1; }
+                    return Some((c.0 as usize, x.trailing_zeros()));
+                }
+                k -= x.count_ones();
+            }
+            None
+        };
+        let (Some((sw, sb)), Some((dw, db))) = (pick(&|c| c.1, rng), pick(&|c| c.2, rng)) else { return };
+        let m = self.input_mask.as_words_mut();
+        m[sw] &= !(1u64 << sb);
+        m[dw] |= 1u64 << db;
+    }
+
     /// How many of its lines agree with the input (on lines that are on; or, with a pattern,
     /// cared lines whose value matches).
     pub fn agreement(&self, input: &BitVector) -> usize {
+        if let Some(ws) = &self.words {
+            let m = self.input_mask.as_words();
+            return match &self.pattern {
+                None => ws.iter().map(|&w| (self.at(input, w) & m[w as usize]).count_ones() as usize).sum(),
+                Some(p) => { let q = p.as_words(); ws.iter().map(|&w| (!(self.at(input, w) ^ q[w as usize]) & m[w as usize]).count_ones() as usize).sum() }
+            };
+        }
         match &self.pattern {
             None => input.mask_and_count(self.input_idx, &self.input_mask, |a, m| a & m),
             Some(p) => {
@@ -91,7 +149,9 @@ impl SimpleKernel {
         };
         let agree: Vec<u64> = x.iter().zip(&m).zip(&q).map(|((a, m), q)| !(a ^ q) & m).collect();
         let from: Vec<u64> = agree.iter().zip(&m).map(|(g, m)| if from_agreeing { *g } else { !g & m }).collect();
-        let free: Vec<u64> = m.iter().map(|m| !m).collect();
+        // a sparse kernel's lines stay within its words
+        let mine = |i: usize| self.words.as_ref().map_or(true, |ws| ws.contains(&(i as u32)));
+        let free: Vec<u64> = m.iter().enumerate().map(|(i, m)| if mine(i) { !m } else { 0 }).collect();
         let (Some(a), Some(b)) = (pick(from, rng), pick(free, rng)) else { return };
         self.input_mask.bit_clear(a);
         self.input_mask.bit_set(b);
@@ -117,6 +177,7 @@ impl SimpleKernel {
             confirmed: 0,
             age: u8::MAX,
             tonic: 0,
+            words: None,
         }
     }
 
@@ -139,8 +200,11 @@ impl SimpleKernel {
     #[inline]
     fn is_inhibited(&self, ctx: &KernelContext, _stats: &InputStats) -> bool {
         // held down when more than half of our mask overlaps lines a fired kernel took
-        let taken = ctx.inhibit.mask_and_count(self.input_idx, &self.input_mask, |a, m| a & m);
-        2 * taken > self.input_mask.count_ones()
+        let taken = match &self.words {
+            Some(ws) => { let m = self.input_mask.as_words(); ws.iter().map(|&w| (self.at(ctx.inhibit, w) & m[w as usize]).count_ones() as usize).sum() }
+            None => ctx.inhibit.mask_and_count(self.input_idx, &self.input_mask, |a, m| a & m),
+        };
+        2 * taken > self.care()
     }
 
     #[inline]
@@ -149,6 +213,9 @@ impl SimpleKernel {
         // (use your mask_move_random_* helpers)
         // If inhibited we SEARCH for a new pattern to connect to
         //  eg. [SEARCH] CLEAR a CONNECTED + ACTIVE bit and choose a random INACTIVE + UNCONNECTED bit to set.
+        if self.words.is_some() {
+            return self.sparse_move(ctx.input, |a, m| a & m, |a, m| !a & !m, rng);
+        }
         ctx.input.mask_move_random_connected_and_set(self.input_idx, &mut self.input_mask, rng);
     }
 
@@ -157,6 +224,9 @@ impl SimpleKernel {
         // Eg: move one connected+inactive to active+unconnected
         //If not inhibited we STRENGTHEN our active pattern
         // eg. [STRENGTHEN] CLEAR a CONNECTED + INACTIVE bit and choose a random ACTIVE + UNCONNECTED bit to SET.
+        if self.words.is_some() {
+            return self.sparse_move(ctx.input, |a, m| !a & m, |a, m| a & !m, rng);
+        }
         ctx.input.mask_move_random_connected_and_not_set(self.input_idx, &mut self.input_mask, rng);
     }
 
@@ -172,6 +242,9 @@ impl SimpleKernel {
     /// Extinction: it acted (fired) and what should follow did not. One synapse moves off the
     /// lines it read then (`then`, the input of that time) onto a silent line (anti-Hebbian).
     pub fn fade<R: rand::Rng + ?Sized>(&mut self, then: &BitVector, rng: &mut R) {
+        if self.words.is_some() {
+            return self.sparse_move(then, |a, m| a & m, |a, m| !a & !m, rng);
+        }
         then.mask_move_random_connected_and_set(self.input_idx, &mut self.input_mask, rng);
     }
 
@@ -296,12 +369,20 @@ impl KernelTrait for SimpleKernel {
     /// confirmed: a better match is a larger share; among equal shares, the wider (more
     /// context), then the more often right.
     fn strength(&self, input: &BitVector) -> usize {
-        let care = self.input_mask.count_ones().max(1);
+        let care = self.care().max(1);
         let share = self.agreement(input) * 4096 / care;
         (share << 24) | (care.min(65535) << 8) | self.confirmed as usize
     }
 
     fn mark_inhibit(&self, inhibit: &mut BitVector) {
+        if let Some(ws) = &self.words {
+            let m = self.input_mask.as_words();
+            let iw = inhibit.as_words_mut();
+            for &w in ws {
+                if let Some(x) = iw.get_mut(self.input_idx + w as usize) { *x |= m[w as usize]; }
+            }
+            return;
+        }
         inhibit.mask_mut(self.input_idx, &self.input_mask, |a, m| a | m);
     }
 
@@ -338,6 +419,31 @@ mod tests {
         let both: usize = c.as_words().iter().zip(small.as_words()).map(|(a, b)| (a & b).count_ones() as usize).sum();
         assert_eq!(both, 4);
         assert_eq!(c.as_words().iter().filter(|&&w| w != 0).count(), 1);
+    }
+
+    #[test]
+    fn a_sparse_kernel_matches_and_learns_like_a_dense_one_within_its_words() {
+        // lines in words 0 and 1000 of a 1024-word field
+        let mut mask = BitVector::new(1024 * 64, Some(0));
+        for b in [1, 2, 3, 4, 64_000, 64_001, 64_002, 64_003] { mask.bit_set(b); }
+        let mut input = BitVector::new(1024 * 64, Some(0));
+        for b in [1, 2, 3, 64_000, 64_001, 64_005] { input.bit_set(b); }
+        let dense = SimpleKernel::new(mask.clone(), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        let mut sparse = SimpleKernel::new(mask, 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        sparse.sparsify();
+        assert_eq!(sparse.words.as_deref(), Some(&[0u32, 1000][..]));
+        assert_eq!(dense.agreement(&input), 5);
+        assert_eq!(sparse.agreement(&input), 5);
+        assert_eq!(sparse.care(), 8);
+        // Hebbian on firing: a line moves from an off line to an on line, in its own words
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
+        let inhibit = BitVector::new(1024 * 64, Some(0));
+        let mut out = BitVector::new(64, Some(0));
+        assert!(sparse.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, phase: 0 }, &mut out, &mut rng));
+        assert_eq!(sparse.care(), 8);
+        assert_eq!(sparse.agreement(&input), 6);
+        let m = sparse.input_mask.as_words();
+        assert_eq!(m.iter().enumerate().filter(|(w, x)| **x != 0 && *w != 0 && *w != 1000).count(), 0);
     }
 
     #[test]

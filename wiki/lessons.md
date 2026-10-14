@@ -170,5 +170,6 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     Build with hardware popcount (target x86-64-v3).
 35. **Width is free until it is read (experiment 09).** A step costs the words an edge reads and
     writes, so a 131,072-bit channel read through a 64-word field costs the same as a 512-bit
-    one. A kernel spread across a wide field still pays for its mask's whole extent, because
-    masks are dense; lesson 34's bit-position lists are the fix.
+    one. A kernel spread across a wide field pays for its mask's whole extent if its mask is
+    dense; a sparse kernel (the words it touches) pays for its lines, about 6x cheaper at
+    131,072 bits.

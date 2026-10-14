@@ -36,7 +36,24 @@ field of Y as in the seed. `whole`: Z's field is all of Y.
 - With a whole-channel field the cost grows with the field. A profile puts 62% of it in kernel
   matching (`agreement` and the match list). A kernel born across a wide field has a dense mask
   spanning from its first to its last line, so a 16-line kernel over 2048 words scans 2048
-  words. A sparse mask (a list of the words it touches) would cost its lines instead. Not done
-  yet.
+  words.
+
+**Sparse kernels** (added after). A population property `sparse`: each kernel keeps the list of
+mask words its lines are in, and matching, inhibition and learning visit only those. Its lines
+move only within those words (a synapse slides within its word, never to a new word). Off by
+default; a new random population is sparse half the time, and mutation toggles it.
+
+Same benchmark, `sparse` = whole-channel field with Z's kernels sparse (timed while another
+run shared the machine, so compare within the table):
+
+| w | bits | fixed | whole | sparse |
+|---|---|---|---|---|
+| 3 | 512 | 8.3 | 7.8 | 5.9 |
+| 8 | 16,384 | 9.0 | 11.6 | 9.0 |
+| 11 | 131,072 | 10.5 | 66.6 | 11.9 |
+
+A kernel spread across a 131,072-bit field now costs about what a one-word kernel costs. Held-out
+scores move a little (9 vs -6 on this short run) because sparse lines learn only within their
+words; that is a learning difference, not a speed one.
 - Discrimination does not change with width here (the circuit's score is near zero on this
   short run at every width); this is a cost check, not a learning result.

@@ -178,6 +178,9 @@ pub struct EdgeSpec {
     pub noise: u16,
     /// its starting kernels' activity: 0 responsive; k > 0 tonic (chance 2^-k a step)
     pub tonic: u8,
+    /// its kernels are sparse: each visits only the words its lines are in (and its lines move
+    /// only within them), so one spread across a wide field costs its lines, not the field
+    pub sparse: bool,
 }
 
 impl EdgeSpec {
@@ -217,6 +220,7 @@ impl EdgeSpec {
             out_words: 0,
             noise: 0,
             tonic: 0,
+            sparse: false,
         }
     }
 }

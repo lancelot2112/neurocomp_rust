@@ -93,6 +93,8 @@ pub struct Pop {
     pub fade: u8,
     /// a wire's rotation, in bits
     pub rotate: u16,
+    /// sparse kernels: each visits only the words its lines are in
+    pub sparse: bool,
 }
 
 impl Pop {
@@ -104,7 +106,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false,
         }
     }
 
@@ -217,6 +219,7 @@ impl TagGenome {
                 salt: p.id,
                 out_words: 1 << p.spread.min(MAX_WIDTH),
                 tonic: p.tonic,
+                sparse: p.sparse,
                 ..EdgeSpec::plain()
             }));
         }
@@ -233,6 +236,36 @@ impl TagGenome {
         g
     }
 
+    /// Split: the population at token `at` writes into a new channel one tag bit (`bit`) from
+    /// its destination, as wide, and a wire carries that channel on to the old destination one
+    /// frame later (a stage inserted on the path).
+    pub fn split(&mut self, at: usize, bit: u8) {
+        let Some(Token::Pop(p)) = self.tokens.get(at) else { return };
+        let ch = Channels::of(&self.tokens);
+        let (old, words) = ch.list[ch.resolve(p.to, true)];
+        let width = words.trailing_zeros() as u8;
+        let new = old ^ (1u8 << (bit & 7));
+        let carry = Pop { field: width, spread: width, ..Pop::wire(self.next_id, new, old) };
+        self.next_id += 1;
+        if let Token::Pop(p) = &mut self.tokens[at] {
+            p.to = new;
+        }
+        self.tokens.insert(at, Token::Channel { tag: new, width });
+        self.tokens.insert(at + 2, Token::Pop(carry));
+    }
+
+    /// Self-loop: the population at token `at` writes back into the channel it reads (a carry,
+    /// a clock, a counter, held state). Not on the senses, which nothing writes.
+    pub fn self_loop(&mut self, at: usize) {
+        let ch = Channels::of(&self.tokens);
+        if let Some(Token::Pop(p)) = self.tokens.get_mut(at) {
+            let src = ch.resolve(p.from, false);
+            if src != 0 {
+                p.to = ch.list[src].0;
+            }
+        }
+    }
+
     fn random_pop(&mut self, rng: &mut StdRng) -> Pop {
         let id = self.next_id;
         self.next_id += 1;
@@ -240,6 +273,7 @@ impl TagGenome {
         // tonic, sometimes growing (an inert gene would need several more mutations to matter)
         let mut p = Pop::new(id, rng.r#gen(), rng.r#gen());
         p.wire = rng.gen_bool(0.25);
+        p.sparse = rng.gen_bool(0.5);
         p.op = if rng.gen_bool(0.5) { KernelOp::Or } else { KernelOp::random(rng) };
         p.count = rng.gen_range(1..=8);
         p.field = rng.gen_range(0..4);
@@ -366,6 +400,9 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
             let threshold = (sp.start_quarters as usize * syn.count_ones()).div_ceil(4).max(1);
             let mut k = SimpleKernel::new(syn, 0, out, out_word, threshold, op);
             k.tonic = sp.tonic;
+            if sp.sparse {
+                k.sparsify();
+            }
             k
         })
         .collect();
@@ -386,7 +423,7 @@ impl Evolvable for TagGenome {
     fn mutate(&self, rng: &mut StdRng) -> Self {
         let mut g = self.clone();
         let n = g.tokens.len();
-        match rng.gen_range(0..12) {
+        match rng.gen_range(0..14) {
             // a new token
             0 => {
                 let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..=MAX_WIDTH) } } else { Token::Pop(g.random_pop(rng)) };
@@ -444,6 +481,12 @@ impl Evolvable for TagGenome {
                     g.tokens.insert(at + k, t);
                 }
             }
+            // a stage split into a population's path, or a population turned back on its source
+            12 | 13 if g.pops().count() > 0 => {
+                let pops: Vec<usize> = (0..n).filter(|&i| matches!(g.tokens[i], Token::Pop(_))).collect();
+                let at = *pops.choose(rng).unwrap();
+                if rng.gen_bool(0.5) { g.split(at, rng.gen_range(0..8)) } else { g.self_loop(at) }
+            }
             // one property of one token
             _ if n > 0 => {
                 let at = rng.gen_range(0..n);
@@ -454,7 +497,7 @@ impl Evolvable for TagGenome {
                     Token::Channel { tag, width } => {
                         if rng.gen_bool(0.5) { *tag ^= bit } else { *width = step(*width, 0, MAX_WIDTH) }
                     }
-                    Token::Pop(p) => match rng.gen_range(0..30) {
+                    Token::Pop(p) => match rng.gen_range(0..31) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -484,7 +527,8 @@ impl Evolvable for TagGenome {
                         26 => p.code_lines = step(p.code_lines, 1, 64),
                         27 => p.out_learn = step(p.out_learn, 0, 8),
                         28 => p.fade = step(p.fade, 0, 8),
-                        _ => p.rotate = if up { p.rotate.wrapping_add(61) } else { p.rotate.wrapping_sub(61) },
+                        29 => p.rotate = if up { p.rotate.wrapping_add(61) } else { p.rotate.wrapping_sub(61) },
+                        _ => p.sparse = !p.sparse,
                     },
                 }
             }
@@ -570,6 +614,28 @@ mod tests {
             assert_eq!(ch.list[b].0, p.to);
         }
         let _ = live(&g, Task::Conditioning(Conditioning::Reversal, 8), Physics::Varied, 1);
+    }
+
+    #[test]
+    fn split_inserts_a_stage_and_self_loop_closes_one() {
+        let (a, b) = (0x0Fu8, 0xF0u8);
+        let p = Pop { count: 2, ..Pop::new(1, a, b) };
+        let mut g = TagGenome { tokens: vec![Token::Channel { tag: a, width: 2 }, Token::Channel { tag: b, width: 5 }, Token::Pop(p)], next_id: 2 };
+        g.split(2, 0);
+        // a new channel 0xF1 as wide as B; the population writes it; a wire carries it on to B
+        assert_eq!(g.tokens[2], Token::Channel { tag: 0xF1, width: 5 });
+        let Token::Pop(p) = &g.tokens[3] else { panic!() };
+        assert_eq!((p.from, p.to), (a, 0xF1));
+        let Token::Pop(w) = &g.tokens[4] else { panic!() };
+        assert!(w.wire && w.from == 0xF1 && w.to == b && w.field == 5);
+        assert_eq!(g.graph().edge_count(), 2);
+        g.self_loop(3);
+        let Token::Pop(p) = &g.tokens[3] else { panic!() };
+        assert_eq!(p.to, a);
+        // a population reading the senses is left alone
+        let mut s = TagGenome { tokens: vec![Token::Pop(Pop::new(1, SENSES, a))], next_id: 2 };
+        s.self_loop(0);
+        assert_eq!(s.tokens[0], Token::Pop(Pop::new(1, SENSES, a)));
     }
 
     #[test]

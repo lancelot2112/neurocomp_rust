@@ -425,7 +425,11 @@ impl RuntimeNetwork {
                 let d = nodes[eg.dst].current_mut();
                 apply(&mut d.as_words_mut()[dw..dw + 1], out_mask.as_words(), eg.op);
             }
-            class.add(SimpleKernel::new(syn_mask, sw, out_mask, dw, threshold, eg.op));
+            let mut k = SimpleKernel::new(syn_mask, sw, out_mask, dw, threshold, eg.op);
+            if sp.sparse {
+                k.sparsify();
+            }
+            class.add(k);
         }
     }
 

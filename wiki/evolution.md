@@ -67,3 +67,11 @@ needs.
   their ends, local mutations. Both front ends compile to the same graph.
 - Selecting on reversal needs many lifetimes per genome: with 4, gains on training lifetimes
   (about 180/1024) did not hold out (9–51).
+- The tag grammar (`src/evolve/tags.rs`) is the genome from here on. Besides insert, delete,
+  segment copy and move, and one-property changes, it has:
+  - **split**: a population writes into a new channel one tag bit from its destination, as wide,
+    and a wire carries that channel on to the old destination one frame later. The path keeps
+    working (one frame later) and gains a stage evolution can then change.
+  - **self-loop**: a population writes back into the channel it reads. Clocks (NOR), counters
+    (ADD) and held state (OR) are self-loops (experiment 10), now one mutation away.
+  - **sparse** as a population property (experiment 09).

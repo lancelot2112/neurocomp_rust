@@ -96,14 +96,18 @@ what it can build. We do not add special-purpose modules to get a task done.
   Never feed the observer's scores, the scene or the phase into the program.
 - Keep the world honest: an act that does nothing is sensed as nothing.
 - Keep it deterministic by seed. Evaluate on several seeds and compare genomes on the same ones.
-- **The genome is a list of edges** (`src/evolve/genes.rs`). An edge names its source and
-  destination vectors by id and carries all its own properties: kind (wire, kernels, noise), op,
-  lag, span, window, landing word and span, gate, births, rates, starting kernels.
-- **Vectors are not genes.** A vector exists because edges name it, and its shape follows from
-  them: its width from the widest span written into it, and its history depth from the deepest
-  frame read from it. Vector 0 is the senses, vector 1 the act.
-- Mutation is local: add, copy, remove or rewire an edge, or change one of its properties. Every
-  edge has a permanent id, which keys its own random stream.
+- **The genome is the tag grammar** (`src/evolve/tags.rs`), the one we work on. It is a string
+  of tokens:
+  - `Channel { tag, width }`: a bit vector of 2^width words (up to 2^11 words, 131,072 bits);
+  - `Pop { from, to, ... }`: a population of kernels (or a wire) from one channel to another,
+    with all its own properties inline: op, lag, span, field, place, spread, starting kernels,
+    fan-in and fan-out, threshold, tonic activity, inhibition, births, gate, rates.
+  A population's `from` and `to` are tags, each resolved to the declared channel nearest in
+  Hamming distance. The senses' tag is 0x00 and the act's 0xFF. Any string of tokens builds a
+  network.
+- Mutation is local: insert, delete, copy or move a token, or change one property or flip one tag
+  bit. Every population has a permanent id, which keys its own random stream.
+- The edge-list (`genes.rs`) and stack genomes are kept for earlier results only.
 - **Improvements come from evolution.** Hand-written genomes are only starting points. Do not
   tune a seed by hand to make a task work. Make the evolutionary system able to find it: enough
   lifetimes per genome for selection to beat noise, held-out lifetimes for every claim, and a

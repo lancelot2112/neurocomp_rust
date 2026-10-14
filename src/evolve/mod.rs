@@ -273,8 +273,16 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
     let mut last: Vec<G> = population.clone();
     for generation in 0..generations {
         let mut scored: Vec<(i32, observe::Responding, G)> = score_all(population.drain(..).collect(), task, physics, seeds);
-        // ties go to the smaller genome, then to the earlier one
-        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.2.size().cmp(&b.2.size())));
+        // ties go to the newer genome (the offspring come after the kept ones), so on a flat stretch
+        // the population drifts instead of keeping the same genomes forever
+        let mut order: Vec<usize> = (0..scored.len()).collect();
+        order.sort_by(|&a, &b| scored[b].0.cmp(&scored[a].0).then(b.cmp(&a)));
+        let mut sorted = Vec::with_capacity(scored.len());
+        let mut slots: Vec<Option<(i32, observe::Responding, G)>> = scored.drain(..).map(Some).collect();
+        for i in order {
+            sorted.push(slots[i].take().unwrap());
+        }
+        let scored = sorted;
         let mean = scored.iter().map(|s| s.0).sum::<i32>() / scored.len() as i32;
         report(generation, &Generation { best: scored[0].2.clone(), best_fitness: scored[0].0, mean_fitness: mean, responding: scored[0].1 });
         let parents: Vec<G> = scored.iter().map(|s| s.2.clone()).collect();

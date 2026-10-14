@@ -7,13 +7,13 @@
 //! - `reversal1`: serial reversal with one swap per lifetime (every 200 trials);
 //! - `reversal`: the original (every 100 trials).
 //!
-//! `CUR_GENOME=edges|tags` (the context circuit as edge genes, the start that learned in experiment
-//! 06, or as tag tokens), `CUR_TRIALS`, `CUR_LIVES`, `CUR_HELD`, `CUR_POP`, `CUR_ELITE`,
+//! `CUR_GENOME=edges|tags|stack`, `CUR_START=context|bare` (the context circuit, or the barest
+//! start: a single tonic population on the act; for the stack grammar, random programs), `CUR_TRIALS`, `CUR_LIVES`, `CUR_HELD`, `CUR_POP`, `CUR_ELITE`,
 //! `CUR_EVERY` (held-out check interval), `CUR_SEED`.
 
 use neurocomp::evolve::genes::GeneGenome;
 use neurocomp::evolve::tags::TagGenome;
-use neurocomp::evolve::{evolve_population, fitness, Evolvable, Physics, Task};
+use neurocomp::evolve::{evolve_population, fitness, Evolvable, Genome, Physics, Task};
 use neurocomp::world::Conditioning;
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -60,14 +60,19 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize) {
 }
 
 fn main() {
+    let bare = std::env::var("CUR_START").map_or(false, |v| v == "bare");
     match std::env::var("CUR_GENOME").unwrap_or_else(|_| "edges".into()).as_str() {
         "tags" => {
-            println!("curriculum, tag genome from the context circuit");
-            run(TagGenome::context_seed(), |g| g.tokens.len());
+            println!("curriculum, tag genome from {}", if bare { "a bare start" } else { "the context circuit" });
+            run(if bare { TagGenome::bare_seed() } else { TagGenome::context_seed() }, |g| g.tokens.len());
+        }
+        "stack" => {
+            println!("curriculum, stack genome from an empty program");
+            run(Genome { code: vec![] }, |g| g.code.len());
         }
         _ => {
-            println!("curriculum, edge genome from the context circuit");
-            run(GeneGenome::context_seed(8), |g| g.edges.len());
+            println!("curriculum, edge genome from {}", if bare { "a bare start" } else { "the context circuit" });
+            run(if bare { GeneGenome::act_seed(8) } else { GeneGenome::context_seed(8) }, |g| g.edges.len());
         }
     }
 }

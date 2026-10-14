@@ -3,6 +3,7 @@ use crate::kernel::class::{KernelTrait, KernelOp, KernelContext};
 
 
 
+#[derive(Clone)]
 /// A simple “dendrite” kernel:
 /// - Reads input ∧ input_mask, counts ones
 /// - If count >= threshold, applies `op` of output_mask at `dest_word_idx` into `output`
@@ -48,11 +49,13 @@ pub struct SimpleKernel {
     lines: usize,
     /// a tile kernel: per mask word, the lines it may use (its tile); its lines move only there
     pub room: Option<Vec<u64>>,
+    /// a tile kernel's tile: (first bit, bits)
+    pub tile_at: Option<(usize, usize)>,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, room: None }.counted()
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, room: None, tile_at: None }.counted()
     }
 
     /// A tile kernel: it reads bits `start .. start + bits` of its input (a tile, which may
@@ -69,6 +72,24 @@ impl SimpleKernel {
         let mut k = Self::new(mask, w0, output_mask, output_idx, threshold, op);
         k.words = Some((0..n as u32).collect());
         k.room = Some(room);
+        k.tile_at = Some((start, bits));
+        k
+    }
+
+    /// Its lines as bit indices of its input.
+    pub fn lines_abs(&self) -> Vec<usize> {
+        self.input_mask.as_words().iter().enumerate().flat_map(|(j, &w)| ones_of(w).into_iter().map(move |b| (self.input_idx + j) * 64 + b)).collect()
+    }
+
+    /// A copy of this tile kernel on the tile starting at `start` (its lines at the same places
+    /// inside the tile), writing `output_mask` at `output_idx`; it starts unconfirmed.
+    pub fn moved_to(&self, start: usize, output_idx: usize) -> Self {
+        let Some((s0, bits)) = self.tile_at else { return self.clone() };
+        let lines: Vec<usize> = self.lines_abs().into_iter().map(|b| b - s0 + start).collect();
+        let mut k = Self::tile(start, bits, &lines, self.output_mask.clone(), output_idx, self.threshold, self.op);
+        k.tonic = self.tonic;
+        k.learn_held = self.learn_held;
+        k.learn_fire = self.learn_fire;
         k
     }
 
@@ -222,6 +243,7 @@ impl SimpleKernel {
             words: None,
             lines: 32,
             room: None,
+            tile_at: None,
         }
     }
 
@@ -550,6 +572,14 @@ mod tests {
         let m = k.input_mask.as_words();
         assert_eq!(m[0] & !tile_word(32, 64, 0), 0);
         assert_eq!(m[1] & !tile_word(32, 64, 1), 0);
+    }
+
+    #[test]
+    fn a_tile_kernel_moves_to_another_tile_keeping_its_shape() {
+        let k = SimpleKernel::tile(32, 64, &[40, 41, 70], BitVector::from_words(vec![1]), 0, 2, KernelOp::Xor);
+        let m = k.moved_to(128, 3);
+        assert_eq!(m.lines_abs(), vec![136, 137, 166]);
+        assert_eq!((m.tile_at, m.output_idx, m.threshold, m.care()), (Some((128, 64)), 3, 2, 3));
     }
 
     #[test]

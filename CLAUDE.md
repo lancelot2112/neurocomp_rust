@@ -120,6 +120,13 @@ what it can build. We do not add special-purpose modules to get a task done.
     a channel switches off what reads it.
   - **Work** is counted (kernels matched plus words wired), and evolution can prefer less of it
     (`PRB_THRIFT=1`: one lexicase case for less work per step).
+  - **Kernel replication.** A population may copy its kernels that keep coming true: a
+    predicting kernel (XOR or AND-NOT) is confirmed when every line it wrote was cancelled, a
+    repeating kernel when the gate opened after its act; at 2^k confirmations (net, its own u8
+    count) it is copied once, in place or to a neighbouring tile.
+  - **Circuit copy and plasmids.** A mutation copies a whole circuit (a channel and every
+    population touching it) with a private channel, sometimes reading another channel; and half
+    of all crossovers move one whole circuit from the other genome instead of cutting the string.
   - **The self channel** (tag 0x80, 256 bits, read-only) is what the network senses of itself,
     written by the runtime each step: last step's work and its kernel count as thermometer codes
     (popcount reads the order of magnitude), the step count in binary (a clock), and how many

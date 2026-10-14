@@ -111,6 +111,10 @@ pub struct Pop {
     /// an execution gate: it runs only while the channel nearest this tag had lines on (true)
     /// or none (false) a frame ago; paused, it reads, writes and learns nothing and costs nothing
     pub pause: Option<(u8, bool)>,
+    /// kernel replication: 0 off; k > 0, a kernel confirmed 2^k times (net) is copied, to a
+    /// neighbouring tile (`replicate_shift`) or in place
+    pub replicate: u8,
+    pub replicate_shift: bool,
 }
 
 impl Pop {
@@ -122,7 +126,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false,
         }
     }
 
@@ -230,7 +234,8 @@ impl TagGenome {
                         if p.grow { format!(" grow(syn {}, out {}-{}{}{})", p.birth_syn, p.out_min, p.out_max, if p.new_code { ", new" } else { "" }, if p.repeat { format!(", repeat {}", p.repeat_lag) } else { String::new() }) } else { String::new() },
                         p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false))))
                             + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, name(ch.resolve(g, false)))),
-                        if p.sparse { " sparse" } else { "" },
+                        if p.sparse { " sparse".to_string() } else { String::new() }
+                            + &if p.replicate > 0 { format!(" replicate at {} ({})", 1u32 << p.replicate.min(7), if p.replicate_shift { "to a neighbour tile" } else { "in place" }) } else { String::new() },
                         if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() },
                     );
                 }
@@ -296,6 +301,8 @@ impl TagGenome {
                 tonic: p.tonic,
                 sparse: p.sparse,
                 pause,
+                replicate: p.replicate,
+                replicate_shift: p.replicate_shift,
                 ..EdgeSpec::plain()
             }));
         }
@@ -330,6 +337,114 @@ impl TagGenome {
         self.tokens.insert(at + 2, Token::Pop(carry));
     }
 
+    /// A circuit: the declared channel at `channel` (its index among the channels, 1-based as
+    /// `Channels` numbers them) and every population that reads it, writes it, or is gated or
+    /// paused on it. Returns token indices (the channel's first).
+    pub fn circuit(&self, channel: usize) -> Vec<usize> {
+        let ch = Channels::of(&self.tokens);
+        let mut c = 0;
+        let mut out = Vec::new();
+        for (i, t) in self.tokens.iter().enumerate() {
+            if let Token::Channel { .. } = t {
+                c += 1;
+                if c == channel {
+                    out.insert(0, i);
+                }
+            }
+        }
+        if out.is_empty() {
+            return out;
+        }
+        for (i, t) in self.tokens.iter().enumerate() {
+            if let Token::Pop(p) = t {
+                let touches = ch.resolve(p.from, false) == channel
+                    || ch.resolve(p.to, true) == channel
+                    || p.gate.is_some_and(|(g, _)| ch.resolve(g, false) == channel)
+                    || p.pause.is_some_and(|(g, _)| ch.resolve(g, false) == channel);
+                if touches {
+                    out.push(i);
+                }
+            }
+        }
+        out
+    }
+
+    /// The tokens of a circuit (`circuit(channel)`) made private: the channel gets the fresh tag
+    /// `fresh`, every reference that resolved to it now names `fresh` exactly, and populations
+    /// get new ids from `next_id`. What the circuit reads and writes outside stays as it was.
+    fn private_circuit(&self, channel: usize, fresh: u8, next_id: &mut u32) -> Vec<Token> {
+        let ch = Channels::of(&self.tokens);
+        self.circuit(channel)
+            .into_iter()
+            .map(|i| match &self.tokens[i] {
+                Token::Channel { width, hold, .. } => Token::Channel { tag: fresh, width: *width, hold: *hold },
+                Token::Pop(p) => {
+                    let mut q = p.clone();
+                    if ch.resolve(p.from, false) == channel { q.from = fresh }
+                    if ch.resolve(p.to, true) == channel { q.to = fresh }
+                    if let Some((g, on)) = p.gate { if ch.resolve(g, false) == channel { q.gate = Some((fresh, on)) } }
+                    if let Some((g, on)) = p.pause { if ch.resolve(g, false) == channel { q.pause = Some((fresh, on)) } }
+                    q.id = *next_id;
+                    *next_id += 1;
+                    Token::Pop(q)
+                }
+            })
+            .collect()
+    }
+
+    /// A tag no declared channel (nor the senses, act or self channel) has.
+    fn fresh_tag(&self, rng: &mut StdRng) -> u8 {
+        let ch = Channels::of(&self.tokens);
+        loop {
+            let t: u8 = rng.r#gen();
+            if ch.list.iter().all(|c| c.0 != t) {
+                return t;
+            }
+        }
+    }
+
+    /// Circuit copy (gene duplication): the circuit around a declared channel, copied whole with
+    /// a private channel, appended. With `rewire`, the copy's populations that read from outside
+    /// read another channel instead (the same machinery on other data).
+    pub fn copy_circuit(&mut self, channel: usize, rewire: Option<u8>, rng: &mut StdRng) {
+        let fresh = self.fresh_tag(rng);
+        let mut next = self.next_id;
+        let mut copy = self.private_circuit(channel, fresh, &mut next);
+        if copy.is_empty() {
+            return;
+        }
+        if let Some(src) = rewire {
+            for t in &mut copy {
+                if let Token::Pop(p) = t {
+                    if p.to == fresh && p.from != fresh {
+                        p.from = src;
+                    }
+                }
+            }
+        }
+        self.next_id = next;
+        self.tokens.extend(copy);
+    }
+
+    /// Plasmid transfer: the circuit around one of `donor`'s declared channels, made private,
+    /// appended to this genome. What it reads and writes outside resolves among this genome's
+    /// channels (the senses and the act always match).
+    pub fn take_plasmid(&mut self, donor: &TagGenome, channel: usize, rng: &mut StdRng) {
+        let fresh = self.fresh_tag(rng);
+        let mut next = self.next_id.max(donor.next_id);
+        let plasmid = donor.private_circuit(channel, fresh, &mut next);
+        if plasmid.is_empty() {
+            return;
+        }
+        self.next_id = next;
+        self.tokens.extend(plasmid);
+    }
+
+    /// How many channels are declared.
+    pub fn channels(&self) -> usize {
+        self.tokens.iter().filter(|t| matches!(t, Token::Channel { .. })).count()
+    }
+
     /// Self-loop: the population at token `at` writes back into the channel it reads (a carry,
     /// a clock, a counter, held state). Not on the senses, which nothing writes.
     pub fn self_loop(&mut self, at: usize) {
@@ -353,6 +468,11 @@ impl TagGenome {
         // full coverage, at a random scale from a byte to two words
         p.cover = true;
         p.tile = rng.gen_range(3..=7);
+        // sometimes replicating its confirmed kernels
+        if rng.gen_range(0..3) == 0 {
+            p.replicate = rng.gen_range(2..=5);
+            p.replicate_shift = rng.gen_bool(0.5);
+        }
         // any of the ops, evenly (OR is one of twelve)
         p.op = KernelOp::random(rng);
         p.count = rng.gen_range(1..=8);
@@ -526,7 +646,7 @@ impl Evolvable for TagGenome {
     fn mutate(&self, rng: &mut StdRng) -> Self {
         let mut g = self.clone();
         let n = g.tokens.len();
-        match rng.gen_range(0..14) {
+        match rng.gen_range(0..15) {
             // a new token
             0 => {
                 let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..=MAX_WIDTH), hold: rng.gen_bool(0.25) } } else { Token::Pop(g.random_pop(rng)) };
@@ -584,6 +704,13 @@ impl Evolvable for TagGenome {
                     g.tokens.insert(at + k, t);
                 }
             }
+            // a circuit copied whole (gene duplication), half the time reading another channel
+            14 if g.channels() > 0 => {
+                let c = rng.gen_range(1..=g.channels());
+                let ch = Channels::of(&g.tokens);
+                let rewire = if rng.gen_bool(0.5) { Some(ch.list[rng.gen_range(0..ch.list.len() - 1)].0) } else { None };
+                g.copy_circuit(c, rewire, rng);
+            }
             // a stage split into a population's path, or a population turned back on its source
             12 | 13 if g.pops().count() > 0 => {
                 let pops: Vec<usize> = (0..n).filter(|&i| matches!(g.tokens[i], Token::Pop(_))).collect();
@@ -602,7 +729,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..34) {
+                    Token::Pop(p) => match rng.gen_range(0..36) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -636,6 +763,8 @@ impl Evolvable for TagGenome {
                         30 => p.sparse = !p.sparse,
                         31 => p.cover = !p.cover,
                         32 => p.tile = step(p.tile, 3, MAX_TILE),
+                        33 => p.replicate = step(p.replicate, 0, 7),
+                        34 => p.replicate_shift = !p.replicate_shift,
                         _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                     },
                 }
@@ -649,8 +778,16 @@ impl Evolvable for TagGenome {
         self.tokens.len()
     }
 
-    /// One point: this string's front, the other's back (tags carry the wiring across).
+    /// Half the time a plasmid: one whole circuit of the other genome, made private and appended
+    /// (so a working circuit moves intact); otherwise one point: this string's front, the
+    /// other's back (tags carry the wiring across).
     fn crossover(&self, other: &Self, rng: &mut StdRng) -> Self {
+        if other.channels() > 0 && rng.gen_bool(0.5) {
+            let mut g = self.clone();
+            let c = rng.gen_range(1..=other.channels());
+            g.take_plasmid(other, c, rng);
+            return g;
+        }
         let a = rng.gen_range(0..=self.tokens.len());
         let b = rng.gen_range(0..=other.tokens.len());
         TagGenome { tokens: self.tokens[..a].iter().chain(other.tokens[b..].iter()).cloned().collect(), next_id: self.next_id.max(other.next_id) }
@@ -858,6 +995,54 @@ mod tests {
         // senses are empty, so the population is idle and costs nothing) -> 3 lines; 4 kernels
         // -> 3 lines; 4 steps so far; 2 edges ran -> 2 lines
         assert_eq!(w, vec![0b111, 0b111, 4, 0b11]);
+    }
+
+    #[test]
+    fn a_circuit_copies_whole_and_moves_between_genomes() {
+        // channel R (0x3C): the eye copied in, predictions XORed out of it, and R wired to the act
+        let r = 0x3C;
+        let copy = Pop { field: 3, ..Pop::wire(1, SENSES, r) };
+        let predict = Pop { lag: 2, op: KernelOp::Xor, grow: true, ..Pop::new(2, SENSES, r) };
+        let out = Pop::wire(3, r, ACT);
+        let other = Pop::new(4, SENSES, ACT);
+        let g = TagGenome { tokens: vec![Token::Channel { tag: r, width: 3, hold: false }, Token::Pop(copy), Token::Pop(predict), Token::Pop(out), Token::Pop(other)], next_id: 5 };
+        assert_eq!(g.circuit(1), vec![0, 1, 2, 3], "R and the three populations that touch it");
+        let mut rng = StdRng::seed_from_u64(1);
+        let mut d = g.clone();
+        d.copy_circuit(1, None, &mut rng);
+        assert_eq!((d.channels(), d.tokens.len(), d.graph().edge_count()), (2, 9, 7));
+        // the copy is private: its populations name its own channel, with fresh ids
+        let Token::Channel { tag: fresh, .. } = d.tokens[5] else { panic!() };
+        assert_ne!(fresh, r);
+        let pops: Vec<&Pop> = d.tokens[6..].iter().map(|t| if let Token::Pop(p) = t { p } else { panic!() }).collect();
+        assert!(pops[0].to == fresh && pops[1].to == fresh && pops[2].from == fresh);
+        assert!(pops.iter().all(|p| p.id >= 5));
+        // a plasmid: the circuit moves into a genome that has none of it
+        let mut h = TagGenome { tokens: vec![Token::Pop(Pop::new(1, SENSES, ACT))], next_id: 2 };
+        h.take_plasmid(&g, 1, &mut rng);
+        assert_eq!((h.channels(), h.tokens.len(), h.graph().edge_count()), (1, 5, 4));
+    }
+
+    #[test]
+    fn confirmed_predicting_kernels_replicate() {
+        // the residue circuit (an eye copy ORed into R, XOR predictions from two frames back) on a
+        // repeating cycle: its kernels come true, and with replication they copy themselves
+        let run = |replicate: u8| -> usize {
+            let r = 0x3C;
+            let copy = Pop { field: 3, ..Pop::wire(1, SENSES, r) };
+            let predict = Pop { lag: 2, field: 3, op: KernelOp::Xor, grow: true, share: true, replicate, cap: 64, ..Pop::new(2, SENSES, r) };
+            let g = TagGenome { tokens: vec![Token::Channel { tag: r, width: 3, hold: false }, Token::Pop(copy), Token::Pop(predict)], next_id: 3 };
+            let mut net = g.build(&World::new(1, 4), 1);
+            let mut rng = StdRng::seed_from_u64(2);
+            let codes: Vec<BitVector> = (0..3).map(|_| world::clustered_code(world::CH_BITS, 16, &mut rng)).collect();
+            for t in 0..300 {
+                net.tick(crate::bitvec::bithistory::AdvanceMode::Clear, 0);
+                net.write_input(&codes[t % 3], 0);
+            }
+            net.edges[1].group.kernel_count()
+        };
+        let (plain, copied) = (run(0), run(2));
+        assert!(copied > plain, "{plain} -> {copied}");
     }
 
     #[test]

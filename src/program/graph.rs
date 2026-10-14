@@ -194,6 +194,14 @@ pub struct EdgeSpec {
     /// an execution gate: it runs (reads, writes, learns) only while this node had lines on
     /// (true) or none (false) a frame ago; otherwise it is paused and costs nothing
     pub pause: Option<(usize, bool)>,
+    /// kernel replication: 0 off; k > 0, a kernel whose prediction comes true 2^k times more
+    /// than it fails (its own `confirmed` count) is copied, once, and both counts restart.
+    /// A predicting kernel (XOR or AND-NOT) is confirmed when every line it wrote was cancelled;
+    /// a repeating kernel when the gate opened (the act was followed) `repeat_lag` after it
+    /// acted. `replicate_shift`: the copy goes to a neighbouring tile (the same detector tried
+    /// elsewhere), else it stays in place (the two then hold each other down and separate).
+    pub replicate: u8,
+    pub replicate_shift: bool,
 }
 
 impl EdgeSpec {
@@ -236,6 +244,8 @@ impl EdgeSpec {
             sparse: false,
             tile: 0,
             pause: None,
+            replicate: 0,
+            replicate_shift: false,
         }
     }
 }

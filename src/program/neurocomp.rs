@@ -361,6 +361,17 @@ impl RuntimeNetwork {
             // a gate: it learns only while the gate node had lines on (or none) a frame ago
             if let Some((g, on)) = eg.gate {
                 let open = (nodes[g].get_frame(sp.gate_lag.max(1)).count_ones() > 0) == on;
+                // (replication) a repeating kernel that acted `repeat_lag` steps ago is confirmed
+                // if the gate opened (what should follow its act did), else it counts down
+                if sp.replicate > 0 && eg.repeat {
+                    if let Some(class) = eg.group.classes_mut().first_mut() {
+                        for k in class.kernels_mut() {
+                            if k.age as usize == eg.repeat_lag {
+                                k.confirm(open, None);
+                            }
+                        }
+                    }
+                }
                 // extinction on a repeat edge: a kernel that acted `repeat_lag` steps ago, with
                 // the gate still shut, fades (chance 1/4)
                 if !open && eg.repeat {
@@ -381,7 +392,40 @@ impl RuntimeNetwork {
             if matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
                 let dest = nodes[eg.dst].current();
                 for &k in &fired[i] {
+                    // (replication) its prediction came true if every line it wrote is now off
+                    if sp.replicate > 0 {
+                        let kk = &class.kernels()[k];
+                        let left = kk.output_mask.as_words().iter().enumerate().any(|(j, &m)| dest.as_words().get(kk.output_idx + j).is_some_and(|&d| d & m != 0));
+                        class.kernels_mut()[k].confirm(!left, None);
+                    }
                     class.kernels_mut()[k].learn_output(dest, sp.out_learn, rng);
+                }
+            }
+            // replication: the first kernel confirmed 2^replicate times (net) is copied, once a
+            // step, while there is room under the cap
+            if sp.replicate > 0 && class.len() < sp.cap as usize {
+                let need = (1u32 << sp.replicate.min(7)).min(255) as u8;
+                if let Some(k) = class.kernels().iter().position(|k| k.confirmed >= need) {
+                    class.kernels_mut()[k].confirmed = 0;
+                    let parent = class.kernels()[k].clone();
+                    let child = match (sp.replicate_shift, parent.tile_at, seen[i].as_ref()) {
+                        (true, Some((start, bits)), Some(view)) if view.bit_len() > bits => {
+                            // the neighbouring tile, one way or the other (wrapping), output at the
+                            // same relative place (not into the act, whose outputs are moves)
+                            let span = view.bit_len() - bits + 1;
+                            let to = if rng.gen_bool(0.5) { (start + bits) % span } else { (start + span - bits % span) % span };
+                            let dwords = nodes[eg.dst].current().word_len().max(1);
+                            let out = if eg.can_grow { (to * dwords / view.word_len().max(1)).min(dwords - 1) } else { parent.output_idx };
+                            parent.moved_to(to, out)
+                        }
+                        _ => {
+                            let mut c = parent.clone();
+                            c.confirmed = 0;
+                            c.age = u8::MAX;
+                            c
+                        }
+                    };
+                    class.add(child);
                 }
             }
             if !(eg.grow && eg.can_grow) || class.len() >= sp.cap as usize {

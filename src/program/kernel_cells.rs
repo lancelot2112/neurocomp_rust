@@ -81,6 +81,9 @@ pub struct Kernel {
     /// newest first
     depth: usize,
     hist: std::collections::VecDeque<Vec<u64>>,
+    /// only conjunction cells write the output (what came after what), plain cells code and
+    /// learn but do not send
+    pub conj_only: bool,
 }
 
 /// The bits one coding cell writes (the popcount a new part must meet to be a cell of its own).
@@ -102,7 +105,7 @@ impl Kernel {
     /// Cells over `bits` input lines writing into `out_bits` output bits, `out_k` bits each, `k`
     /// winning an input.
     pub fn new(bits: usize, out_bits: usize, k: usize, out_k: usize, seed: u64) -> Self {
-        Self { bits, out_bits, k, out_k, cells: Vec::new(), rng: StdRng::seed_from_u64(seed), births: 0, depth: 0, hist: Default::default() }
+        Self { bits, out_bits, k, out_k, cells: Vec::new(), rng: StdRng::seed_from_u64(seed), births: 0, depth: 0, hist: Default::default(), conj_only: false }
     }
 
     pub fn rand_mask(&mut self, p: u32) -> u64 {
@@ -400,7 +403,9 @@ impl Kernel {
         }
         let mut out = vec![0u64; words(self.out_bits)];
         for &c in &winners {
-            self.write_out(c, &mut out);
+            if !self.conj_only || self.cells[c].lag > 0 {
+                self.write_out(c, &mut out);
+            }
         }
         (BitVector::from_words(out), winners)
     }

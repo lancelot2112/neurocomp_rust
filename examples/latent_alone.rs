@@ -68,6 +68,8 @@ fn main() {
         // (`LATENT_HIST=h`: the kernel's cells may look up to h inputs back: conjunctions in time)
         let hist: usize = env("LATENT_HIST", 0);
         let mut ksep = Kernel::new(1024, 1024, 4, 8, seed ^ 0xC0DE).with_history(hist);
+        // (`LATENT_CONJ=1`: only the conjunction cells send to the holder)
+        ksep.conj_only = std::env::var("LATENT_CONJ").is_ok();
         let mut kh = Holder::new(1024, seed ^ 0xF00D);
         let noise: usize = env("LATENT_NOISE", 0);
         let seq = std::env::var("LATENT_SEQ").is_ok();

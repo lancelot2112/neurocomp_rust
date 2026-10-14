@@ -35,3 +35,11 @@ Stopped after the delayed stage.
 **Meaning.** Silence-is-death works: every genome clicks within 20 generations. But with 8
 training lifetimes, gains on training (up to 50) were luck: held out they were negative on the
 stage and chance on reversal. Next: 24 training lifetimes on every stage.
+
+**Correction (later).** The negative held-out scores are silent lifetimes, not clicking on the
+wrong light. A held-out score is the mean of 16 lifetimes and a silent one scores -4096, so each
+silent lifetime costs -256: -259 is one, -513 two, and the same holds in the 24-lifetime and
+full-coverage runs after it (-254, -279, -265: one; -779: three). What is left is within 25 of 0
+every time. The "fixed eye word" reading above was a guess from the printed networks that this
+does not need. `examples/baseline.rs` confirms the held-out seeds are not biased: networks that
+cannot see score about 0 pooled on training, held-out and a large set alike.

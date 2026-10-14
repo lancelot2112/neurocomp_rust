@@ -432,11 +432,15 @@ pub struct Config {
     /// misses adds one) that silences the active assembly at that bit length, unexplained acts
     /// recruit new cells at the same, and the silenced assembly stays adapted as long
     pub volatile: bool,
+    /// the context is the orbitofrontal column's own held assembly (`MIND_LATENT=4`, with
+    /// `MIND_PHASE=1`): layer 4's code separated, held by an assembly of layer 2/3 cells that
+    /// sustains itself by recurrence and falls silent to inhibition (`Column::set_assembly`)
+    pub assembly: bool,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false, latent: false, attractor: false, volatile: false }
+        Self { hc_assoc: true, topographic: true, amygdala: true, learned_pause: true, contingency: true, imagine_value: true, own_effect: true, agency: true, pit: true, response: true, amy_critic: true, efference: true, tonic: true, effort: (ONE / 32) as i32, nogo: true, salience: true, coverage: true, critic_all: false, nogo_symmetric: true, balance: true, opportunity: true, act_baseline: true, per_act: true, act_credit: true, attend_gate: false, elemental: true, focused: true, credit_own: true, window: 2, alpha: true, ofc_column: true, ofc_value_z: true, ofc_split: true, frustration: true, persist: false, recur: true, superpose: true, claustrum: true, wide: true, generalize: true, need: true, keep_order: true, burst: false, sparse_out: true, adapt: true, bounded: true, local: true, top_view: true, compact: true, consolidate: true, predictive: false, attend_ctx: false, burst_out: false, l6_gain: false, phase: false, explore: false, ilam: false, latent: false, attractor: false, volatile: false, assembly: false }
     }
 }
 
@@ -506,6 +510,7 @@ impl Config {
             latent: std::env::var("MIND_LATENT").map_or(false, |v| ["1", "2", "3", "4"].contains(&v.as_str())),
             attractor: std::env::var("MIND_LATENT").map_or(false, |v| v == "2" || v == "3"),
             volatile: std::env::var("MIND_LATENT").map_or(false, |v| v == "3"),
+            assembly: std::env::var("MIND_LATENT").map_or(false, |v| v == "4"),
             effort: std::env::var("MIND_EFFORT").ok().and_then(|v| v.parse().ok()).unwrap_or((ONE / 32) as i32),
         }
     }
@@ -680,6 +685,7 @@ impl Mind {
 
     pub fn with_config(body: Body, seed: u64, cfg: Config) -> Self {
         let volatile = cfg.volatile;
+        let assembly = cfg.assembly;
         let mut b = Brain::new(BITS, ACTIVE, seed.wrapping_add(500));
         b.columns = true;
         b.selforg = true;
@@ -818,6 +824,9 @@ impl Mind {
                     o.set_recurrence(3);
                 } else if persist {
                     o.set_persistence(4);
+                }
+                if assembly {
+                    o.col.set_assembly(1024, 16, 256, 8, seed ^ 0xA55E);
                 }
                 o
             },
@@ -1726,6 +1735,14 @@ impl Mind {
             let got = got.clamp(0, ONE as i32);
             if let Some(c) = self.context_given {
                 self.move_context(c);
+            } else if self.cfg.phase && self.cfg.assembly {
+                // the orbitofrontal column's active assembly (the last one kept while it is silent)
+                if let Some((c, true)) = self.ofc_area.col.assembly_context() {
+                    self.phase_count = self.phase_count.max(c + 1);
+                    self.move_context(c);
+                } else {
+                    self.ilam_open = false;
+                }
             } else if self.cfg.phase && self.cfg.attractor {
                 self.latent_attract(&bits, got);
             } else if self.cfg.phase && self.cfg.latent {

@@ -563,6 +563,39 @@ impl TagGenome {
         (r, w)
     }
 
+    /// A plasmid around one of `donor`'s populations (the `k`-th): the circuit of a declared
+    /// channel it reads, writes or is gated by, made private; or, when it touches none (it
+    /// reads and writes ports), the population alone, with a new id. Appended to this genome;
+    /// returns the plasmid's tokens as moved (empty if the donor has no population).
+    pub fn take_population_plasmid(&mut self, donor: &TagGenome, k: usize, rng: &mut StdRng) -> Vec<Token> {
+        let pops: Vec<usize> = (0..donor.tokens.len()).filter(|&i| matches!(donor.tokens[i], Token::Pop(_))).collect();
+        if pops.is_empty() {
+            return vec![];
+        }
+        let Token::Pop(p) = &donor.tokens[pops[k % pops.len()]] else { unreachable!() };
+        let ch = Channels::of(&donor.tokens);
+        let touched = [(!p.from_port).then_some(p.from), (!p.to_port).then_some(p.to), p.gate.map(|g| g.0), p.pause.map(|g| g.0)]
+            .into_iter()
+            .flatten()
+            .find_map(|t| ch.internal(t));
+        let before = self.tokens.len();
+        match touched {
+            Some(c) => self.take_plasmid(donor, c, rng),
+            None => {
+                let mut q = p.clone();
+                q.id = self.next_id.max(donor.next_id);
+                self.next_id = q.id + 1;
+                self.tokens.push(Token::Pop(q));
+            }
+        }
+        self.tokens[before..].to_vec()
+    }
+
+    /// How many populations it has.
+    pub fn populations(&self) -> usize {
+        self.pops().count()
+    }
+
     /// How many channels are declared.
     pub fn channels(&self) -> usize {
         self.tokens.iter().filter(|t| matches!(t, Token::Channel { .. })).count()
@@ -918,10 +951,10 @@ impl Evolvable for TagGenome {
     /// (so a working circuit moves intact); otherwise one point: this string's front, the
     /// other's back (tags carry the wiring across).
     fn crossover(&self, other: &Self, rng: &mut StdRng) -> Self {
-        if other.channels() > 0 && rng.gen_bool(0.5) {
+        if other.populations() > 0 && rng.gen_bool(0.5) {
             let mut g = self.clone();
-            let c = rng.gen_range(1..=other.channels());
-            g.take_plasmid(other, c, rng);
+            let k = rng.gen_range(0..other.populations());
+            g.take_population_plasmid(other, k, rng);
             return g;
         }
         let a = rng.gen_range(0..=self.tokens.len());
@@ -1219,6 +1252,26 @@ mod tests {
         let a = net.read_output().as_words().to_vec();
         assert_eq!(a[world::HAND * w], 0b1011);
         assert!(a[world::VOICE * w..(world::VOICE + 1) * w].iter().all(|&x| x == 0));
+    }
+
+    #[test]
+    fn a_population_plasmid_moves_its_circuit_or_itself() {
+        let r = 0x3C;
+        let copy = Pop { field: 3, ..Pop::wire(1, SENSES, r) };
+        let out = Pop::wire(2, r, ACT);
+        let reflex = Pop { count: 4, cover: true, from: EYE, from_port: true, to: HAND, to_port: true, ..Pop::new(3, EYE, HAND) };
+        let donor = TagGenome { tokens: vec![Token::Channel { tag: r, width: 3, hold: false }, Token::Pop(copy), Token::Pop(out), Token::Pop(reflex)], next_id: 4 };
+        let mut rng = StdRng::seed_from_u64(1);
+        // a population touching R brings R's circuit (R and both its populations)
+        let mut g = TagGenome { tokens: vec![], next_id: 1 };
+        let moved = g.take_population_plasmid(&donor, 0, &mut rng);
+        assert_eq!((moved.len(), g.channels(), g.populations()), (3, 1, 2));
+        // a population on ports only moves alone, with a new id
+        let mut h = TagGenome { tokens: vec![], next_id: 1 };
+        let moved = h.take_population_plasmid(&donor, 2, &mut rng);
+        assert_eq!((moved.len(), h.channels(), h.populations()), (1, 0, 1));
+        let Token::Pop(p) = &h.tokens[0] else { panic!() };
+        assert!(p.from_port && p.to_port && p.id >= 4);
     }
 
     #[test]

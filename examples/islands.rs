@@ -6,9 +6,9 @@
 //! - recall: respond, remember (a light gone a few steps ago);
 //! - reading: copy (say the token shown on the eye a few steps before);
 //! - generalist: all seven.
-//! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (a channel and every
-//! population touching it, made private) from the best genomes of other islands into its new
-//! children, so a circuit grown under one pressure is tried under another. Each plasmid is
+//! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (one population of a
+//! donor with the circuit of any channel it touches, made private; or the population alone if it
+//! only reads and writes ports) from the best genomes of other islands into its new children, so a circuit grown under one pressure is tried under another. Each plasmid is
 //! recorded (from, to, the circuit) in `ISL_LOG`; at each exchange every island's best genome is
 //! scored on every probe on held-out worlds (does a circuit carry over?).
 //!
@@ -66,15 +66,13 @@ fn main() {
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     // a plasmid: one circuit of the donor (a random declared channel and what touches it)
     let transfer = |recipient: &TagGenome, donor: &TagGenome, rng: &mut StdRng| -> (TagGenome, String) {
-        let n = donor.channels();
-        if n == 0 {
-            return (recipient.clone(), "(nothing: the donor has no channel)".into());
+        if donor.populations() == 0 {
+            return (recipient.clone(), "(nothing: the donor has no population)".into());
         }
-        let c = rng.gen_range(1..=n);
-        let circuit: Vec<Token> = donor.circuit(c).into_iter().map(|i| donor.tokens[i].clone()).collect();
-        let text = TagGenome { tokens: circuit, next_id: 0 }.describe();
         let mut child = recipient.clone();
-        child.take_plasmid(donor, c, rng);
+        let k = rng.gen_range(0..donor.populations());
+        let moved = child.take_population_plasmid(donor, k, rng);
+        let text = TagGenome { tokens: moved, next_id: 0 }.describe();
         (child, text)
     };
     evolve_islands(&islands, start, pop, trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
@@ -82,7 +80,7 @@ fn main() {
             let _ = writeln!(log, "generation {g}: {} -> {}\n{what}", islands[*from].name, islands[*to].name);
         }
         if !r.moved.is_empty() {
-            println!("{g:>4}  plasmids moved: {}", r.moved.iter().map(|(f, t, w)| format!("{}->{} ({} tokens)", islands[*f].name, islands[*t].name, w.lines().count())).collect::<Vec<_>>().join(", "));
+            println!("{g:>4}  plasmids moved: {}", r.moved.iter().map(|(f, t, w)| format!("{}->{} ({} populations)", islands[*f].name, islands[*t].name, w.lines().filter(|l| l.contains("->")).count())).collect::<Vec<_>>().join(", "));
             // every island's best on every probe, held out: does a circuit carry over?
             println!("      every island's best on every probe, held out:{}", "");
             println!("      {:<11}{names}", "");

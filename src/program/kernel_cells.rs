@@ -10,10 +10,11 @@
 //!   on the input. Its threshold is a share of its own mask, so a cell that has come to take in
 //!   several inputs (more synapses) needs more of them together and fires for none alone: there is
 //!   no rate to keep (homeostasis without a hidden variable).
-//! - **Inhibition between cells that match the same input**: of the cells that fire, the `k` with
-//!   most synapses on the input win (feedback inhibition); the others, which matched and were held
-//!   down, unlearn the input (anti-Hebbian: their synapses on its lines go, each at random), so
-//!   overlapping inputs come apart.
+//! - **Inhibition between cells whose masks overlap**: of the cells that fire, a cell is held down
+//!   by a better-matched one whose mask overlaps its own (more than half the smaller), as cells
+//!   competing for the same lines share their interneurons; cells on different parts of the
+//!   input both fire. The held-down cells, which matched, unlearn the input (anti-Hebbian: their
+//!   synapses on its lines go, each at random), so overlapping inputs come apart.
 //! - **Hebbian**: a winner's mask moves toward the input (its synapses on the input's lines set,
 //!   those off it cleared, each at random).
 //! - **Births**: an input no cell fires for (as an input that overlaps a known one only in part
@@ -154,9 +155,10 @@ impl Kernel {
         }
     }
 
-    /// Code an input: the cells that fire compete (the `k` with most synapses on it win), the
-    /// winners learn it and the matched losers unlearn it (with `learn`), an input no cell fires
-    /// for gets `k` new cells (with `learn`), and the winners write the output. Returns the
+    /// Code an input: the cells that fire compete with those whose masks overlap theirs (the
+    /// better-matched win), the winners learn it and the held-down ones unlearn it (with
+    /// `learn`), an input no cell fires for gets `k` new cells (with `learn`), and the winners
+    /// write the output. Returns the
     /// output and the winners.
     pub fn code(&mut self, input: &BitVector, learn: bool) -> (BitVector, Vec<usize>) {
         let mut inw = input.as_words().to_vec();
@@ -166,7 +168,24 @@ impl Kernel {
             f.then_some((on, c))
         }).collect();
         fired.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
-        let mut winners: Vec<usize> = fired.iter().take(self.k).map(|x| x.1).collect();
+        // inhibition is local: a fired cell is held down by a better-matched one whose mask
+        // overlaps its own (more than half the smaller), as cells competing for the same lines
+        // share their inhibition; cells on different parts of the input both fire
+        let mut winners: Vec<usize> = Vec::new();
+        let mut held: Vec<usize> = Vec::new();
+        for &(_, c) in &fired {
+            let mine = &self.cells[c].syn;
+            let n = pop(mine);
+            let rivals = winners.iter().any(|&w| {
+                let theirs = &self.cells[w].syn;
+                2 * and_pop(mine, theirs) > n.min(pop(theirs))
+            });
+            if rivals {
+                held.push(c);
+            } else {
+                winners.push(c);
+            }
+        }
         if learn && pop(&inw) > 0 {
             if winners.is_empty() {
                 winners = (0..self.k).map(|_| self.birth(&inw, None)).collect();
@@ -174,7 +193,7 @@ impl Kernel {
                 for &c in &winners {
                     self.hebbian(c, &inw, 3);
                 }
-                for &(_, c) in fired.iter().skip(self.k) {
+                for &c in &held {
                     self.anti_hebbian(c, &inw, 1);
                 }
             }

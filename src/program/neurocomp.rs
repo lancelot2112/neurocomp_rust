@@ -30,6 +30,12 @@ pub struct RuntimeNetwork {
     /// work done since it was built: kernels matched plus words a wire or noise edge wrote (a
     /// paused or idle population adds nothing)
     pub work: u64,
+    /// the self node (named "self"), if the program has one: what the network senses of itself
+    pub self_node: Option<usize>,
+    /// last step's work and how many edges ran (for the self node), and the steps so far
+    last_work: u64,
+    last_ran: u64,
+    steps: u64,
 }
 
 /// What an edge reads: frames `read_back .. read_back + span` of a node ORed together, only the
@@ -184,7 +190,8 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(i as u64 ^ 0xA0A0)).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output, noise, hold, work: 0 }
+        let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
+        Self { nodes, edges, node_rngs, output, noise, hold, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -231,7 +238,8 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, work: 0 }
+        let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
+        Self { nodes, edges, node_rngs, output: last, noise, hold, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Advance histories and process all edges once.
@@ -246,6 +254,7 @@ impl RuntimeNetwork {
         // whatever their ops. Each edge reads its source as it was `read_back` (at least 1)
         // frames ago, never the frame being written, so edges into different vectors do not
         // depend on each other.
+        self.write_self();
         let Self { nodes, edges, node_rngs, noise, .. } = self;
         // spontaneous activity: random lines on, in the nodes that have it (each its own stream)
         for (i, &k) in noise.iter().enumerate() {
@@ -323,6 +332,9 @@ impl RuntimeNetwork {
             }
         }
         self.work += work;
+        self.last_work = work;
+        self.last_ran = paused.iter().zip(&seen).filter(|(p, _)| !**p).count() as u64;
+        self.steps += 1;
         let Self { nodes, edges, .. } = self;
         // After the tick: cancelling kernels learn their outputs, and growing edges give birth
         // where their destination was left uncovered (a paused edge does not learn)
@@ -520,6 +532,24 @@ impl RuntimeNetwork {
                 k.sparsify();
             }
             class.add(k);
+        }
+    }
+
+    /// The self node's frame this step, written by the runtime before any edge runs (bits only,
+    /// for kernels to read like any other vector):
+    /// - word 0: last step's work (kernels matched plus words wired), as a thermometer: the low
+    ///   `bit length of the count` lines on, so popcount reads the order of magnitude;
+    /// - word 1: how many kernels it has, the same way;
+    /// - word 2: the steps so far in binary (line k flips every 2^k steps: a clock);
+    /// - word 3: how many edges ran last step (not paused), the same way as word 0.
+    fn write_self(&mut self) {
+        let Some(m) = self.self_node else { return };
+        let therm = |x: u64| -> u64 { let b = 64 - x.leading_zeros(); if b >= 64 { u64::MAX } else { (1u64 << b) - 1 } };
+        let kernels: u64 = self.edges.iter().map(|e| e.group.kernel_count() as u64).sum();
+        let words = [therm(self.last_work), therm(kernels), self.steps, therm(self.last_ran)];
+        let cur = self.nodes[m].current_mut().as_words_mut();
+        for (d, w) in cur.iter_mut().zip(words) {
+            *d = w;
         }
     }
 

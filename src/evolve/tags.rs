@@ -45,6 +45,11 @@ use super::Evolvable;
 pub const SENSES: u8 = 0x00;
 /// The act's tag.
 pub const ACT: u8 = 0xFF;
+/// The self channel's tag: what the network senses of itself (read-only; see
+/// `RuntimeNetwork::write_self`).
+pub const SELF: u8 = 0x80;
+/// The self channel's width: 4 words.
+pub const SELF_BITS: usize = 256;
 
 /// A population: kernels (or a wire) from one channel to another, with all its properties.
 #[derive(Clone, Debug, PartialEq)]
@@ -159,15 +164,24 @@ impl Channels {
                 hold.push(*h);
             }
         }
+        list.push((SELF, SELF_BITS / 64));
+        hold.push(false);
         list.push((ACT, world::ACT_BITS / 64));
         hold.push(false);
         Self { list, hold }
     }
 
-    /// The channel nearest a tag (ties: the earlier); `writable` skips the senses.
+    /// The self channel's index (just before the act).
+    fn self_index(&self) -> usize {
+        self.list.len() - 2
+    }
+
+    /// The channel nearest a tag (ties: the earlier); `writable` skips the senses and the self
+    /// channel, which only the world and the runtime write.
     fn resolve(&self, tag: u8, writable: bool) -> usize {
+        let me = self.self_index();
         (0..self.list.len())
-            .filter(|&i| !(writable && i == 0))
+            .filter(|&i| !(writable && (i == 0 || i == me)))
             .min_by_key(|&i| ((self.list[i].0 ^ tag).count_ones(), i))
             .unwrap()
     }
@@ -189,7 +203,8 @@ impl TagGenome {
     pub fn describe(&self) -> String {
         let ch = Channels::of(&self.tokens);
         let last = ch.list.len() - 1;
-        let name = |i: usize| if i == 0 { "S".to_string() } else if i == last { "A".to_string() } else { format!("C{i}") };
+        let me = ch.self_index();
+        let name = |i: usize| if i == 0 { "S".to_string() } else if i == last { "A".to_string() } else if i == me { "M".to_string() } else { format!("C{i}") };
         let mut out = String::new();
         let mut c = 0;
         for t in &self.tokens {
@@ -287,7 +302,7 @@ impl TagGenome {
         let mut g: Graph<NodeSpec, EdgeSpec, Directed> = Graph::new();
         let idx: Vec<_> = (0..n)
             .map(|i| {
-                let name = if i == 0 { Some("input".to_string()) } else if i == n - 1 { Some("output".to_string()) } else { None };
+                let name = if i == 0 { Some("input".to_string()) } else if i == n - 1 { Some("output".to_string()) } else if i == n - 2 { Some("self".to_string()) } else { None };
                 g.add_node(NodeSpec { name, bits: ch.list[i].1 * 64, history_depth: depth[i], noise: 0, hold: ch.hold[i] })
             })
             .collect();
@@ -321,7 +336,7 @@ impl TagGenome {
         let ch = Channels::of(&self.tokens);
         if let Some(Token::Pop(p)) = self.tokens.get_mut(at) {
             let src = ch.resolve(p.from, false);
-            if src != 0 {
+            if src != 0 && src != ch.self_index() {
                 p.to = ch.list[src].0;
             }
         }
@@ -656,7 +671,9 @@ mod tests {
         assert_eq!(ch.resolve(SENSES, false), 0);
         // nothing writes the senses: the nearest writable channel instead
         assert_ne!(ch.resolve(SENSES, true), 0);
-        assert_eq!(ch.resolve(ACT, true), 3);
+        // the act is last, after the self channel
+        assert_eq!(ch.resolve(ACT, true), 4);
+        assert_eq!(ch.resolve(SELF, false), 3);
     }
 
     #[test]
@@ -819,6 +836,28 @@ mod tests {
         assert_eq!(run(true), (0, 0));
         let (lines, work) = run(false);
         assert!(lines > 0 && work >= 4 * 5, "{lines} {work}");
+    }
+
+    #[test]
+    fn the_self_channel_reports_work_size_and_time() {
+        // C copies the self channel (a wire reads it a frame back); a population of 4 kernels on
+        // the senses gives it some work to report
+        let c = 0x3C;
+        let look = Pop { cover: true, ..Pop::wire(1, SELF, c) };
+        let busy = Pop { count: 4, ..Pop::new(2, SENSES, ACT) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 2, hold: false }, Token::Pop(look), Token::Pop(busy)], next_id: 3 };
+        let ch = Channels::of(&g.tokens);
+        assert_eq!(ch.resolve(SELF, false), ch.self_index());
+        assert_ne!(ch.resolve(SELF, true), ch.self_index(), "nothing writes the self channel");
+        let mut net = g.build(&World::new(1, 4), 1);
+        for _ in 0..6 {
+            net.tick(crate::bitvec::bithistory::AdvanceMode::Clear, 0);
+        }
+        let w = net.read_node(1).as_words().to_vec();
+        // the frame read was written at step 4 (0-based), about step 3: work 4 words wired (the
+        // senses are empty, so the population is idle and costs nothing) -> 3 lines; 4 kernels
+        // -> 3 lines; 4 steps so far; 2 edges ran -> 2 lines
+        assert_eq!(w, vec![0b111, 0b111, 4, 0b11]);
     }
 
     #[test]

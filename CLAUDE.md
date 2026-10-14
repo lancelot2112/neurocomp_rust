@@ -120,6 +120,10 @@ what it can build. We do not add special-purpose modules to get a task done.
     a channel switches off what reads it.
   - **Work** is counted (kernels matched plus words wired), and evolution can prefer less of it
     (`PRB_THRIFT=1`: one lexicase case for less work per step).
+  - **The self channel** (tag 0x80, 256 bits, read-only) is what the network senses of itself,
+    written by the runtime each step: last step's work and its kernel count as thermometer codes
+    (popcount reads the order of magnitude), the step count in binary (a clock), and how many
+    populations ran. It is the network's own state, not the observer's scores.
   A population's `from` and `to` are tags, each resolved to the declared channel nearest in
   Hamming distance. The senses' tag is 0x00 and the act's 0xFF. Any string of tokens builds a
   network.

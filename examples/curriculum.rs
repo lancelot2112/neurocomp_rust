@@ -10,6 +10,7 @@
 //!
 //! `CUR_SCORE=phase` (reversal stages score a lifetime's worst phase), `CUR_LIVES_REV` (lifetimes a
 //! genome on reversal stages), `CUR_CHANNELS` (empty channels in a naked tag genome),
+//! `CUR_SHOW=1` prints the current best network under each row.
 //! `CUR_GENOME=edges|tags|stack`, `CUR_START=context|bare|naked` (the context circuit; a bare start,
 //! a single tonic population on the act; or naked, an empty genome), `CUR_TRIALS`, `CUR_LIVES`, `CUR_HELD`, `CUR_POP`, `CUR_ELITE`,
 //! `CUR_EVERY` (held-out check interval), `CUR_SEED`.
@@ -44,6 +45,7 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize, describe: impl Fn(&G)
     let original_worst = Task::Reversal { trials, period: trials / 4, worst_phase: true };
     // (`CUR_LIVES_REV`: lifetimes a genome on reversal stages; default CUR_LIVES)
     let lives_rev: u64 = env("CUR_LIVES_REV", lives);
+    let show = env("CUR_SHOW", 0u8) == 1;
     let train_rev: Vec<u64> = (0..lives_rev).collect();
     let train: Vec<u64> = (0..lives).collect();
     let held: Vec<u64> = (10_000..10_000 + held_n).collect();
@@ -63,6 +65,10 @@ fn run<G: Evolvable>(start: G, size: impl Fn(&G) -> usize, describe: impl Fn(&G)
             if g % every == 0 || g + 1 == gens {
                 let (h, o, w) = check(&r.best, t);
                 println!("{name:<13} {g:>4}  {:>5} {:>5}  {:>5}  {h:>11}  {o:>14}  {w:>14}", r.best_fitness, r.mean_fitness, size(&r.best));
+                // (`CUR_SHOW=1`: the current best network under each row)
+                if show {
+                    print!("{}", describe(&r.best));
+                }
             }
         });
     }

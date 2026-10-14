@@ -39,3 +39,24 @@ clicked. Both now average 0 at chance (tested with hand-written policies).
 - At generation 60 the best held a learned reflex evolved from nothing: a covering population
   growing repeat births (a kernel on what was seen before an act repeats the act), learning
   only while the act was on. Held-out discriminate 32, close to noise for one genome.
+
+## Later runs (gaps between trials, ports, thrift per world)
+
+- **Clock artefact.** With trials back to back, a blind policy clicking on steps 3-5 of every 10
+  scores over 900 on respond; with gaps of 0-6 steps between trials it scores about 0. The rise
+  in respond at generation 40 of the self-channel run was most likely the step counter, not
+  sight. Runs since use gaps.
+- **The self channel crowded out the senses.** Its tag sat one bit from the senses', taking half
+  the tags that reached them (55 of 256 instead of 105). Tags now name internal channels only;
+  senses and effectors are ports with a tag space of their own.
+- **Noise.** One genome scored on 16 held-out worlds lands as far as +/-50 from 0 by luck: a
+  genome reading no sense at all scored tell 50, discriminate 36 held out. Claims need many
+  worlds, or one held-out set to pick and another to report.
+- **First sensory skill (ports run, generations 90-110).** A covering population on all the
+  senses into the hand, growing by repeat births, spread through the population: held-out tell
+  202, 142, 110 in three successive rows (population tell on training 26, 71, 47), with
+  discriminate and reverse still about 0. Work per step rose to about 300.
+- **Births into act ports** (added after): a spontaneous eye -> hand population on 64 held-out
+  worlds goes from respond 15 / tell 32 to respond 196 / tell 339 once births copy the move
+  being made onto what is seen (`examples/port_cost.rs`). Discrimination still needs clicks to
+  be tied to the stroke that follows.

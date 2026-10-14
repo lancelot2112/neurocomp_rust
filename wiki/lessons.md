@@ -84,6 +84,11 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
   - No anti-Hebbian across nested scales: it destroys back-off.
   - Every kernel that matched checks its own prediction (the third mask). Checking only the
     winner deadlocks.
+- **Confirmations carry context (experiment 04).** A reader of "matched and came true" codes
+  holds a reversal through a click between light and outcome (7–10/10 swaps), where the old
+  reader failed (0–4) and a reader of matches alone fails (2–3). Small codes (matched, failed)
+  destabilise an assembly reader, because kernels born after it settled show up as
+  unexplained.
 
 16. **Prediction error is the signal, and it must be bound to its context.** XOR of input and
     prediction carries what is new. The error alone loses which context it followed: two

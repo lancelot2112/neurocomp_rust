@@ -36,3 +36,38 @@ byte, with no codes designed for them?
   Tolerant matching on dense input needs agreement measured against chance, or codes from a
   first layer that are sparse.
 - Cost: about 10 s for 20,000 bytes with no index (every kernel checked every step).
+
+## Options tested before committing to a design
+
+**The third mask (confirmation).** Each kernel has three outputs:
+- its match;
+- its prediction (the byte);
+- a confirmation mask, written into a confirmation vector when its prediction came true.
+
+Confirmed, it counts up a `u8`; disconfirmed, down. A wrong winner also gets a sibling at its
+own scale for the byte that came. Among equally good matches, the most confirmed wins.
+`BYTES_CONFIRM=1`.
+
+**Best match by share.** A kernel's strength is the share of its lines that agree, then its
+width, then its confirmations (it had been the plain count of agreeing lines).
+
+| Variant (last 2,000 bytes of 20,000) | Right | Kernels |
+|---|---|---|
+| exact, no confirmation | 45.0% | 11,822 |
+| exact, confirmation checked by the winner only | 45.0% | 23,572 |
+| **exact, confirmation checked by every matched kernel** | **50.1%** | 21,726 |
+| tolerant 3/4, ranked by share | 15.9% | 17,603 |
+| tolerant 3/4, ranked by share, confirmation | 11.2–16.8% | 28–29k |
+| longest-context lookup (reference) | 53.9% | |
+
+**Meaning.**
+- **Confirmation must be local to every kernel that matched**, held down or not. When only the
+  winner is checked, a new sibling never wins, so it is never confirmed and never wins: a
+  deadlock (identical accuracy, twice the kernels). With every matched kernel checking its own
+  prediction, the most often right sibling rises, and accuracy comes within 4 points of the
+  frequency lookup.
+- The third mask is a sense of being right, local to each kernel. Here it only breaks ties; it
+  could also gate learning (strengthen only the confirmed), or be read by another layer.
+- **Tolerance on raw bytes stays broken, even ranked by share.** Chance agreement between ASCII
+  bytes is too high for any fraction under 1 to separate them. Tolerant matching needs a sparse
+  first layer.

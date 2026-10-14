@@ -76,6 +76,15 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
 
 ## Prediction, surprise and context
 
+- **Raw bytes (this branch, experiment 03).** Two-mask kernels (a care mask and the values
+  expected) at scales of 1 to 1024 bytes over a sliding window predict Alice's next byte at
+  50.1%, against 53.9% for a frequency lookup of the longest context.
+  - Exact matching only: chance agreement between ASCII bytes makes any tolerance match
+    everything.
+  - No anti-Hebbian across nested scales: it destroys back-off.
+  - Every kernel that matched checks its own prediction (the third mask). Checking only the
+    winner deadlocks.
+
 16. **Prediction error is the signal, and it must be bound to its context.** XOR of input and
     prediction carries what is new. The error alone loses which context it followed: two
     different surprises can give identical error bits. Pass on the surprising step together

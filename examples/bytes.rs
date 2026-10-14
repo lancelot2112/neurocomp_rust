@@ -16,6 +16,13 @@
 //!
 //! `BYTES_FILE` (default data/alice.txt), `BYTES_N` (bytes read), `BYTES_Q` (1-4, default 4:
 //! exact), `BYTES_HELD=1` (held-down kernels learn anti-Hebbian).
+//!
+//! `BYTES_CONFIRM=1`: the third mask. Every kernel that matched (fired or held down) checks its
+//! own prediction: confirmed, it writes
+//! its confirmation line into the confirmation vector and counts up; else it counts down. A wrong
+//! winner also gets a sibling at its own scale writing the byte that came (as well as the kernel
+//! one scale up), so a context followed by several bytes holds one kernel for each, and the
+//! most often confirmed wins among equal matches.
 
 use std::collections::HashMap;
 
@@ -57,9 +64,11 @@ fn main() {
     let n: usize = env("BYTES_N", 20000);
     let q: usize = env("BYTES_Q", 4);
     let held = std::env::var("BYTES_HELD").is_ok();
+    let confirm = std::env::var("BYTES_CONFIRM").is_ok();
+    let mut confirmations = BitVector::new(65536, Some(0));
     let text = std::fs::read(&path).expect("corpus file");
     let text = &text[..n.min(text.len())];
-    println!("bytes: {path}, {} bytes, threshold {q}/4, held-down learn {}", text.len(), if held { "on" } else { "off" });
+    println!("bytes: {path}, {} bytes, threshold {q}/4, held-down learn {}, confirmation {}", text.len(), if held { "on" } else { "off" }, if confirm { "on" } else { "off" });
 
     let mut rng = StdRng::seed_from_u64(1);
     let mut class: KernelClass<SimpleKernel> = KernelClass::with_kernels(Vec::new());
@@ -79,6 +88,17 @@ fn main() {
         let winner = fired.first().copied();
         let pred = winner.map(|_| (p.as_words()[0] & 0xFF) as u8);
         hit += (pred == Some(b)) as u32;
+        if confirm {
+            // every kernel that matched (fired or held down) sees whether its own prediction came
+            // true: confirmed, it writes its third mask and counts up; else it counts down
+            confirmations.bit_clear_all();
+            for k in class.kernels_mut().iter_mut() {
+                if k.agreement(&w) >= k.threshold {
+                    let right = (k.output_mask.as_words()[0] & 0xFF) as u8 == b;
+                    k.confirm(right, Some(&mut confirmations));
+                }
+            }
+        }
         fired_any += winner.is_some() as u32;
         // baselines: the commonest byte so far; the longest context seen before (its commonest next)
         let common = (0..256).max_by_key(|&c| (freq[c], 255 - c)).unwrap() as u8;
@@ -102,17 +122,31 @@ fn main() {
             s *= 2;
         }
         // births on a wrong or missing prediction (harness rule): one scale up from the winner
+        let mut scales: Vec<usize> = vec![winner.map_or(1, |k| (scale[k] * 2).min(MAX_SCALE)).min(t)];
+        if confirm {
+            if let Some(k) = winner {
+                // a sibling at the winner's own scale for the byte that came, unless one exists
+                let s0 = scale[k];
+                let exists = fired.iter().any(|&f| scale[f] == s0 && (class.kernels()[f].output_mask.as_words()[0] & 0xFF) as u8 == b);
+                if !exists {
+                    scales.push(s0);
+                }
+            }
+        }
         if pred != Some(b) && t > 0 && b != 0 {
-            let s = winner.map_or(1, |k| (scale[k] * 2).min(MAX_SCALE)).min(t);
+          for s in scales {
             if s >= 1 {
                 let (care, pat) = window(&w, s);
                 let lines = care.count_ones();
                 let thr = (q * lines).div_ceil(4).max(1);
                 let mut k = SimpleKernel::with_pattern(care, pat, 0, BitVector::from_words(vec![b as u64]), 0, thr, KernelOp::Or);
                 k.learn_held = held;
+                // its confirmation line: one line of its own in the confirmation vector
+                k.confirm_mask = Some(BitVector::from_bits(&[class.len() % 65536], 65536));
                 class.add(k);
                 scale.push(s);
             }
+          }
         }
         slide(&mut w, b);
         seen += 1;

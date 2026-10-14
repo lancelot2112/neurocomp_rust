@@ -23,11 +23,17 @@ pub struct SimpleKernel {
     pub pattern: Option<BitVector>,
     /// learn anti-Hebbian when matched but held down (on by default)
     pub learn_held: bool,
+    /// the third mask: written (into a confirmation vector) when what this kernel predicted
+    /// came true
+    pub confirm_mask: Option<BitVector>,
+    /// how often its prediction came true lately: up one when confirmed, down one when not
+    /// (a u8, saturating); breaks ties between equally good matches
+    pub confirmed: u8,
 }
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, confirm_mask: None, confirmed: 0 }
     }
 
     /// A two-mask kernel: `care` lines, expecting `pattern` on them.
@@ -94,6 +100,8 @@ impl SimpleKernel {
             search: false,
             pattern: None,
             learn_held: true,
+            confirm_mask: None,
+            confirmed: 0,
         }
     }
 
@@ -155,6 +163,19 @@ impl SimpleKernel {
 }
 
 impl SimpleKernel {
+    /// Its prediction was checked: confirmed or not. Confirmed, it writes its third mask into
+    /// `confirmations` (if it has one) and counts up; else it counts down.
+    pub fn confirm(&mut self, right: bool, confirmations: Option<&mut BitVector>) {
+        if right {
+            self.confirmed = self.confirmed.saturating_add(1);
+            if let (Some(m), Some(c)) = (&self.confirm_mask, confirmations) {
+                c.mask_mut(0, m, |a, b| a | b);
+            }
+        } else {
+            self.confirmed = self.confirmed.saturating_sub(1);
+        }
+    }
+
     /// Output learning for a kernel that cancels (writes by XOR or clear), after the tick, with
     /// `dest` its destination as the tick left it: each line it wrote that is still on (its
     /// cancel failed: what it predicted did not come) moves to a line of the
@@ -229,8 +250,13 @@ impl KernelTrait for SimpleKernel {
         true
     }
 
+    /// The share of its lines that agree (in 1/4096), then its width, then how often it was
+    /// confirmed: a better match is a larger share; among equal shares, the wider (more
+    /// context), then the more often right.
     fn strength(&self, input: &BitVector) -> usize {
-        self.agreement(input)
+        let care = self.input_mask.count_ones().max(1);
+        let share = self.agreement(input) * 4096 / care;
+        (share << 24) | (care.min(65535) << 8) | self.confirmed as usize
     }
 
     fn mark_inhibit(&self, inhibit: &mut BitVector) {

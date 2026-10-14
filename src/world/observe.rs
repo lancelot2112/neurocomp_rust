@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy"];
 /// How many probes there are.
-pub const NPROBES: usize = 6;
+pub const NPROBES: usize = 7;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -144,7 +144,10 @@ fn rate(tr: &[Trial], pick: impl Fn(&Trial) -> bool, click: impl Fn(&Trial) -> b
 ///   click was stroked minus when it was not. A network that ignores strokes scores 0 (so does one
 ///   that always clicks one light: the same rate after either); one whose clicks follow what was
 ///   stroked scores above 0. The step between telling the lights apart and discriminating.
-pub fn probes(reversal: &[Event], period: usize, delayed: &[Event]) -> ProbeRow {
+///
+/// And from a sequence lifetime (a random token shown on the eye each step):
+/// - copy: says the token it saw a few steps ago (see `copy`).
+pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[Event]) -> ProbeRow {
     let tr = trials(reversal, (3, 5), (7, 9));
     let all = |_: &Trial| true;
     let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
@@ -184,7 +187,23 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event]) -> ProbeRow 
     // repeat rate; one that never clicks scores 0)
     let r = |c: i64, n: i64| if n == 0 { 0 } else { c * 1024 / n };
     let win_stay = (r(won, won_n) - r(lost, lost_n)) as i32;
-    [respond, tell, discriminate, reverse, remember, win_stay]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence)]
+}
+
+/// Reading aloud: of the tokens said in a sequence of random tokens shown one a step, how many
+/// match a token shown 1 to 4 steps before, minus how many match one shown 9 to 12 steps before
+/// (chance: the shown tokens are independent), per token said. Saying nothing, or saying tokens
+/// at random, scores 0; saying each token seen a couple of steps later scores about 900.
+pub fn copy(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    let said = ev.iter().filter(|e| e.said.is_some()).count() as i64;
+    if said == 0 {
+        return 0;
+    }
+    let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
+        lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t].said == ev[t - l].shown).count() as i64).sum()
+    };
+    ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
 }
 
 /// Sequence: steps where a next token was due, and those where the program said it on the
@@ -300,7 +319,7 @@ mod tests {
                 let a = d.act(None, if (4..=6).contains(&since) { Some(CLICK) } else { None });
                 prev = d.step(&a);
             }
-            probes(&w.events, 50, &d.events)
+            probes(&w.events, 50, &d.events, &[])
         };
         let blind = run(&|_, t| t % 3 == 0);
         // a test-only policy that knows the phase (an oracle for checking the observer): clicks
@@ -342,13 +361,36 @@ mod tests {
                 t += 1;
             }
             let d = World::new(8, 4);
-            (probes(&w.events, 50, &d.events)[0], w.events.len())
+            (probes(&w.events, 50, &d.events, &[])[0], w.events.len())
         };
         let (locked, steps) = run(0);
         let (jittered, longer) = run(6);
         assert!(locked > 900, "back to back, the clock looks like responding: {locked}");
         assert!(jittered.abs() < 120, "with gaps it does not: {jittered}");
         assert!(steps == 2000 && longer > 2400, "{steps} {longer}");
+    }
+
+    #[test]
+    fn copy_scores_reading_aloud_and_not_chance() {
+        let run = |say: &dyn Fn(&[usize], usize) -> Option<usize>| -> i32 {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(4);
+            let toks: Vec<usize> = (0..400).map(|_| rand::Rng::gen_range(&mut rng, 0..8)).collect();
+            let mut w = World::new(6, 8);
+            w.sequence(&toks);
+            let mut t = 0;
+            while !w.done() {
+                let a = w.act(say(&toks, t), None);
+                w.step(&a);
+                t += 1;
+            }
+            copy(&w.events)
+        };
+        let reads = run(&|toks, t| if t >= 2 { Some(toks[t - 2]) } else { None });
+        let random = run(&|_, t| Some((t * 5 + 3) % 8));
+        let silent = run(&|_, _| None);
+        assert!(reads > 800, "{reads}");
+        assert!(random.abs() < 100, "{random}");
+        assert_eq!(silent, 0);
     }
 
     #[test]

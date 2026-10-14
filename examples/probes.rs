@@ -25,6 +25,9 @@
 
 use neurocomp::evolve::tags::{TagGenome, Token};
 use neurocomp::evolve::{evolve_lexicase, probe_all, probe_means, Physics};
+
+/// The probes this experiment evolves on: all but copy (which needs a reading task).
+const WANTED: [usize; 6] = [0, 1, 2, 3, 4, 5];
 use neurocomp::world::observe::{ProbeRow, PROBES};
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -62,13 +65,13 @@ fn main() {
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     println!("{:>4}  {:>5}  {:<42}  {:<42}  {:<42}  {:>13}", "gen", "size", "shown: held-out pick", "shown: second held-out set", "population mean (training)", "work: shown pop");
     println!("{:>4}  {:>5}  {names}  {names}  {names}", "", "");
-    let last = evolve_lexicase(vec![start; pop], trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, |g, r| {
+    let last = evolve_lexicase(vec![start; pop], trials, Physics::Varied, &train, gap, &WANTED, elite, gens, seed, thrift, |g, r| {
         if g % every == 0 || g + 1 == gens {
             // the top of the population by training score, judged on held-out worlds
             let top: Vec<TagGenome> = r.ranked.iter().take(shortlist).cloned().collect();
-            let judged = probe_all(top, trials, Physics::Varied, &held, gap);
+            let judged = probe_all(top, trials, Physics::Varied, &held, gap, &WANTED);
             let pick = judged.iter().max_by_key(|j| probe_means(&j.probes).iter().map(|&x| x as i64).sum::<i64>()).unwrap();
-            let shown = probe_all(vec![pick.genome.clone()], trials, Physics::Varied, &report_set, gap);
+            let shown = probe_all(vec![pick.genome.clone()], trials, Physics::Varied, &report_set, gap, &WANTED);
             let hm = probe_means(&shown[0].probes);
             // how many genomes read each input port and write each output port
             let mut reads: std::collections::BTreeMap<String, usize> = Default::default();
@@ -86,7 +89,7 @@ fn main() {
             }
         }
     });
-    let h = probe_all(vec![last[0].clone()], trials, Physics::Varied, &held, gap);
+    let h = probe_all(vec![last[0].clone()], trials, Physics::Varied, &held, gap, &WANTED);
     println!("final best, held out: {}  work {}", row(&probe_means(&h[0].probes)), h[0].work);
     print!("{}", last[0].describe());
 }

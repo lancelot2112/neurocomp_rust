@@ -2,7 +2,7 @@
 //! two-population genomes, over `PC_N` worlds (default 64), gaps of 0-6 steps between trials.
 
 use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, EYE, HAND, SELF, TOUCH};
-use neurocomp::evolve::{probe_all, probe_means, Physics};
+use neurocomp::evolve::{probe_all, probe_means, Physics, ALL_PROBES};
 use neurocomp::kernel::KernelOp;
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -28,10 +28,10 @@ fn main() {
     ];
     let _ = ACT;
     let seeds: Vec<u64> = (20_000..20_000 + n).collect();
-    println!("{:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", "genome", "respond", "tell", "discr", "reverse", "rememb", "winstay", "work");
+    println!("{:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", "genome", "respond", "tell", "discr", "reverse", "rememb", "winstay", "copy", "work");
     for (name, g) in genomes {
-        let r = probe_all(vec![g], 200, Physics::Varied, &seeds, 6);
+        let r = probe_all(vec![g], 200, Physics::Varied, &seeds, 6, &ALL_PROBES);
         let m = probe_means(&r[0].probes);
-        println!("{name:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", m[0], m[1], m[2], m[3], m[4], m[5], r[0].work);
+        println!("{name:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", m[0], m[1], m[2], m[3], m[4], m[5], m[6], r[0].work);
     }
 }

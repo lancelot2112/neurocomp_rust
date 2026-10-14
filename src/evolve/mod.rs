@@ -195,6 +195,8 @@ pub enum Task {
     /// `worst_phase`, a lifetime scores its worst phase (discrimination within each phase between
     /// swaps), so a genome must do well before and after each swap, not on average
     Reversal { trials: usize, period: usize, worst_phase: bool },
+    /// reading: this many random tokens shown on the eye, one a step
+    Sequence(usize),
 }
 
 /// Where a lifetime's world physics comes from.
@@ -230,6 +232,11 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
         Task::Reversal { trials, period, .. } => {
             w.reversal_period = period.max(1);
             w.conditioning(Conditioning::Reversal, trials)
+        }
+        Task::Sequence(n) => {
+            let mut r = StdRng::seed_from_u64(seed ^ 0x5E9);
+            let toks: Vec<usize> = (0..n).map(|_| r.gen_range(0..8)).collect();
+            w.sequence(&toks)
         }
     }
     let mut net = g.build(&w, seed ^ 0x5EED);
@@ -371,16 +378,29 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
     last
 }
 
-/// The probes of one genome in one world seed: a serial-reversal lifetime and a delayed one,
-/// `trials` trials each (see `observe::probes`), with gaps of 0 to `gap` steps between trials,
-/// and its work per step over both.
-pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize) -> (observe::ProbeRow, u64) {
+/// The probes of one genome in one world seed (see `observe::probes`), and its work per step.
+/// Only the lifetimes the `wanted` probes need are lived (a serial-reversal lifetime for respond,
+/// tell, discriminate, reverse and win-stay; a delayed one for remember; a sequence for copy),
+/// `trials` trials or tokens each, with gaps of 0 to `gap` steps between trials; the other
+/// probes read 0.
+pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize]) -> (observe::ProbeRow, u64) {
     let period = (trials / 4).max(1);
-    let (rev, w1) = live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap);
-    let (del, w2) = live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap);
-    let steps = (rev.len() + del.len()).max(1) as u64;
-    (observe::probes(&rev, period, &del), (w1 + w2) / steps)
+    let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
+    let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap) } else { (vec![], 0) };
+    let (del, w2) = if want(&[4]) { live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap) } else { (vec![], 0) };
+    let (seq, w3) = if want(&[6]) { live_work(g, Task::Sequence(trials), physics, seed ^ 0x5E0, 0) } else { (vec![], 0) };
+    let steps = (rev.len() + del.len() + seq.len()).max(1) as u64;
+    let mut row = observe::probes(&rev, period, &del, &seq);
+    for (p, x) in row.iter_mut().enumerate() {
+        if !wanted.contains(&p) {
+            *x = 0;
+        }
+    }
+    (row, (w1 + w2 + w3) / steps)
 }
+
+/// All the probes.
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.
@@ -393,7 +413,7 @@ pub struct Probed<G> {
 
 /// Each genome's probes in each seed, spread over the machine's cores (a genome whose network
 /// panics scores worst on every probe).
-pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize) -> Vec<Probed<G>> {
+pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, wanted: &[usize]) -> Vec<Probed<G>> {
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).max(1);
     let chunk = population.len().div_ceil(threads).max(1);
     let mut out = Vec::with_capacity(population.len());
@@ -401,7 +421,7 @@ pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physi
         let handles: Vec<_> = population
             .chunks(chunk)
             .map(|part| sc.spawn(move || part.iter().map(|g| {
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores(g, trials, physics, s, gap)).collect::<Vec<_>>()))
+                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores(g, trials, physics, s, gap, wanted)).collect::<Vec<_>>()))
                     .unwrap_or_else(|_| vec![([-1024; observe::NPROBES], u64::MAX / 2); seeds.len()]);
                 let work = r.iter().map(|x| x.1).sum::<u64>() / seeds.len().max(1) as u64;
                 Probed { probes: r.iter().map(|x| x.0).collect(), works: r.iter().map(|x| x.1).collect(), work, genome: g.clone() }
@@ -448,76 +468,167 @@ pub struct ProbeGeneration<G> {
 /// all of them at once. The `elite` survivors are lexicase choices too; the rest are their
 /// mutated (a quarter recombined) children. Returns the final population, highest summed probe
 /// means first.
-pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, elite: usize, generations: usize, seed: u64, thrift: bool, mut report: impl FnMut(usize, &ProbeGeneration<G>)) -> Vec<G> {
+pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, wanted: &[usize], elite: usize, generations: usize, seed: u64, thrift: bool, mut report: impl FnMut(usize, &ProbeGeneration<G>)) -> Vec<G> {
     let mut rng = StdRng::seed_from_u64(seed ^ 0x1E81);
     let pop = start.len();
     let mut population = start;
     let mut last: Vec<G> = population.clone();
     for generation in 0..generations {
-        let scored = probe_all(population.drain(..).collect(), trials, physics, seeds, gap);
+        let scored = probe_all(population.drain(..).collect(), trials, physics, seeds, gap, wanted);
         let n = scored.len();
-        // the cases: one per (seed, probe), then one thrift case per seed (less work is better)
-        let np = observe::NPROBES;
-        let ncases = seeds.len() * np + if thrift { seeds.len() } else { 0 };
-        let value = |g: usize, c: usize| -> i64 {
-            if c < seeds.len() * np { scored[g].probes[c / np][c % np] as i64 } else { -(scored[g].works[c - seeds.len() * np].min(i64::MAX as u64 / 2) as i64) }
-        };
-        // epsilon per case: the median absolute deviation over the population
-        let eps: Vec<i64> = (0..ncases).map(|c| {
-            let mut v: Vec<i64> = (0..n).map(|g| value(g, c)).collect();
-            v.sort_unstable();
-            let med = v[n / 2];
-            let mut d: Vec<i64> = v.iter().map(|x| (x - med).abs()).collect();
-            d.sort_unstable();
-            d[n / 2]
-        }).collect();
-        let select = |rng: &mut StdRng| -> usize {
-            let mut order: Vec<usize> = (0..ncases).collect();
-            order.shuffle(rng);
-            let mut cand: Vec<usize> = (0..n).collect();
-            for c in order {
-                if cand.len() == 1 {
-                    break;
-                }
-                let best = cand.iter().map(|&g| value(g, c)).max().unwrap();
-                cand.retain(|&g| value(g, c) >= best - eps[c]);
-            }
-            cand[rng.gen_range(0..cand.len())]
-        };
+        let (ranked, next) = lexicase_breed(&scored, wanted, thrift, pop, elite, &mut rng);
         let means: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
-        let total = |m: &observe::ProbeRow| m.iter().map(|&x| x as i64).sum::<i64>();
-        let mut ranked: Vec<usize> = (0..n).collect();
-        ranked.sort_by(|&a, &b| total(&means[b]).cmp(&total(&means[a])).then(scored[a].work.cmp(&scored[b].work)).then(b.cmp(&a)));
         let pop_means = probe_means(&means);
         let pop_work = scored.iter().map(|s| s.work.min(u64::MAX / 4)).sum::<u64>() / n.max(1) as u64;
         let b = ranked[0];
         report(generation, &ProbeGeneration { ranked: ranked.iter().map(|&g| scored[g].genome.clone()).collect(), best: scored[b].genome.clone(), best_means: means[b], best_work: scored[b].work, pop_means, pop_work });
         last = ranked.iter().map(|&g| scored[g].genome.clone()).collect();
-        let mut kept: Vec<usize> = Vec::new();
-        for _ in 0..elite * 4 {
-            if kept.len() >= elite.min(n) {
+        population = next;
+    }
+    last
+}
+
+/// One generation of epsilon-lexicase breeding on the `wanted` probes (and, with `thrift`, one
+/// work case per seed): the population ranked by its summed probe means (highest first, ties to
+/// the cheaper), and the next population: `elite` lexicase choices kept, the rest their mutated
+/// (a quarter recombined) children.
+fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: bool, pop: usize, elite: usize, rng: &mut StdRng) -> (Vec<usize>, Vec<G>) {
+    let n = scored.len();
+    let nseeds = scored.first().map_or(0, |s| s.probes.len());
+    // the cases: one per (seed, wanted probe), then one thrift case per seed (less work is better)
+    let np = wanted.len();
+    let ncases = nseeds * np + if thrift { nseeds } else { 0 };
+    let value = |g: usize, c: usize| -> i64 {
+        if c < nseeds * np { scored[g].probes[c / np][wanted[c % np]] as i64 } else { -(scored[g].works[c - nseeds * np].min(i64::MAX as u64 / 2) as i64) }
+    };
+    // epsilon per case: the median absolute deviation over the population
+    let eps: Vec<i64> = (0..ncases).map(|c| {
+        let mut v: Vec<i64> = (0..n).map(|g| value(g, c)).collect();
+        v.sort_unstable();
+        let med = v[n / 2];
+        let mut d: Vec<i64> = v.iter().map(|x| (x - med).abs()).collect();
+        d.sort_unstable();
+        d[n / 2]
+    }).collect();
+    let select = |rng: &mut StdRng| -> usize {
+        let mut order: Vec<usize> = (0..ncases).collect();
+        order.shuffle(rng);
+        let mut cand: Vec<usize> = (0..n).collect();
+        for c in order {
+            if cand.len() == 1 {
                 break;
             }
-            let g = select(&mut rng);
-            if !kept.contains(&g) {
-                kept.push(g);
+            let best = cand.iter().map(|&g| value(g, c)).max().unwrap();
+            cand.retain(|&g| value(g, c) >= best - eps[c]);
+        }
+        cand[rng.gen_range(0..cand.len())]
+    };
+    let means: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
+    let total = |m: &observe::ProbeRow| wanted.iter().map(|&p| m[p] as i64).sum::<i64>();
+    let mut ranked: Vec<usize> = (0..n).collect();
+    ranked.sort_by(|&a, &b| total(&means[b]).cmp(&total(&means[a])).then(scored[a].work.cmp(&scored[b].work)).then(b.cmp(&a)));
+    let mut kept: Vec<usize> = Vec::new();
+    for _ in 0..elite * 4 {
+        if kept.len() >= elite.min(n) {
+            break;
+        }
+        let g = select(rng);
+        if !kept.contains(&g) {
+            kept.push(g);
+        }
+    }
+    let mut next: Vec<G> = kept.iter().map(|&g| scored[g].genome.clone()).collect();
+    while next.len() < pop {
+        let mut child = scored[select(rng)].genome.clone();
+        if rng.gen_range(0..4) == 0 {
+            let other = select(rng);
+            child = child.crossover(&scored[other].genome, rng);
+        }
+        loop {
+            child = child.mutate(rng);
+            if rng.gen_bool(0.5) {
+                break;
             }
         }
-        population = kept.iter().map(|&g| scored[g].genome.clone()).collect();
-        while population.len() < pop {
-            let mut child = scored[select(&mut rng)].genome.clone();
-            if rng.gen_range(0..4) == 0 {
-                let other = select(&mut rng);
-                child = child.crossover(&scored[other].genome, &mut rng);
-            }
-            loop {
-                child = child.mutate(&mut rng);
-                if rng.gen_bool(0.5) {
-                    break;
+        next.push(child);
+    }
+    (ranked, next)
+}
+
+/// An island: a population evolving on its own probes.
+pub struct Island {
+    pub name: String,
+    pub probes: Vec<usize>,
+}
+
+/// One generation of island evolution, per island: the population ranked (by its own probes,
+/// training worlds), its probe means and its work per step; and the plasmids moved this
+/// generation: (from island, to island, what moved).
+pub struct IslandGeneration<G> {
+    pub ranked: Vec<Vec<G>>,
+    pub means: Vec<observe::ProbeRow>,
+    pub work: Vec<u64>,
+    pub moved: Vec<(usize, usize, String)>,
+}
+
+/// Islands: each population evolves by lexicase on its own probes (`evolve_lexicase`'s breeding),
+/// and every `every` generations each island takes `plasmids` circuits from the best genomes of
+/// other islands (`transfer(recipient, donor, rng)` makes the child and says what moved): a
+/// circuit that does well under one island's pressure gets tried under another's. The donors
+/// are the top `elite` of a random other island; the recipients are this island's new
+/// children (not its kept genomes).
+pub fn evolve_islands<G: Evolvable>(
+    islands: &[Island],
+    start: G,
+    pop: usize,
+    trials: usize,
+    physics: Physics,
+    seeds: &[u64],
+    gap: usize,
+    elite: usize,
+    generations: usize,
+    seed: u64,
+    thrift: bool,
+    every: usize,
+    plasmids: usize,
+    transfer: impl Fn(&G, &G, &mut StdRng) -> (G, String),
+    mut report: impl FnMut(usize, &IslandGeneration<G>),
+) -> Vec<Vec<G>> {
+    let k = islands.len();
+    let mut rng = StdRng::seed_from_u64(seed ^ 0x1514);
+    let mut pops: Vec<Vec<G>> = (0..k).map(|_| vec![start.clone(); pop]).collect();
+    let mut last: Vec<Vec<G>> = pops.clone();
+    for generation in 0..generations {
+        let mut ranked: Vec<Vec<G>> = Vec::with_capacity(k);
+        let mut means = Vec::with_capacity(k);
+        let mut work = Vec::with_capacity(k);
+        let mut next: Vec<Vec<G>> = Vec::with_capacity(k);
+        for (i, isl) in islands.iter().enumerate() {
+            let scored = probe_all(pops[i].drain(..).collect(), trials, physics, seeds, gap, &isl.probes);
+            let (order, children) = lexicase_breed(&scored, &isl.probes, thrift, pop, elite, &mut rng);
+            let m: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
+            means.push(probe_means(&m));
+            work.push(scored.iter().map(|s| s.work.min(u64::MAX / 4)).sum::<u64>() / scored.len().max(1) as u64);
+            ranked.push(order.iter().map(|&g| scored[g].genome.clone()).collect());
+            next.push(children);
+        }
+        // the exchange: plasmids from the best of other islands into new children
+        let mut moved = Vec::new();
+        if k > 1 && generation > 0 && every > 0 && generation % every == 0 {
+            for i in 0..k {
+                for _ in 0..plasmids {
+                    let j = (i + rng.gen_range(1..k)) % k;
+                    let donor = &ranked[j][rng.gen_range(0..elite.min(ranked[j].len()).max(1))];
+                    let slot = rng.gen_range(elite.min(pop - 1)..pop);
+                    let (child, what) = transfer(&next[i][slot], donor, &mut rng);
+                    next[i][slot] = child;
+                    moved.push((j, i, what));
                 }
             }
-            population.push(child);
         }
+        report(generation, &IslandGeneration { ranked: ranked.clone(), means, work, moved });
+        last = ranked;
+        pops = next;
     }
     last
 }

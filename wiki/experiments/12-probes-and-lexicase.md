@@ -60,3 +60,30 @@ clicked. Both now average 0 at chance (tested with hand-written policies).
   worlds goes from respond 15 / tell 32 to respond 196 / tell 339 once births copy the move
   being made onto what is seen (`examples/port_cost.rs`). Discrimination still needs clicks to
   be tied to the stroke that follows.
+
+## The long run (400 generations, births into act ports, honest reporting)
+
+`PRB_SHOW=1 PRB_THRIFT=1 PRB_GAP=6 PRB_GENS=400 cargo run --release --example probes`, five probes
+(before win-stay). Shown: the best of the top 8 on one held-out set, reported on another.
+
+| gen | shown, second held-out set: respond tell disc reverse remember | population (training) tell, remember | eye readers |
+|---|---|---|---|
+| 10 | 69 164 4 15 20 | 1, 0 | 10 |
+| 50 | -10 284 -15 1 9 | 334, 15 | 30 |
+| 90 | 65 450 8 9 5 | 253, -4 | 32 |
+| 190 | -62 311 10 5 102 | 320, 27 | 32 |
+| 270 | 204 355 -5 -6 -14 | 293, 33 | 32 |
+| 340 | -29 135 16 -12 131 | 232, 86 | 32 |
+| 399 | final best, first held-out set: 4 440 -6 -9 174 | 343, 72 | 32 |
+
+- Sense readers appeared by generation 10 (twice the new-token rate, ports) and every genome read
+  the eye from generation 60 on.
+- **tell** (clicking differently to the two lights) held out at 135-450 from generation 30 on.
+- **remember** (more clicks after a light that is gone) arrived late: population mean 65-122
+  from generation 320, held out 77-131 at 330-340, 174 for the final best.
+- **discriminate** and **reverse** stayed at chance for 400 generations. Readers of affect (where
+  the stroke is felt) came and went (0-9 genomes): nothing rewarded using it. Hence win-stay.
+- The final best (137 tokens, 396 work a step): several covering eye -> hand populations with
+  NAND kernels growing by repeat births (the act made 1-2 steps back, keyed on what was seen),
+  spontaneous XOR clickers on the senses gated off by a channel, touch -> channel and ear ->
+  channel -> hand paths, and an affect -> hand AND-NOT population.

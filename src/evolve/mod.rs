@@ -224,18 +224,21 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
 }
 
 /// What a stage of a curriculum sets in the world (the harness's side only; the network is
-/// never told): how many distinct tokens a reading lifetime uses (2 to 8), and how often the
-/// teacher says a shown token aloud, in eighths. The default is the plain world: 8 tokens, the
-/// teacher on half of them.
+/// never told): how many distinct tokens a reading lifetime uses (2 to 8); how often the teacher
+/// says a shown token aloud, in eighths; how many times the paying light swaps in a reversal
+/// lifetime; and how many steps before the response window the delayed light flashes (1 to 5).
+/// The default is the plain world: 8 tokens, the teacher on half of them, 3 swaps, a delay of 3.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lesson {
     pub tokens: usize,
     pub teach: u32,
+    pub swaps: usize,
+    pub delay: usize,
 }
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3 }
     }
 }
 
@@ -251,6 +254,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     let mut w = World::with_physics(p, seed, tokens);
     w.gap_max = gap;
     w.teacher_rate = lesson.teach;
+    w.delay = lesson.delay;
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
@@ -418,7 +422,7 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
 
 /// `probe_scores` in a world set by a lesson.
 pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize], lesson: Lesson) -> (observe::ProbeRow, u64) {
-    let period = (trials / 4).max(1);
+    let period = (trials / (lesson.swaps + 1)).max(1);
     let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
     let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap) } else { (vec![], 0) };
     let (del, w2) = if want(&[4]) { live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap) } else { (vec![], 0) };
@@ -748,10 +752,10 @@ mod tests {
     fn a_lesson_sets_the_tokens_and_the_teacher() {
         // a genome that does nothing: only the world's side shows
         let g = Genome { code: vec![] };
-        let (ev, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson { tokens: 2, teach: 8 });
+        let (ev, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson { tokens: 2, teach: 8, ..Lesson::default() });
         assert!(ev.iter().filter_map(|e| e.shown).all(|t| t < 2), "two tokens only");
         assert!(ev.iter().filter(|e| e.shown.is_some()).all(|e| e.taught), "the teacher says every one");
-        let (ev, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson { tokens: 8, teach: 1 });
+        let (ev, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson { tokens: 8, teach: 1, ..Lesson::default() });
         let taught = ev.iter().filter(|e| e.taught).count();
         assert!(taught > 5 && taught < 60, "about one in eight: {taught}");
         // the plain lesson is the old world

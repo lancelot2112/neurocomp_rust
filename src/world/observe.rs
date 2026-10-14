@@ -275,6 +275,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_delayed_light_flashes_delay_steps_before_the_window() {
+        for d in 1..=5 {
+            let mut w = World::new(5, 4);
+            w.delay = d;
+            w.conditioning(Conditioning::Delayed, 20);
+            let none = BitVector::new(ACT_BITS, Some(0));
+            let mut lit = vec![];
+            while !w.done() {
+                let senses = w.step(&none);
+                let e = w.events.last().unwrap();
+                if channel(&senses, EYE).count_ones() > 0 {
+                    lit.push(e.trial.unwrap().1);
+                }
+            }
+            assert!(!lit.is_empty() && lit.iter().all(|&t| t + d == 5), "delay {d}: {lit:?}");
+        }
+    }
+
+    #[test]
     fn a_program_that_clicks_on_the_light_discriminates() {
         let mut w = World::new(5, 4);
         w.conditioning(Conditioning::Instrumental, 60);

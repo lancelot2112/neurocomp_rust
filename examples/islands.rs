@@ -24,11 +24,14 @@
 //! Curricula (`ISL_LADDERS=1`): an island can climb a ladder of stages, each its own probes, its
 //! own world (`Lesson`: tokens and how often the teacher speaks) and a goal; it moves to the next
 //! stage once its population's training mean meets the goal for `hold` generations in a row
-//! (`evolve_islands`). The default ladder is reading's: babble, then echo with 2, 4 and 8 tokens
+//! (`evolve_islands`). Switching climbs respond, tell, win-stay, discriminate (no swaps), then one
+//! swap, then three; recall clicks after a light gone 1, 2, 3 (the plain task), then 4 steps
+//! before the window. Reading's: babble, then echo with 2, 4 and 8 tokens
 //! with the teacher on every token, then the teacher fading (6, 4, 2, 1 in 8) so the glyph must
 //! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
 //! `;`, each `name key=value ...` with keys `probes` (probe names joined by `+`), `tokens`,
-//! `teach` (eighths), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
+//! `teach` (eighths), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
+//! delayed light to the response window), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
 //! at each exchange is always in the plain world, on every probe.
 //!
 //! Checkpoints: at every exchange each island's whole population is written to `ISL_CHECKPOINT`
@@ -69,6 +72,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "probes" => stage.probes = v.split('+').map(probe_named).collect(),
                 "tokens" => stage.lesson.tokens = v.parse().expect("tokens"),
                 "teach" => stage.lesson.teach = v.parse().expect("teach"),
+                "swaps" => stage.lesson.swaps = v.parse().expect("swaps"),
+                "delay" => stage.lesson.delay = v.parse().expect("delay"),
                 "hold" => stage.hold = v.parse().expect("hold"),
                 "goal" => stage.goal = v.split('+').map(|g| {
                     let (p, x) = g.split_once('@').expect("probe@score");
@@ -91,6 +96,22 @@ const READING_LADDER: &str = "babble probes=babble tokens=2 teach=8 goal=babble@
     fade4 probes=echo+copy tokens=8 teach=4 goal=copy@100; \
     fade2 probes=echo+copy tokens=8 teach=2 goal=copy@100; \
     read probes=echo+copy tokens=8 teach=1";
+
+/// Switching's ladder: see a light, tell the two apart, repeat what was stroked, prefer the
+/// paying light, then follow one swap, then three.
+const SWITCHING_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
+    tell probes=respond+tell swaps=0 goal=tell@100; \
+    winstay probes=respond+tell+win-stay swaps=0 goal=win-stay@80; \
+    discrim probes=respond+tell+win-stay+discriminate swaps=0 goal=discriminate@100; \
+    swap1 probes=respond+tell+win-stay+discriminate+reverse swaps=1 goal=reverse@80; \
+    swap3 probes=respond+tell+win-stay+discriminate+reverse swaps=3";
+
+/// Recall's ladder: click after a light gone 1 step before the window, then 2, then 3 (the plain
+/// task), then 4.
+const RECALL_LADDER: &str = "lag1 probes=respond+remember delay=1 goal=remember@150; \
+    lag2 probes=respond+remember delay=2 goal=remember@150; \
+    lag3 probes=respond+remember delay=3 goal=remember@150; \
+    lag4 probes=respond+remember delay=4";
 
 fn main() {
     let pop: usize = env("ISL_POP", 16);
@@ -126,8 +147,13 @@ fn main() {
     for isl in islands.iter_mut() {
         if let Ok(text) = std::env::var(format!("ISL_LADDER_{}", isl.name)) {
             isl.stages = ladder(&text);
-        } else if ladders && isl.name == "reading" {
-            isl.stages = ladder(READING_LADDER);
+        } else if ladders {
+            match isl.name.as_str() {
+                "reading" => isl.stages = ladder(READING_LADDER),
+                "switching" => isl.stages = ladder(SWITCHING_LADDER),
+                "recall" => isl.stages = ladder(RECALL_LADDER),
+                _ => {}
+            }
         }
     }
     let tokens = (0..4).map(|i| Token::Channel { tag: (0x11u8).wrapping_mul(i as u8 + 1) ^ 0x5A, width: 3, hold: false }).collect();

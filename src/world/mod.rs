@@ -186,6 +186,9 @@ pub struct World {
     pub teacher: bool,
     /// how often the teacher says a shown token, in eighths (4: half of them)
     pub teacher_rate: u32,
+    /// delayed conditioning: how many steps before the response window (steps 5 to 7) the light
+    /// flashes, 1 to 5 (3: at step 2, three to five steps before a click pays)
+    pub delay: usize,
     scene: Scene,
     stroke_next: bool,
     present: bool,
@@ -250,6 +253,7 @@ impl World {
             gap_max: 0,
             teacher: false,
             teacher_rate: 4,
+            delay: 3,
             scene: Scene::Idle,
             stroke_next: false,
             present: false,
@@ -337,7 +341,7 @@ impl World {
                         }
                     }
                     Conditioning::Delayed => {
-                        if cue && t == 2 {
+                        if cue && t + self.delay.clamp(1, 5) == 5 {
                             put(&mut senses, EYE, &self.lights[0].clone());
                         }
                         if cue && click && (5..=7).contains(&t) && !stroked {

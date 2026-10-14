@@ -4,6 +4,7 @@
 //!
 //! Stages (`CUR_STAGES`, comma-separated `name:generations`):
 //! - `instrumental`: click while the light is on (one light, paying every time it shows);
+//! - `delayed`: the light flashes once; a click three to five steps later pays;
 //! - `reversal1`: serial reversal with one swap per lifetime (every 200 trials);
 //! - `reversal`: the original (every 100 trials).
 //!
@@ -23,6 +24,7 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 fn task(name: &str, trials: usize) -> Task {
     match name {
         "instrumental" => Task::Conditioning(Conditioning::Instrumental, trials),
+        "delayed" => Task::Conditioning(Conditioning::Delayed, trials),
         "reversal1" => Task::Reversal { trials, period: trials / 2 },
         _ => Task::Reversal { trials, period: trials / 4 },
     }

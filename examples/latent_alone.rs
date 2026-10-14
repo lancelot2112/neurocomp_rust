@@ -21,7 +21,7 @@ use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::area::Pool;
 use neurocomp::program::assembly::Assembly;
-use neurocomp::program::kernel_cells::{Holder, Kernel};
+use neurocomp::program::kernel_cells::{Holder, Kernel, Predictor};
 use neurocomp::program::latent::{LatentCause, Scale};
 use rand::rngs::StdRng;
 use rand::{Rng, RngCore, SeedableRng};
@@ -76,6 +76,11 @@ fn main() {
         // (`LATENT_TRACE=p`: a trace, rotated and thinned at 2^-p a step, is what the kernel codes)
         let trace_p: u32 = env("LATENT_TRACE", 0);
         let mut trace = vec![0u64; 16];
+        let pred_on = std::env::var("LATENT_PRED").is_ok();
+        let lags: usize = std::env::var("LATENT_LAGS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        let mut chain: Vec<Vec<u64>> = Vec::new();
+        let gate = std::env::var("LATENT_GATE").is_ok();
+        let mut pred = Predictor::new(1024, 1024, seed ^ 0x9E3D);
         // (the thinning is a fixed mask, the same every step: each bit kept unless all of p
         // fixed random words have it set, so the same recent sequence leaves the same trace)
         let keep: Vec<u64> = {
@@ -84,6 +89,7 @@ fn main() {
         };
         let mut prev = BitVector::new(1024, Some(0));
         kh.debug = debug;
+        kh.separate = std::env::var("LATENT_SEPARATE").is_ok();
         // the circuit's input: layer 4's code of what came together (the light shown and what
         // followed), a random sparse code per conjunction, as layer 4 recruits one for each
         // (`LATENT_SHARED=1`: a conjunction's code shares half its bits with the other outcome
@@ -189,6 +195,61 @@ fn main() {
                             *trace = t.clone();
                             BitVector::from_words(t)
                         };
+                        if pred_on {
+                            // (`LATENT_PRED=1`: a predictor reads the trace before each step and the
+                            // holder sees the kernel's code of the error, input XOR prediction)
+                            let out = outcome[(got > 0) as usize].clone();
+                            let mut last = BitVector::new(1024, Some(0));
+                            for (i, now) in [cue[light].clone(), click.clone(), out].into_iter().enumerate() {
+                                // (`LATENT_LAGS=n`: the predictor's context is a chain of n lag
+                                // stages instead of the trace: each step moves one stage along,
+                                // rotated, so the context holds exactly the last n steps)
+                                let before = if lags > 0 {
+                                    let mut c = vec![0u64; 16];
+                                    for (j, st) in chain.iter().enumerate() {
+                                        for b in (0..1024).filter(|&b| st[b / 64] >> (b % 64) & 1 == 1) {
+                                            let d = (b + 97 * (j + 1)) % 1024;
+                                            c[d / 64] |= 1 << (d % 64);
+                                        }
+                                    }
+                                    BitVector::from_words(c)
+                                } else {
+                                    BitVector::from_words(trace.clone())
+                                };
+                                if lags > 0 {
+                                    chain.insert(0, now.as_words().to_vec());
+                                    chain.truncate(lags);
+                                }
+                                let err = pred.step(&before, &now);
+                                let v = step(&now, &mut trace, &mut rng);
+                                // what came before, with this step replaced by its error
+                                let w: Vec<u64> = if lags > 0 {
+                                    let _ = v;
+                                    before.as_words().iter().zip(err.as_words()).map(|(c, e)| c | e).collect()
+                                } else {
+                                    v.as_words().iter().zip(now.as_words()).zip(err.as_words())
+                                        .map(|((t, x), e)| (t & !x) | e).collect()
+                                };
+                                let w = BitVector::from_words(w);
+                                if debug {
+                                    eprintln!("step {i} light {light} paid {} err {}", got > 0, err.count_ones());
+                                }
+                                // (`LATENT_GATE=1`: a step predicted within one cell's popcount
+                                // carries no news and the holder sees nothing of it)
+                                let w = if gate && err.count_ones() < 8 { BitVector::new(1024, Some(0)) } else { w };
+                                if i < 2 {
+                                    if w.count_ones() == 0 {
+                                        continue;
+                                    }
+                                    let b0 = ksep.births;
+                                    let (c1, _) = ksep.code(&w, true);
+                                    kh.hold(&c1, ksep.births > b0);
+                                } else {
+                                    last = w;
+                                }
+                            }
+                            last
+                        } else {
                         for first in [cue[light].clone(), click.clone()] {
                             let v = step(&first, &mut trace, &mut rng);
                             let b0 = ksep.births;
@@ -197,6 +258,7 @@ fn main() {
                         }
                         let out = outcome[(got > 0) as usize].clone();
                         step(&out, &mut trace, &mut rng)
+                        }
                     } else if seq && hist > 0 {
                         // light, then the click (the same whichever light), then what followed;
                         // each coded as it is, the kernel's history holding what came before
@@ -226,11 +288,13 @@ fn main() {
                         codes[light * 2 + (got > 0) as usize].clone()
                     };
                     let born = if seq { ksep.births } else { born };
+                    if ev.count_ones() > 0 {
                     let (code, _) = ksep.code(&ev, true);
                     if debug {
-                        eprintln!("event light {light} paid {} code {:?} new {}", got > 0, (0..1024).filter(|&b| code.bit_get(b)).take(6).collect::<Vec<_>>(), ksep.births > born);
+                        eprintln!("event light {light} paid {} code {:?} new {} pop {}", got > 0, (0..1024).filter(|&b| code.bit_get(b)).take(6).collect::<Vec<_>>(), ksep.births > born, ev.count_ones());
                     }
                     kh.hold(&code, ksep.births > born);
+                    }
                 } else if circuit {
                     if l4_on {
                         let code = l4.learn(&[(0, &cue[light]), (1, &outcome[(got > 0) as usize])]);

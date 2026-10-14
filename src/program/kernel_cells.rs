@@ -68,13 +68,13 @@ pub struct Cell {
 
 #[derive(Clone)]
 pub struct Kernel {
-    bits: usize,
+    pub bits: usize,
     out_bits: usize,
-    k: usize,
+    pub k: usize,
     /// output bits each cell writes
     out_k: usize,
     pub cells: Vec<Cell>,
-    rng: StdRng,
+    pub rng: StdRng,
     /// cells born so far
     pub births: u64,
     /// conjunctions: how many inputs back cells may look (0: none), and the inputs that came,
@@ -212,7 +212,7 @@ impl Kernel {
     }
 
     /// The bit positions set in `mask`.
-    fn ones(mask: &[u64]) -> Vec<usize> {
+    pub fn ones(mask: &[u64]) -> Vec<usize> {
         let mut v = Vec::new();
         for (w, &x) in mask.iter().enumerate() {
             let mut x = x;
@@ -444,11 +444,13 @@ pub struct Holder {
     pub switches: u32,
     pub resets: u32,
     pub debug: bool,
+    /// matched cells of assemblies held down by the active one learn anti-Hebbian
+    pub separate: bool,
 }
 
 impl Holder {
     pub fn new(bits: usize, seed: u64) -> Self {
-        Self { kernel: Kernel::new(bits, 64, 1, 1, seed), explained: Vec::new(), rival: Vec::new(), active: None, now: 0, switches: 0, resets: 0, debug: false }
+        Self { kernel: Kernel::new(bits, 64, 1, 1, seed), explained: Vec::new(), rival: Vec::new(), active: None, now: 0, switches: 0, resets: 0, debug: false, separate: false }
     }
 
     pub fn contexts(&self) -> usize {
@@ -509,6 +511,16 @@ impl Holder {
                 let young = self.explained[a] < 16;
                 if e[a] {
                     self.explained[a] = self.explained[a].saturating_add(1);
+                    // (`separate`: the other assemblies' cells that matched it were held down by
+                    // the active one, and learn anti-Hebbian: pattern separation, so an input
+                    // stays with one assembly)
+                    if self.separate {
+                        for c in 0..self.kernel.cells.len() {
+                            if self.kernel.cells[c].label.map_or(false, |l| l != a) && self.kernel.match_of(c, &inw).0 {
+                                self.kernel.anti_hebbian(c, &inw, 1);
+                            }
+                        }
+                    }
                 } else if young {
                     // young: it learns what comes
                     self.kernel.births_for(&inw, 4, Some(a));
@@ -584,5 +596,69 @@ impl Holder {
             eprintln!("holder: explained {:?} by {:?} rivals {:?} -> {:?}", self.explained, e, self.rival, self.active);
         }
         self.now
+    }
+}
+
+/// Prediction by kernel cells, learned by local rules: each cell reads the context (what came
+/// before: a trace) through its synapses and, firing, writes its prediction of the next input
+/// through its output mask. The prediction is what the firing cells write (ORed); the error is
+/// the input XOR the prediction: what came unpredicted and what was predicted but did not come.
+///
+/// The firing cells do not hold each other down: a context followed by either of two things
+/// predicts both, and the error is then the one that did not come.
+///
+/// Learning is local to each cell, and its output is fixed at birth:
+/// - a cell that fired and whose output came (most of it) moves its synapses toward the context
+///   it fired on (Hebbian); one whose output did not come moves them off it (anti-Hebbian), so a
+///   cell for what no longer follows its context stops firing on it;
+/// - when the unpredicted part meets one cell's popcount, `k` cells are born on the context (its
+///   lines dealt among them), each writing that part.
+pub struct Predictor {
+    pub kernel: Kernel,
+    in_bits: usize,
+}
+
+impl Predictor {
+    /// Cells over `ctx_bits` context lines predicting `in_bits` input lines.
+    pub fn new(ctx_bits: usize, in_bits: usize, seed: u64) -> Self {
+        Self { kernel: Kernel::new(ctx_bits, in_bits, 4, 8, seed), in_bits }
+    }
+
+    /// One step: the context before and the input that came; returns the error (input XOR
+    /// prediction), learning.
+    pub fn step(&mut self, context: &BitVector, input: &BitVector) -> BitVector {
+        let mut cw = context.as_words().to_vec();
+        cw.resize(words(self.kernel.bits), 0);
+        let mut iw = input.as_words().to_vec();
+        iw.resize(words(self.in_bits), 0);
+        // the cells the context fires: each predicts what it writes, and they are not held down
+        // by each other (a context followed by either of two things predicts both)
+        let winners: Vec<usize> = (0..self.kernel.cells.len()).filter(|&c| self.kernel.match_of(c, &cw).0).collect();
+        let mut pred = vec![0u64; iw.len()];
+        for &c in &winners {
+            for (p, o) in pred.iter_mut().zip(&self.kernel.cells[c].out) {
+                *p |= o;
+            }
+        }
+        let error: Vec<u64> = iw.iter().zip(&pred).map(|(x, p)| x ^ p).collect();
+        // local learning: a cell whose output came (most of it) moves its synapses toward the
+        // context it fired on; one whose output did not come moves them off it
+        for &c in &winners {
+            let out = &self.kernel.cells[c].out;
+            let came = and_pop(out, &iw);
+            if 2 * came >= pop(out) {
+                self.kernel.hebbian(c, &cw, 3);
+            } else {
+                self.kernel.anti_hebbian(c, &cw, 3);
+            }
+        }
+        let unpredicted: Vec<u64> = iw.iter().zip(&pred).map(|(x, p)| x & !p).collect();
+        if pop(&unpredicted) >= ONE_CELL.min(pop(&iw).max(1)) && pop(&cw) > 0 {
+            let born = self.kernel.births_for(&cw, self.kernel.k, None);
+            for c in born {
+                self.kernel.cells[c].out = unpredicted.clone();
+            }
+        }
+        BitVector::from_words(error)
     }
 }

@@ -1,13 +1,14 @@
 //! Evolving on graded probes instead of one task score.
 //!
 //! The tag genome from a naked start (an empty string and `PRB_CHANNELS` empty channels) evolves
-//! by epsilon-lexicase selection on five probes (`observe::probes`), each a small capacity on a
+//! by epsilon-lexicase selection on six probes (`observe::probes`), each a small capacity on a
 //! smooth scale in parts per 1024:
 //! - respond: clicks while a light is up minus clicks with none (a blind babbler scores 0);
 //! - tell: clicks differently to the two lights, either way round;
 //! - discriminate: more clicks on the paying light (the task);
 //! - reverse: the worst phase of a serial reversal (it follows every swap);
-//! - remember: more clicks after a light that is gone than after none.
+//! - remember: more clicks after a light that is gone than after none;
+//! - win-stay: after a click on a light, more clicks on it next time if it was stroked than if not.
 //! Each (world seed, probe) pair is a lexicase case, so a genome best at any one capacity in a
 //! few worlds can be a parent. The probes are read by the observer from the event log; the
 //! network never sees them.
@@ -24,13 +25,13 @@
 
 use neurocomp::evolve::tags::{TagGenome, Token};
 use neurocomp::evolve::{evolve_lexicase, probe_all, probe_means, Physics};
-use neurocomp::world::observe::PROBES;
+use neurocomp::world::observe::{ProbeRow, PROBES};
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
     std::env::var(k).ok().and_then(|v| v.parse().ok()).unwrap_or(d)
 }
 
-fn row(m: &[i32; 5]) -> String {
+fn row(m: &ProbeRow) -> String {
     m.iter().map(|x| format!("{x:>7}")).collect::<Vec<_>>().join("")
 }
 
@@ -59,7 +60,7 @@ fn main() {
     let start = TagGenome { tokens, next_id: 1 };
     println!("probes: tag genome from a naked start ({channels} empty channels); pop {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials a lifetime, gaps 0-{gap}, thrift {thrift}");
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
-    println!("{:>4}  {:>5}  {:<35}  {:<35}  {:<35}  {:>13}", "gen", "size", "shown: held-out pick", "shown: second held-out set", "population mean (training)", "work: shown pop");
+    println!("{:>4}  {:>5}  {:<42}  {:<42}  {:<42}  {:>13}", "gen", "size", "shown: held-out pick", "shown: second held-out set", "population mean (training)", "work: shown pop");
     println!("{:>4}  {:>5}  {names}  {names}  {names}", "", "");
     let last = evolve_lexicase(vec![start; pop], trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, |g, r| {
         if g % every == 0 || g + 1 == gens {

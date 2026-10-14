@@ -94,7 +94,11 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; 5] = ["respond", "tell", "discriminate", "reverse", "remember"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay"];
+/// How many probes there are.
+pub const NPROBES: usize = 6;
+/// One lifetime pair's probes, in the order of `PROBES`.
+pub type ProbeRow = [i32; NPROBES];
 
 /// Per trial of a conditioning scene: (trial index, cue trial, paying trial, a click in steps
 /// `win`, a click in steps `off`).
@@ -135,8 +139,12 @@ fn rate(tr: &[Trial], pick: impl Fn(&Trial) -> bool, click: impl Fn(&Trial) -> b
 /// - reverse: discrimination in the second half of each reversal phase (after it has had time to
 ///   switch), averaged over the phases; clicking one light is right in half the phases and wrong
 ///   in the rest, so only following the swaps scores;
-/// - remember: after a light that is already gone, more clicks than after no light.
-pub fn probes(reversal: &[Event], period: usize, delayed: &[Event]) -> [i32; 5] {
+/// - remember: after a light that is already gone, more clicks than after no light;
+/// - win-stay: after a click on a light, the click rate the next time that light comes, when the
+///   click was stroked minus when it was not. A network that ignores strokes scores 0 (so does one
+///   that always clicks one light: the same rate after either); one whose clicks follow what was
+///   stroked scores above 0. The step between telling the lights apart and discriminating.
+pub fn probes(reversal: &[Event], period: usize, delayed: &[Event]) -> ProbeRow {
     let tr = trials(reversal, (3, 5), (7, 9));
     let all = |_: &Trial| true;
     let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
@@ -156,7 +164,27 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event]) -> [i32; 5] 
     let reverse = if late.is_empty() { 0 } else { late.iter().sum::<i32>() / late.len() as i32 };
     let td = trials(delayed, (5, 7), (5, 7));
     let remember = rate(&td, |x| x.1, |x| x.3) - rate(&td, |x| !x.1, |x| x.3);
-    [respond, tell, discriminate, reverse, remember]
+    // win-stay: each click (in the response window) on a light is stroked if the trial paid;
+    // the next trial showing the same light is clicked or not
+    let (mut won, mut won_n, mut lost, mut lost_n) = (0i64, 0i64, 0i64, 0i64);
+    for i in 0..tr.len() {
+        if !tr[i].3 {
+            continue;
+        }
+        let Some(next) = tr[i + 1..].iter().find(|x| x.1 == tr[i].1) else { continue };
+        if tr[i].2 {
+            won_n += 1;
+            won += next.3 as i64;
+        } else {
+            lost_n += 1;
+            lost += next.3 as i64;
+        }
+    }
+    // (a side with no clicks counts 0: one that only ever clicks where it is stroked scores its
+    // repeat rate; one that never clicks scores 0)
+    let r = |c: i64, n: i64| if n == 0 { 0 } else { c * 1024 / n };
+    let win_stay = (r(won, won_n) - r(lost, lost_n)) as i32;
+    [respond, tell, discriminate, reverse, remember, win_stay]
 }
 
 /// Sequence: steps where a next token was due, and those where the program said it on the
@@ -252,7 +280,7 @@ mod tests {
             probe.lights_for_test().to_vec()
         };
         let sees = |prev: &BitVector, l: &BitVector| channel(prev, EYE).as_words().iter().zip(l.as_words()).any(|(a, b)| a & b != 0);
-        let run = |policy: &dyn Fn(&BitVector, usize) -> bool| -> [i32; 5] {
+        let run = |policy: &dyn Fn(&BitVector, usize) -> bool| -> ProbeRow {
             let mut w = World::new(7, 4);
             w.reversal_period = 50;
             w.conditioning(Conditioning::Reversal, 200);
@@ -290,6 +318,10 @@ mod tests {
         // the blind and any-light clickers average 0 on tell and reverse (no noise bias)
         assert!(blind[1].abs() < 80 && blind[3].abs() < 120 && any_light[3].abs() < 120, "{blind:?} {any_light:?}");
         assert!(follows[2] > 800 && follows[3] > 800, "{follows:?}");
+        // win-stay: 0 for clickers that ignore strokes (blind, any light, light A only); high for
+        // the one whose clicks follow what pays
+        assert!(blind[5].abs() < 80 && any_light[5].abs() < 80 && light_a[5].abs() < 80, "{blind:?} {any_light:?} {light_a:?}");
+        assert!(follows[5] > 500, "{follows:?}");
         // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
         assert!(blind[4] > 500, "{blind:?}");
     }

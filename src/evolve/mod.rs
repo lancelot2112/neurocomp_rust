@@ -374,7 +374,7 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
 /// The probes of one genome in one world seed: a serial-reversal lifetime and a delayed one,
 /// `trials` trials each (see `observe::probes`), with gaps of 0 to `gap` steps between trials,
 /// and its work per step over both.
-pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize) -> ([i32; 5], u64) {
+pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize) -> (observe::ProbeRow, u64) {
     let period = (trials / 4).max(1);
     let (rev, w1) = live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap);
     let (del, w2) = live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap);
@@ -385,7 +385,7 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.
 pub struct Probed<G> {
-    pub probes: Vec<[i32; 5]>,
+    pub probes: Vec<observe::ProbeRow>,
     pub works: Vec<u64>,
     pub work: u64,
     pub genome: G,
@@ -402,7 +402,7 @@ pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physi
             .chunks(chunk)
             .map(|part| sc.spawn(move || part.iter().map(|g| {
                 let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores(g, trials, physics, s, gap)).collect::<Vec<_>>()))
-                    .unwrap_or_else(|_| vec![([-1024; 5], u64::MAX / 2); seeds.len()]);
+                    .unwrap_or_else(|_| vec![([-1024; observe::NPROBES], u64::MAX / 2); seeds.len()]);
                 let work = r.iter().map(|x| x.1).sum::<u64>() / seeds.len().max(1) as u64;
                 Probed { probes: r.iter().map(|x| x.0).collect(), works: r.iter().map(|x| x.1).collect(), work, genome: g.clone() }
             }).collect::<Vec<_>>()))
@@ -415,10 +415,10 @@ pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physi
 }
 
 /// Mean of each probe over a genome's seeds.
-pub fn probe_means(s: &[[i32; 5]]) -> [i32; 5] {
-    let mut m = [0i64; 5];
+pub fn probe_means(s: &[observe::ProbeRow]) -> observe::ProbeRow {
+    let mut m = [0i64; observe::NPROBES];
     for x in s {
-        for p in 0..5 {
+        for p in 0..observe::NPROBES {
             m[p] += x[p] as i64;
         }
     }
@@ -431,9 +431,9 @@ pub struct ProbeGeneration<G> {
     /// the whole population, highest summed probe means (on the training worlds) first
     pub ranked: Vec<G>,
     pub best: G,
-    pub best_means: [i32; 5],
+    pub best_means: observe::ProbeRow,
     pub best_work: u64,
-    pub pop_means: [i32; 5],
+    pub pop_means: observe::ProbeRow,
     pub pop_work: u64,
 }
 
@@ -457,9 +457,10 @@ pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Phys
         let scored = probe_all(population.drain(..).collect(), trials, physics, seeds, gap);
         let n = scored.len();
         // the cases: one per (seed, probe), then one thrift case per seed (less work is better)
-        let ncases = seeds.len() * 5 + if thrift { seeds.len() } else { 0 };
+        let np = observe::NPROBES;
+        let ncases = seeds.len() * np + if thrift { seeds.len() } else { 0 };
         let value = |g: usize, c: usize| -> i64 {
-            if c < seeds.len() * 5 { scored[g].probes[c / 5][c % 5] as i64 } else { -(scored[g].works[c - seeds.len() * 5].min(i64::MAX as u64 / 2) as i64) }
+            if c < seeds.len() * np { scored[g].probes[c / np][c % np] as i64 } else { -(scored[g].works[c - seeds.len() * np].min(i64::MAX as u64 / 2) as i64) }
         };
         // epsilon per case: the median absolute deviation over the population
         let eps: Vec<i64> = (0..ncases).map(|c| {
@@ -483,8 +484,8 @@ pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Phys
             }
             cand[rng.gen_range(0..cand.len())]
         };
-        let means: Vec<[i32; 5]> = scored.iter().map(|s| probe_means(&s.probes)).collect();
-        let total = |m: &[i32; 5]| m.iter().map(|&x| x as i64).sum::<i64>();
+        let means: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
+        let total = |m: &observe::ProbeRow| m.iter().map(|&x| x as i64).sum::<i64>();
         let mut ranked: Vec<usize> = (0..n).collect();
         ranked.sort_by(|&a, &b| total(&means[b]).cmp(&total(&means[a])).then(scored[a].work.cmp(&scored[b].work)).then(b.cmp(&a)));
         let pop_means = probe_means(&means);

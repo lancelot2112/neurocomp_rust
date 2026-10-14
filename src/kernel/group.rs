@@ -29,9 +29,14 @@ impl KernelGroup {
         self.available_classes.is_empty()
     }
 
-    pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16) {
+    /// A group of the given classes.
+    pub fn from_classes(available_classes: Vec<KernelClass<SimpleKernel>>) -> Self {
+        Self { available_classes }
+    }
+
+    pub fn process_all<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, rng: &mut R) {
         for kclass in &mut self.available_classes {
-            kclass.process_all(input, output, phase, adj_temperature);
+            kclass.process_all(input, output, phase, adj_temperature, rng);
         }
     }
 }

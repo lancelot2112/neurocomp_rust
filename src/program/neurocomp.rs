@@ -7,6 +7,8 @@ use crate::bitvec::bithistory::{AdvanceMode, BitVecHistory};
 use crate::kernel::class::KernelOp;
 use crate::kernel::group::KernelGroup;
 use crate::program::graph::{EdgeSpec, GraphProgram, NodeSpec, ProgramDefaults};
+use rand::rngs::StdRng;
+use rand::SeedableRng;
 
 /// A runnable network: node histories plus per-edge kernel groups.
 /// For now, each edge also carries a simple default kernel used for execution
@@ -14,6 +16,20 @@ use crate::program::graph::{EdgeSpec, GraphProgram, NodeSpec, ProgramDefaults};
 pub struct RuntimeNetwork {
     pub nodes: Vec<BitVecHistory>,
     pub edges: Vec<RuntimeEdgeGroup>,
+    /// the network's own random stream (learning moves), so runs are deterministic
+    pub rng: StdRng,
+}
+
+/// What an edge's kernel factory is told about the edge it fills.
+pub struct EdgeInfo<'a> {
+    pub index: usize,
+    pub src: usize,
+    pub dst: usize,
+    pub src_bits: usize,
+    pub dst_bits: usize,
+    /// the destination is the output node
+    pub to_output: bool,
+    pub spec: &'a EdgeSpec,
 }
 
 /// Per-edge runtime unit: group of kernel classes plus a default kernel.
@@ -41,7 +57,9 @@ impl RuntimeNetwork {
         for ni in g.node_indices() {
             let ns = g.node_weight(ni).expect("node weight");
             let bits = ns.bits;
-            let ring_len = ns.history_depth.max(2);
+            // one more frame than the deepest read, so a read never lands on the frame being
+            // written
+            let ring_len = ns.history_depth.max(1) + 1;
             let init = BitVector::new(bits, Some(0));
             nodes.push(BitVecHistory::new(init, ring_len));
         }
@@ -69,7 +87,35 @@ impl RuntimeNetwork {
             });
         }
 
-        Self { nodes, edges }
+        Self { nodes, edges, rng: StdRng::seed_from_u64(0) }
+    }
+
+    /// Build from a graph with the input and output nodes resized (to a world's senses and
+    /// acts) and each edge's kernels made by `factory`; the network's random stream is seeded
+    /// with `seed`.
+    pub fn from_graph_with<F>(g: &Graph<NodeSpec, EdgeSpec, Directed>, in_bits: usize, out_bits: usize, seed: u64, mut factory: F) -> Self
+    where
+        F: FnMut(&EdgeInfo) -> KernelGroup,
+    {
+        let last = g.node_count() - 1;
+        let bits_of = |i: usize| if i == 0 { in_bits } else if i == last { out_bits } else { g.node_weight(NodeIndex::new(i)).unwrap().bits };
+        let mut nodes: Vec<BitVecHistory> = Vec::with_capacity(g.node_count());
+        for ni in g.node_indices() {
+            let ns = g.node_weight(ni).expect("node weight");
+            let ring_len = ns.history_depth.max(1) + 1;
+            nodes.push(BitVecHistory::new(BitVector::new(bits_of(ni.index()), Some(0)), ring_len));
+        }
+        let mut edges: Vec<RuntimeEdgeGroup> = Vec::with_capacity(g.edge_count());
+        for (index, e) in g.edge_references().enumerate() {
+            let (src, dst) = (e.source().index(), e.target().index());
+            let info = EdgeInfo { index, src, dst, src_bits: bits_of(src), dst_bits: bits_of(dst), to_output: dst == last, spec: e.weight() };
+            edges.push(RuntimeEdgeGroup {
+                src: RuntimeEdgeTarget { idx: src, read_back: e.weight().input_read_back.max(1) },
+                dst,
+                group: factory(&info),
+            });
+        }
+        Self { nodes, edges, rng: StdRng::seed_from_u64(seed) }
     }
 
     /// Advance histories and process all edges once.
@@ -80,12 +126,13 @@ impl RuntimeNetwork {
         }
 
         // Execute edges
-        for eg in &mut self.edges {
+        let Self { nodes, edges, rng } = self;
+        for eg in edges.iter_mut() {
             // Snapshot source at read_back frames
-            let src_view = self.nodes[eg.src.idx].snapshot(eg.src.read_back);
-            let dst_curr = self.nodes[eg.dst].current_mut();
+            let src_view = nodes[eg.src.idx].snapshot(eg.src.read_back);
+            let dst_curr = nodes[eg.dst].current_mut();
 
-            eg.group.process_all(&src_view, dst_curr, 0, adj_temperature); // phase=0 for now
+            eg.group.process_all(&src_view, dst_curr, 0, adj_temperature, rng); // phase=0 for now
         }
     }
 

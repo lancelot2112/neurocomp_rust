@@ -55,6 +55,8 @@ pub struct KernelContext<'a> {
 pub trait KernelTrait {
     fn try_fire<R: rand::Rng + ?Sized>(&mut self, ctx: &KernelContext, out: &mut BitVector, rng: &mut R) -> bool;
     fn word_range(&self) -> (usize, usize);
+    /// Mark the input lines this kernel takes when it fires (for overlap inhibition).
+    fn mark_inhibit(&self, inhibit: &mut BitVector);
 }
 
 pub struct KernelClass<K: KernelTrait> {
@@ -75,10 +77,11 @@ impl<K: KernelTrait> KernelClass<K> {
         self.active_kernels.push(k);
     }
 
-    /// Run all kernels; kernels may OR/XOR/AND/CLEAR into `output`.
-    pub fn process_all(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16) {
-        let mut inhibit = BitVector::new(input.word_len(),Some(0));
-        let mut rng = rand::thread_rng();
+    /// Run all kernels; kernels may OR/XOR/AND/CLEAR into `output`. A kernel that fires marks
+    /// its input mask as taken: a later kernel whose mask overlaps the taken lines by more than
+    /// half is held down (and, if it matched, learns anti-Hebbian).
+    pub fn process_all<R: rand::Rng + ?Sized>(&mut self, input: &BitVector, output: &mut BitVector, phase: u16, adj_temperature: i16, rng: &mut R) {
+        let mut inhibit = BitVector::new(input.bit_len(), Some(0));
         for k in &mut self.active_kernels {
             let ctx = KernelContext {
                 input,
@@ -86,14 +89,8 @@ impl<K: KernelTrait> KernelClass<K> {
                 temperature: self.temperature.current + adj_temperature,
                 phase,
             };
-
-            if k.try_fire(&ctx, output, &mut rng) {
-                // Kernel fired inhibit overlapping kernels
-                let (start,end) = k.word_range();
-                for i in start..end {
-                    inhibit.bit_set(i);
-                }
-
+            if k.try_fire(&ctx, output, rng) {
+                k.mark_inhibit(&mut inhibit);
             }
         }
     }

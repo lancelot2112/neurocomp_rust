@@ -59,8 +59,9 @@ impl SimpleKernel {
 
     #[inline]
     fn is_inhibited(&self, ctx: &KernelContext, _stats: &InputStats) -> bool {
-        // Example: any inhibit bit overlapping our input window
-        ctx.inhibit.bit_get(self.input_idx)
+        // held down when more than half of our mask overlaps lines a fired kernel took
+        let taken = ctx.inhibit.mask_and_count(self.input_idx, &self.input_mask, |a, m| a & m);
+        2 * taken > self.input_mask.count_ones()
     }
 
     #[inline]
@@ -112,6 +113,10 @@ impl KernelTrait for SimpleKernel {
         true
     }
 
+    fn mark_inhibit(&self, inhibit: &mut BitVector) {
+        inhibit.mask_mut(self.input_idx, &self.input_mask, |a, m| a | m);
+    }
+
     fn word_range(&self) -> (usize, usize) {
         let start = self.output_idx;
         let end = start + self.output_mask.word_len();
@@ -136,7 +141,7 @@ mod tests {
         // output mask sets upper nibble of first byte
         let out_mask = BitVector::from_words(vec![0xF0]);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
@@ -159,7 +164,7 @@ mod tests {
         let mut output = BitVector::new(64, Some(0));
         let out_mask = BitVector::from_words(vec![0x0F]);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
@@ -181,7 +186,7 @@ mod tests {
         let mut output = BitVector::from_words(vec![0xFFFF]);
         let out_mask = BitVector::from_words(vec![0x0F0F]);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
@@ -203,7 +208,7 @@ mod tests {
         let mut output = BitVector::new(64, Some(0));
         let out_mask = BitVector::from_words(vec![0x0F]);
 
-        let mut rng = rand::thread_rng();
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
 
         let mut k = SimpleKernel::new(in_mask, 0, out_mask, 0, 5, KernelOp::Or);
         let inhibit = BitVector::new(64, Some(0));

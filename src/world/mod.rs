@@ -202,11 +202,20 @@ fn put(v: &mut BitVector, ch: usize, x: &BitVector) {
 }
 
 impl World {
-    /// A world with `tokens` distinct tokens (seen, heard and sayable).
+    /// A world with `tokens` distinct tokens (seen, heard and sayable); its physics (every code)
+    /// and its draws both come from `seed`.
     pub fn new(seed: u64, tokens: usize) -> Self {
-        let r = |salt: u64| StdRng::seed_from_u64(seed ^ salt);
+        Self::with_physics(seed, seed, tokens)
+    }
+
+    /// A world whose physics (how each token, tone, light and move looks, and the body's motor
+    /// primitives) comes from `physics` and whose draws (cues, trial order, the caregiver) come
+    /// from `seed`. Fixed physics across lifetimes lets evolution wire in what the codes are;
+    /// varied physics leaves only what a program learns within a lifetime.
+    pub fn with_physics(physics: u64, seed: u64, tokens: usize) -> Self {
+        let r = |salt: u64| StdRng::seed_from_u64(physics ^ salt);
         Self {
-            rng: StdRng::seed_from_u64(seed),
+            rng: StdRng::seed_from_u64(seed ^ 0xD1CE),
             glyphs: codes(tokens, &mut r(0x6171)),
             sounds: codes(tokens, &mut r(0x50D5)),
             tones: codes(2, &mut r(0x7070)),

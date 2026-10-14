@@ -36,6 +36,7 @@ frame, `S` a kernel's mask, `|v|` the popcount.
 | Shift-register trace | write `OR`, decay by shift; matches a float trace (12) |
 | Fast tag | one-shot `AND-NOT` of a just-confirmed cell's output, cleared at a boundary (22) |
 | Two compartments | basal mask on the input, apical mask on the context; a primed (bursting) cell lets silent synapses count |
+| Match and confirmation (nested codes) | on a match, a kernel ORs its small code into a match vector; when its prediction comes true, its big code (the small code plus extra lines, same word). Small only = surprise bound to context; big = expected |
 | Go / no-go | two masks from the same random start, push-pull Hebbian, recruited up to an asymptote in popcounts |
 
 ## History

@@ -49,6 +49,12 @@ what it can build. We do not add special-purpose modules to get a task done.
 - **The best match fires first**; kernels whose masks overlap are held down.
 - **Decoding: the winner writes the slot.** A predicted symbol is written by the best-matched
   kernel into its slot; predicted XOR actual is the residue.
+- **Match and confirmation share one vector, as nested codes.** A kernel that matches writes a
+  small code (a few lines in one word) into a match vector. When its prediction comes true (a
+  step later) it writes its big code: the same lines plus a few more. A reader sees nothing
+  (not this context), the small code (this context, prediction failed: surprise bound to its
+  context) or the big code (this context, as expected), and picks which by its threshold.
+- **Decode from the winner only**, never from the OR of everything that fired.
 - **Kernels write anywhere.** An edge's kernels write its destination vector; the program
   builds the map of vectors.
 

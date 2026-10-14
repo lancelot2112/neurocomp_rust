@@ -25,8 +25,12 @@ pub struct SimpleKernel {
     pub learn_held: bool,
     /// learn Hebbian when it fires (on by default)
     pub learn_fire: bool,
-    /// the third mask: written (into a confirmation vector) when what this kernel predicted
-    /// came true
+    /// its match code: a small code written into a match vector when it matches
+    pub match_code: Option<BitVector>,
+    /// the extra lines of its confirmed code: when what it predicted came true, it writes its
+    /// match code plus these into the same vector (a bigger code). A reader of that vector sees
+    /// nothing (not this context), the small code (this context, and its prediction failed:
+    /// surprise bound to context), or the big code (this context, and it came true).
     pub confirm_mask: Option<BitVector>,
     /// how often its prediction came true lately: up one when confirmed, down one when not
     /// (a u8, saturating); breaks ties between equally good matches
@@ -35,7 +39,7 @@ pub struct SimpleKernel {
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, confirm_mask: None, confirmed: 0 }
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0 }
     }
 
     /// A two-mask kernel: `care` lines, expecting `pattern` on them.
@@ -103,6 +107,7 @@ impl SimpleKernel {
             pattern: None,
             learn_held: true,
             learn_fire: true,
+            match_code: None,
             confirm_mask: None,
             confirmed: 0,
         }
@@ -166,13 +171,34 @@ impl SimpleKernel {
 }
 
 impl SimpleKernel {
-    /// Its prediction was checked: confirmed or not. Confirmed, it writes its third mask into
-    /// `confirmations` (if it has one) and counts up; else it counts down.
-    pub fn confirm(&mut self, right: bool, confirmations: Option<&mut BitVector>) {
+    /// A small code and its extra lines for a nested match code: `small` random lines in one
+    /// random word of a `bits`-wide match vector, and `extra` more lines in the same word.
+    pub fn nested_code<R: rand::Rng + ?Sized>(bits: usize, small: usize, extra: usize, rng: &mut R) -> (BitVector, BitVector) {
+        use rand::seq::SliceRandom;
+        let w = rng.gen_range(0..(bits / 64).max(1));
+        let lines: Vec<usize> = (0..64).collect();
+        let picked: Vec<usize> = lines.choose_multiple(rng, (small + extra).min(64)).map(|b| w * 64 + b).collect();
+        let (a, b) = picked.split_at(small.min(picked.len()));
+        (BitVector::from_bits(a, bits), BitVector::from_bits(b, bits))
+    }
+
+    /// It matched: its small code goes into the match vector.
+    pub fn write_match(&self, matches: &mut BitVector) {
+        if let Some(m) = &self.match_code {
+            matches.mask_mut(0, m, |a, b| a | b);
+        }
+    }
+
+    /// Its prediction was checked. Confirmed, it writes its big code (match code plus extra
+    /// lines) into `matches` (if given) and counts up; else it counts down.
+    pub fn confirm(&mut self, right: bool, matches: Option<&mut BitVector>) {
         if right {
             self.confirmed = self.confirmed.saturating_add(1);
-            if let (Some(m), Some(c)) = (&self.confirm_mask, confirmations) {
-                c.mask_mut(0, m, |a, b| a | b);
+            if let Some(c) = matches {
+                self.write_match(c);
+                if let Some(m) = &self.confirm_mask {
+                    c.mask_mut(0, m, |a, b| a | b);
+                }
             }
         } else {
             self.confirmed = self.confirmed.saturating_sub(1);
@@ -278,6 +304,29 @@ impl KernelTrait for SimpleKernel {
 mod tests {
     use super::*;
     use crate::bitvec::BitVector;
+
+    #[test]
+    fn match_and_confirmation_write_nested_codes_to_one_vector() {
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(3);
+        let mut k = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![1]), 0, 8, KernelOp::Or);
+        let (small, extra) = SimpleKernel::nested_code(512, 4, 4, &mut rng);
+        k.match_code = Some(small.clone());
+        k.confirm_mask = Some(extra.clone());
+        // matched: the small code
+        let mut m = BitVector::new(512, Some(0));
+        k.write_match(&mut m);
+        assert_eq!(m.count_ones(), 4);
+        // its prediction failed: nothing more, and it counts down (from 0: stays 0)
+        k.confirm(false, Some(&mut m));
+        assert_eq!((m.count_ones(), k.confirmed), (4, 0));
+        // confirmed: the big code, a superset of the small one, in the same word
+        let mut c = BitVector::new(512, Some(0));
+        k.confirm(true, Some(&mut c));
+        assert_eq!((c.count_ones(), k.confirmed), (8, 1));
+        let both: usize = c.as_words().iter().zip(small.as_words()).map(|(a, b)| (a & b).count_ones() as usize).sum();
+        assert_eq!(both, 4);
+        assert_eq!(c.as_words().iter().filter(|&&w| w != 0).count(), 1);
+    }
 
     #[test]
     fn fires_when_threshold_met() {

@@ -71,7 +71,9 @@ fn main() {
     let q: usize = env("BYTES_Q", 4);
     let held = std::env::var("BYTES_HELD").is_ok();
     let confirm = std::env::var("BYTES_CONFIRM").is_ok();
-    let mut confirmations = BitVector::new(65536, Some(0));
+    // the match vector: each kernel's small code when it matches, its big code (small plus
+    // extra lines) when its prediction came true
+    let mut confirmations = BitVector::new(BITS, Some(0));
     let sparse = std::env::var("BYTES_SPARSE").is_ok();
     let fuzzy_depth = std::env::var("BYTES_FUZZYDEPTH").is_ok();
     // (`BYTES_EXACTCONFIRM=1`: only kernels that matched exactly check their prediction)
@@ -124,6 +126,7 @@ fn main() {
                 let a = k.agreement(input);
                 if a >= k.threshold && (!exact_confirm || a == k.input_mask.count_ones()) {
                     let right = (k.output_mask.as_words()[0] & 0xFF) as u8 == b;
+                    k.write_match(&mut confirmations);
                     k.confirm(right, Some(&mut confirmations));
                 }
             }
@@ -186,8 +189,10 @@ fn main() {
                 k.learn_held = held;
                 // (`BYTES_NOHEBB=1`: no Hebbian move when it fires)
                 k.learn_fire = !no_hebb;
-                // its confirmation line: one line of its own in the confirmation vector
-                k.confirm_mask = Some(BitVector::from_bits(&[class.len() % 65536], 65536));
+                // its nested match code: 4 lines when it matches, 4 more when it was right
+                let (small, extra) = SimpleKernel::nested_code(BITS, 4, 4, &mut rng);
+                k.match_code = Some(small);
+                k.confirm_mask = Some(extra);
                 class.add(k);
                 scale.push(s);
             }

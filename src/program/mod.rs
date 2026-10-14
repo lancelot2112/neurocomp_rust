@@ -87,5 +87,6 @@ pub mod column;
 pub mod claustrum;
 pub mod latent;
 pub mod assembly;
+pub mod kernel_cells;
 pub use striatum::Striatum;
 pub use mask_striatum::MaskStriatum;

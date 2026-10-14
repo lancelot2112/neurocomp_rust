@@ -21,6 +21,7 @@ use neurocomp::bitvec::BitVector;
 use neurocomp::fixed::ONE;
 use neurocomp::program::area::Pool;
 use neurocomp::program::assembly::Assembly;
+use neurocomp::program::kernel_cells::{Holder, Kernel};
 use neurocomp::program::latent::{LatentCause, Scale};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -50,7 +51,8 @@ fn main() {
     let phases: usize = env("LATENT_PHASES", 8);
     let seeds: u64 = env("LATENT_SEEDS", 20);
     let debug = std::env::var("LATENT_DEBUG").is_ok();
-    let circuit = std::env::var("LATENT_MODEL").map_or(false, |v| v == "circuit");
+    let kern = std::env::var("LATENT_MODEL").map_or(false, |v| v == "kernel");
+    let circuit = kern || std::env::var("LATENT_MODEL").map_or(false, |v| v == "circuit");
     // per phase index: the outcome of the swap into it
     let mut per: Vec<Swap> = vec![Swap::default(); phases];
     let mut first_phase_false = 0u32;
@@ -60,6 +62,11 @@ fn main() {
         lc.debug = debug;
         let mut cc = Assembly::holding(env("LATENT_N", 256), env("LATENT_K", 16), 1024, seed ^ 0x5EED);
         cc.debug = debug;
+        // (`LATENT_MODEL=kernel`: kernel cells separate the input and a holder of kernel
+        // assemblies holds; `kernel_cells.rs`)
+        let mut ksep = Kernel::new(1024, 1024, 4, 8, seed ^ 0xC0DE);
+        let mut kh = Holder::new(1024, seed ^ 0xF00D);
+        kh.debug = debug;
         // the circuit's input: layer 4's code of what came together (the light shown and what
         // followed), a random sparse code per conjunction, as layer 4 recruits one for each
         // (`LATENT_SHARED=1`: a conjunction's code shares half its bits with the other outcome
@@ -111,11 +118,11 @@ fn main() {
         let mut home: [Option<usize>; 2] = [None, None];
         for ph in 0..phases {
             let kind = ph % 2;
-            let resets_before = if circuit { cc.resets() } else { lc.resets };
+            let resets_before = if kern { kh.resets } else if circuit { cc.resets() } else { lc.resets };
             let mut detected: Option<u32> = None;
             for t in 0..period {
                 let light = rng.gen_range(0..2usize);
-                let ctx = if circuit { cc.now() } else { lc.now };
+                let ctx = if kern { kh.now } else if circuit { cc.now() } else { lc.now };
                 let act = if greedy {
                     let v = worth.get(ctx).map_or(-1, |w| w[light]);
                     let share = if v < 0 { 0.5 } else { (v as f64 / ONE as f64).max(0.1) };
@@ -128,8 +135,11 @@ fn main() {
                 }
                 let got = if light == kind && rng.gen_bool(p) { ONE as i32 } else { 0 };
                 let bits = [light, BACKGROUND];
-                let before = if circuit { cc.resets() } else { lc.resets };
-                if circuit {
+                let before = if kern { kh.resets } else if circuit { cc.resets() } else { lc.resets };
+                if kern {
+                    let (code, _) = ksep.code(&codes[light * 2 + (got > 0) as usize], true);
+                    kh.hold(&code);
+                } else if circuit {
                     if l4_on {
                         let code = l4.learn(&[(0, &cue[light]), (1, &outcome[(got > 0) as usize])]);
                         cc.hold(&code);
@@ -144,11 +154,11 @@ fn main() {
                 } else {
                     lc.step(&worth, &learned, &bits, got);
                 }
-                if (if circuit { cc.resets() } else { lc.resets }) > before && detected.is_none() {
+                if (if kern { kh.resets } else if circuit { cc.resets() } else { lc.resets }) > before && detected.is_none() {
                     detected = Some(t);
                 }
                 // the active context learns the outcome (locking in)
-                let c = if circuit { cc.now() } else { lc.now };
+                let c = if kern { kh.now } else if circuit { cc.now() } else { lc.now };
                 while worth.len() <= c {
                     worth.push(vec![-1; BITS]);
                     learned.push(vec![0; BITS]);
@@ -159,8 +169,8 @@ fn main() {
                     *n = n.saturating_add(1);
                 }
             }
-            let resets = if circuit { cc.resets() } else { lc.resets } - resets_before;
-            let (now, contexts) = if circuit { (cc.now(), cc.contexts()) } else { (lc.now, lc.contexts) };
+            let resets = if kern { kh.resets } else if circuit { cc.resets() } else { lc.resets } - resets_before;
+            let (now, contexts) = if kern { (kh.now, kh.contexts()) } else if circuit { (cc.now(), cc.contexts()) } else { (lc.now, lc.contexts) };
             let s = &mut per[ph];
             if ph == 0 {
                 first_phase_false += resets;
@@ -183,7 +193,7 @@ fn main() {
     }
     println!(
         "latent alone: {}, policy {}, pay {p}, period {period}, {seeds} seeds; false silencings in the first phase {first_phase_false}",
-        if circuit { "circuit".to_string() } else { format!("attractor {scale:?}") },
+        if kern { "kernel".to_string() } else if circuit { "circuit".to_string() } else { format!("attractor {scale:?}") },
         if greedy { "greedy" } else { "random" }
     );
     println!("swap  detected  median-trials  missed  back  new  wrong  false-alarms");

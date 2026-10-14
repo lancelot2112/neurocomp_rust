@@ -27,7 +27,7 @@ use crate::program::neurocomp::{EdgeInfo, RuntimeNetwork};
 use crate::world::{self, observe, Conditioning, World};
 
 /// Every graph instruction, for mutation.
-pub const INSTRUCTIONS: [GraphInstruction; 31] = [
+pub const INSTRUCTIONS: [GraphInstruction; 40] = [
     GraphInstruction::Stay(),
     GraphInstruction::Create(),
     GraphInstruction::Pop(),
@@ -59,6 +59,15 @@ pub const INSTRUCTIONS: [GraphInstruction; 31] = [
     GraphInstruction::EdgeKernels(),
     GraphInstruction::EdgeSynapses(),
     GraphInstruction::EdgeQuarter(),
+    GraphInstruction::EdgeNand(),
+    GraphInstruction::EdgeNor(),
+    GraphInstruction::EdgeAdd(),
+    GraphInstruction::EdgeSub(),
+    GraphInstruction::EdgeShl(),
+    GraphInstruction::EdgeShr(),
+    GraphInstruction::EdgeRotl(),
+    GraphInstruction::EdgeRotr(),
+    GraphInstruction::EdgeWider(),
 ];
 
 pub mod genes;

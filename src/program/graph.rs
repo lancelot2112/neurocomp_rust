@@ -82,6 +82,15 @@ pub enum GraphInstruction {
     EdgeWide(),   // births sample synapses across the whole source, not one word
     EdgeSpan(),   // it reads the OR of twice as many past frames
     Noise(),      // the current node gets spontaneous activity: random lines each step (doubles)
+    EdgeNand(),   // its writes are NAND
+    EdgeNor(),    // its writes are NOR
+    EdgeAdd(),    // its writes add, in byte lanes
+    EdgeSub(),    // its writes subtract, in byte lanes
+    EdgeShl(),    // what it writes is shifted left by 8, then ORed in
+    EdgeShr(),    // ... shifted right by 8
+    EdgeRotl(),   // ... rotated left by 8
+    EdgeRotr(),   // ... rotated right by 8
+    EdgeWider(),  // its op's lane width or amount grows (lanes 8 to 64 bits; amounts 0 to 63)
     EdgeKernels(),  // the last edge starts with more kernels (0, 1, 2, 4, ... 32)
     EdgeSynapses(), // its starting kernels have more synapses (4, 8, 16, 32, then 2)
     EdgeQuarter(),  // its starting kernels need one more quarter of their synapses (1 to 4, round)
@@ -461,7 +470,10 @@ impl GraphProgram {
                 | GraphInstruction::EdgeWire() | GraphInstruction::EdgeRotate() | GraphInstruction::EdgeLag() | GraphInstruction::EdgeGrow()
                 | GraphInstruction::EdgeShare() | GraphInstruction::EdgeGate() | GraphInstruction::EdgeGateNot()
                 | GraphInstruction::EdgeNew() | GraphInstruction::EdgeWide() | GraphInstruction::EdgeSpan()
-                | GraphInstruction::EdgeKernels() | GraphInstruction::EdgeSynapses() | GraphInstruction::EdgeQuarter() => {
+                | GraphInstruction::EdgeKernels() | GraphInstruction::EdgeSynapses() | GraphInstruction::EdgeQuarter()
+                | GraphInstruction::EdgeNand() | GraphInstruction::EdgeNor() | GraphInstruction::EdgeAdd() | GraphInstruction::EdgeSub()
+                | GraphInstruction::EdgeShl() | GraphInstruction::EdgeShr() | GraphInstruction::EdgeRotl() | GraphInstruction::EdgeRotr()
+                | GraphInstruction::EdgeWider() => {
                     // a gate takes its node off the stack (nothing happens without one)
                     let popped = if matches!(instr, GraphInstruction::EdgeGate() | GraphInstruction::EdgeGateNot()) { stack.pop() } else { None };
                     if last_edge != EdgeIndex::end() {
@@ -472,6 +484,15 @@ impl GraphProgram {
                             GraphInstruction::EdgeAnd() => e.op = KernelOp::And,
                             GraphInstruction::EdgeXor() => e.op = KernelOp::Xor,
                             GraphInstruction::EdgeClear() => e.op = KernelOp::Clear,
+                            GraphInstruction::EdgeNand() => e.op = KernelOp::Nand,
+                            GraphInstruction::EdgeNor() => e.op = KernelOp::Nor,
+                            GraphInstruction::EdgeAdd() => e.op = KernelOp::Add(3),
+                            GraphInstruction::EdgeSub() => e.op = KernelOp::Sub(3),
+                            GraphInstruction::EdgeShl() => e.op = KernelOp::Shl(8),
+                            GraphInstruction::EdgeShr() => e.op = KernelOp::Shr(8),
+                            GraphInstruction::EdgeRotl() => e.op = KernelOp::Rotl(8),
+                            GraphInstruction::EdgeRotr() => e.op = KernelOp::Rotr(8),
+                            GraphInstruction::EdgeWider() => e.op = e.op.nudge(true),
                             GraphInstruction::EdgeWire() => e.kind = EdgeKind::Wire,
                             GraphInstruction::EdgeRotate() => e.rotate = e.rotate.wrapping_add(61),
                             GraphInstruction::EdgeKernels() => e.start_kernels = (e.start_kernels * 2).max(1).min(32),

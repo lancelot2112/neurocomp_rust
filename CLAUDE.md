@@ -23,9 +23,15 @@ what it can build. We do not add special-purpose modules to get a task done.
   mask, an operation, and a destination vector. When `popcount(input AND mask)` meets the
   threshold (and it is not inhibited), it writes its output mask into the destination with its
   op.
-- **Write ops**: `OR` (set), `AND`, `XOR` (toggle / compare), `AND-NOT` (clear), `NAND`,
-  integer `ADD` / `SUB` on a word, and a 64-bit word `ROTATE`. Any new op must be a single
-  cheap word operation like these.
+- **Write ops** (every population picks one; `d` is the destination word, `m` what is written):
+  - combining: `OR`, `AND`, `XOR`, `AND-NOT`, `NAND`, `NOR`;
+  - arithmetic: `ADD` / `SUB` in lanes of 8, 16, 32 or 64 bits, wrapping within a lane;
+  - moving bits: shift left or right, and rotate left or right, by 0 to 63 bits. What is written
+    is moved, then ORed in. A word carried from a vector's previous frame and shifted is a
+    sliding window.
+  - Within a step, writes land in this order: set and shift, then arithmetic, then
+    AND/NAND/NOR, then XOR/AND-NOT.
+  - Any new op must be a single cheap word operation like these.
 - **Learning** (density-preserving moves, the mask keeps its popcount):
   - Hebbian, on firing: move one mask bit from a line that was off to a line that was on.
   - Anti-Hebbian, when the kernel matched but was inhibited: move one mask bit from a line

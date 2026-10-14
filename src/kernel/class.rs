@@ -1,13 +1,136 @@
 use crate::bitvec::BitVector;
 use crate::common::config;
 
-/// How to combine the output mask into the output BitVector (word-aligned).
+/// How a write lands in its destination word: `d` is the destination word, `m` what is written
+/// (a kernel's output mask, or a wire's copied word). Every op is one cheap word operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KernelOp {
     Or,
     And,
     Xor,
     Clear, // a & !b
+    Nand,  // !(d & m)
+    Nor,   // !(d | m)
+    /// integer add / subtract, in lanes of 2^k bits (k = 3..6: 8, 16, 32, 64), wrapping in a lane
+    Add(u8),
+    Sub(u8),
+    /// what is written is shifted or rotated by this many bits (0..63), then ORed in: a word
+    /// carried from a vector's previous frame, shifted, makes a sliding window
+    Shl(u8),
+    Shr(u8),
+    Rotl(u8),
+    Rotr(u8),
+}
+
+/// The top bit of each lane of 2^k bits.
+fn lane_tops(k: u8) -> u64 {
+    match k.clamp(3, 6) {
+        3 => 0x8080_8080_8080_8080,
+        4 => 0x8000_8000_8000_8000,
+        5 => 0x8000_0000_8000_0000,
+        _ => 0x8000_0000_0000_0000,
+    }
+}
+
+impl KernelOp {
+    /// The destination word after the write.
+    #[inline]
+    pub fn word(self, d: u64, m: u64) -> u64 {
+        match self {
+            KernelOp::Or => d | m,
+            KernelOp::And => d & m,
+            KernelOp::Xor => d ^ m,
+            KernelOp::Clear => d & !m,
+            KernelOp::Nand => !(d & m),
+            KernelOp::Nor => !(d | m),
+            KernelOp::Add(k) => {
+                if k >= 6 { return d.wrapping_add(m); }
+                let h = lane_tops(k);
+                ((d & !h).wrapping_add(m & !h)) ^ ((d ^ m) & h)
+            }
+            KernelOp::Sub(k) => {
+                if k >= 6 { return d.wrapping_sub(m); }
+                let h = lane_tops(k);
+                ((d | h).wrapping_sub(m & !h)) ^ ((d ^ !m) & h)
+            }
+            KernelOp::Shl(n) => d | (m << (n & 63)),
+            KernelOp::Shr(n) => d | (m >> (n & 63)),
+            KernelOp::Rotl(n) => d | m.rotate_left((n & 63) as u32),
+            KernelOp::Rotr(n) => d | m.rotate_right((n & 63) as u32),
+        }
+    }
+
+    /// The order writes land in within a step: setting and shifting first, then arithmetic, then
+    /// keeping and inverting, then toggling and clearing (so an XOR can cancel what came in).
+    pub fn phase(self) -> u8 {
+        match self {
+            KernelOp::Or | KernelOp::Shl(_) | KernelOp::Shr(_) | KernelOp::Rotl(_) | KernelOp::Rotr(_) => 0,
+            KernelOp::Add(_) | KernelOp::Sub(_) => 1,
+            KernelOp::And | KernelOp::Nand | KernelOp::Nor => 2,
+            KernelOp::Xor | KernelOp::Clear => 3,
+        }
+    }
+
+    /// A random op, with a random lane width or amount where it takes one.
+    pub fn random<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
+        let n: u8 = rng.gen_range(0..64);
+        let k: u8 = rng.gen_range(3..7);
+        match rng.gen_range(0..12) {
+            0 => KernelOp::Or,
+            1 => KernelOp::And,
+            2 => KernelOp::Xor,
+            3 => KernelOp::Clear,
+            4 => KernelOp::Nand,
+            5 => KernelOp::Nor,
+            6 => KernelOp::Add(k),
+            7 => KernelOp::Sub(k),
+            8 => KernelOp::Shl(n),
+            9 => KernelOp::Shr(n),
+            10 => KernelOp::Rotl(n),
+            _ => KernelOp::Rotr(n),
+        }
+    }
+
+    /// The same op with its lane width or amount nudged (others unchanged).
+    pub fn nudge(self, up: bool) -> Self {
+        let a = |n: u8| if up { (n + 1) & 63 } else { n.wrapping_sub(1) & 63 };
+        let l = |k: u8| if up { (k + 1).min(6) } else { k.saturating_sub(1).max(3) };
+        match self {
+            KernelOp::Add(k) => KernelOp::Add(l(k)),
+            KernelOp::Sub(k) => KernelOp::Sub(l(k)),
+            KernelOp::Shl(n) => KernelOp::Shl(a(n)),
+            KernelOp::Shr(n) => KernelOp::Shr(a(n)),
+            KernelOp::Rotl(n) => KernelOp::Rotl(a(n)),
+            KernelOp::Rotr(n) => KernelOp::Rotr(a(n)),
+            o => o,
+        }
+    }
+}
+
+#[cfg(test)]
+mod op_tests {
+    use super::KernelOp::*;
+
+    #[test]
+    fn every_op_is_one_word_operation() {
+        let (d, m) = (0b1100u64, 0b1010u64);
+        assert_eq!(Or.word(d, m), 0b1110);
+        assert_eq!(And.word(d, m), 0b1000);
+        assert_eq!(Xor.word(d, m), 0b0110);
+        assert_eq!(Clear.word(d, m), 0b0100);
+        assert_eq!(Nand.word(d, m), !0b1000);
+        assert_eq!(Nor.word(d, m), !0b1110);
+        // lanes wrap on their own: 0xFF + 1 in a byte lane does not carry into the next byte
+        assert_eq!(Add(3).word(0x00FF, 0x0001), 0x0000);
+        assert_eq!(Add(4).word(0x00FF, 0x0001), 0x0100);
+        assert_eq!(Sub(3).word(0x0000, 0x0001), 0x00FF);
+        assert_eq!(Sub(6).word(5, 7), 5u64.wrapping_sub(7));
+        // shifts and rotations move what is written, then OR it in
+        assert_eq!(Shl(8).word(0x01, 0xAB), 0xAB01);
+        assert_eq!(Shr(4).word(0, 0xF0), 0x0F);
+        assert_eq!(Rotl(4).word(0, 0xF000_0000_0000_0000), 0xF);
+        assert_eq!(Rotr(4).word(0, 0xF), 0xF000_0000_0000_0000);
+    }
 }
 
 pub struct KernelClassTemperature {

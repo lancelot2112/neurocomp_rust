@@ -121,16 +121,6 @@ impl SimpleKernel {
     }
 
     #[inline]
-    fn op_fn(op: KernelOp) -> fn(u64, u64) -> u64 {
-        match op {
-            KernelOp::Or => |a, b| a | b,
-            KernelOp::And => |a, b| a & b,
-            KernelOp::Xor => |a, b| a ^ b,
-            KernelOp::Clear => |a, b| a & !b,
-        }
-    }
-
-    #[inline]
     fn input_stats(&self, ctx: &KernelContext) -> InputStats {
         // Single pass popcount (reuse existing API)
         let count = self.agreement(ctx.input);
@@ -172,7 +162,8 @@ impl SimpleKernel {
 
     #[inline]
     fn apply_output(&self, out: &mut BitVector) {
-        let f = Self::op_fn(self.op);
+        let op = self.op;
+        let f = move |a: u64, b: u64| op.word(a, b);
         out.mask_mut(self.output_idx, &self.output_mask, f);
     }
 }

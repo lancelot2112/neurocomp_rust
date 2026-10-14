@@ -27,16 +27,6 @@ pub struct RuntimeNetwork {
     pub noise: Vec<usize>,
 }
 
-/// The order writes land in within a tick: what sets lines first, then what keeps, then what
-/// toggles or clears (so an XOR edge can cancel what came in).
-fn write_phase(op: KernelOp) -> u8 {
-    match op {
-        KernelOp::Or => 0,
-        KernelOp::And => 1,
-        KernelOp::Xor | KernelOp::Clear => 2,
-    }
-}
-
 /// The word with the most lines on, and how many.
 fn busiest_word(words: &[u64]) -> (usize, u32) {
     words.iter().enumerate().map(|(i, w)| (i, w.count_ones())).max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).unwrap_or((0, 0))
@@ -44,12 +34,7 @@ fn busiest_word(words: &[u64]) -> (usize, u32) {
 
 fn apply(d: &mut [u64], t: &[u64], op: KernelOp) {
     for (a, b) in d.iter_mut().zip(t) {
-        match op {
-            KernelOp::Or => *a |= b,
-            KernelOp::And => *a &= b,
-            KernelOp::Xor => *a ^= b,
-            KernelOp::Clear => *a &= !b,
-        }
+        *a = op.word(*a, *b);
     }
 }
 
@@ -242,9 +227,9 @@ impl RuntimeNetwork {
         }
         let mut fired: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
         let mut seen: Vec<Option<BitVector>> = vec![None; edges.len()];
-        for phase in 0..3u8 {
+        for phase in 0..4u8 {
             for (i, eg) in edges.iter_mut().enumerate() {
-                if write_phase(eg.op) != phase {
+                if eg.op.phase() != phase {
                     continue;
                 }
                 let mut src_view = nodes[eg.src.idx].snapshot(eg.src.read_back);

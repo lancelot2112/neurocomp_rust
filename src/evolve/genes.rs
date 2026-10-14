@@ -58,7 +58,6 @@ pub struct GeneGenome {
     pub next_id: u32,
 }
 
-const OPS: [KernelOp; 4] = [KernelOp::Or, KernelOp::And, KernelOp::Xor, KernelOp::Clear];
 
 fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
     let all: Vec<usize> = (0..bits).collect();
@@ -286,7 +285,7 @@ impl Evolvable for GeneGenome {
                 let dst = if rng.gen_range(0..4) == 0 { fresh(&mut g) } else { g.any_vector(rng, true) };
                 let kind = *[EdgeKind::Wire, EdgeKind::Kernels, EdgeKind::Kernels, EdgeKind::Noise].choose(rng).unwrap();
                 let id = fresh(&mut g);
-                let mut e = EdgeGene::new(id, src, dst, kind, *OPS.choose(rng).unwrap());
+                let mut e = EdgeGene::new(id, src, dst, kind, KernelOp::random(rng));
                 if kind == EdgeKind::Noise {
                     e.spec.noise = 4;
                     e.spec.out_words = 1;
@@ -324,7 +323,7 @@ impl Evolvable for GeneGenome {
                 }
                 let s = &mut e.spec;
                 match which {
-                    0 => s.op = *OPS.choose(rng).unwrap(),
+                    0 => s.op = if rng.gen_bool(0.5) { KernelOp::random(rng) } else { s.op.nudge(up) },
                     1 => s.kind = *[EdgeKind::Wire, EdgeKind::Kernels, EdgeKind::Noise].choose(rng).unwrap(),
                     2 => s.input_read_back = stepu(s.input_read_back, 1, 8),
                     3 => s.span = if up { (s.span * 2).min(64) } else { (s.span / 2).max(1) },

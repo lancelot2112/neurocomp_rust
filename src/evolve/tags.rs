@@ -117,7 +117,6 @@ pub struct TagGenome {
     pub next_id: u32,
 }
 
-const OPS: [KernelOp; 4] = [KernelOp::Or, KernelOp::And, KernelOp::Xor, KernelOp::Clear];
 
 /// What the string's channels resolve to.
 struct Channels {
@@ -230,7 +229,7 @@ impl TagGenome {
         self.next_id += 1;
         let mut p = Pop::new(id, rng.r#gen(), rng.r#gen());
         p.wire = rng.gen_bool(0.3);
-        p.op = *OPS.choose(rng).unwrap();
+        p.op = KernelOp::random(rng);
         p.count = rng.gen_range(0..4);
         p.field = rng.gen_range(0..4);
         p.at = rng.r#gen();
@@ -390,7 +389,7 @@ impl Evolvable for TagGenome {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
-                        3 => p.op = *OPS.choose(rng).unwrap(),
+                        3 => p.op = if rng.gen_bool(0.5) { KernelOp::random(rng) } else { p.op.nudge(up) },
                         4 => p.lag = step(p.lag, 1, 8),
                         5 => p.span = if up { (p.span * 2).min(64) } else { (p.span / 2).max(1) },
                         6 => p.at = if up { p.at.wrapping_add(1) } else { p.at.wrapping_sub(1) },
@@ -460,6 +459,29 @@ mod tests {
         }
         // and an empty string is a network too
         let _ = live(&TagGenome { tokens: vec![], next_id: 0 }, Task::Conditioning(Conditioning::Reversal, 4), Physics::Varied, 1);
+    }
+
+    /// A sliding window from the grammar alone: a channel carrying its previous frame shifted
+    /// left a byte, and the newest byte written in. No window is built into the runtime.
+    #[test]
+    fn a_sliding_window_is_two_populations() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        let w = 0x5A;
+        let mut into = Pop::wire(1, SENSES, w);
+        into.field = 0;
+        let mut carry = Pop::wire(2, w, w);
+        carry.op = KernelOp::Shl(8);
+        let g = TagGenome { tokens: vec![Token::Channel { tag: w, width: 0 }, Token::Pop(into), Token::Pop(carry)], next_id: 3 };
+        let world = World::new(1, 4);
+        let mut net = g.build(&world, 1);
+        let mut last = 0u64;
+        for b in [0x11u64, 0x22, 0x33, 0x44] {
+            net.tick(AdvanceMode::Clear, 0);
+            net.write_input(&BitVector::from_words(vec![b]), 0);
+            last = net.read_node(1).as_words()[0];
+        }
+        // the window holds the bytes before the newest, newest lowest (it reads the senses a frame back)
+        assert_eq!(last, 0x11_22_33);
     }
 
     #[test]

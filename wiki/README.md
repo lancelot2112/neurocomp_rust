@@ -12,6 +12,8 @@ branch `ccr-8d772201-st7vqw` under `research/`. Experiment numbers here refer to
 | [failures.md](failures.md) | what failed and the root cause, retractions, and plumbing bugs |
 | [evolution.md](evolution.md) | genomes and the world, for evolving kernel networks |
 | [kernel-cells-and-context.md](kernel-cells-and-context.md) | the last stretch: kernel cells, context holding, prediction error |
+| [library-task.md](library-task.md) | design: a world of books and questions, staged for evolution |
+| [experiments/](experiments/) | this branch's experiments |
 | [open-questions.md](open-questions.md) | what is still unknown |
 
 ## In one paragraph

@@ -113,4 +113,18 @@ reliable test of a stage, and holding 3 in a row on few noisy worlds now only de
 
 Run 7 plus `ISL_LIVES=24` (24 training worlds, halving the noise of a mean) and `ISL_HOLD=1`
 (the goal met once on the training worlds, then the held-out check on 48 decides). 600
-generations, `runs/run8.cmd`. Results to follow in `runs/islands8`.
+generations, `runs/run8.cmd`.
+
+**Result** (`runs/islands8`, 99 minutes). Recall climbed its whole ladder on fresh worlds: lag1 at
+210, lag2 at 380, lag3 at 389, lag4 at 420 (run 7: lag1 at 399). Shapes again reached win-stay
+(at 89), and switching reached it at 172. Over generations 100-599, win-stay averaged 3 on
+switching and 1 on shapes, maze 0 (run 7: 37), screen 48 and prediction 59.
+
+So with goals checked once against 48 held-out worlds, everything up to win-stay is climbed on
+worlds the population has never fitted. Two steps stop every run since fresh worlds came in:
+- **win-stay**, the first rung that needs learning within a lifetime (click a light again
+  because it was just stroked);
+- **maze's turn**, which needs the hand's two turn codes learned within each lifetime from the
+  stroke.
+
+Both are lifetime learning from reward, and both are where the next rungs are needed.

@@ -218,3 +218,9 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     spends on work (a ration a step, food for each 1024 points) cut runaway genomes, which
     had set a generation's time at 10-40 times their island's best, without costing any
     capacity. Run 6 was 3-10 times faster per genome than run 5.
+44. **On fresh worlds, judge a goal once against many held-out worlds (experiment 15).** With
+    new training worlds each generation the population mean swings by 50-100, so "met 3
+    generations in a row" on 12 of them stopped switching, shapes and recall (run 7). With 24
+    training worlds and the goal checked once on 48 held-out worlds (run 8), recall climbed its
+    whole ladder. What is left, win-stay and the maze's turn, is learning from reward within a
+    lifetime.

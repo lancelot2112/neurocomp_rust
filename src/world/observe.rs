@@ -548,6 +548,27 @@ mod tests {
         assert!(lit > 600 && blind.abs() < 150, "torch: eye-only {lit}, blind {blind}");
         let (plain, _) = eye_only(false);
         assert!(plain < 300, "plain: eye-only {plain}");
+        // dark (no cursor mark) with the torch: the eye is empty unless the cursor is on the
+        // target, so "click at anything seen, else step aside" scores: a respond. With the
+        // cursor's mark shown it clicks at the cursor and scores about 0: the torch alone asks to
+        // tell glyph-and-cursor from cursor
+        let anything = |dark: bool| -> i32 {
+            let mut w = World::new(3, 4);
+            (w.screen_w, w.screen_h, w.screen_torch, w.screen_dark, w.gap_max) = (2, 1, true, dark, 2);
+            w.screen(200);
+            let (mut senses, mut k) = (BitVector::from_words(vec![0; SENSE_BITS / 64]), 0usize);
+            while !w.done() {
+                let ch = CH_BITS / 64;
+                let seen = senses.as_words()[EYE * ch..(EYE + 1) * ch].iter().any(|&x| x != 0);
+                k += 1;
+                let hand = if seen { CLICK } else if k % 2 == 0 { LEFT } else { RIGHT };
+                let a = w.act(None, Some(hand));
+                senses = w.step(&a);
+            }
+            screen(&w.events)
+        };
+        let (dark, lit) = (anything(true), anything(false));
+        assert!(dark > 600 && lit.abs() < 150, "dark {dark}, cursor shown {lit}");
         // a wall stops the cursor: on a 4 x 4 screen with walls the cursor never stands on one
         let mut w = World::new(3, 4);
         (w.screen_w, w.screen_h, w.screen_cell, w.screen_walls) = (4, 4, 32, 6);

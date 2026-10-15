@@ -252,6 +252,10 @@ pub struct World {
     pub screen_cell: usize,
     pub screen_walls: usize,
     pub screen_torch: bool,
+    /// the cursor's mark is not shown (with the torch, the eye is then empty unless the cursor is
+    /// on the target: clicking at whatever is seen is a respond, not telling glyph-and-cursor from
+    /// cursor alone)
+    pub screen_dark: bool,
     /// programs built for this world keep each declared channel in one frame, held in place
     /// from step to step (only clearing writes take lines away, and a write is seen by the edges
     /// after it in the same step); default: the process's (`neurocomp::set_in_place`)
@@ -380,6 +384,7 @@ impl World {
             screen_cell: 64,
             screen_walls: 0,
             screen_torch: false,
+            screen_dark: false,
             in_place: crate::program::neurocomp::in_place(),
             count_reads: crate::program::neurocomp::count_reads(),
             cursor_mark: {
@@ -742,7 +747,9 @@ impl World {
                             place(c, self.wall_mark);
                         }
                     }
-                    place(tr.cursor, self.cursor_mark);
+                    if !self.screen_dark {
+                        place(tr.cursor, self.cursor_mark);
+                    }
                     put(&mut senses, EYE, &BitVector::from_words(eye));
                     Scene::Screen(left, t + 1, tr)
                 }

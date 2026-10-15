@@ -239,7 +239,7 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
 /// light's code rather than a side of the eye; and the screen: its columns and rows, how many
 /// glyphs it shows (the target and distractors), its cells' width in bits (64, 32 or 16: at most
 /// 8, 16 or 32 cells), how many walls it has (a 2-D maze) and whether a glyph shows only under
-/// the cursor (a torch). The default is the plain world: 8 tokens, the
+/// the cursor (a torch), and whether the cursor's mark is hidden (dark). The default is the plain world: 8 tokens, the
 /// teacher on half of them, 3 swaps, a delay of 3, no pattern, fixed lights, a stem of 2 with the
 /// cue on a side of the eye all along it, a 2 x 2 screen with the target alone on it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -261,6 +261,7 @@ pub struct Lesson {
     pub screen_cell: usize,
     pub screen_walls: usize,
     pub screen_torch: bool,
+    pub screen_dark: bool,
     /// energy, 0: none. Each step the network gets `ration` and pays its work; and it eats what it
     /// scores: every `FOOD_BLOCK` steps the lifetime's last block is scored by its task's probes,
     /// and each 1024 points (positive scores only) are `food` more. The store starts at 64 rations
@@ -289,7 +290,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -317,6 +318,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.screen_cell = lesson.screen_cell;
     w.screen_walls = lesson.screen_walls;
     w.screen_torch = lesson.screen_torch;
+    w.screen_dark = lesson.screen_dark;
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);

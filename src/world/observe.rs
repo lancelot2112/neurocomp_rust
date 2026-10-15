@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen"];
 /// How many probes there are.
-pub const NPROBES: usize = 11;
+pub const NPROBES: usize = 12;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -147,7 +147,7 @@ fn rate(tr: &[Trial], pick: impl Fn(&Trial) -> bool, click: impl Fn(&Trial) -> b
 ///
 /// And from a sequence lifetime (a random token shown on the eye each step):
 /// - copy: says the token it saw a few steps ago (see `copy`).
-pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[Event], pattern: &[Event], maze_events: &[Event]) -> ProbeRow {
+pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[Event], pattern: &[Event], maze_events: &[Event], screen_events: &[Event]) -> ProbeRow {
     let tr = trials(reversal, (3, 5), (7, 9));
     let all = |_: &Trial| true;
     let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
@@ -187,7 +187,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // repeat rate; one that never clicks scores 0)
     let r = |c: i64, n: i64| if n == 0 { 0 } else { c * 1024 / n };
     let win_stay = (r(won, won_n) - r(lost, lost_n)) as i32;
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -294,6 +294,31 @@ pub fn maze(events: &[Event]) -> i32 {
         None => (r, w),
     });
     ((right - wrong) * 1024 / trials) as i32
+}
+
+/// The screen: clicks on the target above chance, per trial, in parts per 1024: (hits x cells -
+/// clicks) / (trials x (cells - 1)). A click where the cursor happens to be hits 1 in `cells`
+/// (the target and the cursor start on random cells), so a blind clicker scores about 0 and
+/// moving the cursor to the target and clicking it on every trial scores 1024.
+pub fn screen(events: &[Event]) -> i32 {
+    let mut trials = std::collections::BTreeSet::new();
+    let (mut cells, mut clicks, mut hits) = (2i64, 0i64, 0i64);
+    for e in events {
+        if let Some((t, c)) = e.screen {
+            trials.insert(t);
+            cells = c as i64;
+        }
+        if e.scene == SceneKind::Screen {
+            if let Some(h) = e.chose {
+                clicks += 1;
+                hits += h as i64;
+            }
+        }
+    }
+    if trials.is_empty() {
+        return 0;
+    }
+    ((hits * cells - clicks) * 1024 / (trials.len() as i64 * (cells - 1))) as i32
 }
 
 /// Sequence: steps where a next token was due, and those where the program said it on the
@@ -438,6 +463,52 @@ mod tests {
     }
 
     #[test]
+    fn the_screen_scores_pointing_at_the_target_and_not_a_blind_clicker() {
+        // test-only policies that read the world's state: one moves the cursor to the target and
+        // clicks; one moves at random and clicks at random; one clicks at once
+        let run = |w_: usize, h_: usize, lit: usize, policy: &dyn Fn(&World, &mut rand::rngs::StdRng) -> Option<usize>| -> (i32, usize) {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
+            let mut w = World::new(3, 4);
+            w.screen_w = w_;
+            w.screen_h = h_;
+            w.screen_lit = lit;
+            w.gap_max = 2;
+            w.screen(200);
+            while !w.done() {
+                let a = w.act(None, policy(&w, &mut rng));
+                w.step(&a);
+            }
+            (screen(&w.events), w.events.iter().filter(|e| e.stroked).count())
+        };
+        let points = |w: &World, _: &mut rand::rngs::StdRng| -> Option<usize> {
+            let Some((cursor, target)) = w.screen_state_for_test() else { return None };
+            let cols = w.screen_w;
+            Some(if cursor == target {
+                CLICK
+            } else if cursor / cols < target / cols {
+                DOWN
+            } else if cursor / cols > target / cols {
+                UP
+            } else if cursor % cols < target % cols {
+                RIGHT
+            } else {
+                LEFT
+            })
+        };
+        let wanders = |_: &World, r: &mut rand::rngs::StdRng| Some([LEFT, RIGHT, UP, DOWN, CLICK][rand::Rng::gen_range(r, 0..5)]);
+        let at_once = |_: &World, _: &mut rand::rngs::StdRng| Some(CLICK);
+        for (w_, h_, lit) in [(2, 1, 1), (2, 2, 1), (4, 2, 3)] {
+            let (p, strokes) = run(w_, h_, lit, &points);
+            assert!(p > 1000, "{w_}x{h_}: {p}");
+            assert!(strokes > 190, "the target is felt: {strokes}");
+            let (r, _) = run(w_, h_, lit, &wanders);
+            assert!(r.abs() < 150, "{w_}x{h_} wanders: {r}");
+            let (o, _) = run(w_, h_, lit, &at_once);
+            assert!(o.abs() < 150, "{w_}x{h_} at once: {o}");
+        }
+    }
+
+    #[test]
     fn the_delayed_light_flashes_delay_steps_before_the_window() {
         for d in 1..=5 {
             let mut w = World::new(5, 4);
@@ -542,7 +613,7 @@ mod tests {
                 let a = d.act(None, if (4..=6).contains(&since) { Some(CLICK) } else { None });
                 prev = d.step(&a);
             }
-            probes(&w.events, 50, &d.events, &[], &[], &[])
+            probes(&w.events, 50, &d.events, &[], &[], &[], &[])
         };
         let blind = run(&|_, t| t % 3 == 0);
         // a test-only policy that knows the phase (an oracle for checking the observer): clicks
@@ -584,7 +655,7 @@ mod tests {
                 t += 1;
             }
             let d = World::new(8, 4);
-            (probes(&w.events, 50, &d.events, &[], &[], &[])[0], w.events.len())
+            (probes(&w.events, 50, &d.events, &[], &[], &[], &[])[0], w.events.len())
         };
         let (locked, steps) = run(0);
         let (jittered, longer) = run(6);

@@ -10,6 +10,7 @@
 //! - prediction (`ISL_PREDICTION=1`): surprise, clicking after a token that broke the stream's
 //!   cycle;
 //! - maze (`ISL_MAZE=1`): a T-maze, turning at the junction to the side of the food the cue shows;
+//! - screen (`ISL_SCREEN=1`): move a cursor over a grid of cells to the target glyph and click;
 //! - shapes (`ISL_SHAPES=1`): respond, tell and discriminate with the lights distorted into
 //!   shapes, a fresh exemplar every trial.
 //! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (one population of a
@@ -35,7 +36,7 @@
 //! with the teacher on every token, then the teacher fading (6, 4, 2, 1 in 8) so the glyph must
 //! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
 //! `;`, each `name key=value ...` with keys `probes` (probe names joined by `+`), `tokens`,
-//! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `maze`, `gone` and `symbol` (the T-maze), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
+//! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `maze`, `gone` and `symbol` (the T-maze), `sw`, `sh` and `lit` (the screen), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
 //! delayed light to the response window), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
 //! at each exchange is always in the plain world, on every probe.
 //!
@@ -86,6 +87,9 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "maze" => stage.lesson.maze_len = v.parse().expect("maze"),
                 "gone" => stage.lesson.cue_gone = v == "1",
                 "symbol" => stage.lesson.symbol = v == "1",
+                "sw" => stage.lesson.screen_w = v.parse().expect("sw"),
+                "sh" => stage.lesson.screen_h = v.parse().expect("sh"),
+                "lit" => stage.lesson.screen_lit = v.parse().expect("lit"),
                 "hold" => stage.hold = v.parse().expect("hold"),
                 "goal" => stage.goal = v.split('+').map(|g| {
                     let (p, x) = g.split_once('@').expect("probe@score");
@@ -160,6 +164,17 @@ const MAZE_LADDER: &str = "turn probes=maze maze=0 goal=maze@200; \
     symbol probes=maze maze=0 symbol=1 goal=maze@150; \
     symbolgone probes=maze maze=2 gone=1 symbol=1";
 
+/// Screen's ladder: move a cursor to the glyph on the screen and click it (stroked on the target).
+/// Two cells side by side, then four in a row, then a 2 x 2 grid (up and down too), then 4 x 2;
+/// then a distractor beside the target (which glyph is the target is learned from the stroke),
+/// then three distractors on the full screen.
+const SCREEN_LADDER: &str = "two probes=screen sw=2 sh=1 lit=1 goal=screen@300; \
+    row probes=screen sw=4 sh=1 lit=1 goal=screen@250; \
+    square probes=screen sw=2 sh=2 lit=1 goal=screen@250; \
+    full probes=screen sw=4 sh=2 lit=1 goal=screen@200; \
+    pick probes=screen sw=2 sh=2 lit=2 goal=screen@150; \
+    crowd probes=screen sw=4 sh=2 lit=4";
+
 /// The world the generalist and the cross-island table use: the plain world, with a cycle of 3
 /// broken one time in 8 for surprise (the plain stream has no pattern to break).
 fn plain() -> Lesson {
@@ -205,6 +220,10 @@ fn main() {
     if env("ISL_MAZE", 0u8) == 1 {
         islands.push(Island { name: "maze".into(), stages: vec![Stage { name: "all".into(), probes: vec![10], lesson: plain(), goal: vec![], hold: 0 }] });
     }
+    // (`ISL_SCREEN=1`: a screen with a cursor; starts naked or from a checkpoint)
+    if env("ISL_SCREEN", 0u8) == 1 {
+        islands.push(Island { name: "screen".into(), stages: vec![Stage { name: "all".into(), probes: vec![11], lesson: plain(), goal: vec![], hold: 0 }] });
+    }
     // (`ISL_SHAPES=1`: shapes, telling two distorted lights apart; starts naked or from a checkpoint)
     if env("ISL_SHAPES", 0u8) == 1 {
         let lesson = Lesson { swaps: 0, blur: 2, shift: 16, ..Lesson::default() };
@@ -223,6 +242,7 @@ fn main() {
                 "prediction" => isl.stages = ladder(PREDICTION_LADDER),
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 "maze" => isl.stages = ladder(MAZE_LADDER),
+                "screen" => isl.stages = ladder(SCREEN_LADDER),
                 _ => {}
             }
         }

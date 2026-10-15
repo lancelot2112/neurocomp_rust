@@ -91,6 +91,7 @@ pub enum SceneKind {
     Sequence,
     Echo,
     Maze,
+    Screen,
 }
 
 /// A record of one step, for the observer (never sent to the program).
@@ -120,8 +121,11 @@ pub struct Event {
     /// maze: the trial's index, the place on the stem (the stem's length: at the junction), and
     /// the side the food is on (true: right)
     pub maze: Option<(usize, usize, bool)>,
-    /// maze: a choice at the junction this step, and whether it was the food's side
+    /// maze: a choice at the junction this step, and whether it was the food's side; screen: a
+    /// click this step, and whether it was on the target
     pub chose: Option<bool>,
+    /// screen: the trial's index and how many cells the screen has
+    pub screen: Option<(usize, usize)>,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -177,6 +181,11 @@ enum Scene {
     Maze(usize, usize, usize, bool),
     /// between maze trials: (trials left after it, steps left)
     MazeGap(usize, usize),
+    /// a screen trial: (trials left, steps in the trial, the cursor's cell, the target's cell,
+    /// the glyph in each cell)
+    Screen(usize, usize, usize, usize, [Option<usize>; 8]),
+    /// between screen trials: (trials left after it, steps left)
+    ScreenGap(usize, usize),
 }
 
 /// The world.
@@ -222,6 +231,13 @@ pub struct World {
     pub symbol: bool,
     junction: BitVector,
     maze_total: usize,
+    /// screen: a grid of `screen_w` x `screen_h` cells, one eye word each (at most 8), with
+    /// `screen_lit` glyphs on it: the target (the first glyph) and the others as distractors
+    pub screen_w: usize,
+    pub screen_h: usize,
+    pub screen_lit: usize,
+    cursor_mark: u64,
+    screen_total: usize,
     present: bool,
     pub events: Vec<Event>,
 }
@@ -334,6 +350,15 @@ impl World {
             symbol: false,
             junction: codes(1, &mut r(0x7A2E)).remove(0),
             maze_total: 0,
+            screen_w: 2,
+            screen_h: 2,
+            screen_lit: 1,
+            cursor_mark: {
+                let mut c = StdRng::seed_from_u64(physics ^ 0xC025);
+                let lines: Vec<u64> = (0..64).collect();
+                lines.choose_multiple(&mut c, 8).fold(0u64, |m, &b| m | 1 << b)
+            },
+            screen_total: 0,
             present: false,
             events: Vec::new(),
         }
@@ -409,6 +434,45 @@ impl World {
         }
     }
 
+    /// A screen: `trials` trials. The eye shows a grid of `screen_w` x `screen_h` cells, one eye
+    /// word each: `screen_lit` cells hold a glyph (the target, the first glyph, and different
+    /// distractors), and the cell under the cursor also holds the cursor's mark. Left, right, up
+    /// and down move the cursor one cell (off the edge: nothing); a click selects the cell under
+    /// it, stroked (the step after) if it is the target, and ends the trial, as do 12 steps. The
+    /// cursor and the glyphs start on random cells.
+    pub fn screen(&mut self, trials: usize) {
+        self.present = false;
+        self.screen_total = trials;
+        self.scene = self.screen_trial(trials);
+    }
+
+    /// A new screen trial's layout.
+    fn screen_trial(&mut self, left: usize) -> Scene {
+        let cells = (self.screen_w * self.screen_h).clamp(2, 8);
+        let mut order: Vec<usize> = (0..cells).collect();
+        order.shuffle(&mut self.rng);
+        let mut layout = [None; 8];
+        let lit = self.screen_lit.clamp(1, cells.min(self.glyphs.len()));
+        for (k, &c) in order.iter().take(lit).enumerate() {
+            layout[c] = Some(k);
+        }
+        let cursor = self.rng.gen_range(0..cells);
+        Scene::Screen(left, 0, cursor, order[0], layout)
+    }
+
+    /// The scene after a screen trial: a gap of 0 to `gap_max` steps, then the next trial.
+    fn after_screen(&mut self, left: usize) -> Scene {
+        if left <= 1 {
+            return Scene::Idle;
+        }
+        let g = if self.gap_max > 0 { self.rng.gen_range(0..=self.gap_max) } else { 0 };
+        if g > 0 {
+            Scene::ScreenGap(left - 1, g)
+        } else {
+            self.screen_trial(left - 1)
+        }
+    }
+
     /// Echo play: `steps` steps; a caregiver comes or goes every 8, there half the time.
     pub fn echo(&mut self, steps: usize) {
         self.scene = Scene::Echo(steps, false);
@@ -423,7 +487,7 @@ impl World {
     pub fn step(&mut self, act: &BitVector) -> BitVector {
         let said = self.voice.articulate(&channel(act, VOICE));
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if let Some(w) = said {
@@ -558,6 +622,51 @@ impl World {
                     Scene::Maze(left, pos, t + 1, side)
                 }
             }
+            Scene::Screen(left, t, mut cursor, target, layout) => {
+                ev.scene = SceneKind::Screen;
+                let (w, cells) = (self.screen_w.clamp(1, 8), (self.screen_w * self.screen_h).clamp(2, 8));
+                ev.screen = Some((self.screen_total - left, cells));
+                // the move made acts on the cursor (a trial's first step only shows the screen)
+                let mut done = false;
+                if t > 0 {
+                    match moved {
+                        Some(LEFT) if cursor % w > 0 => cursor -= 1,
+                        Some(RIGHT) if cursor % w + 1 < w && cursor + 1 < cells => cursor += 1,
+                        Some(UP) if cursor >= w => cursor -= w,
+                        Some(DOWN) if cursor + w < cells => cursor += w,
+                        Some(CLICK) => {
+                            ev.chose = Some(cursor == target);
+                            if cursor == target {
+                                self.stroke_next = true;
+                            }
+                            done = true;
+                        }
+                        _ => {}
+                    }
+                }
+                if done || t + 1 >= 12 {
+                    self.after_screen(left)
+                } else {
+                    let mut eye = vec![0u64; CH_BITS / 64];
+                    for (c, g) in layout.iter().enumerate().take(cells) {
+                        if let Some(g) = g {
+                            // the glyph's lines, in its cell's word
+                            eye[c] = self.glyphs[*g].as_words().iter().fold(0, |m, &x| m | x);
+                        }
+                    }
+                    eye[cursor] |= self.cursor_mark;
+                    put(&mut senses, EYE, &BitVector::from_words(eye));
+                    Scene::Screen(left, t + 1, cursor, target, layout)
+                }
+            }
+            Scene::ScreenGap(left, g) => {
+                ev.scene = SceneKind::Screen;
+                if g > 1 {
+                    Scene::ScreenGap(left, g - 1)
+                } else {
+                    self.screen_trial(left)
+                }
+            }
             Scene::MazeGap(left, g) => {
                 ev.scene = SceneKind::Maze;
                 if g > 1 {
@@ -602,6 +711,14 @@ impl World {
         ev.present = self.present;
         self.events.push(ev);
         senses
+    }
+
+    /// The screen's cursor and target cells, if a screen trial is on (for tests' policies only).
+    pub fn screen_state_for_test(&self) -> Option<(usize, usize)> {
+        match self.scene {
+            Scene::Screen(_, _, cursor, target, _) => Some((cursor, target)),
+            _ => None,
+        }
     }
 
     /// The two lights' codes (for tests outside the program; a program only sees them).

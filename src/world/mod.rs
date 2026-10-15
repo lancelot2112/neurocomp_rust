@@ -92,6 +92,7 @@ pub enum SceneKind {
     Echo,
     Maze,
     Screen,
+    Feel,
 }
 
 /// A record of one step, for the observer (never sent to the program).
@@ -195,6 +196,8 @@ enum Scene {
     Screen(usize, usize, Box<ScreenTrial>),
     /// between screen trials: (trials left after it, steps left)
     ScreenGap(usize, usize),
+    /// feeling: steps left; a stroke comes now and then, whatever the program does
+    Feel(usize),
 }
 
 /// The world.
@@ -505,6 +508,13 @@ impl World {
     /// nothing); a click selects the cell under it, stroked (the step after) if it is the target,
     /// and ends the trial, as do 4 x (columns + rows) + 4 steps. The cursor, glyphs and walls are
     /// placed at random, every free cell reachable from every other.
+    /// Feeling: `steps` steps with nothing to see or hear, a stroke on one step in eight at random,
+    /// whatever the program does: noticing reward with nothing to earn it (the `feel` probe).
+    pub fn feel(&mut self, steps: usize) {
+        self.present = false;
+        self.scene = Scene::Feel(steps);
+    }
+
     pub fn screen(&mut self, trials: usize) {
         self.present = false;
         self.screen_total = trials;
@@ -777,6 +787,13 @@ impl World {
                     put(&mut senses, EYE, &BitVector::from_words(eye));
                     Scene::Screen(left, t + 1, tr)
                 }
+            }
+            Scene::Feel(left) => {
+                ev.scene = SceneKind::Feel;
+                if self.rng.gen_ratio(1, 8) {
+                    stroke = true;
+                }
+                if left > 1 { Scene::Feel(left - 1) } else { Scene::Idle }
             }
             Scene::ScreenGap(left, g) => {
                 ev.scene = SceneKind::Screen;

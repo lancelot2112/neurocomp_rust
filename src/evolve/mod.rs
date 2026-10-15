@@ -211,6 +211,8 @@ pub enum Task {
     /// each block `Lesson::mixed_block` trials (a reading block ten tokens a trial), with the
     /// block's task felt as a cue on the touch channel if `Lesson::mixed_cue`
     Mixed(usize),
+    /// feeling: this many steps with strokes at random, nothing to see or earn
+    Feel(usize),
 }
 
 /// Where a lifetime's world physics comes from.
@@ -418,6 +420,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         Task::Maze(n) => w.maze(n),
         Task::Screen(n) => w.screen(n),
         Task::Mixed(_) => mixed_block(&mut w, 0, &lesson, tokens, seed),
+        Task::Feel(n) => w.feel(n),
     }
     let mut blk = 0usize;
     let mut net = g.build(&w, seed ^ 0x5EED);
@@ -453,6 +456,11 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
                     Task::Mixed(_) => {
                         let mut r = [0; observe::NPROBES];
                         r[13] = observe::select(b);
+                        r
+                    }
+                    Task::Feel(_) => {
+                        let mut r = [0; observe::NPROBES];
+                        r[14] = observe::feel(b);
                         r
                     }
                 };
@@ -625,19 +633,21 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (scr, w6) = if want(&[11]) { live_lesson(g, Task::Screen(trials), physics, seed ^ 0x5C2E, gap, lesson) } else { (vec![], 0) };
     let blocks = (trials / lesson.mixed_block.max(1)).max(2);
     let (mix, w7) = if want(&[13]) { live_lesson(g, Task::Mixed(blocks), physics, seed ^ 0x313C, gap, lesson) } else { (vec![], 0) };
-    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len()).max(1) as u64;
+    let (fel, w8) = if want(&[14]) { live_lesson(g, Task::Feel(trials * 5), physics, seed ^ 0xFEE1, gap, lesson) } else { (vec![], 0) };
+    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
     row[13] = observe::select(&mix);
+    row[14] = observe::feel(&fel);
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) {
             *x = 0;
         }
     }
-    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7) / steps)
+    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8) / steps)
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.

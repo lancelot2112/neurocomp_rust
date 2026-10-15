@@ -54,6 +54,13 @@
 //! writing back into its source, or the destination); one whose predictions come true 16 times
 //! or more over a generation's lifetimes is added to the genome, tagged `explored`.
 //!
+//! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
+//! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
+//! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
+//! (affect copied into a channel, and a repeating population gated on it: a gate names a
+//! channel, not a port), and run 10's genomes chose on almost every trial but repeated a turn
+//! as often after a miss as after a stroke.
+//!
 //! `ISL_SELECTION=1`: a ninth island, task selection: one lifetime with one network, blocks that
 //! alternate between responding (click at a light) and babbling (vary the voice), scored by
 //! `select` (both tasks done, minus doing the other's thing); its ladder starts with each block's
@@ -478,6 +485,20 @@ fn main() {
                 "screen" => isl.stages = ladder(SCREEN_LADDER),
                 "selection" => isl.stages = ladder(SELECTION_LADDER),
                 _ => {}
+            }
+        }
+    }
+    // (`ISL_FEEL=1`: a feel rung before each repeat rung, switching's, shapes' and the maze's:
+    // strokes at random, click after one; the rung it is copied from, with feel for repeat)
+    if env("ISL_FEEL", 0u8) == 1 {
+        let (feel, repeat, maze) = (probe_named("feel"), probe_named("repeat"), probe_named("maze"));
+        for isl in islands.iter_mut() {
+            if let Some(k) = isl.stages.iter().position(|s| s.name == "repeat" || s.name == "learn") {
+                let mut st = isl.stages[k].clone();
+                st.name = "feel".into();
+                st.probes = st.probes.iter().copied().filter(|&p| p != repeat && p != maze).chain([feel]).collect();
+                st.goal = vec![(feel, 300)];
+                isl.stages.insert(k, st);
             }
         }
     }

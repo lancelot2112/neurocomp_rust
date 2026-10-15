@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel"];
 /// How many probes there are.
-pub const NPROBES: usize = 14;
+pub const NPROBES: usize = 15;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -189,7 +189,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = if won_n == 0 || lost_n == 0 { 0 } else { (won * 1024 / won_n - lost * 1024 / lost_n) as i32 };
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -280,6 +280,25 @@ pub fn surprise(events: &[Event]) -> i32 {
         return 0;
     }
     (odd_c * 1024 / odd - kept_c * 1024 / kept) as i32
+}
+
+/// Feeling reward: in a lifetime of strokes that come at random (`World::feel`), how much more often
+/// the program clicks in the 3 steps after a stroke than at other steps, in parts per 1024. Nothing
+/// is earned: it asks only that the stroke reach the hand, the circuit that learning from reward
+/// builds on. A clicker that ignores the stroke, clicking always, never or at random, scores 0.
+/// (Set by `evolve::probe_scores_in` from a feeling lifetime: `probes` leaves it 0.)
+pub fn feel(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Feel).collect();
+    let (mut after, mut after_c, mut other, mut other_c) = (0i64, 0i64, 0i64, 0i64);
+    for t in 0..ev.len() {
+        let near = (t.saturating_sub(3)..t).any(|u| ev[u].stroked);
+        let click = (ev[t].moved == Some(CLICK)) as i64;
+        if near { after += 1; after_c += click } else { other += 1; other_c += click }
+    }
+    if after == 0 || other == 0 {
+        return 0;
+    }
+    (after_c * 1024 / after - other_c * 1024 / other) as i32
 }
 
 /// Task selection, in a lifetime of blocks that alternate between two tasks (`evolve::Task::Mixed`):
@@ -756,6 +775,28 @@ mod tests {
         assert!(follows[5] > -80, "{follows:?}");
         // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
         assert!(blind[4] > 500, "{blind:?}");
+    }
+
+    #[test]
+    fn feel_scores_clicking_after_a_stroke_and_not_clicking_regardless() {
+        // policies that feel only the affect channel: one clicks the step after a stroke; one
+        // clicks every step; one at random; one never
+        let run = |kind: u8, seed: u64| -> i32 {
+            let mut w = World::new(seed, 4);
+            w.feel(1000);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let touched = channel(&senses, AFFECT).count_ones() > 0;
+                let click = match kind { 0 => touched, 1 => true, 2 => rand::Rng::gen_bool(&mut rng, 0.3), _ => false };
+                let a = w.act(None, click.then_some(CLICK));
+                senses = w.step(&a);
+            }
+            feel(&w.events)
+        };
+        let mean = |kind: u8| (0..12u64).map(|s| run(kind, 500 + s)).sum::<i32>() / 12;
+        let (feels, always, random, never) = (mean(0), mean(1), mean(2), mean(3));
+        assert!(feels > 250 && always == 0 && random.abs() < 60 && never == 0, "feels {feels}, always {always}, random {random}, never {never}");
     }
 
     #[test]

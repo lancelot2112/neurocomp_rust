@@ -892,7 +892,9 @@ impl Evolvable for TagGenome {
             .map(|i| w.act(Some(i), None))
             .chain((0..body.hand.len()).map(|i| w.act(None, Some(i))))
             .collect();
-        RuntimeNetwork::from_graph_held(&g, world::SENSE_BITS, world::ACT_BITS, seed, w.in_place, |e: &EdgeInfo| start_kernels(e, &primitives))
+        let mut net = RuntimeNetwork::from_graph_held(&g, world::SENSE_BITS, world::ACT_BITS, seed, w.in_place, |e: &EdgeInfo| start_kernels(e, &primitives));
+        net.count_reads = w.count_reads;
+        net
     }
 
     fn mutate(&self, rng: &mut StdRng) -> Self {

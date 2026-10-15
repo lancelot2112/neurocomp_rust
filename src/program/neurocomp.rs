@@ -27,6 +27,18 @@ pub fn in_place() -> bool {
     IN_PLACE.load(Ordering::Relaxed)
 }
 
+/// The process's default for new worlds (`World::count_reads`): the words a kernel population
+/// reads count as its work.
+static COUNT_READS: AtomicBool = AtomicBool::new(false);
+
+pub fn set_count_reads(on: bool) {
+    COUNT_READS.store(on, Ordering::Relaxed);
+}
+
+pub fn count_reads() -> bool {
+    COUNT_READS.load(Ordering::Relaxed)
+}
+
 /// A runnable network: node histories plus per-edge kernel groups.
 /// For now, each edge also carries a simple default kernel used for execution
 /// until KernelClass execution is wired in.
@@ -45,6 +57,8 @@ pub struct RuntimeNetwork {
     /// copied, its lag 1 the frame as it is now (writes earlier in this step included); a ring
     /// only if something reads it 2 or more steps back
     pub live: Vec<bool>,
+    /// the words a kernel population reads count as work (so thrift sees a wide read)
+    pub count_reads: bool,
     /// work done since it was built: kernels matched plus words a wire or noise edge wrote (a
     /// paused or idle population adds nothing)
     pub work: u64,
@@ -78,6 +92,42 @@ fn view(node: &BitVecHistory, live: bool, read_back: usize, span: usize, window:
         }
     }
     BitVector::from_words(w)
+}
+
+/// One node to read and another to write, borrowed together.
+fn pair(nodes: &mut [BitVecHistory], a: usize, b: usize) -> (&BitVecHistory, &mut BitVecHistory) {
+    assert_ne!(a, b);
+    if a < b {
+        let (l, r) = nodes.split_at_mut(b);
+        (&l[a], &mut r[0])
+    } else {
+        let (l, r) = nodes.split_at_mut(a);
+        (&r[0], &mut l[b])
+    }
+}
+
+/// What a kernel edge read this step, for its learning after the tick: its own copy, or a frame
+/// of a node, read again where it lies (the same lines: frames behind the current one are not
+/// written during a step; a node held in place is read as the step left it).
+enum Seen {
+    Owned(BitVector),
+    Frame(usize, usize),
+}
+
+impl Seen {
+    fn of(owned: Option<BitVector>, node: usize, frame: usize) -> Self {
+        match owned {
+            Some(v) => Seen::Owned(v),
+            None => Seen::Frame(node, frame),
+        }
+    }
+
+    fn get<'a>(&'a self, nodes: &'a [BitVecHistory]) -> &'a BitVector {
+        match self {
+            Seen::Owned(v) => v,
+            Seen::Frame(n, f) => nodes[*n].get_frame(*f),
+        }
+    }
 }
 
 /// The word with the most lines on, and how many.
@@ -219,7 +269,7 @@ impl RuntimeNetwork {
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, live, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -280,7 +330,7 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, live, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Advance histories and process all edges once.
@@ -303,7 +353,7 @@ impl RuntimeNetwork {
         // frames ago, never the frame being written, so edges into different vectors do not
         // depend on each other.
         self.write_self();
-        let Self { nodes, edges, node_rngs, noise, live, .. } = self;
+        let Self { nodes, edges, node_rngs, noise, live, count_reads, .. } = self;
         // spontaneous activity: random lines on, in the nodes that have it (each its own stream)
         for (i, &k) in noise.iter().enumerate() {
             let bits = nodes[i].current().bit_len();
@@ -313,7 +363,7 @@ impl RuntimeNetwork {
             }
         }
         let mut fired: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
-        let mut seen: Vec<Option<BitVector>> = vec![None; edges.len()];
+        let mut seen: Vec<Option<Seen>> = (0..edges.len()).map(|_| None).collect();
         let mut paused: Vec<bool> = vec![false; edges.len()];
         let mut work = 0u64;
         {
@@ -325,8 +375,25 @@ impl RuntimeNetwork {
                         continue;
                     }
                 }
-                let mut src_view = view(&nodes[eg.src.idx], live[eg.src.idx], eg.src.read_back, eg.src.span, eg.window);
-                let dst_curr = nodes[eg.dst].current_mut();
+                // what it reads: a whole vector one frame is borrowed where it lies (no copy); a
+                // window, a span of frames, a rotation or its own destination is copied
+                let frame = at(live[eg.src.idx], eg.src.read_back);
+                let borrow = eg.src.span <= 1 && eg.window.is_none() && eg.rotate == 0 && eg.src.idx != eg.dst;
+                let owned = (!borrow).then(|| {
+                    let mut v = view(&nodes[eg.src.idx], live[eg.src.idx], eg.src.read_back, eg.src.span, eg.window);
+                    if eg.kind == EdgeKind::Wire && eg.rotate > 0 {
+                        let n = v.bit_len();
+                        v.rotr_mut(eg.rotate as usize % n.max(1));
+                    }
+                    v
+                });
+                let (src_view, dst_curr): (&BitVector, &mut BitVector) = match &owned {
+                    Some(v) => (v, nodes[eg.dst].current_mut()),
+                    None => {
+                        let (s, d) = pair(nodes, eg.src.idx, eg.dst);
+                        (s.get_frame(frame), d.current_mut())
+                    }
+                };
                 match eg.kind {
                     EdgeKind::Noise => {
                         // spontaneous lines in the destination's span, each touching one word
@@ -341,10 +408,6 @@ impl RuntimeNetwork {
                         }
                     }
                     EdgeKind::Wire => {
-                        if eg.rotate > 0 {
-                            let n = src_view.bit_len();
-                            src_view.rotr_mut(eg.rotate as usize % n.max(1));
-                        }
                         // the copy lands from `dst_word`, wrapping round the destination; the op
                         // touches only the words it lands on (a wider source folds in by OR)
                         let dw = dst_curr.word_len().max(1);
@@ -378,13 +441,17 @@ impl RuntimeNetwork {
                         // what it reads is all off (a population upstream cleared it): none of
                         // its kernels can fire or learn, so it is paused, at no cost (exact,
                         // unless a kernel acts on nothing)
+                        let read = src_view.word_len() as u64;
+                        if *count_reads {
+                            work += read;
+                        }
                         if src_view.as_words().iter().all(|&w| w == 0) && !eg.group.acts_on_nothing() {
-                            seen[i] = Some(src_view);
+                            seen[i] = Some(Seen::of(owned, eg.src.idx, frame));
                             continue;
                         }
                         work += eg.group.kernel_count() as u64;
-                        fired[i] = eg.group.process(&src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
-                        seen[i] = Some(src_view);
+                        fired[i] = eg.group.process(src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
+                        seen[i] = Some(Seen::of(owned, eg.src.idx, frame));
                     }
                 }
             }
@@ -466,7 +533,7 @@ impl RuntimeNetwork {
                 if let Some(k) = class.kernels().iter().position(|k| k.confirmed >= need) {
                     class.kernels_mut()[k].confirmed = 0;
                     let parent = class.kernels()[k].clone();
-                    let child = match (sp.replicate_shift, parent.tile_at, seen[i].as_ref()) {
+                    let child = match (sp.replicate_shift, parent.tile_at, seen[i].as_ref().map(|s| s.get(nodes))) {
                         (true, Some((start, bits)), Some(view)) if view.bit_len() > bits => {
                             // the neighbouring tile, one way or the other (wrapping), output at the
                             // same relative place (not into the act, whose outputs are moves)
@@ -496,7 +563,7 @@ impl RuntimeNetwork {
                 older = view(&nodes[eg.src.idx], live[eg.src.idx], eg.src.read_back + eg.repeat_lag, 1, eg.window);
                 &older
             } else {
-                seen[i].as_ref().unwrap()
+                seen[i].as_ref().unwrap().get(nodes)
             };
             let ones = ones_of;
             let dest = nodes[eg.dst].current();
@@ -517,7 +584,22 @@ impl RuntimeNetwork {
                 let stride = (t / 2).max(1);
                 let tiles = if t >= bits { 1 } else { (bits - t) / stride + 1 };
                 let count = |s: usize| -> u32 { (s / 64..=(s + t - 1) / 64).map(|w| (sw[w] & !covered[w] & SimpleKernel::tile_word(s, t, w)).count_ones()).sum() };
-                let (start, n) = (0..tiles).map(|j| (j * stride, count(j * stride))).max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).unwrap_or((0, 0));
+                // only a tile over a word with uncovered lines can have any, so only those are
+                // scored (the same winner: the most lines, the first on a tie; none: no birth)
+                let mut cand: Vec<usize> = Vec::new();
+                let mut next = 0usize;
+                for w in 0..sw.len() {
+                    if sw[w] & !covered[w] == 0 {
+                        continue;
+                    }
+                    let lo = (w * 64 + 1).saturating_sub(t).div_ceil(stride).max(next);
+                    let hi = ((w * 64 + 63) / stride).min(tiles - 1);
+                    if lo <= hi {
+                        cand.extend(lo..=hi);
+                        next = hi + 1;
+                    }
+                }
+                let (start, n) = cand.iter().map(|&j| (j * stride, count(j * stride))).max_by(|a, b| a.1.cmp(&b.1).then(b.0.cmp(&a.0))).unwrap_or((0, 0));
                 if n == 0 {
                     continue;
                 }

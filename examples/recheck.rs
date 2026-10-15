@@ -4,8 +4,8 @@
 //! each island's ranked genomes, from the top), `RCK_DELAY` (3: steps from the delayed light to
 //! the response window, for remember), `RCK_BLIND` (0; 1: each genome's blind control too),
 //! `RCK_SWAPS` (3), `RCK_BLUR` (0) and `RCK_SHIFT` (0) (the reversal lifetime: shapes' stages),
-//! `RCK_ISLAND` (all: only the island of that name), `RCK_INPLACE` (0; 1: channels held in place, as
-//! `ISL_INPLACE`: a checkpoint from such a run is rechecked so).
+//! `RCK_ISLAND` (all: only the island of that name), `RCK_READS` and `RCK_INPLACE` (0; 1: reads counted as work, channels held in place, as
+//! `ISL_READS` and `ISL_INPLACE`: a checkpoint from such a run is rechecked so).
 
 use neurocomp::evolve::tags::TagGenome;
 use neurocomp::evolve::{probe_all_in, probe_means, Lesson, Physics, ALL_PROBES};
@@ -22,6 +22,7 @@ fn main() {
     let gap: usize = env("RCK_GAP", 6);
     let from: u64 = env("RCK_FROM", 50_000);
     neurocomp::program::neurocomp::set_in_place(env("RCK_INPLACE", 0u8) == 1);
+    neurocomp::program::neurocomp::set_count_reads(env("RCK_READS", 0u8) == 1);
     let top: usize = env("RCK_TOP", 1);
     let lesson = Lesson { delay: env("RCK_DELAY", 3), swaps: env("RCK_SWAPS", 3), blur: env("RCK_BLUR", 0), shift: env("RCK_SHIFT", 0), ..Lesson::default() };
     let only = std::env::var("RCK_ISLAND").ok();

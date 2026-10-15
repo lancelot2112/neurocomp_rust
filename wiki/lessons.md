@@ -172,7 +172,9 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     writes, so a 131,072-bit channel read through a 64-word field costs the same as a 512-bit
     one. A kernel spread across a wide field pays for its mask's whole extent if its mask is
     dense; a sparse kernel (the words it touches) pays for its lines, about 6x cheaper at
-    131,072 bits.
+    131,072 bits. Births were the exception until experiment 14: a covering birth scored every
+    tile of its source every step, so a growing population over a wide channel paid for the whole
+    width, not for its lines.
 36. **Every probe needs a blind control, under every world it is scored in (experiments 12,
     13).** A genome that sees nothing must score about 0. Blind controls caught:
     - a clock-locked clicker scoring respond > 900;
@@ -192,3 +194,14 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     - Lexicase's top genome changes almost every generation, and a capacity most of the
       population holds can be missing from it.
     - Report on 48 held-out worlds and recheck claims on 64 fresh ones (`examples/recheck`).
+    - Check a stage move on held-out worlds too. Shapes' training mean ran twice its held-out
+      one, and in run 3 it climbed five rungs on such scores (experiment 14).
+39. **Memory held in place makes memory tasks reachable (experiment 14).** With channels that
+    keep their lines until something clears them, and no history in the runtime, recall went
+    from never responding to remembering a light 3 steps (held out 180), and reading's echo
+    tripled. The network builds any lag itself, and the islands that need the past turned to
+    shifted writes.
+40. **Time what a step costs; thrift sees only what it counts (experiment 14).** Births on a
+    wide channel scanned all of its tiles every step, 120 of 131 thread-seconds on one genome,
+    and reads were not counted as work. So the costliest genomes looked cheap. Profile before
+    you optimise: copying reads and clearing channels, the first suspects, cost little.

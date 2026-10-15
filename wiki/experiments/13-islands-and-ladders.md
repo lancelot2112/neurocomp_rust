@@ -197,6 +197,9 @@ If the run needs more speed, in order of cost:
    exchange. This needs a coordinator, a merge of checkpoints and restarts kept in step. It waits
    until the results show it is worth it.
 
+Run 3 ended at generation 399 (`runs/islands3`). A fresh run on a runtime with channels held
+in place, against this one, is experiment 14.
+
 ## What it means
 
 - **A capacity that needs two unlearned maps scores nothing**, and evolution has no gradient to

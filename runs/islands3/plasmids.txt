@@ -1,0 +1,503 @@
+generation 20: recall -> switching
+C1 channel 11110111  256 bits
+   C1 -> C1 kernels Or lag 1 cover, tiles of 8 bits n7 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 1) replicate at 4 (in place)
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+
+generation 20: generalist -> switching
+C1 channel 01110000  512 bits  holds
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+
+generation 20: generalist -> recall
+C1 channel 11100100  512 bits  holds
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+
+generation 20: generalist -> recall
+C1 channel 00110011  512 bits
+   eye -> C1 kernels Sub(6) lag 1 cover, tiles of 8 bits n3 in8 out16 q2/4 tonic 1/4 replicate at 8 (in place)
+   C1 -> voice wire Or lag 1 whole
+
+generation 20: switching -> reading
+C1 channel 10001001  16384 bits  holds
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in3 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 3)
+
+generation 20: recall -> reading
+   affect -> hand kernels Shr(40) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 5) sparse replicate at 8 (to a neighbour tile)
+
+generation 20: recall -> generalist
+C1 channel 11110000  512 bits
+   C1 -> C1 kernels And lag 1 cover, tiles of 128 bits n4 in16 out16 q2/4 replicate at 32 (in place)
+
+generation 20: recall -> generalist
+C1 channel 11100101  256 bits
+   C1 -> C1 kernels Or lag 1 cover, tiles of 8 bits n7 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 1) replicate at 4 (in place)
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+
+generation 40: generalist -> switching
+C1 channel 10100010  512 bits
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> voice wire Or lag 1 whole
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> voice wire Or lag 1 whole
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n4 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+
+generation 40: generalist -> switching
+C1 channel 00000011  512 bits
+   C1 -> C1 kernels Or lag 1 cover, tiles of 8 bits n7 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 1) replicate at 4 (in place)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Or lag 1 cover, tiles of 8 bits n7 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 1) replicate at 4 (in place)
+   C1 -> C1 wire Or lag 1 whole
+
+generation 40: reading -> recall
+C1 channel 10110101  256 bits  holds
+   C1 -> C1 kernels Shr(32) lag 1 cover, tiles of 32 bits n1 in8 out16 q2/4 replicate at 32 (to a neighbour tile)
+
+generation 40: generalist -> recall
+C1 channel 10101111  512 bits
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> voice wire Or lag 1 whole
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+
+generation 40: switching -> reading
+C1 channel 10111100  32768 bits
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+
+generation 40: switching -> reading
+C1 channel 10101100  4096 bits  holds
+   C1 -> voice wire Nor lag 1 whole tonic 1/8 gate C1 sparse replicate at 8 (to a neighbour tile)
+
+generation 40: reading -> generalist
+C1 channel 11100010  512 bits
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+
+generation 40: switching -> generalist
+C1 channel 10011100  32768 bits
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+
+generation 60: recall -> switching
+C1 channel 11010111  512 bits  holds
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> hand kernels Shl(52) lag 1 cover, tiles of 32 bits n1 in7 out16 q2/4 tonic 1/16
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+
+generation 60: generalist -> switching
+C1 channel 01101011  512 bits
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 32 bits n3 in16 out16 q2/4
+   C1 -> voice kernels Or lag 1 cover, tiles of 16 bits n3 in4 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 32 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   affect -> hand kernels Nor lag 1 span 2 cover, tiles of 16 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64) gate !C1 replicate at 16 (to a neighbour tile)
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Or lag 1 cover, tiles of 8 bits n7 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 replicate at 4 (in place)
+   C1 -> voice kernels Or lag 1 cover, tiles of 16 bits n3 in4 out16 q2/4 grow(syn 16, out 8-64)
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+
+generation 60: reading -> recall
+C1 channel 00110101  32768 bits
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 128 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+
+generation 60: switching -> recall
+C1 channel 01101001  32768 bits  holds
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in3 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 3)
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in3 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 3)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in3 out16 q2/4 tonic 1/4 grow(syn 16, out 8-64, repeat 3)
+
+generation 60: switching -> reading
+C1 channel 01111110  32768 bits  holds
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> voice kernels Rotr(47) lag 1 cover, tiles of 64 bits n1 in8 out16 q2/4 sparse replicate at 16 (in place)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 15, out 8-64) sparse
+   C1 -> C1 kernels Rotr(47) lag 1 cover, tiles of 64 bits n1 in8 out16 q2/4 sparse replicate at 16 (in place)
+
+generation 60: recall -> reading
+C1 channel 01101010  65536 bits
+   C1 -> voice kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   eye -> hand kernels Sub(4) lag 1 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 gate C1 sparse replicate at 4 (in place)
+
+generation 60: reading -> generalist
+C1 channel 00001100  256 bits
+   C1 -> C1 kernels Add(4) lag 1 cover, tiles of 64 bits n5 in8 out16 q2/4 sparse
+   C1 -> C1 kernels Add(4) lag 1 cover, tiles of 128 bits n5 in8 out16 q2/4 sparse
+
+generation 60: reading -> generalist
+C1 channel 10001101  256 bits
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+
+generation 80: generalist -> switching
+C1 channel 00110101  1024 bits
+   eye -> C1 wire Rotl(4) lag 1 whole gate !C1
+   eye -> voice wire Rotl(4) lag 1 whole gate !C1
+   eye -> C1 wire Rotl(4) lag 1 whole gate !C1
+   eye -> C1 wire Rotl(4) lag 1 whole gate !C1
+
+generation 80: reading -> switching
+C1 channel 10101010  512 bits
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+
+generation 80: switching -> recall
+C1 channel 11100000  256 bits
+   S -> C1 kernels Sub(3) lag 1 cover, tiles of 64 bits n4 in8 out16 q2/4 sparse replicate at 32 (to a neighbour tile)
+
+generation 80: generalist -> recall
+C1 channel 11000101  256 bits
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, new, repeat 1) gate !C1 replicate at 16 (to a neighbour tile)
+   S -> C1 wire Or lag 1 whole replicate at 32 (to a neighbour tile)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Nor lag 1 whole tonic 1/16 grow(syn 16, out 8-64, repeat 1) sparse replicate at 32 (to a neighbour tile)
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 runs while !C1
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Or lag 1 cover, tiles of 128 bits n7 in16 out16 q2/4 tonic 1/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 share grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 gate !C1 sparse replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 share grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+
+generation 80: recall -> reading
+C1 channel 10101110  131072 bits  holds
+   C1 -> voice kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> voice kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 share grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Sub(4) lag 2 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 gate C1 sparse replicate at 4 (in place)
+   C1 -> voice kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 share grow(syn 16, out 8-64) gate !C1 sparse
+   eye -> hand kernels Sub(4) lag 1 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 gate C1 sparse replicate at 4 (in place)
+
+generation 80: recall -> reading
+C1 channel 01101110  512 bits
+   eye -> hand kernels Sub(4) lag 1 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64) gate C1 sparse replicate at 4 (in place)
+   C1 -> C1 kernels Shl(11) lag 1 cover, tiles of 8 bits n2 in8 out16 q2/4 gate C1 replicate at 4 (to a neighbour tile)
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> C1 kernels Shl(52) lag 1 cover, tiles of 32 bits n1 in7 out16 q2/4 tonic 1/16
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+
+generation 80: recall -> generalist
+C1 channel 10010100  65536 bits
+   C1 -> C1 kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   eye -> hand kernels Sub(4) lag 1 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 gate C1 sparse replicate at 4 (in place)
+   C1 -> voice kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> voice kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 share grow(syn 16, out 8-64) gate !C1 sparse
+   eye -> hand kernels Sub(4) lag 1 cover, tiles of 16 bits n1 in16 out16 q2/4 tonic 1/8 gate C1 sparse replicate at 4 (in place)
+   C1 -> voice kernels Rotr(40) lag 1 cover, tiles of 128 bits n1 in8 out16 q2/4 share grow(syn 16, out 8-64) gate !C1 sparse
+
+generation 80: switching -> generalist
+C1 channel 10000001  512 bits
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A wire Or lag 1 whole
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A wire Or lag 1 whole
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A wire Or lag 1 whole
+   C1 -> C1 kernels Shl(49) lag 1 cover, tiles of 32 bits n5 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 1) rot 61
+   C1 -> C1 wire Or lag 1 whole
+
+generation 100: reading -> switching
+C1 channel 00100100  64 bits
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels Add(4) lag 1 cover, tiles of 128 bits n5 in8 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+
+generation 100: generalist -> switching
+C1 channel 00000111  512 bits
+   C1 -> hand wire Or lag 1 whole
+   C1 -> hand wire Or lag 1 whole
+   affect -> C1 kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 17, out 8-64, repeat 2) gate !C1 runs while C1 replicate at 16 (to a neighbour tile)
+
+generation 100: reading -> recall
+C1 channel 11011011  512 bits  holds
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   M -> voice kernels Rotr(52) lag 1 cover, tiles of 32 bits n8 in8 out16 q2/4 tonic 1/4 gate !C1 runs while C1 sparse replicate at 2 (in place)
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   C1 -> C1 kernels Xor lag 1 cover, tiles of 32 bits n3 in4 out16 q2/4 tonic 1/4 gate C1 sparse
+   C1 -> C1 wire Add(4) lag 1 whole tonic 1/4 gate !C1 sparse
+
+generation 100: generalist -> recall
+C1 channel 00011011  256 bits
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q3/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q3/4
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+
+generation 100: recall -> reading
+C1 channel 00100011  65536 bits  holds
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> hand kernels Shl(52) lag 1 cover, tiles of 32 bits n2 in7 out16 q2/4 tonic 1/16
+   C1 -> hand kernels Shl(52) lag 1 cover, tiles of 32 bits n1 in7 out16 q2/4 tonic 1/16
+
+generation 100: generalist -> reading
+C1 channel 11111001  1024 bits
+   C1 -> C1 wire Shl(55) lag 1 whole sparse
+   C1 -> A kernels Shl(22) lag 1 cover, tiles of 16 bits n4 in8 out16 q2/4 gate !C1 sparse
+   C1 -> C1 wire Nor lag 1 whole tonic 1/16 grow(syn 16, out 8-64, repeat 1) sparse replicate at 32 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q3/4
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+
+generation 100: switching -> generalist
+C1 channel 11101101  32768 bits
+   C1 -> C1 wire Rotl(47) lag 1 whole gate !C1 runs while !C1 sparse replicate at 4 (to a neighbour tile)
+   S -> C1 kernels Sub(3) lag 1 cover, tiles of 64 bits n4 in8 out16 q2/4 sparse replicate at 32 (to a neighbour tile)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+
+generation 100: switching -> generalist
+C1 channel 10001011  256 bits  holds
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n3 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   S -> C1 kernels Sub(3) lag 1 cover, tiles of 64 bits n4 in8 out16 q2/4 sparse replicate at 32 (to a neighbour tile)
+
+generation 120: reading -> switching
+C1 channel 01011001  256 bits  holds
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+
+generation 120: generalist -> switching
+   eye -> hand kernels Clear lag 1 cover, tiles of 32 bits n3 in8 out17 q2/4 sparse
+
+generation 120: generalist -> recall
+C1 channel 00101000  256 bits  holds
+   C1 -> voice kernels Xor lag 1 cover, tiles of 16 bits n3 in8 out16 q2/4 grow(syn 16, out 8-64, repeat 2) sparse
+   C1 -> C1 wire Nor lag 1 whole tonic 1/16 grow(syn 16, out 8-64, repeat 1) sparse replicate at 32 (to a neighbour tile)
+
+generation 120: switching -> recall
+C1 channel 01001011  256 bits
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> C1 kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+
+generation 120: generalist -> reading
+C1 channel 00010010  512 bits
+   C1 -> C1 wire Or lag 1 whole
+
+generation 120: generalist -> reading
+C1 channel 10110011  256 bits
+   C1 -> C1 kernels Or lag 1 cover, tiles of 32 bits n3 in16 out16 q2/4 replicate at 16 (in place)
+   S -> C1 wire Or lag 1 whole replicate at 32 (to a neighbour tile)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Nor lag 1 whole tonic 1/16 grow(syn 16, out 8-64, repeat 1) sparse replicate at 32 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse
+   C1 -> C1 wire Nor lag 1 whole tonic 1/16 grow(syn 16, out 8-64, repeat 1) sparse replicate at 32 (to a neighbour tile)
+   C1 -> voice kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 rot 61
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 gate !C1 sparse
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q3/4
+   C1 -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+   affect -> C1 kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, repeat 2) gate !C1 replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Shr(25) lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4
+   affect -> hand kernels Nor lag 1 cover, tiles of 32 bits n2 in8 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64, new, repeat 1) gate !C1 replicate at 16 (to a neighbour tile)
+   C1 -> C1 wire Nor lag 1 whole tonic 1/16 grow(syn 16, out 8-64, repeat 1) sparse replicate at 32 (to a neighbour tile)
+   C1 -> C1 wire Nor lag 1 whole tonic 1/16 grow(syn 16, out 8-64, repeat 1) sparse replicate at 32 (to a neighbour tile)
+   C1 -> C1 wire Or lag 1 whole
+
+generation 120: switching -> generalist
+C1 channel 01000100  4096 bits
+   ear -> C1 kernels Rotl(38) lag 1 cover, tiles of 32 bits n3 in16 out16 q2/4
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 9-64)
+
+generation 120: recall -> generalist
+C1 channel 10100110  65536 bits  holds
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> hand kernels Shl(52) lag 1 cover, tiles of 32 bits n1 in7 out16 q2/4 tonic 1/16
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> hand kernels Shl(52) lag 1 cover, tiles of 32 bits n2 in7 out16 q2/4 tonic 1/16
+   C1 -> hand kernels Shl(52) lag 1 cover, tiles of 32 bits n1 in7 out16 q2/4 tonic 1/16
+
+generation 140: screen -> switching
+C1 channel 10011111  2048 bits
+   C1 -> hand kernels Shl(38) lag 1 field 2w@22954 -> 1w@0 n7 in4 out16 q2/4 tonic 1/4
+   ear -> C1 kernels And lag 1 cover, tiles of 64 bits n6 in16 out16 q2/4 tonic 1/16 sparse
+
+generation 140: shapes -> switching
+C1 channel 10110110  1024 bits  holds
+   ear -> C1 kernels Nand lag 1 cover, tiles of 8 bits n3 in8 out16 q2/4 sparse
+
+generation 140: maze -> recall
+   eye -> hand kernels Add(4) lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 tonic 1/2
+
+generation 140: screen -> recall
+C1 channel 10001111  2048 bits
+   C1 -> hand kernels Shl(38) lag 1 field 2w@22954 -> 1w@0 n7 in4 out16 q2/4 tonic 1/4
+
+generation 140: recall -> reading
+C1 channel 00111010  512 bits
+   C1 -> C1 kernels And lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   C1 -> C1 kernels And lag 1 cover, tiles of 16 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64)
+   eye -> hand kernels Sub(4) lag 2 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 gate !C1 sparse replicate at 4 (in place)
+   eye -> hand kernels Sub(4) lag 1 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 gate !C1 sparse replicate at 4 (in place)
+   eye -> hand kernels Sub(4) lag 2 cover, tiles of 8 bits n1 in16 out16 q2/4 tonic 1/8 gate !C1 sparse replicate at 4 (in place)
+
+generation 140: shapes -> reading
+C1 channel 10001000  512 bits
+   C1 -> voice kernels Rotr(62) lag 1 cover, tiles of 128 bits n3 in8 out16 q2/4 gate C1 replicate at 32 (to a neighbour tile)
+
+generation 140: switching -> generalist
+C1 channel 10101010  2048 bits
+   ear -> C1 kernels Rotl(38) lag 1 cover, tiles of 32 bits n3 in16 out16 q2/4
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   C1 -> voice kernels Or lag 1 cover, tiles of 16 bits n4 in4 out16 q2/4 sparse
+   affect -> hand wire Rotr(27) lag 1 whole tonic 1/2 gate C1 sparse
+   C1 -> A kernels Shr(55) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64)
+   ear -> C1 kernels Rotl(38) lag 1 cover, tiles of 32 bits n3 in16 out16 q2/4
+
+generation 140: reading -> generalist
+C1 channel 01101111  256 bits  holds
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+
+generation 140: maze -> prediction
+   eye -> hand kernels Add(4) lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 tonic 1/2
+
+generation 140: screen -> prediction
+C1 channel 01010001  2048 bits
+   C1 -> hand kernels Shl(38) lag 1 field 2w@22954 -> 1w@0 n7 in4 out16 q2/4 tonic 1/4
+   ear -> C1 kernels And lag 1 cover, tiles of 64 bits n6 in16 out16 q2/4 tonic 1/16 sparse
+
+generation 140: reading -> maze
+C1 channel 01101011  512 bits
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse rot 61
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate C1 runs while C1 sparse
+
+generation 140: screen -> maze
+C1 channel 10111100  2048 bits
+   C1 -> hand kernels Shl(38) lag 1 field 2w@22954 -> 1w@0 n7 in4 out16 q2/4 tonic 1/4
+   ear -> C1 kernels And lag 1 cover, tiles of 64 bits n6 in16 out16 q2/4 tonic 1/16 sparse
+
+generation 140: reading -> screen
+C1 channel 11100001  128 bits
+   C1 -> C1 kernels Shr(6) lag 1 cover, tiles of 8 bits n6 in4 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in5 out16 q2/4 sparse
+   M -> voice wire Rotr(52) lag 1 whole tonic 1/4 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse
+
+generation 140: prediction -> screen
+(nothing: the donor has no population)
+generation 140: maze -> shapes
+   eye -> hand kernels Add(4) lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 tonic 1/2
+
+generation 140: maze -> shapes
+   eye -> hand kernels Add(4) lag 1 cover, tiles of 32 bits n4 in16 out16 q2/4 tonic 1/2
+

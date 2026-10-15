@@ -1,0 +1,325 @@
+islands: switching, recall, reading, generalist of 16, elite 4, 12 worlds, 12 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+   0              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching        0      0      0      0      .      0      .      0      4  reads  writes   (population, training)
+                       0      0      0      0      .      0      .  (its best, held out)
+      recall           0      .      .      .      0      .      .      0      4  reads  writes   (population, training)
+                       0      .      .      .      0      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      0      0      4  reads  writes   (population, training)
+                       .      .      .      .      .      .      0  (its best, held out)
+      generalist       0      0      0      0      0      0      0      0      4  reads  writes   (population, training)
+                       0      0      0      0      0      0      0  (its best, held out)
+  10              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching       -1     -5      1     -6      .      4      .      3     11  reads  writes voice+A  (population, training)
+                       3     20     -4     -5      .     20      .  (its best, held out)
+      recall           0      .      .      .      0      .      .      0     11  reads  writes   (population, training)
+                       0      .      .      .      0      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      6      3      9  reads M writes voice  (population, training)
+                       .      .      .      .      .      .      3  (its best, held out)
+      generalist       0      0      0      0      0      0      0      0      7  reads  writes   (population, training)
+                       0      0      0      0      0      0      0  (its best, held out)
+  20  plasmids moved: recall->switching (2 populations), generalist->switching (2 populations), generalist->recall (2 populations), generalist->recall (2 populations), switching->reading (2 populations), recall->reading (1 populations), recall->generalist (1 populations), recall->generalist (2 populations)
+      every island's best on every probe, held out:
+                  respon   tell discri revers rememb win-st   copy
+      switching        9    -20      7      3      4      2    -14
+      recall          -3    -17     -5    -21      1     -7    -11
+      reading          0      0      0      0      0      0      3
+      generalist       0      0      0      0      0      0     -1
+  20              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching        6      1      1     -2      .     11      .     80     15  reads affect writes A  (population, training)
+                       9    -20      7      3      .      2      .  (its best, held out)
+      recall           2      .      .      .     -1      .      .    177     25  reads touch+affect writes A+hand  (population, training)
+                      -3      .      .      .      1      .      .  (its best, held out)
+      reading          .      .      .      .      .      .     15      8     11  reads  writes voice  (population, training)
+                       .      .      .      .      .      .      3  (its best, held out)
+      generalist       5     10      0      0      0      0     16     13     22  reads eye writes hand+voice  (population, training)
+                       0      0      0      0      0      0     -1  (its best, held out)
+  30              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching        6     -5     10      9      .     21      .    153     42  reads  writes A  (population, training)
+                      15     23      0    -23      .      9      .  (its best, held out)
+      recall           0      .      .      .      1      .      .    228     18  reads touch+affect writes A+hand  (population, training)
+                       0      .      .      .    -26      .      .  (its best, held out)
+      reading          .      .      .      .      .      .     28      6     35  reads M writes voice+A  (population, training)
+                       .      .      .      .      .      .     -8  (its best, held out)
+      generalist       2      7     -2      3     -1    -26     15    371     17  reads eye writes voice  (population, training)
+                       0      0      0      0      0      0     15  (its best, held out)
+  40  plasmids moved: generalist->switching (18 populations), generalist->switching (4 populations), reading->recall (1 populations), generalist->recall (15 populations), switching->reading (3 populations), switching->reading (1 populations), reading->generalist (1 populations), switching->generalist (3 populations)
+      every island's best on every probe, held out:
+                  respon   tell discri revers rememb win-st   copy
+      switching        6    -25     -7      9     -4    -13      8
+      recall           0    -15     -4      0    -12     19     25
+      reading          0      0      0      0      0      0      3
+      generalist      -4      1     15     -9     10     85     13
+  40              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching        6     14      2     11      .    -16      .    157     42  reads  writes A+voice  (population, training)
+                       6    -25     -7      9      .    -13      .  (its best, held out)
+      recall           5      .      .      .      7      .      .    334     77  reads eye+touch+affect+S writes hand+A+voice  (population, training)
+                       0      .      .      .    -12      .      .  (its best, held out)
+      reading          .      .      .      .      .      .     17     13     20  reads S writes voice  (population, training)
+                       .      .      .      .      .      .      3  (its best, held out)
+      generalist       8     11      0      1     -8     11      7   1412     73  reads eye+affect writes hand+voice  (population, training)
+                      -4      1     15     -9     10     85     13  (its best, held out)
+  50              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching        6      9     11      5      .    -10      .    141     76  reads touch writes A+voice  (population, training)
+                     -17     -6     -4    -10      .     11      .  (its best, held out)
+      recall           9      .      .      .      6      .      .    142     45  reads eye+touch+S writes hand+A  (population, training)
+                      11      .      .      .      5      .      .  (its best, held out)
+      reading          .      .      .      .      .      .     35     17     47  reads M writes voice+A  (population, training)
+                       .      .      .      .      .      .      7  (its best, held out)
+      generalist       1      7     -2     -2     -2    -15      6   1400     87  reads eye+affect writes hand+voice  (population, training)
+                      -7      1      1      0      5     81     -5  (its best, held out)
+  60  plasmids moved: recall->switching (3 populations), generalist->switching (14 populations), reading->recall (4 populations), switching->recall (3 populations), switching->reading (6 populations), recall->reading (2 populations), reading->generalist (2 populations), reading->generalist (5 populations)
+      every island's best on every probe, held out:
+                  respon   tell discri revers rememb win-st   copy
+      switching       -3    -24      5     19     30    -21     -1
+      recall           5     16     10    -12      4     12      0
+      reading        -13     -6    -19    -21      2     18     49
+      generalist     -31     80     19     11     13    -14      0
+  60              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching       14     -2     31     27      .     24      .    230     39  reads  writes A+voice  (population, training)
+                      -3    -24      5     19      .    -21      .  (its best, held out)
+      recall          15      .      .      .      0      .      .    172     16  reads eye writes hand+voice  (population, training)
+                       5      .      .      .      4      .      .  (its best, held out)
+      reading          .      .      .      .      .      .     15     10     49  reads M writes voice+A  (population, training)
+                       .      .      .      .      .      .     49  (its best, held out)
+      generalist       9     47      3      9      7     -1      6   1399     57  reads eye+affect+S writes hand+voice  (population, training)
+                     -31     80     19     11     13    -14      0  (its best, held out)
+  70              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching        2      3      7      2      .      2      .    812     43  reads  writes A+hand  (population, training)
+                       5    -25      3    -14      .     -1      .  (its best, held out)
+      recall          18      .      .      .      8      .      .    221     42  reads eye writes hand+voice  (population, training)
+                     -12      .      .      .     10      .      .  (its best, held out)
+      reading          .      .      .      .      .      .     37     11     74  reads M+eye writes voice+A  (population, training)
+                       .      .      .      .      .      .     58  (its best, held out)
+      generalist      18     38      3     12     10    -12      6    817     59  reads eye+affect+M writes hand+voice  (population, training)
+                       2    -19    -29    -57     -9    -60     27  (its best, held out)
+  80  plasmids moved: generalist->switching (4 populations), reading->switching (10 populations), switching->recall (1 populations), generalist->recall (37 populations), recall->reading (5 populations), recall->reading (5 populations), recall->generalist (6 populations), switching->generalist (10 populations)
+      every island's best on every probe, held out:
+                  respon   tell discri revers rememb win-st   copy
+      switching       13      8     -6     -8    -17    -17     17
+      recall          19     -7      5     31      3      9      0
+      reading        -24      9     -3    -18     -4     -2     16
+      generalist      32     69      9     66    -26    -40     10
+  80              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching       -2      4     15     30      .      6      .    321     48  reads ear writes A  (population, training)
+                      13      8     -6     -8      .    -17      .  (its best, held out)
+      recall           9      .      .      .     12      .      .     46     22  reads eye writes hand+voice  (population, training)
+                      19      .      .      .      3      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      8      4     65  reads touch+M writes A+voice  (population, training)
+                       .      .      .      .      .      .     16  (its best, held out)
+      generalist      10     33     10     15      3     -1     20    736    140  reads eye+affect+S+M writes hand+voice+A  (population, training)
+                      32     69      9     66    -26    -40     10  (its best, held out)
+  90              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching       -5      4     16      8      .     12      .    130     42  reads ear+eye+S writes A+voice  (population, training)
+                      18     -2     -9     32      .    -18      .  (its best, held out)
+      recall          22      .      .      .      1      .      .     79     74  reads eye writes hand+voice  (population, training)
+                     -32      .      .      .      1      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      7      6     68  reads M writes voice+A  (population, training)
+                       .      .      .      .      .      .     29  (its best, held out)
+      generalist      16     32      8     17     11     15      1    854    159  reads eye+affect+S+M writes hand+voice+A  (population, training)
+                      25    -14    -12    -28     -6    -27     10  (its best, held out)
+ 100  plasmids moved: reading->switching (8 populations), generalist->switching (3 populations), reading->recall (8 populations), generalist->recall (9 populations), recall->reading (4 populations), generalist->reading (8 populations), switching->generalist (4 populations), switching->generalist (6 populations)
+      every island's best on every probe, held out:
+                  respon   tell discri revers rememb win-st   copy
+      switching       -8     16     13     25     -3     65     21
+      recall          -4      4     16     32     17     -8      0
+      reading        -11     -3    -10    -16    -17    -17     52
+      generalist      -9     12      0     26     -5     -5     11
+ 100              respon   tell discri revers rememb win-st   copy   work   size  ports
+      switching        2     -3     -1     -9      .    -11      .    252     41  reads touch+S writes A+voice  (population, training)
+                      -8     16     13     25      .     65      .  (its best, held out)
+---- resumed at generation 100 with the reading ladder (babble > echo2/4/8 > teacher fade), 48 held out ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (all)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (all)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (babble)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (all)
+islands: switching, recall, reading, generalist of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+---- restarted at generation 100 with all three ladders (switching, recall, reading) ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (respond)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (lag1)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (babble)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck100.txt: 16 genomes, generation 100, stage 0 (all)
+islands: switching, recall, reading, generalist of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+switching climbs: respond > tell > winstay > discrim > swap1 > swap3
+recall climbs: lag1 > lag2 > lag3 > lag4
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+ 110              respon   tell discri revers rememb win-st   copy   echo babble   work   size  ports
+      switching       -6      .      .      .      .      .      .      .      .    139     27  reads ear+touch+S writes A+voice  (population, training)  [stage 0 respond, 10 generations]
+                       1      .      .      .      .      .      .      .      .  (its best, held out)
+      recall           1      .      .      .     27      .      .      .      .    207     70  reads eye writes hand+A  (population, training)  [stage 0 lag1, 10 generations]
+                       4      .      .      .     40      .      .      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      .      .    853      5     83  reads M writes voice+A  (population, training)  [stage 0 babble, 10 generations]
+                       .      .      .      .      .      .      .      .    800  (its best, held out)
+      generalist      11    -11     15     14      5     13     -5     -3    467    341     75  reads eye+affect+ear+S writes hand+voice+A  (population, training)
+                       0     28    -11      5     -7    -28     22     18    709  (its best, held out)
+ 120  plasmids moved: reading->switching (5 populations), generalist->switching (1 populations), generalist->recall (2 populations), switching->recall (7 populations), generalist->reading (1 populations), generalist->reading (18 populations), switching->generalist (2 populations), recall->generalist (6 populations)
+      every island's best on every probe, held out:
+                  respon   tell discri revers rememb win-st   copy   echo babble
+      switching       91    164      2      5      0     -8      6      6    853
+      recall           4     46    -12      4     51     -9      0      0      0
+      reading          0     -4      0    -12     -4     -8      6     22    765
+      generalist       4     49      3     15      3    -27     15     -3    752
+ 120              respon   tell discri revers rememb win-st   copy   echo babble   work   size  ports
+      switching       57      .      .      .      .      .      .      .      .     70     18  reads ear+eye writes A+hand  (population, training)  [stage 0 respond, 20 generations]
+                      99      .      .      .      .      .      .      .      .  (its best, held out)
+      recall           3      .      .      .     19      .      .      .      .    216     60  reads eye+touch writes hand+A  (population, training)  [stage 0 lag1, 20 generations]
+                       4      .      .      .     51      .      .      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      .      .    914     38     74  reads M writes voice+A  (population, training)  [stage 0 babble, 20 generations]
+                       .      .      .      .      .      .      .      .    981  (its best, held out)
+      generalist       4     29      1     -4     -6     -1     32     -5    703    541     86  reads eye+affect+ear+S writes hand+voice+A  (population, training)
+                       4     49      3     15      3    -27     15     -3    752  (its best, held out)
+---- restarted at generation 120: goal progress printed every generation ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120.txt: 16 genomes, generation 120, stage 0 (respond)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120.txt: 16 genomes, generation 120, stage 0 (lag1)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120.txt: 16 genomes, generation 120, stage 0 (babble)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120.txt: 16 genomes, generation 120, stage 0 (all)
+islands: switching, recall, reading, generalist of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+switching climbs: respond > tell > winstay > discrim > swap1 > swap3
+recall climbs: lag1 > lag2 > lag3 > lag4
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+ 121  goals: switching respond respond 57/100 (met 0/3); recall lag1 remember 19/150 (met 0/3); reading babble babble 914/768 (met 1/3)
+ 122  goals: switching respond respond 74/100 (met 0/3); recall lag1 remember 15/150 (met 0/3); reading babble babble 896/768 (met 2/3)
+ 123  goals: switching respond respond 110/100 (met 1/3); recall lag1 remember 21/150 (met 0/3); reading babble babble 903/768 (met 3/3)
+ 124  goals: switching respond respond 99/100 (met 0/3); recall lag1 remember 19/150 (met 0/3); reading echo2 echo 89/150 (met 0/3)
+ 124  reading moves to stage 1 (echo2): goal met
+ 125  goals: switching respond respond 106/100 (met 1/3); recall lag1 remember 29/150 (met 0/3); reading echo2 echo 89/150 (met 0/3)
+---- restarted at generation 120: copy and echo count near and far lags over the same steps (blind 2-token speaker scored echo 85 before); reading starts at echo2 ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 0 (respond)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 0 (lag1)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 1 (echo2)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 0 (all)
+islands: switching, recall, reading, generalist of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+switching climbs: respond > tell > winstay > discrim > swap1 > swap3
+recall climbs: lag1 > lag2 > lag3 > lag4
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+ 121  goals: switching respond respond 57/100 (met 0/3); recall lag1 remember 19/150 (met 0/3); reading echo2 echo 11/150 (met 0/3)
+ 122  goals: switching respond respond 74/100 (met 0/3); recall lag1 remember 15/150 (met 0/3); reading echo2 echo 3/150 (met 0/3)
+ 123  goals: switching respond respond 112/100 (met 1/3); recall lag1 remember 19/150 (met 0/3); reading echo2 echo 18/150 (met 0/3)
+ 124  goals: switching respond respond 51/100 (met 0/3); recall lag1 remember 24/150 (met 0/3); reading echo2 echo 0/150 (met 0/3)
+ 125  goals: switching respond respond 42/100 (met 0/3); recall lag1 remember 25/150 (met 0/3); reading echo2 echo 20/150 (met 0/3)
+ 126  goals: switching respond respond 71/100 (met 0/3); recall lag1 remember 29/150 (met 0/3); reading echo2 echo 5/150 (met 0/3)
+ 127  goals: switching respond respond 39/100 (met 0/3); recall lag1 remember 40/150 (met 0/3); reading echo2 echo 7/150 (met 0/3)
+ 128  goals: switching respond respond 50/100 (met 0/3); recall lag1 remember 25/150 (met 0/3); reading echo2 echo 0/150 (met 0/3)
+ 129  goals: switching respond respond 70/100 (met 0/3); recall lag1 remember 40/150 (met 0/3); reading echo2 echo 6/150 (met 0/3)
+ 130  goals: switching respond respond 105/100 (met 1/3); recall lag1 remember 60/150 (met 0/3); reading echo2 echo -1/150 (met 0/3)
+ 130              respon   tell discri revers rememb win-st   copy   echo babble   work   size  ports
+      switching      105      .      .      .      .      .      .      .      .     35     11  reads ear+eye writes A+hand  (population, training)  [stage 0 respond, 10 generations]
+                     162      .      .      .      .      .      .      .      .  (its best, held out)
+      recall           2      .      .      .     60      .      .      .      .    614     56  reads eye+touch+ear writes hand+A  (population, training)  [stage 0 lag1, 10 generations]
+                      11      .      .      .     43      .      .      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      .     -1    866     74     77  reads M writes voice+A  (population, training)  [stage 1 echo2, 10 generations]
+                       .      .      .      .      .      .      .     23    981  (its best, held out)
+      generalist       4     22    -11     -7      0      4     13    -18    765    407     89  reads eye+M+S+affect+ear writes hand+A+voice  (population, training)
+                       2      3     -1     17    -12     -2      6    -16    906  (its best, held out)
+ 131  goals: switching respond respond 122/100 (met 2/3); recall lag1 remember 36/150 (met 0/3); reading echo2 echo 4/150 (met 0/3)
+ 132  goals: switching respond respond 130/100 (met 3/3); recall lag1 remember 24/150 (met 0/3); reading echo2 echo 8/150 (met 0/3)
+ 133  goals: switching tell tell 166/100 (met 1/3); recall lag1 remember 60/150 (met 0/3); reading echo2 echo 18/150 (met 0/3)
+ 133  switching moves to stage 1 (tell): goal met
+ 134  goals: switching tell tell 226/100 (met 2/3); recall lag1 remember 50/150 (met 0/3); reading echo2 echo 7/150 (met 0/3)
+ 135  goals: switching tell tell 259/100 (met 3/3); recall lag1 remember 103/150 (met 0/3); reading echo2 echo 19/150 (met 0/3)
+ 136  goals: switching winstay win-stay -124/80 (met 0/3); recall lag1 remember 125/150 (met 0/3); reading echo2 echo 36/150 (met 0/3)
+ 136  switching moves to stage 2 (winstay): goal met
+ 137  goals: switching winstay win-stay -19/80 (met 0/3); recall lag1 remember 100/150 (met 0/3); reading echo2 echo 34/150 (met 0/3)
+---- container restarted at generation 137; resumed from the generation-120 checkpoint (reading at echo2) with prediction, maze and shapes islands, lessons reaching every lifetime, checkpoints every 5 ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 0 (respond)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 0 (lag1)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 1 (echo2)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck120b.txt: 16 genomes, generation 120, stage 0 (all)
+islands: switching, recall, reading, generalist, prediction, maze, shapes of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+switching climbs: respond > tell > winstay > discrim > swap1 > swap3
+recall climbs: lag1 > lag2 > lag3 > lag4
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+prediction climbs: cycle1 > cycle2 > cycle3 > cycle4 > order2 > cycle8
+maze climbs: turn > walk > gone > long > symbol > symbolgone
+shapes climbs: clean > blur1 > blur2 > shift8 > shift64 > paying
+ 121  goals: switching respond respond 57/100 (met 0/3); recall lag1 remember 22/150 (met 0/3); reading echo2 echo 11/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 122  goals: switching respond respond 74/100 (met 0/3); recall lag1 remember 22/150 (met 0/3); reading echo2 echo 3/150 (met 0/3); prediction cycle1 surprise 1/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 123  goals: switching respond respond 69/100 (met 0/3); recall lag1 remember 15/150 (met 0/3); reading echo2 echo -4/150 (met 0/3); prediction cycle1 surprise 1/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 124  goals: switching respond respond 57/100 (met 0/3); recall lag1 remember 14/150 (met 0/3); reading echo2 echo 0/150 (met 0/3); prediction cycle1 surprise -1/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 125  goals: switching respond respond 124/100 (met 1/3); recall lag1 remember 28/150 (met 0/3); reading echo2 echo 10/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+---- resumed at generation 125: up and down moves; probing split into (genome, world) jobs ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck125.txt: 16 genomes, generation 125, stage 0 (respond)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck125.txt: 16 genomes, generation 125, stage 0 (lag1)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck125.txt: 16 genomes, generation 125, stage 1 (echo2)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck125.txt: 16 genomes, generation 125, stage 0 (all)
+resumed prediction from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck125.txt: 16 genomes, generation 125, stage 0 (cycle1)
+resumed maze from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck125.txt: 16 genomes, generation 125, stage 0 (turn)
+resumed shapes from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck125.txt: 16 genomes, generation 125, stage 0 (clean)
+islands: switching, recall, reading, generalist, prediction, maze, shapes of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+switching climbs: respond > tell > winstay > discrim > swap1 > swap3
+recall climbs: lag1 > lag2 > lag3 > lag4
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+prediction climbs: cycle1 > cycle2 > cycle3 > cycle4 > order2 > cycle8
+maze climbs: turn > walk > gone > long > symbol > symbolgone
+shapes climbs: clean > blur1 > blur2 > shift8 > shift64 > paying
+ 126  goals: switching respond respond 32/100 (met 0/3); recall lag1 remember 16/150 (met 0/3); reading echo2 echo 25/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 127  goals: switching respond respond 16/100 (met 0/3); recall lag1 remember 1/150 (met 0/3); reading echo2 echo 32/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 128  goals: switching respond respond 19/100 (met 0/3); recall lag1 remember 1/150 (met 0/3); reading echo2 echo 26/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 0/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 129  goals: switching respond respond 73/100 (met 0/3); recall lag1 remember 10/150 (met 0/3); reading echo2 echo 24/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 2/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 130  goals: switching respond respond 114/100 (met 1/3); recall lag1 remember 24/150 (met 0/3); reading echo2 echo 35/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 8/200 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 130              respon   tell discri revers rememb win-st   copy   echo babble surpri   maze   work   size  ports
+      switching      114      .      .      .      .      .      .      .      .      .      .     78      7  reads ear+eye writes A+hand  (population, training)  [stage 0 respond, 5 generations]
+                     108      .      .      .      .      .      .      .      .      .      .  (its best, held out)
+      recall           7      .      .      .     24      .      .      .      .      .      .    109     48  reads M+eye writes hand  (population, training)  [stage 0 lag1, 5 generations]
+                       5      .      .      .     56      .      .      .      .      .      .  (its best, held out)
+      reading          .      .      .      .      .      .      .     35    522      .      .    133     78  reads M+touch writes voice+A+hand  (population, training)  [stage 1 echo2, 5 generations]
+                       .      .      .      .      .      .      .     59    992      .      .  (its best, held out)
+      generalist     -15     14      1      9      7      0     10      4    694     21      0    762     74  reads eye+S+M+ear+affect writes voice+hand+A  (population, training)
+                      14     10      9    -11      3      4      5     -5    954     18      1  (its best, held out)
+      prediction       .      .      .      .      .      .      .      .      .      0      .      0      5  reads  writes   (population, training)  [stage 0 cycle1, 5 generations]
+                       .      .      .      .      .      .      .      .      .      0      .  (its best, held out)
+      maze             .      .      .      .      .      .      .      .      .      .      8     28      9  reads eye writes hand  (population, training)  [stage 0 turn, 5 generations]
+                       .      .      .      .      .      .      .      .      .      .      2  (its best, held out)
+      shapes           0      0      .      .      .      .      .      .      .      .      .      0      9  reads ear writes hand  (population, training)  [stage 0 clean, 5 generations]
+                       0      0      .      .      .      .      .      .      .      .      .  (its best, held out)
+---- resumed at generation 130: screen island added ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck130.txt: 16 genomes, generation 130, stage 0 (respond)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck130.txt: 16 genomes, generation 130, stage 0 (lag1)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck130.txt: 16 genomes, generation 130, stage 1 (echo2)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck130.txt: 16 genomes, generation 130, stage 0 (all)
+resumed prediction from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck130.txt: 16 genomes, generation 130, stage 0 (cycle1)
+resumed maze from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck130.txt: 16 genomes, generation 130, stage 0 (turn)
+resumed shapes from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck130.txt: 16 genomes, generation 130, stage 0 (clean)
+islands: switching, recall, reading, generalist, prediction, maze, screen, shapes of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+switching climbs: respond > tell > winstay > discrim > swap1 > swap3
+recall climbs: lag1 > lag2 > lag3 > lag4
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+prediction climbs: cycle1 > cycle2 > cycle3 > cycle4 > order2 > cycle8
+maze climbs: turn > walk > gone > long > symbol > symbolgone
+screen climbs: two > row > square > full > pick > crowd
+shapes climbs: clean > blur1 > blur2 > shift8 > shift64 > paying
+ 131  goals: switching respond respond 114/100 (met 1/3); recall lag1 remember 24/150 (met 0/3); reading echo2 echo 35/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 8/200 (met 0/3); screen two screen 0/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 132  goals: switching respond respond 118/100 (met 2/3); recall lag1 remember 41/150 (met 0/3); reading echo2 echo 35/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 18/200 (met 0/3); screen two screen 0/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 133  goals: switching respond respond 106/100 (met 3/3); recall lag1 remember 18/150 (met 0/3); reading echo2 echo 18/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 10/200 (met 0/3); screen two screen 1/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 134  goals: switching tell tell 140/100 (met 1/3); recall lag1 remember 34/150 (met 0/3); reading echo2 echo 16/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 5/200 (met 0/3); screen two screen 0/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 134  switching moves to stage 1 (tell): goal met
+ 135  goals: switching tell tell 158/100 (met 2/3); recall lag1 remember 44/150 (met 0/3); reading echo2 echo 29/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 14/200 (met 0/3); screen two screen 3/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 136  goals: switching tell tell 133/100 (met 3/3); recall lag1 remember 63/150 (met 0/3); reading echo2 echo 37/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 7/200 (met 0/3); screen two screen 3/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 137  goals: switching winstay win-stay 33/80 (met 0/3); recall lag1 remember 36/150 (met 0/3); reading echo2 echo 20/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 13/200 (met 0/3); screen two screen 3/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 137  switching moves to stage 2 (winstay): goal met
+ 138  goals: switching winstay win-stay 55/80 (met 0/3); recall lag1 remember 47/150 (met 0/3); reading echo2 echo 30/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 12/200 (met 0/3); screen two screen 0/300 (met 0/3); shapes clean tell -1/150 (met 0/3)
+ 139  goals: switching winstay win-stay 63/80 (met 0/3); recall lag1 remember 39/150 (met 0/3); reading echo2 echo 2/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 17/200 (met 0/3); screen two screen 5/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+ 140  goals: switching winstay win-stay 72/80 (met 0/3); recall lag1 remember 55/150 (met 0/3); reading echo2 echo -2/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 20/200 (met 0/3); screen two screen 7/300 (met 0/3); shapes clean tell -1/150 (met 0/3)
+ 140  plasmids moved: screen->switching (2 populations), shapes->switching (1 populations), maze->recall (1 populations), screen->recall (1 populations), recall->reading (5 populations), shapes->reading (1 populations), switching->generalist (6 populations), reading->generalist (5 populations), maze->prediction (1 populations), screen->prediction (2 populations), reading->maze (8 populations), screen->maze (2 populations), reading->screen (12 populations), prediction->screen (0 populations), maze->shapes (1 populations), maze->shapes (1 populations)
+      every island's best on every probe, held out:
+                  respon   tell discri revers rememb win-st   copy   echo babble surpri   maze screen
+      switching      109    190     -4     -8     -2      4     -4      5    600     -8     -7      4
+      recall          -9     57      5     -6     37      1     -8     34     29     -5      5      7
+      reading          0      8     -3     -1      0     -2     -4      0    469    -10      0      3
+---- resumed at generation 140: screen walls (2-D maze) and smaller cells ----
+resumed switching from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 2 (winstay)
+resumed recall from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 0 (lag1)
+resumed reading from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 1 (echo2)
+resumed generalist from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 0 (all)
+resumed prediction from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 0 (cycle1)
+resumed maze from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 0 (turn)
+resumed screen from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 0 (two)
+resumed shapes from /tmp/claude-0/-home-user-neurocomp-rust/c740d567-6f32-5a8a-a35e-8dde0bec7b33/scratchpad/ck140.txt: 16 genomes, generation 140, stage 0 (clean)
+islands: switching, recall, reading, generalist, prediction, maze, screen, shapes of 16, elite 4, 12 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 20 (2 plasmids an island), thrift true
+switching climbs: respond > tell > winstay > discrim > swap1 > swap3
+recall climbs: lag1 > lag2 > lag3 > lag4
+reading climbs: babble > echo2 > echo4 > echo8 > fade6 > fade4 > fade2 > read
+prediction climbs: cycle1 > cycle2 > cycle3 > cycle4 > order2 > cycle8
+maze climbs: turn > walk > gone > long > symbol > symbolgone
+screen climbs: two > row > square > full > grid > walls > maze > bigmaze > pick > crowd
+shapes climbs: clean > blur1 > blur2 > shift8 > shift64 > paying

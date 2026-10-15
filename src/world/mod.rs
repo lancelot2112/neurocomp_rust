@@ -208,6 +208,10 @@ pub struct World {
     lights: Vec<BitVector>,
     /// how each hand move feels
     felt: Vec<BitVector>,
+    /// task cues: a code per task, felt on the touch channel while `task_cue` names it
+    cues: Vec<BitVector>,
+    /// the task on now, felt as its cue every step (none: no cue)
+    pub task_cue: Option<usize>,
     voice: Effector,
     hand: Effector,
     cond_total: usize,
@@ -368,6 +372,8 @@ impl World {
             tones: codes(2, &mut r(0x7070)),
             lights: codes(2, &mut r(0x1167)),
             felt: codes(MOVES, &mut r(0xFE17)),
+            cues: codes(2, &mut r(0xC0E5)),
+            task_cue: None,
             voice: Effector::new(tokens, &mut r(0x7AC7)),
             hand: Effector::new(MOVES, &mut r(0x40B5)),
             cond_total: 0,
@@ -820,6 +826,9 @@ impl World {
             let run: Vec<usize> = (start..start + ACTIVE).collect();
             put(&mut senses, AFFECT, &BitVector::from_bits(&run, CH_BITS));
             ev.stroked = true;
+        }
+        if let Some(k) = self.task_cue {
+            put(&mut senses, TOUCH, &self.cues[k % self.cues.len()].clone());
         }
         ev.present = self.present;
         self.events.push(ev);

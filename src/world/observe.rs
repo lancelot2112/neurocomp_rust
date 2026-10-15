@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select"];
 /// How many probes there are.
-pub const NPROBES: usize = 13;
+pub const NPROBES: usize = 14;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -189,7 +189,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = if won_n == 0 || lost_n == 0 { 0 } else { (won * 1024 / won_n - lost * 1024 / lost_n) as i32 };
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -280,6 +280,27 @@ pub fn surprise(events: &[Event]) -> i32 {
         return 0;
     }
     (odd_c * 1024 / odd - kept_c * 1024 / kept) as i32
+}
+
+/// Task selection, in a lifetime of blocks that alternate between two tasks (`evolve::Task::Mixed`):
+/// responding (clicks while a light is up minus clicks in a matched stretch with none, in the
+/// conditioning blocks) and babbling (the shown tokens said at least once, in the reading blocks),
+/// their mean, minus doing the other task's thing: the voice used during conditioning blocks and
+/// clicks during reading blocks (each per 1024 of those blocks' steps). A selector scores high;
+/// one that does both all the time scores far below 0; one that does only one task about half.
+/// (Set by `evolve::probe_scores_in` from a mixed lifetime: `probes` leaves it 0.)
+pub fn select(events: &[Event]) -> i32 {
+    let cond: Vec<Event> = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_))).cloned().collect();
+    let seq: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    if cond.is_empty() || seq.is_empty() {
+        return 0;
+    }
+    let tr = trials(&cond, (3, 5), (7, 9));
+    let all = |_: &Trial| true;
+    let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
+    let voice = (cond.iter().filter(|e| e.said.is_some()).count() * 1024 / cond.len()) as i32;
+    let clicks = (seq.iter().filter(|e| e.moved == Some(CLICK)).count() * 1024 / seq.len()) as i32;
+    (respond + babble(events)) / 2 - voice - clicks
 }
 
 /// Repeating what paid: over a maze lifetime's choices in order, how often the next turn is the
@@ -735,6 +756,49 @@ mod tests {
         assert!(follows[5] > -80, "{follows:?}");
         // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
         assert!(blind[4] > 500, "{blind:?}");
+    }
+
+    #[test]
+    fn select_scores_doing_each_task_in_its_block_and_not_both_at_once() {
+        // blocks alternating a conditioning block (40 trials, no swaps) and a reading block (400
+        // tokens, two of them), the block's task as `task_cue`; test-only policies: a selector
+        // clicks at a light in conditioning blocks and says a random token in reading blocks; a
+        // doer of both clicks at anything seen and says a token every step; a silent one
+        let run = |kind: u8, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let mut before = false;
+            for b in 0..4 {
+                w.task_cue = Some(b % 2);
+                if b % 2 == 0 {
+                    w.reversal_period = 40;
+                    w.conditioning(Conditioning::Reversal, 40);
+                } else {
+                    let toks: Vec<usize> = (0..400).map(|_| rand::Rng::gen_range(&mut rng, 0..2)).collect();
+                    w.sequence_marked(&toks, &vec![false; 400]);
+                }
+                while !w.done() {
+                    let seen = channel(&senses, EYE).count_ones() > 0;
+                    let second = seen && before;
+                    before = seen;
+                    let token = rand::Rng::gen_range(&mut rng, 0..2);
+                    let (say, hand) = match (kind, w.task_cue) {
+                        (0, Some(0)) => (None, second.then_some(CLICK)),
+                        (0, _) => (Some(token), None),
+                        (1, _) => (Some(token), seen.then_some(CLICK)),
+                        _ => (None, None),
+                    };
+                    let a = w.act(say, hand);
+                    senses = w.step(&a);
+                }
+            }
+            select(&w.events)
+        };
+        let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
+        let (selector, both, silent) = (mean(0), mean(1), mean(2));
+        assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
     }
 
     #[test]

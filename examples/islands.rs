@@ -54,6 +54,11 @@
 //! writing back into its source, or the destination); one whose predictions come true 16 times
 //! or more over a generation's lifetimes is added to the genome, tagged `explored`.
 //!
+//! `ISL_SELECTION=1`: a ninth island, task selection: one lifetime with one network, blocks that
+//! alternate between responding (click at a light) and babbling (vary the voice), scored by
+//! `select` (both tasks done, minus doing the other's thing); its ladder starts with each block's
+//! task felt as a cue, then none, then short blocks.
+//!
 //! `ISL_FRONTIER=1`: the generalist is scored at the frontier, on each other island's current
 //! stage (its probes, in its world; each probe from the first island that has it), not on all
 //! twelve probes in the plain world. In the plain world most probes are the top of another
@@ -262,6 +267,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "symbol" => stage.lesson.symbol = v == "1",
                 "fixed" => stage.lesson.maze_fixed = v == "1",
                 "nocue" => stage.lesson.maze_nocue = v == "1",
+                "cue" => stage.lesson.mixed_cue = v == "1",
+                "block" => stage.lesson.mixed_block = v.parse().expect("block"),
                 "sw" => stage.lesson.screen_w = v.parse().expect("sw"),
                 "sh" => stage.lesson.screen_h = v.parse().expect("sh"),
                 "lit" => stage.lesson.screen_lit = v.parse().expect("lit"),
@@ -377,6 +384,14 @@ const SCREEN_LADDER: &str = "glow probes=screen sw=2 sh=1 lit=1 torch=1 dark=1 g
     pick probes=screen sw=2 sh=2 lit=2 goal=screen@150; \
     crowd probes=screen sw=4 sh=2 lit=4";
 
+/// Task selection's ladder: one lifetime, one network, blocks alternating responding (click at a
+/// light, the hand) and babbling (vary the voice, the tokens shown), scored by `select` (the two
+/// tasks' mean minus doing the other's thing). First with each block's task felt as a cue on the
+/// touch channel, then with none (the task read from the scene), then short blocks.
+const SELECTION_LADDER: &str = "cued probes=select tokens=2 cue=1 goal=select@600; \
+    uncued probes=select tokens=2 cue=0 goal=select@600; \
+    short probes=select tokens=2 cue=0 block=10";
+
 /// The world the generalist and the cross-island table use: the plain world, with a cycle of 3
 /// broken one time in 8 for surprise (the plain stream has no pattern to break).
 fn plain() -> Lesson {
@@ -441,6 +456,12 @@ fn main() {
         let lesson = Lesson { swaps: 0, blur: 2, shift: 16, ..Lesson::default() };
         islands.push(Island { name: "shapes".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![0, 1, 2], lesson, goal: vec![], hold: 0 }] });
     }
+    // (`ISL_SELECTION=1`: task selection, one lifetime of blocks alternating two tasks; starts
+    // naked or from a checkpoint)
+    if env("ISL_SELECTION", 0u8) == 1 {
+        let lesson = Lesson { tokens: 2, mixed_cue: true, ..Lesson::default() };
+        islands.push(Island { name: "selection".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![13], lesson, goal: vec![], hold: 0 }] });
+    }
     // (`ISL_LADDERS=1`: the default ladders; `ISL_LADDER_<island>`: one's own)
     let ladders = env("ISL_LADDERS", 0u8) == 1;
     for isl in islands.iter_mut() {
@@ -455,6 +476,7 @@ fn main() {
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 "maze" => isl.stages = ladder(MAZE_LADDER),
                 "screen" => isl.stages = ladder(SCREEN_LADDER),
+                "selection" => isl.stages = ladder(SELECTION_LADDER),
                 _ => {}
             }
         }

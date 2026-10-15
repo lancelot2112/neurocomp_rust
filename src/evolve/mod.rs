@@ -206,6 +206,11 @@ pub enum Task {
     Maze(usize),
     /// a screen of this many trials (`World::screen`)
     Screen(usize),
+    /// task selection: this many blocks, alternating a conditioning block (a light to click, no
+    /// swaps) and a reading block (tokens shown, no teacher), in one lifetime with one network;
+    /// each block `Lesson::mixed_block` trials (a reading block ten tokens a trial), with the
+    /// block's task felt as a cue on the touch channel if `Lesson::mixed_cue`
+    Mixed(usize),
 }
 
 /// Where a lifetime's world physics comes from.
@@ -260,6 +265,9 @@ pub struct Lesson {
     pub symbol: bool,
     pub maze_fixed: bool,
     pub maze_nocue: bool,
+    /// task selection (`Task::Mixed`): trials a block, and a cue for the block's task
+    pub mixed_block: usize,
+    pub mixed_cue: bool,
     pub screen_w: usize,
     pub screen_h: usize,
     pub screen_lit: usize,
@@ -274,6 +282,21 @@ pub struct Lesson {
     /// the ration refills it. So compute beyond the ration must be earned by scoring.
     pub ration: u64,
     pub food: u64,
+}
+
+/// A mixed lifetime's block `b` (`Task::Mixed`): even, a conditioning block; odd, a reading one.
+fn mixed_block(w: &mut World, b: usize, lesson: &Lesson, tokens: usize, seed: u64) {
+    let n = lesson.mixed_block.max(1);
+    w.task_cue = lesson.mixed_cue.then_some(b % 2);
+    if b % 2 == 0 {
+        w.reversal_period = n;
+        w.conditioning(Conditioning::Reversal, n);
+    } else {
+        let mut r = StdRng::seed_from_u64(seed ^ 0x313C ^ b as u64);
+        let toks: Vec<usize> = (0..n * 10).map(|_| r.gen_range(0..tokens)).collect();
+        w.teacher = false;
+        w.sequence_marked(&toks, &vec![false; toks.len()]);
+    }
 }
 
 /// Steps a lifetime is scored over for its food (`Lesson::food`).
@@ -295,7 +318,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -342,7 +365,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         Physics::Varied => seed.wrapping_mul(0xA24B_AED4_963E_E407),
     };
     // (a lesson's token count changes only reading lifetimes; conditioning keeps its 8)
-    let reading = matches!(task, Task::Sequence(_) | Task::Reading(_));
+    let reading = matches!(task, Task::Sequence(_) | Task::Reading(_) | Task::Mixed(_));
     let tokens = if reading { lesson.tokens.clamp(2, 8) } else { 8 };
     let mut w = World::with_physics(p, seed, tokens);
     w.gap_max = gap;
@@ -394,14 +417,26 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         }
         Task::Maze(n) => w.maze(n),
         Task::Screen(n) => w.screen(n),
+        Task::Mixed(_) => mixed_block(&mut w, 0, &lesson, tokens, seed),
     }
+    let mut blk = 0usize;
     let mut net = g.build(&w, seed ^ 0x5EED);
     let mut act = BitVector::new(world::ACT_BITS, Some(0));
     // energy (`Lesson::ration`): the store, below 0 the network rests
     let (ration, food) = (lesson.ration as i64, lesson.food as i64);
     let mut store = ration.saturating_mul(64);
     let mut block = 0usize;
-    while !w.done() {
+    loop {
+        // (a mixed lifetime: the next block once one ends)
+        if w.done() {
+            match task {
+                Task::Mixed(blocks) if blk + 1 < blocks => {
+                    blk += 1;
+                    mixed_block(&mut w, blk, &lesson, tokens, seed);
+                }
+                _ => break,
+            }
+        }
         let senses = w.step(&act);
         if ration > 0 {
             // it eats what it scores: the last block of steps, by its task's probes
@@ -415,6 +450,11 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
                     Task::Sequence(_) => observe::probes(e, 1, e, e, b, e, e),
                     Task::Maze(_) => observe::probes(e, 1, e, e, e, b, e),
                     Task::Screen(_) => observe::probes(e, 1, e, e, e, e, b),
+                    Task::Mixed(_) => {
+                        let mut r = [0; observe::NPROBES];
+                        r[13] = observe::select(b);
+                        r
+                    }
                 };
                 fed = food.saturating_mul(row.iter().map(|&x| x.max(0) as i64).sum::<i64>()) / 1024;
                 block = w.events.len();
@@ -583,18 +623,21 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (pat, w4) = if want(&[9]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
     let (maz, w5) = if want(&[10, 12]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
     let (scr, w6) = if want(&[11]) { live_lesson(g, Task::Screen(trials), physics, seed ^ 0x5C2E, gap, lesson) } else { (vec![], 0) };
-    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len()).max(1) as u64;
+    let blocks = (trials / lesson.mixed_block.max(1)).max(2);
+    let (mix, w7) = if want(&[13]) { live_lesson(g, Task::Mixed(blocks), physics, seed ^ 0x313C, gap, lesson) } else { (vec![], 0) };
+    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
+    row[13] = observe::select(&mix);
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) {
             *x = 0;
         }
     }
-    (row, (w1 + w2 + w3 + w4 + w5 + w6) / steps)
+    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7) / steps)
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.

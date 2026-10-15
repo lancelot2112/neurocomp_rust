@@ -27,7 +27,8 @@
 //! wires, what it reads and writes, what could hold state) and classified: its role from its
 //! wiring (reflex, sensor, driver, babbler, relay, sealed), what it scores alone against its blind
 //! control (`ISL_PLASMID_WORLDS` held-out worlds, 16), and the recipient's stage probes with it and
-//! without it (helps, hurts, neutral: a change of `NOTICE`).
+//! without it (helps, hurts, mixed: gains on some probes and losses on others, or neutral: a
+//! change of `NOTICE`).
 //!
 //! Every `ISL_REPORT` generations, per island: its population's means on its own probes (training
 //! worlds), its best genome's probes on held-out worlds, its work per step and which ports its
@@ -496,7 +497,11 @@ fn main() {
                 let host = probe_all_in(vec![recipient, child], trials, Physics::Varied, &plasmid_worlds, gap, &st.probes, st.lesson);
                 let (without, with) = (probe_means(&host[0].probes), probe_means(&host[1].probes));
                 let judged: Vec<usize> = if st.goal.is_empty() { st.probes.clone() } else { st.goal.iter().map(|&(p, _)| p).collect() };
-                let verdict = if judged.iter().any(|&p| with[p] - without[p] <= -NOTICE) { "hurts" } else if judged.iter().any(|&p| with[p] - without[p] >= NOTICE) { "helps" } else { "neutral" };
+                // (an island scored on many probes can keep a plasmid that gains on one and loses
+                // on others: lexicase takes each probe as its own case, so that is "mixed")
+                let gains = judged.iter().any(|&p| with[p] - without[p] >= NOTICE);
+                let losses = judged.iter().any(|&p| with[p] - without[p] <= -NOTICE);
+                let verdict = match (gains, losses) { (true, true) => "mixed", (false, true) => "hurts", (true, false) => "helps", _ => "neutral" };
                 let deltas: Vec<String> = judged.iter().filter(|&&p| with[p] != without[p]).map(|&p| format!("{} {:+}", PROBES[p], with[p] - without[p])).collect();
                 let kind = format!(
                     "{role}; {}{}; {verdict} in {} ({})",

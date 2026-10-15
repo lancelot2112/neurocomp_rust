@@ -513,6 +513,19 @@ pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physi
     probe_all_in(population, trials, physics, seeds, gap, wanted, Lesson::default())
 }
 
+/// The carrying cost: work per step charged for each token of a genome (`set_carry`), so that
+/// carrying what does nothing costs something, as a plasmid costs the cell that copies it. 0: none.
+static CARRY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Sets the carrying cost for every probing from now on.
+pub fn set_carry(per_token: u64) {
+    CARRY.store(per_token, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn carry() -> u64 {
+    CARRY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// `probe_all` in a world set by a lesson.
 pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, wanted: &[usize], lesson: Lesson) -> Vec<Probed<G>> {
     // one job a (genome, world) lifetime set, taken from a shared counter by whichever thread is
@@ -549,13 +562,16 @@ pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Ph
             }
         }
     });
+    let carry = carry();
     population
         .into_iter()
         .enumerate()
         .map(|(i, g)| {
             let r = &results[i * seeds.len()..(i + 1) * seeds.len()];
-            let work = r.iter().map(|x| x.1).sum::<u64>() / seeds.len().max(1) as u64;
-            Probed { probes: r.iter().map(|x| x.0).collect(), works: r.iter().map(|x| x.1).collect(), work, genome: g }
+            let cost = carry * g.size() as u64;
+            let works: Vec<u64> = r.iter().map(|x| x.1.saturating_add(cost)).collect();
+            let work = works.iter().sum::<u64>() / seeds.len().max(1) as u64;
+            Probed { probes: r.iter().map(|x| x.0).collect(), works, work, genome: g }
         })
         .collect()
 }

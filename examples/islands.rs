@@ -30,6 +30,12 @@
 //! without it (helps, hurts, mixed: gains on some probes and losses on others, or neutral: a
 //! change of `NOTICE`).
 //!
+//! As bacteria keep plasmids: `ISL_PLASMID_MAX` (0: any size) cuts a circuit of more populations
+//! to the chosen one and its nearest neighbours in it (a small mobile unit, not a busy channel's
+//! tangle); `ISL_EXCLUDE=1` sends nothing to a recipient that already carries every population
+//! of it (one plasmid of a kind); `ISL_CARRY` (0) charges that much work per step for each token
+//! a genome carries, so what does nothing costs something.
+//!
 //! Every `ISL_REPORT` generations, per island: its population's means on its own probes (training
 //! worlds), its best genome's probes on held-out worlds, its work per step and which ports its
 //! genomes read and write.
@@ -306,6 +312,7 @@ fn plain() -> Lesson {
 fn main() {
     neurocomp::program::neurocomp::set_in_place(env("ISL_INPLACE", 0u8) == 1);
     neurocomp::program::neurocomp::set_count_reads(env("ISL_READS", 0u8) == 1);
+    neurocomp::evolve::set_carry(env("ISL_CARRY", 0u64));
     let pop: usize = env("ISL_POP", 16);
     let elite: usize = env("ISL_ELITE", 4);
     let gens: usize = env("ISL_GENS", 300);
@@ -394,8 +401,8 @@ fn main() {
             }
         }
     }
-    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place());
+    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}",
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1);
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
@@ -403,6 +410,8 @@ fn main() {
     let mut was = stages.clone();
     // plasmids: those already in the populations (moved before a resume), then each one moved
     let plasmid_worlds: Vec<u64> = held.iter().copied().take(env("ISL_PLASMID_WORLDS", 16usize)).collect();
+    let plasmid_max: usize = env("ISL_PLASMID_MAX", 0);
+    let exclude = env("ISL_EXCLUDE", 0u8) == 1;
     let mut followed: Vec<Moved> = Vec::new();
     for (i, popn) in start.iter().enumerate() {
         let mut found: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
@@ -437,10 +446,17 @@ fn main() {
         }
         let mut child = recipient.clone();
         let k = rng.gen_range(0..donor.populations());
-        let moved = child.take_population_plasmid(donor, k, rng);
-        // the plasmid's populations get numbered ids; one that was itself moved before names the
-        // plasmid it came from (the same population but for its id and channel tags)
+        let moved = child.take_population_plasmid_upto(donor, k, plasmid_max, rng);
+        // (the same population but for its id and channel tags)
         let bare = |p: &Pop| Pop { id: 0, from: 0, to: 0, gate: p.gate.map(|(_, on)| (0, on)), pause: p.pause.map(|(_, on)| (0, on)), ..p.clone() };
+        // exclusion: a recipient that already carries every population of it takes nothing (two
+        // copies of one circuit would pile up, as a cell holds one plasmid of a kind)
+        if exclude && moved.iter().all(|t| match t { Token::Pop(q) => recipient.tokens.iter().any(|r| matches!(r, Token::Pop(p) if bare(p) == bare(q))), _ => true }) {
+            pending.borrow_mut().push((n, recipient.clone(), recipient.clone(), vec![], vec![]));
+            return (recipient.clone(), "(excluded: the recipient already carries it)".into());
+        }
+        // the plasmid's populations get numbered ids; one that was itself moved before names the
+        // plasmid it came from
         let at = child.tokens.len() - moved.len();
         let mut parents = Vec::new();
         for (j, t) in child.tokens[at..].iter_mut().enumerate() {
@@ -484,7 +500,7 @@ fn main() {
                 let (from, to) = (*from, *to);
                 let route = format!("#{n} {}->{}", islands[from].name, islands[to].name);
                 if tokens.is_empty() {
-                    moved_lines.push(format!("{route}: nothing"));
+                    moved_lines.push(format!("{route}: {}", what.trim_matches(|c| c == '(' || c == ')')));
                     let _ = writeln!(log, "generation {g}: {route}\n{what}");
                     continue;
                 }

@@ -477,9 +477,14 @@ impl TagGenome {
     /// `fresh`, every reference that resolved to it now names `fresh` exactly, and populations
     /// get new ids from `next_id`. What the circuit reads and writes outside stays as it was.
     fn private_circuit(&self, channel: usize, fresh: u8, next_id: &mut u32) -> Vec<Token> {
+        self.private_tokens(&self.circuit(channel), channel, fresh, next_id)
+    }
+
+    /// `private_circuit` on some of the circuit's tokens (`at`: indices, the channel's first).
+    fn private_tokens(&self, at: &[usize], channel: usize, fresh: u8, next_id: &mut u32) -> Vec<Token> {
         let ch = Channels::of(&self.tokens);
-        self.circuit(channel)
-            .into_iter()
+        at.iter()
+            .copied()
             .map(|i| match &self.tokens[i] {
                 Token::Channel { width, hold, .. } => Token::Channel { tag: fresh, width: *width, hold: *hold },
                 Token::Pop(p) => {
@@ -583,11 +588,19 @@ impl TagGenome {
     /// reads and writes ports), the population alone, with a new id. Appended to this genome;
     /// returns the plasmid's tokens as moved (empty if the donor has no population).
     pub fn take_population_plasmid(&mut self, donor: &TagGenome, k: usize, rng: &mut StdRng) -> Vec<Token> {
+        self.take_population_plasmid_upto(donor, k, 0, rng)
+    }
+
+    /// `take_population_plasmid`, with a circuit of more than `max` populations (0: no limit)
+    /// cut to the chosen population and its nearest neighbours in the circuit (genome order),
+    /// `max` of them with the channel: a small mobile unit, not a busy channel's whole tangle.
+    pub fn take_population_plasmid_upto(&mut self, donor: &TagGenome, k: usize, max: usize, rng: &mut StdRng) -> Vec<Token> {
         let pops: Vec<usize> = (0..donor.tokens.len()).filter(|&i| matches!(donor.tokens[i], Token::Pop(_))).collect();
         if pops.is_empty() {
             return vec![];
         }
-        let Token::Pop(p) = &donor.tokens[pops[k % pops.len()]] else { unreachable!() };
+        let chosen = pops[k % pops.len()];
+        let Token::Pop(p) = &donor.tokens[chosen] else { unreachable!() };
         let ch = Channels::of(&donor.tokens);
         let touched = [(!p.from_port).then_some(p.from), (!p.to_port).then_some(p.to), p.gate.map(|g| g.0), p.pause.map(|g| g.0)]
             .into_iter()
@@ -595,6 +608,18 @@ impl TagGenome {
             .find_map(|t| ch.internal(t));
         let before = self.tokens.len();
         match touched {
+            Some(c) if max > 0 && donor.circuit(c).len() > max + 1 => {
+                let circ = donor.circuit(c);
+                let members = &circ[1..];
+                let at = members.iter().position(|&i| i == chosen).unwrap_or(0);
+                let lo = at.saturating_sub((max - 1) / 2).min(members.len() - max);
+                let keep: Vec<usize> = std::iter::once(circ[0]).chain(members[lo..lo + max].iter().copied()).collect();
+                let fresh = self.fresh_tag(rng);
+                let mut next = self.next_id.max(donor.next_id);
+                let moved = donor.private_tokens(&keep, c, fresh, &mut next);
+                self.next_id = next;
+                self.tokens.extend(moved);
+            }
             Some(c) => self.take_plasmid(donor, c, rng),
             None => {
                 let mut q = p.clone();
@@ -1434,6 +1459,26 @@ mod tests {
         assert_eq!((moved.len(), h.channels(), h.populations()), (1, 0, 1));
         let Token::Pop(p) = &h.tokens[0] else { panic!() };
         assert!(p.from_port && p.to_port && p.id >= 4);
+    }
+
+    #[test]
+    fn a_capped_plasmid_takes_the_chosen_population_and_its_neighbours() {
+        let r = 0x3C;
+        // five populations touch R; the third (k = 2) is chosen
+        let mut t = vec![Token::Channel { tag: r, width: 3, hold: false }];
+        for id in 1..=5 {
+            t.push(Token::Pop(Pop { count: id as u8, ..Pop::wire(id, SENSES, r) }));
+        }
+        let donor = TagGenome { tokens: t, next_id: 6 };
+        let mut rng = StdRng::seed_from_u64(1);
+        let mut g = TagGenome { tokens: vec![], next_id: 1 };
+        let moved = g.take_population_plasmid_upto(&donor, 2, 3, &mut rng);
+        // the channel and three populations: the chosen one (count 3) and one either side
+        let counts: Vec<u8> = moved.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p.count) } else { None }).collect();
+        assert_eq!((g.channels(), counts), (1, vec![2, 3, 4]));
+        // no limit: the whole circuit
+        let mut h = TagGenome { tokens: vec![], next_id: 1 };
+        assert_eq!(h.take_population_plasmid_upto(&donor, 2, 0, &mut rng).len(), 6);
     }
 
     #[test]

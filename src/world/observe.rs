@@ -190,6 +190,12 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence)]
 }
 
+/// The farthest lag copy and echo compare against: both count only steps with that many steps
+/// behind them, so near and far lags have the same number of chances to match (counting from each
+/// lag's own start gave the near lags more, which a blind speaker turned into a score: about 80
+/// with 2 tokens).
+const FAR: usize = 12;
+
 /// Reading aloud: of the tokens said while tokens are shown one a step, how many match a token
 /// shown 1 to 4 steps before, minus how many match one shown 9 to 12 steps before (chance: the
 /// shown tokens are independent), per token said. Only tokens shown without a teacher saying them
@@ -203,7 +209,7 @@ pub fn copy(events: &[Event]) -> i32 {
         return 0;
     }
     let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
-        lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && !ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
+        lags.map(|l| (FAR..ev.len()).filter(|&t| ev[t].said.is_some() && !ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
     };
     ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
 }
@@ -221,7 +227,7 @@ pub fn echo(events: &[Event]) -> i32 {
         return 0;
     }
     let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
-        lags.map(|l| (l..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
+        lags.map(|l| (FAR..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
     };
     ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
 }
@@ -475,7 +481,9 @@ mod tests {
         };
         let (reads, echoes) = (run(false), run(true));
         assert!(reads > 350, "{reads}");
-        assert!(echoes.abs() < 100, "{echoes}");
+        // (echoing earns no copy: it never says an untaught token at its own lag, so it scores at
+        // or below 0)
+        assert!(echoes < 100, "{echoes}");
         // and the echo probe the other way round: echoing scores, and so does reading everything
         // (it says the taught tokens too), while a blind random speaker does not
         let echo_of = |echo_only: bool| -> i32 {
@@ -509,6 +517,22 @@ mod tests {
             echo(&w.events)
         };
         assert!(random.abs() < 150, "{random}");
+        // a blind speaker with two tokens and the teacher on every one: near and far lags have
+        // the same chances, so it scores about 0 (the old count gave it about 80)
+        let blind2: i32 = (0..16u64).map(|seed| {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let toks: Vec<usize> = (0..200).map(|_| rand::Rng::gen_range(&mut rng, 0..2)).collect();
+            let mut w = World::new(seed, 2);
+            w.teacher = true;
+            w.teacher_rate = 8;
+            w.sequence(&toks);
+            while !w.done() {
+                let a = w.act(Some(rand::Rng::gen_range(&mut rng, 0..2)), None);
+                w.step(&a);
+            }
+            echo(&w.events)
+        }).sum::<i32>() / 16;
+        assert!(blind2.abs() < 40, "{blind2}");
         // babbling: how many of the shown tokens were ever said
         let babbled = |say: &dyn Fn(usize) -> Option<usize>| -> i32 {
             let mut w = World::new(6, 8);

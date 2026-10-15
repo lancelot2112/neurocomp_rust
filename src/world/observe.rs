@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise"];
 /// How many probes there are.
-pub const NPROBES: usize = 9;
+pub const NPROBES: usize = 10;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -147,7 +147,7 @@ fn rate(tr: &[Trial], pick: impl Fn(&Trial) -> bool, click: impl Fn(&Trial) -> b
 ///
 /// And from a sequence lifetime (a random token shown on the eye each step):
 /// - copy: says the token it saw a few steps ago (see `copy`).
-pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[Event]) -> ProbeRow {
+pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[Event], pattern: &[Event]) -> ProbeRow {
     let tr = trials(reversal, (3, 5), (7, 9));
     let all = |_: &Trial| true;
     let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
@@ -187,7 +187,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // repeat rate; one that never clicks scores 0)
     let r = |c: i64, n: i64| if n == 0 { 0 } else { c * 1024 / n };
     let win_stay = (r(won, won_n) - r(lost, lost_n)) as i32;
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -253,6 +253,33 @@ pub fn babble(events: &[Event]) -> i32 {
     ((said & shown).count_ones() as i64 * 1024 / shown.count_ones() as i64) as i32
 }
 
+/// Surprise: on a stream of tokens with a pattern (a cycle) that some tokens break, how much
+/// more often the program clicks in the 3 steps after a token that broke it than after one that
+/// kept it, in parts per 1024. A click needs no code learned for any token, so this asks only
+/// whether the program predicted the stream: a blind clicker, or one that clicks on every token,
+/// scores 0. (Tokens kept within 3 steps after a break are left out of the comparison.)
+pub fn surprise(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    let clicked = |t: usize| (t + 1..=(t + 3).min(ev.len().saturating_sub(1))).any(|u| ev[u].moved == Some(CLICK));
+    let (mut odd, mut odd_c, mut kept, mut kept_c) = (0i64, 0i64, 0i64, 0i64);
+    for t in 0..ev.len().saturating_sub(3) {
+        if ev[t].shown.is_none() {
+            continue;
+        }
+        if ev[t].odd {
+            odd += 1;
+            odd_c += clicked(t) as i64;
+        } else if !(t.saturating_sub(3)..t).any(|u| ev[u].odd) {
+            kept += 1;
+            kept_c += clicked(t) as i64;
+        }
+    }
+    if odd == 0 || kept == 0 {
+        return 0;
+    }
+    (odd_c * 1024 / odd - kept_c * 1024 / kept) as i32
+}
+
 /// Sequence: steps where a next token was due, and those where the program said it on the
 /// step before it was shown.
 pub fn anticipation(events: &[Event]) -> (u32, u32) {
@@ -279,6 +306,40 @@ pub fn echoes(events: &[Event]) -> (u32, u32) {
 mod tests {
     use super::super::*;
     use super::*;
+
+    #[test]
+    fn surprise_scores_a_clicker_that_predicts_and_not_a_blind_one() {
+        // a cycle of three tokens, one in eight replaced by another; test-only policies: one that
+        // sees the observer's marks clicks the step after a break, one clicks at random, one on
+        // every token
+        let run = |click: &dyn Fn(bool, &mut rand::rngs::StdRng) -> bool| -> i32 {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(2);
+            let mut odd = vec![];
+            let toks: Vec<usize> = (0..400).map(|i| {
+                let c = [5, 1, 6][i % 3];
+                let t = if rand::Rng::gen_ratio(&mut rng, 1, 8) { rand::Rng::gen_range(&mut rng, 0..8) } else { c };
+                odd.push(t != c);
+                t
+            }).collect();
+            let mut w = World::new(6, 8);
+            w.sequence_marked(&toks, &odd);
+            let mut last_odd = false;
+            while !w.done() {
+                let a = w.act(None, click(last_odd, &mut rng).then_some(CLICK));
+                w.step(&a);
+                last_odd = w.events.last().unwrap().odd;
+            }
+            surprise(&w.events)
+        };
+        let predicts = run(&|o, _| o);
+        let random = run(&|_, r| rand::Rng::gen_ratio(r, 1, 3));
+        let always = run(&|_, _| true);
+        let never = run(&|_, _| false);
+        assert!(predicts > 800, "{predicts}");
+        assert!(random.abs() < 150, "{random}");
+        assert_eq!(always, 0);
+        assert_eq!(never, 0);
+    }
 
     #[test]
     fn the_delayed_light_flashes_delay_steps_before_the_window() {
@@ -385,7 +446,7 @@ mod tests {
                 let a = d.act(None, if (4..=6).contains(&since) { Some(CLICK) } else { None });
                 prev = d.step(&a);
             }
-            probes(&w.events, 50, &d.events, &[])
+            probes(&w.events, 50, &d.events, &[], &[])
         };
         let blind = run(&|_, t| t % 3 == 0);
         // a test-only policy that knows the phase (an oracle for checking the observer): clicks
@@ -427,7 +488,7 @@ mod tests {
                 t += 1;
             }
             let d = World::new(8, 4);
-            (probes(&w.events, 50, &d.events, &[])[0], w.events.len())
+            (probes(&w.events, 50, &d.events, &[], &[])[0], w.events.len())
         };
         let (locked, steps) = run(0);
         let (jittered, longer) = run(6);

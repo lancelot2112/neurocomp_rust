@@ -6,7 +6,9 @@
 //! - recall: respond, remember (a light gone a few steps ago);
 //! - reading: copy (say the token shown on the eye a few steps before) and echo (say the token
 //!   the teacher said a few steps before: the stepping stone, sound to voice with no glyph);
-//! - generalist: all eight.
+//! - generalist: all ten (surprise on a cycle of 3 broken one time in 8);
+//! - prediction (`ISL_PREDICTION=1`): surprise, clicking after a token that broke the stream's
+//!   cycle.
 //! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (one population of a
 //! donor with the circuit of any channel it touches, made private; or the population alone if it
 //! only reads and writes ports) from the best genomes of other islands into its new children, so a circuit grown under one pressure is tried under another. Each plasmid is
@@ -42,7 +44,7 @@
 use std::io::Write;
 
 use neurocomp::evolve::tags::{TagGenome, Token};
-use neurocomp::evolve::{evolve_islands, probe_all, probe_all_in, probe_means, Island, Lesson, Physics, Stage, ALL_PROBES};
+use neurocomp::evolve::{evolve_islands, probe_all_in, probe_means, Island, Lesson, Physics, Stage, ALL_PROBES};
 use neurocomp::world::observe::{ProbeRow, PROBES};
 use rand::rngs::StdRng;
 use rand::Rng;
@@ -74,6 +76,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "teach" => stage.lesson.teach = v.parse().expect("teach"),
                 "swaps" => stage.lesson.swaps = v.parse().expect("swaps"),
                 "delay" => stage.lesson.delay = v.parse().expect("delay"),
+                "period" => stage.lesson.period = v.parse().expect("period"),
+                "noise" => stage.lesson.noise = v.parse().expect("noise"),
                 "hold" => stage.hold = v.parse().expect("hold"),
                 "goal" => stage.goal = v.split('+').map(|g| {
                     let (p, x) = g.split_once('@').expect("probe@score");
@@ -113,6 +117,24 @@ const RECALL_LADDER: &str = "lag1 probes=respond+remember delay=1 goal=remember@
     lag3 probes=respond+remember delay=3 goal=remember@150; \
     lag4 probes=respond+remember delay=4";
 
+/// Prediction's ladder: a stream of tokens in a cycle, one in eight replaced by another; the
+/// program is scored on clicking after a token that broke the cycle (surprise), with no code to
+/// learn for any token. A break in a cycle of k is a token unlike the one k steps back, so each
+/// stage asks for a longer reach into the past; the last ones need the two tokens before (a cycle
+/// of 6 over 3 tokens repeats tokens) and a longer cycle.
+const PREDICTION_LADDER: &str = "cycle1 probes=surprise period=1 noise=1 goal=surprise@200; \
+    cycle2 probes=surprise period=2 noise=1 goal=surprise@200; \
+    cycle3 probes=surprise period=3 noise=1 goal=surprise@200; \
+    cycle4 probes=surprise period=4 noise=1 goal=surprise@200; \
+    order2 probes=surprise period=6 tokens=3 noise=1 goal=surprise@150; \
+    cycle8 probes=surprise period=8 noise=1";
+
+/// The world the generalist and the cross-island table use: the plain world, with a cycle of 3
+/// broken one time in 8 for surprise (the plain stream has no pattern to break).
+fn plain() -> Lesson {
+    Lesson { period: 3, noise: 1, ..Lesson::default() }
+}
+
 fn main() {
     let pop: usize = env("ISL_POP", 16);
     let elite: usize = env("ISL_ELITE", 4);
@@ -140,8 +162,13 @@ fn main() {
         Island::plain("switching", vec![0, 1, 2, 3, 5]),
         Island::plain("recall", vec![0, 4]),
         Island::plain("reading", vec![6, 7]),
-        Island::plain("generalist", ALL_PROBES.to_vec()),
+        Island { name: "generalist".into(), stages: vec![Stage { name: "all".into(), probes: ALL_PROBES.to_vec(), lesson: plain(), goal: vec![], hold: 0 }] },
     ];
+    // (`ISL_PREDICTION=1`: a fifth island, prediction, on the surprise probe; it starts naked, or
+    // from a checkpoint that has it)
+    if env("ISL_PREDICTION", 0u8) == 1 {
+        islands.push(Island { name: "prediction".into(), stages: vec![Stage { name: "all".into(), probes: vec![9], lesson: plain(), goal: vec![], hold: 0 }] });
+    }
     // (`ISL_LADDERS=1`: the default ladders; `ISL_LADDER_<island>`: one's own)
     let ladders = env("ISL_LADDERS", 0u8) == 1;
     for isl in islands.iter_mut() {
@@ -152,6 +179,7 @@ fn main() {
                 "reading" => isl.stages = ladder(READING_LADDER),
                 "switching" => isl.stages = ladder(SWITCHING_LADDER),
                 "recall" => isl.stages = ladder(RECALL_LADDER),
+                "prediction" => isl.stages = ladder(PREDICTION_LADDER),
                 _ => {}
             }
         }
@@ -237,7 +265,7 @@ fn main() {
             println!("      every island's best on every probe, held out:{}", "");
             println!("      {:<11}{names}", "");
             for (i, isl) in islands.iter().enumerate() {
-                let h = probe_all(vec![r.ranked[i][0].clone()], trials, Physics::Varied, &held, gap, &ALL_PROBES);
+                let h = probe_all_in(vec![r.ranked[i][0].clone()], trials, Physics::Varied, &held, gap, &ALL_PROBES, plain());
                 println!("      {:<11}{}", isl.name, row(&probe_means(&h[0].probes), &ALL_PROBES));
             }
         }

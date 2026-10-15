@@ -109,6 +109,9 @@ pub struct Event {
     pub present: bool,
     /// reading: a teacher said the shown token aloud this step
     pub taught: bool,
+    /// sequence: the token shown this step broke the stream's pattern (the observer's mark; the
+    /// program only sees the token)
+    pub odd: bool,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -155,7 +158,7 @@ enum Scene {
     /// (kind, trials left, step in the trial, a cue trial, stroked this trial)
     Conditioning(Conditioning, usize, usize, bool, bool),
     /// the tokens still to be shown
-    Sequence(std::collections::VecDeque<usize>),
+    Sequence(std::collections::VecDeque<(usize, bool)>),
     /// steps left, a caregiver there
     Echo(usize, bool),
     /// a gap between conditioning trials: (kind, trials left after it, steps left in the gap)
@@ -281,8 +284,13 @@ impl World {
 
     /// A sequence: the tokens shown one per step.
     pub fn sequence(&mut self, tokens: &[usize]) {
+        self.sequence_marked(tokens, &[]);
+    }
+
+    /// A sequence with some tokens marked as breaking its pattern (for the observer only).
+    pub fn sequence_marked(&mut self, tokens: &[usize], odd: &[bool]) {
         self.present = false;
-        self.scene = Scene::Sequence(tokens.iter().copied().collect());
+        self.scene = Scene::Sequence(tokens.iter().enumerate().map(|(i, &t)| (t, odd.get(i).copied().unwrap_or(false))).collect());
     }
 
     /// Echo play: `steps` steps; a caregiver comes or goes every 8, there half the time.
@@ -299,7 +307,7 @@ impl World {
     pub fn step(&mut self, act: &BitVector) -> BitVector {
         let said = self.voice.articulate(&channel(act, VOICE));
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if let Some(w) = said {
@@ -388,9 +396,10 @@ impl World {
             }
             Scene::Sequence(mut q) => {
                 ev.scene = SceneKind::Sequence;
-                if let Some(tok) = q.pop_front() {
+                if let Some((tok, odd)) = q.pop_front() {
                     put(&mut senses, EYE, &self.glyphs[tok].clone());
                     ev.shown = Some(tok);
+                    ev.odd = odd;
                     if self.teacher && self.rng.gen_ratio(self.teacher_rate.min(8), 8) {
                         put(&mut senses, EAR, &self.sounds[tok].clone());
                         ev.taught = true;

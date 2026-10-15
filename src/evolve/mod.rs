@@ -226,19 +226,24 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
 /// What a stage of a curriculum sets in the world (the harness's side only; the network is
 /// never told): how many distinct tokens a reading lifetime uses (2 to 8); how often the teacher
 /// says a shown token aloud, in eighths; how many times the paying light swaps in a reversal
-/// lifetime; and how many steps before the response window the delayed light flashes (1 to 5).
-/// The default is the plain world: 8 tokens, the teacher on half of them, 3 swaps, a delay of 3.
+/// lifetime; how many steps before the response window the delayed light flashes (1 to 5); and
+/// the pattern of a prediction lifetime's stream: a cycle of `period` tokens drawn each lifetime
+/// (0: no pattern, each token drawn alone), each token replaced by a random one with chance
+/// `noise` in 8. The default is the plain world: 8 tokens, the teacher on half of them, 3 swaps, a
+/// delay of 3, no pattern.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lesson {
     pub tokens: usize,
     pub teach: u32,
     pub swaps: usize,
     pub delay: usize,
+    pub period: usize,
+    pub noise: u32,
 }
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0 }
     }
 }
 
@@ -266,9 +271,24 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         }
         Task::Sequence(n) | Task::Reading(n) => {
             let mut r = StdRng::seed_from_u64(seed ^ 0x5E9);
-            let toks: Vec<usize> = (0..n).map(|_| r.gen_range(0..tokens)).collect();
+            // (a prediction lifetime: a cycle drawn for this lifetime, some tokens replaced by a
+            // random other one, which the observer marks as breaking it)
+            let cycle: Vec<usize> = (0..lesson.period).map(|_| r.gen_range(0..tokens)).collect();
+            let mut odd = Vec::with_capacity(n);
+            let toks: Vec<usize> = (0..n)
+                .map(|i| {
+                    if cycle.is_empty() {
+                        odd.push(false);
+                        return r.gen_range(0..tokens);
+                    }
+                    let c = cycle[i % cycle.len()];
+                    let t = if lesson.noise > 0 && r.gen_ratio(lesson.noise.min(8), 8) { (c + r.gen_range(1..tokens)) % tokens } else { c };
+                    odd.push(t != c);
+                    t
+                })
+                .collect();
             w.teacher = matches!(task, Task::Reading(_));
-            w.sequence(&toks)
+            w.sequence_marked(&toks, &odd)
         }
     }
     let mut net = g.build(&w, seed ^ 0x5EED);
@@ -413,7 +433,7 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
 /// The probes of one genome in one world seed (see `observe::probes`), and its work per step.
 /// Only the lifetimes the `wanted` probes need are lived (a serial-reversal lifetime for respond,
 /// tell, discriminate, reverse and win-stay; a delayed one for remember; reading with a teacher
-/// for copy and echo),
+/// for copy, echo and babble; a patterned stream for surprise),
 /// `trials` trials or tokens each, with gaps of 0 to `gap` steps between trials; the other
 /// probes read 0.
 pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize]) -> (observe::ProbeRow, u64) {
@@ -426,19 +446,20 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
     let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap) } else { (vec![], 0) };
     let (del, w2) = if want(&[4]) { live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap) } else { (vec![], 0) };
-    let (seq, w3) = if want(&[6, 7, 8]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, lesson) } else { (vec![], 0) };
-    let steps = (rev.len() + del.len() + seq.len()).max(1) as u64;
-    let mut row = observe::probes(&rev, period, &del, &seq);
+    let (seq, w3) = if want(&[6, 7, 8]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
+    let (pat, w4) = if want(&[9]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
+    let steps = (rev.len() + del.len() + seq.len() + pat.len()).max(1) as u64;
+    let mut row = observe::probes(&rev, period, &del, &seq, &pat);
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) {
             *x = 0;
         }
     }
-    (row, (w1 + w2 + w3) / steps)
+    (row, (w1 + w2 + w3 + w4) / steps)
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.

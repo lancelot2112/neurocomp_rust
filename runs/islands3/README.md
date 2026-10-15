@@ -1,24 +1,46 @@
 # Island run 3
 
-The island run of experiment 13 (`wiki/experiments/13-islands-and-ladders.md`), saved to move
-machines.
+The island run of experiment 13 (`wiki/experiments/13-islands-and-ladders.md`), generations 0 to
+399, on the old runtime (every channel cleared or copied each step, edges reading the frame
+before).
 
-- `checkpoint-140.txt`: every island's population at generation 140, with its ladder stage.
-- `log.txt`: the run's output up to the move: rows, goal progress, stage moves, exchanges, and
-  each restart, marked with `----` and what changed.
-- `plasmids.txt`: every plasmid moved, with the circuit it carried.
+- `log.txt`: the run's output: rows, goal progress, stage moves, held-out checks, exchanges,
+  plasmids, and each restart, marked with `----` and what changed. From generation 300 every
+  generation's line carries its UTC time and seconds.
+- `plasmids.txt`: every plasmid moved, with the circuit it carried; from generation 300 also what
+  it was made of, what it scored alone against its blind control, and its recipient with and
+  without it.
+- `checkpoint-140.txt`: every island at generation 140, when the run moved to the workstation.
+- `checkpoint-299.txt`: at generation 299, before plasmid tracking.
+- `checkpoint.txt`: at generation 399, the end. (The restart points at 325, 335, 355 and 375 are
+  not kept in the repository.)
+
+What changed on the way, from the log:
+- 140: moved from the cloud container (about 60 s a generation) to the workstation (about 20 s).
+- 299: plasmids numbered, measured, classified and followed.
+- 325: recall's ladder starts at respond (lag1 needs a population that clicks at a light).
+- 335: a stage move needs the elite to meet the goal on the 48 held-out worlds too.
+- 355: shapes' ladder gets win-stay before paying, then a swap.
+- 375: screen's ladder starts with a torch (the glyph shows only under the cursor).
+
+Where it ended (generation 399, population means on training worlds):
+
+| island | stage | goal probe |
+|---|---|---|
+| switching | swap1 (stage 4 of 6) | reverse 21 / 80 |
+| recall | respond (new first rung) | respond 23 / 100 |
+| reading | echo2 | echo 27 / 150 |
+| prediction | cycle1 | surprise 53 / 200 |
+| maze | turn | maze 27 / 200 |
+| screen | torch (new first rung) | screen 14 / 300 |
+| shapes | winstay (stage 5 of 8) | win-stay 13 / 80 (from -112) |
 
 Resume (from the repository root, after `cargo build --release`):
 
     ISL_SCREEN=1 ISL_MAZE=1 ISL_PREDICTION=1 ISL_SHAPES=1 ISL_LADDERS=1 ISL_CKPT=5 ISL_HELD=48 \
-    ISL_RESUME=runs/islands3/checkpoint-140.txt \
+    ISL_GENS=500 ISL_RESUME=runs/islands3/checkpoint.txt \
     ISL_CHECKPOINT=runs/islands3/checkpoint.txt ISL_LOG=runs/islands3/plasmids.txt \
     cargo run --release --example islands >> runs/islands3/log.txt 2>&1
-
-Every other setting is the default (16 genomes an island, elite 4, 12 training worlds, 200
-trials, gaps 0-6, exchange every 20, 2 plasmids, thrift on, 300 generations). Lifetimes are
-deterministic by seed and spread over every core. The count of generations in a row on a goal
-is not saved, so a resumed island needs its goal met 3 fresh generations.
 
 Rechecking an island's elite on fresh worlds:
 

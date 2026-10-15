@@ -1,0 +1,2223 @@
+generation 20: #0 reading->switching
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads ear+host; writes A; memory repeat; gated
+  alone/blind: respond 7/1 tell -7/-10 discriminate 0/4 reverse -6/3 remember 3/-1 win-stay -4/4 copy -18/-33 echo -16/11 babble 144/144 surprise 9/9 screen 5/5
+  in switching on respond, with/without: respond 6/0
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in switching (respond +6)
+   ear -> A kernels Shr(57) lag 1 cover, tiles of 8 bits n2 in4 out16 q2/4 tonic 1/4 gate - sparse
+
+generation 20: #1 maze->switching
+  made of: 6 populations, 1 channels, 20 kernels, 2 wires; reads eye+host; writes hand+host; memory loop+grows; gated
+  alone/blind: respond -34/-13 tell 137/6 discriminate -5/-14 reverse -18/-5 remember 19/3 win-stay -1/-12 surprise 18/24 maze -11/1 screen -4/11
+  in switching on respond, with/without: respond -45/96
+  kind: reflex (senses to act); senses for tell; hurts in switching (respond -141)
+C1 channel 01011001  1024 bits
+   C1 -> C1 wire Add(5) lag 1 whole tonic 1/8 grow(syn 16, out 8-64) gate C1 sparse replicate at 8 (to a neighbour tile)
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n6 in16 out16 q2/4 tonic 1/8
+   C1 -> C1 wire Set lag 1 whole gate C1
+   eye -> hand kernels Shl(52) lag 1 cover, tiles of 128 bits n6 in4 out16 q2/4 tonic 1/8 gate C1 sparse
+   eye -> hand kernels Shl(53) lag 1 cover, tiles of 128 bits n6 in4 out16 q2/4 tonic 1/8 gate C1 sparse
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 16 bits n2 in16 out16 q2/4 gate C1 sparse
+
+generation 20: #2 reading->recall
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads touch+host; writes A; memory none; gated
+  alone/blind: respond 4/0 tell 6/-15 discriminate -14/3 reverse -13/-11 remember -1/-2 win-stay -13/-12 copy -6/-19 echo -7/-29 babble 448/416 surprise 1/-45 maze 3/1 screen -3/9
+  in recall on respond, with/without: respond -6/14
+  kind: reflex (senses to act); senses for surprise; scores babble blind; neutral in recall (respond -20)
+   touch -> A kernels Clear lag 1 cover, tiles of 64 bits n7 in16 out16 q2/4 tonic 1/8 gate -
+
+generation 20: #3 reading->recall
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads ear+host; writes A; memory repeat; gated
+  alone/blind: respond -3/-3 tell -3/-3 discriminate 5/5 reverse 5/5 win-stay 5/5 copy 10/2 echo -3/35 babble 160/160 surprise -10/-19 maze 1/1 screen 1/0
+  in recall on respond, with/without: respond -13/-14
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in recall (respond +1)
+   ear -> A kernels Shr(57) lag 1 cover, tiles of 8 bits n2 in4 out16 q2/4 tonic 1/4 gate - sparse
+
+generation 20: #4 generalist->reading
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads eye; writes voice; memory repeat+grows
+  alone/blind: copy 2/0 echo 1/0 babble 16/0
+  in reading on babble, with/without: babble 864/800
+  kind: reflex (senses to act); senses for nothing alone; helps in reading (babble +64)
+   eye -> voice kernels Nor lag 1 cover, tiles of 16 bits n2 in16 out16 q2/4 grow(syn 16, out 8-64, repeat 5) replicate at 8 (in place)
+
+generation 20: #5 shapes->reading
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads S; writes hand; memory grows
+  alone/blind: respond 34/0 tell 64/0 surprise -5/0 maze 36/0
+  in reading on babble, with/without: babble 960/960
+  kind: reflex (senses to act); senses for tell; neutral in reading (no change)
+   S -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 16, out 8-64)
+
+generation 20: #6 maze->generalist
+  made of: 6 populations, 1 channels, 8 kernels, 4 wires; reads host; writes host; memory loop+grows; gated
+  alone/blind: all 0
+  in generalist on all, with/without: respond 8/9 tell -33/-31 discriminate -13/-13 reverse 10/10 remember -9/-15 win-stay 10/10 copy -11/-11 echo 16/16 babble 472/472 maze 9/2 screen -16/-3
+  kind: relay (host to host); senses for nothing alone; neutral in generalist (respond -1, tell -2, remember +6, maze +7, screen -13)
+C1 channel 01100111  2048 bits
+   C1 -> C1 wire Add(5) lag 1 whole tonic 1/8 grow(syn 16, out 8-64) gate C1 sparse replicate at 8 (to a neighbour tile)
+   C1 -> C1 kernels Shr(61) lag 1 cover, tiles of 64 bits n6 in16 out16 q2/4 tonic 1/8
+   C1 -> C1 wire Set lag 1 whole gate C1
+   C1 -> C1 wire Add(5) lag 1 whole tonic 1/8 grow(syn 16, out 8-64) gate C1 sparse replicate at 8 (to a neighbour tile)
+   C1 -> C1 wire Set lag 1 whole gate C1
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 16 bits n2 in16 out16 q2/4 gate C1 sparse
+
+generation 20: #7 shapes->generalist
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads nothing; writes host; memory repeat
+  alone/blind: all 0
+  in generalist on all, with/without: respond -3/-3 tell -2/-2 discriminate -10/-10 reverse 18/18 remember 4/4 copy 9/9 echo 3/3 babble 272/272 surprise 12/12 maze 1/1 screen 9/9
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in generalist (no change)
+   (a population with no channel to read or write)
+
+generation 20: #8 shapes->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads S; writes hand; memory grows
+  alone/blind: respond 34/0 tell 64/0 surprise -5/0 maze 36/0
+  in prediction on cycle1, with/without: surprise 66/0
+  kind: reflex (senses to act); senses for tell; helps in prediction (surprise +66)
+   S -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 16, out 8-64, new)
+
+generation 20: #9 screen->prediction
+  made of: 2 populations, 1 channels, 10 kernels, 0 wires; reads S+host; writes hand; memory none; gated
+  alone/blind: respond -18/-10 tell 0/-6 discriminate 2/-33 reverse 1/-62 remember 6/-12 win-stay 28/-29 surprise -20/12 maze -2/-1 screen 8/-2
+  in prediction on cycle1, with/without: surprise -19/13
+  kind: reflex (senses to act); senses for reverse+win-stay; neutral in prediction (surprise -32)
+C1 channel 10111011  256 bits
+   S -> hand kernels And lag 1 cover, tiles of 64 bits n5 in9 out16 q2/4 tonic 1/4 gate C1 runs while !C1 sparse
+   S -> hand kernels And lag 1 cover, tiles of 64 bits n5 in9 out16 q2/4 tonic 1/4 gate C1 runs while C1 sparse
+
+generation 20: #10 shapes->maze
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads S; writes hand; memory grows
+  alone/blind: respond 34/0 tell 64/0 surprise -5/0 maze 36/0
+  in maze on turn, with/without: maze 40/0
+  kind: reflex (senses to act); senses for tell; helps in maze (maze +40)
+   S -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 16, out 8-64)
+
+generation 20: #11 generalist->maze
+  made of: 6 populations, 1 channels (1 hold), 24 kernels, 0 wires; reads eye; writes A+hand+host; memory holds+loop+history+repeat+grows; gated
+  alone/blind: respond -6/2 tell 23/14 discriminate 11/0 reverse 17/-21 remember -10/-20 win-stay 9/67 copy -13/-12 echo 0/-2 babble 712/680 surprise -34/-16 maze -1/-6 screen -3/2
+  in maze on turn, with/without: maze 26/40
+  kind: reflex (senses to act); senses for nothing alone; scores win-stay+babble blind; neutral in maze (maze -14)
+C1 channel 11010101  64 bits  holds
+   C1 -> C1 kernels Sub(3) lag 1 cover, tiles of 32 bits n2 in16 out16 q2/4 grow(syn 16, out 8-63) sparse
+   eye -> A kernels And lag 1 cover, tiles of 128 bits n5 in8 out16 q2/4 tonic 1/4 gate !C1 sparse replicate at 8 (to a neighbour tile)
+   eye -> A kernels And lag 1 cover, tiles of 128 bits n5 in8 out16 q2/4 tonic 1/8 gate !C1 sparse replicate at 16 (to a neighbour tile)
+   eye -> A kernels And lag 1 cover, tiles of 128 bits n5 in8 out16 q2/4 tonic 1/4 gate !C1 sparse replicate at 16 (to a neighbour tile)
+   eye -> hand kernels And lag 2 field 4w@18606 -> 1w@0 n5 in8 out16 q3/4 tonic 1/4 gate !C1 replicate at 16 (to a neighbour tile) rot 61
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 32 bits n2 in16 out16 q2/4 grow(syn 16, out 8-63) sparse
+
+generation 20: #12 prediction->screen
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads host; writes nothing; memory none
+  alone/blind: all 0
+  in screen on torch, with/without: screen 0/15
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in screen (screen -15)
+   (a population with no channel to read or write)
+
+generation 20: #13 reading->screen
+  made of: 4 populations, 1 channels, 3 kernels, 1 wires; reads ear; writes A+host; memory repeat; gated
+  alone/blind: respond -2/1 tell -6/-3 discriminate -7/-4 reverse -11/-2 remember 5/5 win-stay -8/-9 copy -4/-29 echo 0/27 babble 104/104
+  in screen on torch, with/without: screen -7/2
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in screen (screen -9)
+C1 channel 00011011  1024 bits
+   ear -> A kernels Shr(58) lag 1 field 1w@18237 -> 1w@0 n1 in4 out16 q2/4 tonic 1/8 gate C1 sparse
+   C1 -> C1 kernels Xor lag 1 cover, tiles of 8 bits n1 in8 out16 q2/4 replicate at 32 (in place)
+   ear -> C1 kernels Shr(58) lag 1 cover, tiles of 8 bits n1 in4 out16 q2/4 tonic 1/4 gate C1
+   C1 -> A wire Or lag 1 whole
+
+generation 20: #14 recall->shapes
+  made of: 3 populations, 1 channels, 14 kernels, 1 wires; reads touch+host; writes A+voice; memory none; gated
+  alone/blind: respond 11/11 tell -5/-5 discriminate 9/9 remember -4/-4 win-stay 44/44 copy -6/-6 echo -12/-12 babble 632/632 surprise 1/1 maze 6/6 screen -1/-1
+  in shapes on clean, with/without: respond 9/-34 tell 11/-29
+  kind: reflex (senses to act); senses for nothing alone; scores win-stay+babble blind; helps in shapes (tell +40)
+C1 channel 01011010  1024 bits
+   C1 -> A kernels Shr(17) lag 1 cover, tiles of 16 bits n7 in4 out16 q2/4 tonic 1/2 sparse
+   touch -> voice wire Rotl(43) lag 1 whole gate C1
+   C1 -> A kernels Add(6) lag 1 cover, tiles of 16 bits n7 in4 out16 q2/4 tonic 1/2 gate !C1 sparse
+
+generation 20: #15 prediction->shapes
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: respond 78/9 tell 148/44 discriminate 11/6 reverse 18/9 remember -2/6 win-stay 21/-16 surprise -1/19 maze 42/1
+  in shapes on clean, with/without: respond 29/50 tell 88/49
+  kind: reflex (senses to act); senses for respond+tell+maze; neutral in shapes (tell +39)
+   eye -> hand kernels Xor lag 1 cover, tiles of 64 bits n7 in16 out16 q2/4 tonic 1/8 grow(syn 16, out 8-64) gate !- sparse
+
+generation 22: #0 gone from switching after 2 generations (peak 1 of 32)
+generation 22: #1 gone from switching after 2 generations (peak 1 of 32)
+generation 22: #4 gone from reading after 2 generations (peak 1 of 32)
+generation 22: #5 gone from reading after 2 generations (peak 1 of 32)
+generation 22: #8 gone from prediction after 2 generations (peak 1 of 32)
+generation 22: #9 gone from prediction after 2 generations (peak 1 of 32)
+generation 22: #10 gone from maze after 2 generations (peak 1 of 32)
+generation 22: #11 gone from maze after 2 generations (peak 1 of 32)
+generation 22: #12 gone from screen after 2 generations (peak 1 of 32)
+generation 22: #13 gone from screen after 2 generations (peak 1 of 32)
+generation 23: #6 gone from generalist after 3 generations (peak 1 of 32)
+generation 23: #7 gone from generalist after 3 generations (peak 1 of 32)
+generation 23: #14 gone from shapes after 3 generations (peak 1 of 32)
+generation 25: #2 gone from recall after 5 generations (peak 2 of 32)
+generation 25: #3 gone from recall after 5 generations (peak 5 of 32)
+generation 31: #15 gone from shapes after 11 generations (peak 4 of 32)
+generation 40: #16 recall->switching
+  made of: 3 populations, 1 channels, 14 kernels, 0 wires; reads host; writes A+voice; memory loop+grows; gated
+  alone/blind: respond -2/-2 discriminate -8/-8 reverse -21/-21 remember -3/-3 win-stay 1/1 copy -1/-1 echo 9/9 babble 360/360 surprise -9/-9 maze -3/-3 screen 13/13
+  in switching on winstay, with/without: respond 15/161 tell 42/192 win-stay -32/-192
+  kind: driver (host to act); senses for nothing alone; scores babble blind; helps in switching (win-stay +160)
+C1 channel 10110001  512 bits
+   C1 -> A kernels Sub(4) lag 1 field 1w@53620 -> 1w@1 n7 in4 out16 q2/4 tonic 1/2 gate !C1 sparse
+   C1 -> voice kernels Rotl(41) lag 1 cover, tiles of 8 bits n2 in8 out16 q2/4 sparse
+   C1 -> C1 kernels Rotl(15) lag 1 cover, tiles of 8 bits n5 in8 out16 q2/4 tonic 1/2 grow(syn 16, out 8-64)
+
+generation 40: #17 recall->switching
+  made of: 4 populations, 1 channels, 0 kernels, 4 wires; reads nothing; writes A; memory none
+  alone/blind: all 0
+  in switching on winstay, with/without: respond 160/160 tell 192/192 win-stay -64/-64
+  kind: babbler (acts on no sense); senses for nothing alone; neutral in switching (no change)
+C1 channel 00011001  512 bits
+   C1 -> A wire Or lag 1 whole
+   C1 -> A wire Or lag 1 whole
+   C1 -> A wire Shr(36) lag 1 whole
+   C1 -> A wire Or lag 1 whole
+
+generation 40: #18 maze->recall
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads nothing; writes host; memory history
+  alone/blind: all 0
+  in recall on respond, with/without: respond 2/2
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in recall (no change)
+   (a population with no channel to read or write)
+
+generation 40: #19 reading->recall
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear; writes voice; memory none
+  alone/blind: copy -5/-13 echo 2/8 babble 528/552
+  in recall on respond, with/without: respond 10/-10
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in recall (respond +20)
+   ear -> voice kernels Rotl(23) lag 1 cover, tiles of 16 bits n7 in16 out16 q2/4 tonic 1/2 rot 61
+
+generation 40: #20 shapes->reading
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads S; writes hand; memory grows
+  alone/blind: respond 67/0 tell 64/0 surprise 72/0 screen -10/0
+  in reading on babble, with/without: babble 960/960
+  kind: reflex (senses to act); senses for respond+tell+surprise; neutral in reading (no change)
+   S -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 16, out 7-64, new) rot 65475
+
+generation 40: #21 prediction->reading
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: respond -16/9 tell 176/-2 discriminate -7/-9 reverse -1/-25 remember -8/5 win-stay 5/-18 surprise -42/2 maze -9/0 screen 0/5
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for tell; neutral in reading (no change)
+   eye -> hand kernels Set lag 1 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 16, out 7-64) gate !- runs while !- sparse replicate at 4 (in place)
+
+generation 40: #22 maze->generalist
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond 24/-2 tell 121/-17 discriminate -22/-10 reverse -16/2 remember 18/0 win-stay 3/-39 surprise 4/0 maze -61/-6 screen -8/-7
+  in generalist on all, with/without: respond 8/0 tell 101/-18 discriminate -6/14 reverse -4/30 remember -37/9 win-stay -14/29 copy -17/-17 echo -21/-21 babble 552/552 surprise -3/-13 maze 10/0 screen 7/3
+  kind: reflex (senses to act); senses for tell+win-stay; mixed in generalist (respond +8, tell +119, discriminate -20, reverse -34, remember -46, win-stay -43, surprise +10, maze +10, screen +4)
+   eye -> hand kernels Xor lag 2 span 2 cover, tiles of 128 bits n7 in3 out16 q1/4 tonic 1/8 grow(syn 16, out 8-64) gate - sparse
+
+generation 40: #23 reading->generalist
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear; writes voice; memory none
+  alone/blind: copy -18/-2 echo -9/-9 babble 608/608
+  in generalist on all, with/without: respond 15/3 tell -3/-13 discriminate 8/-1 reverse 15/1 remember 5/2 win-stay -16/-39 copy -14/-11 echo 0/12 babble 576/832 surprise 0/5 screen -2/3
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; hurts in generalist (respond +12, tell +10, discriminate +9, reverse +14, remember +3, win-stay +23, copy -3, echo -12, babble -256, surprise -5, screen -5)
+   ear -> voice kernels Rotl(23) lag 1 cover, tiles of 16 bits n7 in16 out16 q2/4 tonic 1/2 rot 61
+
+generation 40: #24 reading->prediction
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads host; writes nothing; memory grows
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise 8/0
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in prediction (surprise +8)
+   (a population with no channel to read or write)
+
+generation 40: #25 reading->prediction
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear; writes voice; memory repeat
+  alone/blind: copy 0/13 echo -2/7 babble 648/640
+  in prediction on cycle1, with/without: all 0
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in prediction (no change)
+   ear -> voice kernels Add(5) lag 1 cover, tiles of 16 bits n7 in16 out16 q2/4 tonic 1/2 rot 61
+
+generation 40: #26 reading->maze
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear; writes voice; memory none
+  alone/blind: copy 2/-9 echo 3/-10 babble 600/608
+  in maze on turn, with/without: maze -15/40
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; hurts in maze (maze -55)
+   ear -> voice kernels Add(5) lag 1 cover, tiles of 16 bits n7 in17 out16 q3/4 tonic 1/2
+
+generation 40: #27 shapes->maze
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads S; writes hand; memory grows
+  alone/blind: surprise 39/0 maze 54/0 screen -22/0
+  in maze on turn, with/without: maze -77/11
+  kind: reflex (senses to act); senses for maze; hurts in maze (maze -88)
+   S -> hand wire Sub(4) lag 1 whole tonic 1/8 grow(syn 16, out 8-64, new)
+
+generation 40: #28 reading->screen
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear; writes voice; memory none
+  alone/blind: copy -7/-6 echo 1/0 babble 576/600
+  in screen on torch, with/without: screen 28/2
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in screen (screen +26)
+   ear -> voice kernels Rotl(23) lag 1 cover, tiles of 16 bits n7 in16 out16 q2/4 tonic 1/2 rot 61
+
+generation 40: #29 switching->screen
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: respond 98/0 tell 64/0 discriminate 0/-1 reverse 0/4 win-stay 0/-1 surprise -16/-11 maze 0/-4 screen -18/0
+  in screen on torch, with/without: screen 7/5
+  kind: reflex (senses to act); senses for respond+tell; neutral in screen (screen +2)
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) runs while !- replicate at 2 (in place) rot 65475
+
+generation 40: #30 generalist->shapes
+  made of: 4 populations, 1 channels, 4 kernels, 1 wires; reads ear; writes host; memory loop+repeat+grows; gated
+  alone/blind: all 0
+  in shapes on clean, with/without: respond 23/27 tell 52/61
+  kind: sensor (senses into the host); senses for nothing alone; neutral in shapes (tell -9)
+C1 channel 11011010  512 bits
+   ear -> C1 kernels Nor lag 1 cover, tiles of 16 bits n1 in4 out16 q2/4 grow(syn 16, out 8-64, new, repeat 2) gate C1 replicate at 8 (in place)
+   ear -> C1 kernels Nor lag 1 cover, tiles of 16 bits n1 in4 out16 q2/4 grow(syn 16, out 8-64, new, repeat 2) gate C1 replicate at 8 (in place)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n2 in16 out16 q2/4
+
+generation 40: #31 recall->shapes
+  made of: 5 populations, 1 channels, 0 kernels, 5 wires; reads nothing; writes A; memory none
+  alone/blind: all 0
+  in shapes on clean, with/without: respond 15/16 tell 20/1
+  kind: babbler (acts on no sense); senses for nothing alone; neutral in shapes (tell +19)
+C1 channel 01111000  512 bits
+   C1 -> A wire Or lag 1 whole
+   C1 -> A wire Or lag 1 whole
+   C1 -> A wire Shr(36) lag 1 whole
+   C1 -> A wire Or lag 1 whole
+   C1 -> A wire Or lag 1 whole
+
+generation 42: #16 gone from switching after 2 generations (peak 1 of 32)
+generation 42: #17 gone from switching after 2 generations (peak 1 of 32)
+generation 42: #19 gone from recall after 2 generations (peak 1 of 32)
+generation 42: #20 gone from reading after 2 generations (peak 1 of 32)
+generation 42: #21 gone from reading after 2 generations (peak 1 of 32)
+generation 42: #24 gone from prediction after 2 generations (peak 1 of 32)
+generation 42: #26 gone from maze after 2 generations (peak 1 of 32)
+generation 42: #27 gone from maze after 2 generations (peak 1 of 32)
+generation 42: #28 gone from screen after 2 generations (peak 1 of 32)
+generation 42: #30 gone from shapes after 2 generations (peak 1 of 32)
+generation 43: #18 gone from recall after 3 generations (peak 1 of 32)
+generation 43: #25 gone from prediction after 3 generations (peak 2 of 32)
+generation 44: #23 gone from generalist after 4 generations (peak 3 of 32)
+generation 44: #31 gone from shapes after 4 generations (peak 4 of 32)
+generation 48: #29 gone from screen after 8 generations (peak 11 of 32)
+generation 60: #32 shapes->switching
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads host; writes host; memory none; gated
+  alone/blind: all 0
+  in switching on winstay, with/without: respond 164/164 tell 320/320 win-stay -64/-64
+  kind: relay (host to host); senses for nothing alone; neutral in switching (no change)
+   (a population with no channel to read or write)
+
+generation 60: #33 reading->switching
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear+host; writes voice; memory none; gated
+  alone/blind: copy -4/-6 echo 15/-4 babble 560/560
+  in switching on winstay, with/without: respond 198/198 tell 384/384 win-stay -128/-128
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in switching (no change)
+   ear -> voice kernels Clear lag 1 field 2w@59288 -> 1w@0 n7 in17 out16 q3/4 tonic 1/2 runs while !- sparse
+
+generation 60: #34 switching->recall
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in recall on respond, with/without: respond 15/15
+  kind: relay (host to host); senses for nothing alone; neutral in recall (no change)
+   (a population with no channel to read or write)
+
+generation 60: #35 prediction->recall
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads ear; writes voice; memory none
+  alone/blind: copy -18/0 echo -7/-6 babble 352/352
+  in recall on respond, with/without: respond 7/7
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in recall (no change)
+   ear -> voice kernels Xor lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 tonic 1/8
+
+generation 60: #36 prediction->reading
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads ear; writes voice; memory none
+  alone/blind: copy 14/10 echo 16/4 babble 328/328
+  in reading on babble, with/without: babble 1024/1024
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in reading (no change)
+   ear -> voice kernels Xor lag 1 cover, tiles of 16 bits n3 in16 out16 q2/4 tonic 1/8
+
+generation 60: #37 prediction->reading
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: respond -15/0 tell 162/-3 discriminate 24/0 reverse 15/2 remember -2/-1 win-stay 9/0 surprise 32/14 maze -32/7 screen 12/3
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for tell; neutral in reading (no change)
+   eye -> hand kernels Set lag 1 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 16, out 7-64) gate !- runs while !- sparse replicate at 4 (in place)
+
+generation 60: #38 recall->generalist
+  made of: 4 populations, 1 channels, 14 kernels, 2 wires; reads nothing; writes A+host; memory loop+grows; gated
+  alone/blind: all 0
+  in generalist on all, with/without: respond 2/0 tell -13/-14 discriminate -9/-7 reverse -6/-1 remember -1/-9 win-stay -9/-19 copy 19/10 echo -1/-7 babble 960/952 surprise -4/0 screen -2/1
+  kind: babbler (acts on no sense); senses for nothing alone; neutral in generalist (respond +2, tell +1, discriminate -2, reverse -5, remember +8, win-stay +10, copy +9, echo +6, babble +8, surprise -4, screen -3)
+C1 channel 00110111  128 bits
+   C1 -> C1 wire Set lag 1 whole grow(syn 16, out 8-64) replicate at 8 (in place)
+   C1 -> A kernels Sub(4) lag 1 field 1w@53620 -> 1w@65535 n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   C1 -> A kernels Sub(4) lag 1 field 1w@53620 -> 1w@65535 n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   C1 -> C1 wire Set lag 1 whole grow(syn 16, out 8-64) replicate at 8 (in place)
+
+generation 60: #39 maze->generalist
+  made of: 2 populations, 1 channels, 6 kernels, 1 wires; reads eye+host; writes hand; memory history+repeat; gated
+  alone/blind: all 0
+  in generalist on all, with/without: respond -38/-38 tell 11/11 discriminate -5/-5 reverse 2/2 remember -3/2 win-stay -9/-9 copy 3/3 echo -6/-6 babble 568/568 surprise -34/-34 maze -6/-6 screen 24/18
+  kind: reflex (senses to act); senses for nothing alone; neutral in generalist (remember -5, screen +6)
+C1 channel 10000101  512 bits
+   C1 -> hand wire Or lag 1 whole
+   eye -> C1 kernels And lag 1 span 2 field 4w@53682 -> 1w@0 n6 in4 out16 q2/4 tonic 1/8 gate C1 sparse
+
+generation 60: #40 screen->prediction
+  made of: 5 populations, 1 channels, 10 kernels, 3 wires; reads eye+M+host; writes hand+host; memory history; gated
+  alone/blind: screen -1/-1
+  in prediction on cycle1, with/without: surprise 0/46
+  kind: reflex (senses to act); senses for nothing alone; hurts in prediction (surprise -46)
+C1 channel 10110000  1024 bits
+   eye -> C1 kernels Add(3) lag 1 cover, tiles of 64 bits n5 in4 out16 q2/4 share rot 65475
+   eye -> C1 kernels Add(3) lag 1 cover, tiles of 64 bits n5 in4 out16 q2/4 share rot 65475
+   C1 -> C1 wire Set lag 1 whole gate !C1
+   M -> C1 wire Add(6) lag 2 whole tonic 1/8 replicate at 16 (in place)
+   C1 -> hand wire Or lag 1 whole
+
+generation 60: #41 switching->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 98/0 tell 64/0 discriminate 0/-1 reverse 0/4 win-stay 0/-1 surprise -16/-11 maze 0/-4 screen -18/0
+  in prediction on cycle1, with/without: surprise 25/78
+  kind: reflex (senses to act); senses for respond+tell; hurts in prediction (surprise -53)
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 runs while - rot 65475
+
+generation 60: #42 screen->maze
+  made of: 6 populations, 1 channels, 29 kernels, 2 wires; reads eye+host; writes nothing; memory loop+repeat; gated
+  alone/blind: all 0
+  in maze on turn, with/without: maze 15/-26
+  kind: sealed sensor (reaches nothing); senses for nothing alone; helps in maze (maze +41)
+C1 channel 00000110  512 bits
+   eye -> C1 kernels Nand lag 1 cover, tiles of 16 bits n8 in8 out17 q2/4 tonic 1/8 gate !C1 replicate at 8 (in place)
+   eye -> C1 kernels Sub(5) lag 1 cover, tiles of 16 bits n8 in8 out17 q2/4 tonic 1/8 gate !C1 replicate at 8 (in place)
+   C1 -> C1 wire Or lag 1 whole runs while !C1
+   C1 -> C1 wire Or lag 1 whole
+   eye -> C1 kernels Clear lag 1 cover, tiles of 64 bits n5 in4 out16 q2/4 share rot 65475
+   eye -> C1 kernels Sub(5) lag 1 cover, tiles of 16 bits n8 in8 out17 q2/4 tonic 1/8 gate !C1 replicate at 8 (in place)
+
+generation 60: #43 recall->maze
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye; writes hand; memory none
+  alone/blind: respond 32/0 tell 64/0 discriminate 0/4 reverse 0/2 win-stay 0/5 screen -3/4
+  in maze on turn, with/without: maze -28/3
+  kind: reflex (senses to act); senses for tell; neutral in maze (maze -31)
+   eye -> hand kernels Shr(20) lag 1 cover, tiles of 8 bits n3 in4 out16 q2/4
+
+generation 60: #44 recall->screen
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye; writes hand; memory none
+  alone/blind: respond 12/1 tell -3/19 discriminate 3/10 reverse 30/-4 remember 11/-4 win-stay -2/-13 surprise -31/-30 maze 1/2 screen 6/0
+  in screen on torch, with/without: screen 26/0
+  kind: reflex (senses to act); senses for nothing alone; neutral in screen (screen +26)
+   eye -> hand kernels And lag 1 cover, tiles of 32 bits n6 in16 out16 q2/4 tonic 1/8 sparse replicate at 16 (to a neighbour tile)
+
+generation 60: #45 reading->screen
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear+host; writes voice; memory none; gated
+  alone/blind: copy 9/-8 echo 4/2 babble 576/584
+  in screen on torch, with/without: all 0
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in screen (no change)
+   ear -> voice kernels Clear lag 1 field 4w@59288 -> 1w@0 n7 in17 out16 q3/4 tonic 1/2 runs while !- sparse
+
+generation 60: #46 recall->shapes
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye; writes hand; memory none
+  alone/blind: respond -4/0 tell -3/-2 discriminate -20/-14 reverse -24/6 remember -28/8 win-stay -18/-20 surprise -15/-19 maze -1/1 screen 8/-9
+  in shapes on clean, with/without: respond 26/11 tell 72/138
+  kind: reflex (senses to act); senses for nothing alone; hurts in shapes (tell -66)
+   eye -> hand kernels And lag 1 cover, tiles of 32 bits n6 in16 out16 q2/4 tonic 1/8 sparse replicate at 16 (to a neighbour tile) rot 65475
+
+generation 60: #47 reading->shapes
+  made of: 1 populations, 0 channels, 9 kernels, 0 wires; reads ear+host; writes voice; memory none; gated
+  alone/blind: copy 0/3 echo -12/4 babble 736/728
+  in shapes on clean, with/without: respond 13/-15 tell 67/151
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; hurts in shapes (tell -84)
+   ear -> voice kernels Xor lag 1 cover, tiles of 16 bits n9 in16 out16 q2/4 tonic 1/4 gate - replicate at 2 (in place) rot 61
+
+generation 62: #33 gone from switching after 2 generations (peak 1 of 32)
+generation 62: #34 gone from recall after 2 generations (peak 1 of 32)
+generation 62: #35 gone from recall after 2 generations (peak 1 of 32)
+generation 62: #36 gone from reading after 2 generations (peak 1 of 32)
+generation 62: #37 gone from reading after 2 generations (peak 1 of 32)
+generation 62: #38 gone from generalist after 2 generations (peak 1 of 32)
+generation 62: #39 gone from generalist after 2 generations (peak 1 of 32)
+generation 62: #40 gone from prediction after 2 generations (peak 1 of 32)
+generation 62: #41 gone from prediction after 2 generations (peak 1 of 32)
+generation 62: #42 gone from maze after 2 generations (peak 1 of 32)
+generation 62: #43 gone from maze after 2 generations (peak 1 of 32)
+generation 62: #45 gone from screen after 2 generations (peak 1 of 32)
+generation 62: #46 gone from shapes after 2 generations (peak 1 of 32)
+generation 62: #47 gone from shapes after 2 generations (peak 1 of 32)
+generation 64: #44 gone from screen after 4 generations (peak 3 of 32)
+generation 66: #22 gone from generalist after 26 generations (peak 15 of 32)
+generation 72: #32 gone from switching after 12 generations (peak 7 of 32)
+generation 80: #48 recall->switching
+  made of: 4 populations, 1 channels (1 hold), 15 kernels, 0 wires; reads eye+host; writes hand; memory holds+loop+grows; gated
+  alone/blind: respond 30/0 tell 64/0 remember 0/-2 surprise 32/1 screen 0/1
+  in switching on winstay, with/without: respond 160/130 tell 320/256 win-stay -320/-256
+  kind: reflex (senses to act); senses for tell; hurts in switching (win-stay -64)
+C1 channel 10110001  1024 bits  holds
+   C1 -> C1 kernels Sub(3) lag 1 field 1w@53620 -> 1w@65535 n7 in4 out17 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   eye -> hand kernels Add(4) lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 16 bits n2 in4 out16 q2/4 tonic 1/16 gate !C1 replicate at 4 (to a neighbour tile)
+
+generation 80: #49 prediction->switching
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond 3/0 tell 186/9 discriminate 6/0 reverse 26/20 remember 81/6 win-stay 4/22 surprise 20/-3 maze -36/0 screen 13/8
+  in switching on winstay, with/without: respond 214/191 tell 116/88 win-stay 60/-69
+  kind: reflex (senses to act); senses for tell+remember; helps in switching (win-stay +129)
+   eye -> hand kernels Nand lag 2 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 18, out 7-63) gate !- runs while !- replicate at 2 (in place)
+
+generation 80: #50 maze->recall
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye+host; writes hand; memory repeat; gated
+  alone/blind: respond 20/-1 tell 7/14 discriminate 17/2 reverse 17/4 remember 15/-2 win-stay 4/9 surprise 4/10 maze 8/3 screen 0/6
+  in recall on respond, with/without: respond -13/-11
+  kind: reflex (senses to act); senses for nothing alone; neutral in recall (respond -2)
+   eye -> hand kernels Add(5) lag 1 field 4w@53682 -> 1w@0 n6 in2 out16 q2/4 tonic 1/16 gate -
+
+generation 80: #51 generalist->recall
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear; writes voice; memory grows
+  alone/blind: copy 9/-34 echo -29/-7 babble 88/40
+  in recall on respond, with/without: respond 62/62
+  kind: reflex (senses to act); senses for copy+babble; neutral in recall (no change)
+   ear -> voice kernels Shr(51) lag 1 cover, tiles of 16 bits n7 in8 out16 q2/4 grow(syn 16, out 8-64) sparse
+
+generation 80: #52 generalist->reading
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads eye; writes voice; memory grows
+  alone/blind: all 0
+  in reading on babble, with/without: babble 960/768
+  kind: reflex (senses to act); senses for nothing alone; helps in reading (babble +192)
+   eye -> voice kernels Add(4) lag 1 cover, tiles of 32 bits n5 in16 out16 q2/4 grow(syn 16, out 8-64) sparse
+
+generation 80: #53 maze->reading
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye+host; writes hand; memory repeat; gated
+  alone/blind: respond 25/-5 tell 85/-23 discriminate -14/17 reverse -21/20 remember -15/6 win-stay 8/1 surprise -8/-27 maze 1/-8 screen -6/-1
+  in reading on babble, with/without: babble 1024/1024
+  kind: reflex (senses to act); senses for tell; neutral in reading (no change)
+   eye -> hand kernels Add(5) lag 1 field 4w@53682 -> 1w@0 n6 in2 out16 q2/4 tonic 1/16 gate -
+
+generation 80: #54 recall->generalist
+  made of: 6 populations, 1 channels, 31 kernels, 1 wires; reads eye+host; writes voice+A+hand; memory loop; gated
+  alone/blind: discriminate 0/-2 reverse 0/-5 surprise -19/0 screen -18/-1
+  in generalist on all, with/without: respond 15/18 tell -6/39 discriminate 3/2 reverse 9/24 remember 23/23 win-stay -12/7 copy -8/-34 echo 1/-10 babble 720/712 surprise 10/-8 screen -10/11
+  kind: reflex (senses to act); senses for nothing alone; hurts in generalist (respond -3, tell -45, discriminate +1, reverse -15, win-stay -19, copy +26, echo +11, babble +8, surprise +18, screen -21)
+C1 channel 10101100  1024 bits
+   C1 -> voice kernels Shl(34) lag 1 field 1w@53620 -> 1w@0 n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels Shl(34) lag 1 field 1w@53620 -> 1w@0 n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   C1 -> A kernels Add(3) lag 1 field 1w@53620 -> 1w@65535 n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   C1 -> hand wire Or lag 1 whole
+   eye -> hand kernels Shr(20) lag 1 cover, tiles of 8 bits n3 in4 out17 q1/4 gate !C1
+   C1 -> C1 kernels Add(3) lag 1 field 1w@53620 -> 2w@65535 n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+
+generation 80: #55 shapes->generalist
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads host; writes host; memory grows
+  alone/blind: all 0
+  in generalist on all, with/without: respond -8/-7 tell -4/47 discriminate 3/8 reverse -2/33 remember -1/19 win-stay -42/-5 copy -7/-5 echo -8/-4 babble 584/568 surprise -34/-29 screen 4/-3
+  kind: relay (host to host); senses for nothing alone; hurts in generalist (respond -1, tell -51, discriminate -5, reverse -35, remember -20, win-stay -37, copy -2, echo -4, babble +16, surprise -5, screen +7)
+   (a population with no channel to read or write)
+
+generation 80: #56 recall->prediction
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 66/0 tell 128/0 surprise -18/4 screen 3/0
+  in prediction on cycle1, with/without: surprise 42/0
+  kind: reflex (senses to act); senses for respond+tell; helps in prediction (surprise +42)
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate -
+
+generation 80: #57 reading->prediction
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes voice; memory none; gated
+  alone/blind: copy 0/-20 echo -5/2 babble 616/608
+  in prediction on cycle1, with/without: surprise -2/-2
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in prediction (no change)
+   eye -> voice kernels Shl(22) lag 1 field 4w@59288 -> 2w@0 n7 in16 out17 q3/4 tonic 1/2 share runs while !- sparse
+
+generation 80: #58 shapes->maze
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes A; memory repeat+grows; gated
+  alone/blind: respond 24/-10 tell 42/5 discriminate -10/11 reverse 0/17 remember 3/0 win-stay -1/12 copy 45/-19 echo 34/0 babble 336/336 surprise -39/-4 maze -8/3 screen -6/0
+  in maze on turn, with/without: maze -11/-17
+  kind: reflex (senses to act); senses for copy; scores babble blind; neutral in maze (maze +6)
+   eye -> A kernels Sub(6) lag 1 cover, tiles of 64 bits n3 in8 out16 q2/4 tonic 1/8 grow(syn 17, out 8-64, repeat 1) gate !-
+
+generation 80: #59 recall->maze
+  made of: 4 populations, 1 channels (1 hold), 15 kernels, 0 wires; reads eye+host; writes hand; memory holds+loop+grows; gated
+  alone/blind: respond 102/0 tell 192/0 remember 0/10 surprise -14/0 screen 7/4
+  in maze on turn, with/without: maze 18/-9
+  kind: reflex (senses to act); senses for respond+tell; neutral in maze (maze +27)
+C1 channel 11111001  1024 bits  holds
+   C1 -> C1 kernels Sub(3) lag 1 field 1w@53620 -> 1w@65535 n7 in4 out17 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   eye -> hand kernels Add(4) lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 16 bits n2 in4 out16 q2/4 tonic 1/16 gate !C1 replicate at 4 (to a neighbour tile)
+
+generation 80: #60 prediction->screen
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond 22/2 tell -26/-6 discriminate 18/2 reverse 9/24 remember 5/0 win-stay 28/48 surprise 43/-7 maze 11/-2 screen 6/1
+  in screen on torch, with/without: screen 11/-21
+  kind: reflex (senses to act); senses for surprise; scores win-stay blind; neutral in screen (screen +32)
+   eye -> hand kernels Shr(52) lag 2 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 18, out 7-63) gate !- runs while !- replicate at 2 (in place)
+
+generation 80: #61 maze->screen
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye+host; writes hand; memory repeat; gated
+  alone/blind: respond -19/-2 tell 6/-20 discriminate 5/-6 reverse 6/-8 remember -12/-6 win-stay -29/3 surprise -24/0 maze 1/5 screen 10/-4
+  in screen on torch, with/without: screen -8/2
+  kind: reflex (senses to act); senses for nothing alone; neutral in screen (screen -10)
+   eye -> hand kernels Add(5) lag 1 field 4w@53682 -> 1w@0 n6 in2 out16 q2/4 tonic 1/16 gate -
+
+generation 80: #62 generalist->shapes
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads eye; writes voice; memory grows
+  alone/blind: copy -3/0 echo -23/0 babble 8/0
+  in shapes on clean, with/without: respond 2/2 tell -2/-2
+  kind: reflex (senses to act); senses for nothing alone; neutral in shapes (no change)
+   eye -> voice kernels Add(4) lag 1 cover, tiles of 32 bits n5 in16 out16 q2/4 grow(syn 16, out 8-64) sparse
+
+generation 80: #63 reading->shapes
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes voice; memory none; gated
+  alone/blind: copy 8/0 echo -16/-9 babble 600/600
+  in shapes on clean, with/without: respond 14/18 tell 28/76
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; hurts in shapes (tell -48)
+   eye -> voice kernels Shl(22) lag 1 field 4w@59288 -> 2w@0 n7 in16 out17 q3/4 tonic 1/2 share runs while !- sparse
+
+generation 82: #50 gone from recall after 2 generations (peak 1 of 32)
+generation 82: #51 gone from recall after 2 generations (peak 1 of 32)
+generation 82: #52 gone from reading after 2 generations (peak 1 of 32)
+generation 82: #53 gone from reading after 2 generations (peak 1 of 32)
+generation 82: #55 gone from generalist after 2 generations (peak 1 of 32)
+generation 82: #57 gone from prediction after 2 generations (peak 1 of 32)
+generation 82: #59 gone from maze after 2 generations (peak 1 of 32)
+generation 82: #60 gone from screen after 2 generations (peak 1 of 32)
+generation 82: #62 gone from shapes after 2 generations (peak 1 of 32)
+generation 82: #63 gone from shapes after 2 generations (peak 1 of 32)
+generation 83: #58 gone from maze after 3 generations (peak 1 of 32)
+generation 84: #49 gone from switching after 4 generations (peak 3 of 32)
+generation 86: #54 gone from generalist after 6 generations (peak 2 of 32)
+generation 91: #56 gone from prediction after 11 generations (peak 10 of 32)
+generation 92: #61 gone from screen after 12 generations (peak 3 of 32)
+generation 100: #64 prediction->switching
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in switching on winstay, with/without: respond 89/89 tell 448/448 win-stay -192/-192
+  kind: relay (host to host); senses for nothing alone; neutral in switching (no change)
+   (a population with no channel to read or write)
+
+generation 100: #65 prediction->switching
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in switching on winstay, with/without: respond 101/101 tell 192/192 win-stay -64/-64
+  kind: relay (host to host); senses for nothing alone; neutral in switching (no change)
+   (a population with no channel to read or write)
+
+generation 100: #66 reading->recall
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear+host; writes voice; memory none; gated
+  alone/blind: copy 1/1 echo 1/9 babble 640/632
+  in recall on lag1, with/without: respond 68/68 remember 256/256
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in recall (no change)
+   ear -> voice kernels Nand lag 1 field 4w@59288 -> 2w@0 n7 in16 out16 q3/4 tonic 1/2 gate - sparse rot 122
+
+generation 100: #67 screen->recall
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads M+host; writes hand; memory history+repeat; gated
+  alone/blind: respond -4/-4 tell -32/-32 discriminate -27/-27 reverse -24/-24 remember 10/10 win-stay 8/8 surprise 20/20 screen -6/-6
+  in recall on lag1, with/without: respond 2/95 remember -13/128
+  kind: driver (host to act); senses for nothing alone; hurts in recall (remember -141)
+   M -> hand kernels Or lag 2 span 2 cover, tiles of 64 bits n8 in3 out16 q2/4 tonic 1/8 gate - replicate at 16 (to a neighbour tile)
+
+generation 100: #68 switching->reading (from #48)
+  made of: 6 populations, 1 channels (1 hold), 23 kernels, 2 wires; reads eye+ear; writes hand; memory holds+loop+grows; gated
+  alone/blind: respond 29/0 tell 64/0 reverse 0/-7 surprise -14/-5 screen -6/1
+  in reading on babble, with/without: babble 192/1024
+  kind: reflex (senses to act); senses for tell; hurts in reading (babble -832)
+C1 channel 00011100  1024 bits  holds
+   C1 -> C1 wire Xor lag 1 whole sparse
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   eye -> hand wire Shl(60) lag 1 whole tonic 1/4 runs while C1 rot 65475
+   ear -> C1 kernels Add(6) lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse replicate at 32 (to a neighbour tile)
+
+generation 100: #69 recall->reading
+  made of: 4 populations, 1 channels, 17 kernels, 0 wires; reads eye+host; writes hand+A; memory none; gated
+  alone/blind: respond 64/0 surprise 31/8 screen -1/0
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for respond; neutral in reading (no change)
+C1 channel 10000011  512 bits
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   C1 -> A kernels Add(3) lag 1 field 1w@53620 -> 1w@65535 n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   eye -> hand kernels Shl(50) lag 1 cover, tiles of 8 bits n4 in3 out16 q1/4 gate C1 replicate at 2 (in place)
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+
+generation 100: #70 prediction->generalist
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond -11/0 tell 214/6 discriminate 7/-1 reverse 2/4 remember 52/-7 win-stay 0/7 surprise -28/-8 maze -5/4 screen 14/-1
+  in generalist on all, with/without: discriminate -1/0 reverse -2/-1 copy 32/53 echo 5/5 babble 256/256
+  kind: reflex (senses to act); senses for tell+remember; neutral in generalist (discriminate -1, reverse -1, copy -21)
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 18, out 7-63, new) gate !- runs while !- sparse replicate at 2 (in place)
+
+generation 100: #71 shapes->generalist
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes nothing; memory grows; gated
+  alone/blind: all 0
+  in generalist on all, with/without: respond 23/19 tell 21/19 discriminate 5/-1 reverse -10/-19 remember 12/10 win-stay 51/38 copy 40/-25 echo 39/-7 babble 392/392 surprise -9/-7
+  kind: sealed (reaches nothing); senses for nothing alone; helps in generalist (respond +4, tell +2, discriminate +6, reverse +9, remember +2, win-stay +13, copy +65, echo +46, surprise -2)
+   (a population with no channel to read or write)
+
+generation 100: #72 switching->prediction
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads host; writes host; memory grows; gated
+  alone/blind: all 0
+  in prediction on cycle1, with/without: all 0
+  kind: relay (host to host); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 100: #73 recall->prediction
+  made of: 6 populations, 1 channels, 19 kernels, 1 wires; reads eye+touch+host; writes A+hand; memory none; gated
+  alone/blind: respond 251/0 tell 384/0 remember 0/5 surprise 25/11 maze -28/0 screen -12/3
+  in prediction on cycle1, with/without: surprise 14/64
+  kind: reflex (senses to act); senses for respond+tell; hurts in prediction (surprise -50)
+C1 channel 00010101  2048 bits
+   C1 -> A kernels Sub(3) lag 1 field 1w@53620 -> 1w@65535 n7 in4 out17 q3/4 tonic 1/2 gate !C1 runs while C1 sparse
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Shr(38) lag 1 cover, tiles of 8 bits n3 in3 out17 q1/4 gate C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   touch -> hand wire Rotl(12) lag 1 whole tonic 1/4 gate !C1 sparse
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+
+generation 100: #74 switching->maze (from #48)
+  made of: 6 populations, 1 channels (1 hold), 23 kernels, 2 wires; reads eye+touch; writes hand+voice; memory holds+loop+repeat+grows; gated
+  alone/blind: surprise 24/0 screen -3/4
+  in maze on turn, with/without: maze 79/17
+  kind: reflex (senses to act); senses for nothing alone; helps in maze (maze +62)
+C1 channel 00001100  2048 bits  holds
+   eye -> hand wire Shl(60) lag 1 whole tonic 1/4 runs while C1 rot 65475
+   C1 -> voice wire Xor lag 1 whole sparse
+   touch -> C1 kernels And lag 1 cover, tiles of 64 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64, repeat 3) replicate at 32 (to a neighbour tile)
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+
+generation 100: #75 screen->maze
+  made of: 1 populations, 0 channels, 9 kernels, 0 wires; reads M+host; writes hand; memory history+repeat; gated
+  alone/blind: respond -8/-8 tell -27/-27 discriminate 22/22 reverse 35/35 remember 8/8 win-stay 44/44 surprise 45/45 maze 2/2 screen 6/6
+  in maze on turn, with/without: maze -35/9
+  kind: driver (host to act); senses for nothing alone; scores win-stay+surprise blind; hurts in maze (maze -44)
+   M -> hand kernels Set lag 2 span 2 cover, tiles of 32 bits n9 in3 out15 q2/4 tonic 1/8 gate - replicate at 16 (to a neighbour tile) rot 61
+
+generation 100: #76 switching->screen (from #48)
+  made of: 6 populations, 1 channels (1 hold), 23 kernels, 2 wires; reads eye+ear; writes hand; memory holds+loop+grows; gated
+  alone/blind: respond 195/0 tell 256/1 discriminate 0/-4 remember 0/-1 win-stay 0/16 surprise -16/-32 screen -8/0
+  in screen on torch, with/without: screen 13/-16
+  kind: reflex (senses to act); senses for respond+tell; neutral in screen (screen +29)
+C1 channel 01101010  2048 bits  holds
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   ear -> C1 kernels Add(6) lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse replicate at 32 (to a neighbour tile)
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64, new) gate C1 rot 61
+
+generation 100: #77 generalist->screen
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads ear; writes hand; memory none
+  alone/blind: respond 0/1 tell 0/1 discriminate 0/3 win-stay 0/45
+  in screen on torch, with/without: screen 2/-8
+  kind: reflex (senses to act); senses for nothing alone; scores win-stay blind; neutral in screen (screen +10)
+   ear -> hand kernels Rotl(2) lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4
+
+generation 100: #78 switching->shapes (from #48)
+  made of: 6 populations, 1 channels (1 hold), 35 kernels, 0 wires; reads ear+eye+host; writes voice+hand; memory holds+grows; gated
+  alone/blind: respond 33/0 tell 64/-6 discriminate 0/-5 reverse 0/-5 win-stay 0/-3 copy -37/-10 echo 31/36 babble 672/664 surprise 24/0 screen -3/0
+  in shapes on clean, with/without: respond 173/5 tell 102/-10
+  kind: reflex (senses to act); senses for tell; scores babble blind; helps in shapes (tell +112)
+C1 channel 10101110  1024 bits  holds
+   ear -> C1 kernels Add(6) lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse replicate at 32 (to a neighbour tile)
+   C1 -> voice kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 tonic 1/16 gate !C1 replicate at 32 (in place)
+   ear -> C1 kernels Add(5) lag 1 cover, tiles of 64 bits n4 in4 out16 q2/4 sparse replicate at 32 (to a neighbour tile)
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 kernels Xor lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+
+generation 100: #79 prediction->shapes
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in shapes on clean, with/without: respond -1/0 tell -6/0
+  kind: relay (host to host); senses for nothing alone; neutral in shapes (tell -6)
+   (a population with no channel to read or write)
+
+generation 102: #64 gone from switching after 2 generations (peak 1 of 32)
+generation 102: #65 gone from switching after 2 generations (peak 1 of 32)
+generation 102: #66 gone from recall after 2 generations (peak 1 of 32)
+generation 102: #68 gone from reading after 2 generations (peak 1 of 32)
+generation 102: #69 gone from reading after 2 generations (peak 1 of 32)
+generation 102: #72 gone from prediction after 2 generations (peak 1 of 32)
+generation 102: #73 gone from prediction after 2 generations (peak 1 of 32)
+generation 102: #74 gone from maze after 2 generations (peak 1 of 32)
+generation 102: #75 gone from maze after 2 generations (peak 1 of 32)
+generation 102: #76 gone from screen after 2 generations (peak 1 of 32)
+generation 102: #77 gone from screen after 2 generations (peak 1 of 32)
+generation 102: #78 gone from shapes after 2 generations (peak 1 of 32)
+generation 102: #79 gone from shapes after 2 generations (peak 1 of 32)
+generation 103: #67 gone from recall after 3 generations (peak 1 of 32)
+generation 105: #70 gone from generalist after 5 generations (peak 1 of 32)
+generation 111: #71 gone from generalist after 11 generations (peak 3 of 32)
+generation 120: #80 shapes->switching
+  made of: 6 populations, 1 channels, 1 kernels, 5 wires; reads eye; writes hand; memory loop+grows; gated
+  alone/blind: all 0
+  in switching on winstay, with/without: respond 133/133 tell 256/256 win-stay -128/-128
+  kind: reflex (senses to act); senses for nothing alone; neutral in switching (no change)
+C1 channel 11000111  512 bits
+   C1 -> C1 wire Rotl(34) lag 1 whole grow(syn 16, out 8-64) sparse replicate at 32 (in place)
+   eye -> C1 kernels And lag 1 cover, tiles of 8 bits n1 in8 out16 q2/4 sparse replicate at 32 (in place)
+   C1 -> hand wire Rotl(28) lag 1 field 1w@2523 -> 1w@65535 tonic 1/8 grow(syn 15, out 6-64) gate C1 replicate at 2 (in place) rot 65475
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   C1 -> C1 wire Clear lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   C1 -> C1 wire Rotl(34) lag 1 whole grow(syn 16, out 8-64) sparse replicate at 32 (in place)
+
+generation 120: #81 reading->switching
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads eye+host; writes voice; memory none; gated
+  alone/blind: copy 9/-22 echo 3/-6 babble 648/640
+  in switching on winstay, with/without: respond 94/95 tell 192/192 win-stay 32/32
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in switching (no change)
+   eye -> voice kernels Xor lag 1 field 2w@59288 -> 4w@0 n8 in16 out17 q3/4 tonic 1/4 share gate !- runs while !- replicate at 2 (to a neighbour tile) rot 61
+
+generation 120: #82 shapes->recall
+  made of: 6 populations, 1 channels, 2 kernels, 5 wires; reads eye; writes hand; memory loop+grows; gated
+  alone/blind: respond 34/0 tell 64/0 surprise 17/0 screen 0/2
+  in recall on lag3, with/without: respond 61/125 remember 64/64
+  kind: reflex (senses to act); senses for tell; neutral in recall (no change)
+C1 channel 00100101  64 bits
+   eye -> hand kernels Shr(63) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 grow(syn 16, out 8-64) gate !C1
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   C1 -> C1 wire Clear lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   C1 -> C1 wire Rotl(34) lag 1 whole grow(syn 16, out 8-64) sparse replicate at 32 (in place)
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (in place)
+
+generation 120: #83 shapes->recall
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads ear; writes hand; memory none
+  alone/blind: all 0
+  in recall on lag3, with/without: respond 127/127
+  kind: reflex (senses to act); senses for nothing alone; neutral in recall (no change)
+   ear -> hand wire Add(6) lag 1 whole tonic 1/2 sparse
+
+generation 120: #84 switching->reading
+  made of: 6 populations, 1 channels (1 hold), 16 kernels, 4 wires; reads eye+host; writes hand+host; memory holds+grows; gated
+  alone/blind: respond 166/2 tell 320/0 discriminate 0/11 reverse 0/11 win-stay 0/-9 surprise 56/-15 screen -5/0
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for respond+tell+surprise; neutral in reading (no change)
+C1 channel 11101110  512 bits  holds
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   eye -> hand wire Shl(60) lag 1 whole tonic 1/4 runs while C1 rot 65475
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64, new) gate C1 rot 61
+   C1 -> C1 wire Add(5) lag 1 whole tonic 1/4 gate !C1 sparse
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64, new) gate C1 rot 61
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+
+generation 120: #85 shapes->reading
+  made of: 1 populations, 1 channels (1 hold), 3 kernels, 0 wires; reads eye+host; writes A; memory holds+repeat+grows; gated
+  alone/blind: respond 32/2 tell 47/-2 discriminate 1/3 reverse 5/14 remember 7/-5 win-stay 6/11 copy 9/10 echo -14/-8 babble 280/320 surprise 0/3 maze 2/0 screen 12/4
+  in reading on babble, with/without: babble 1024/1024
+  kind: reflex (senses to act); senses for tell; scores babble blind; neutral in reading (no change)
+C1 channel 11011000  512 bits  holds
+   eye -> A kernels Sub(6) lag 1 cover, tiles of 64 bits n3 in8 out15 q2/4 tonic 1/8 share grow(syn 17, out 8-64, new, repeat 1) gate !C1 runs while !C1
+
+generation 120: #86 reading->generalist
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads eye+host; writes voice; memory history; gated
+  alone/blind: copy -1/18 echo -3/-2 babble 688/688
+  in generalist on all, with/without: respond 30/48 tell 26/-51 discriminate -3/-4 reverse 6/1 remember 3/-12 win-stay 15/31 copy 1/-7 echo 6/-9 babble 776/448 surprise -18/0 maze 2/4 screen -2/-14
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; helps in generalist (respond -18, tell +77, discriminate +1, reverse +5, remember +15, win-stay -16, copy +8, echo +15, babble +328, surprise -18, maze -2, screen +12)
+   eye -> voice kernels Shl(51) lag 2 field 2w@59288 -> 2w@0 n8 in16 out17 q3/4 tonic 1/4 share gate !- runs while !- replicate at 2 (to a neighbour tile) rot 61
+
+generation 120: #87 recall->generalist
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 57/0 tell 128/0 surprise -52/0 screen -2/1
+  in generalist on all, with/without: respond 67/6 tell 116/0 discriminate 2/0 reverse -5/5 remember 10/-17 win-stay 1/7 copy -25/-22 echo -45/-26 babble 496/496 surprise -48/-30 maze -3/0 screen 4/1
+  kind: reflex (senses to act); senses for respond+tell; helps in generalist (respond +61, tell +116, discriminate +2, reverse -10, remember +27, win-stay -6, copy -3, echo -19, surprise -18, maze -3, screen +3)
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate - runs while !-
+
+generation 120: #88 switching->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise 58/58
+  kind: relay (host to host); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 120: #89 generalist->prediction
+  made of: 6 populations, 1 channels, 14 kernels, 3 wires; reads eye+ear+host; writes host; memory none; gated
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise 0/-21
+  kind: sensor (senses into the host); senses for nothing alone; neutral in prediction (surprise +21)
+C1 channel 10011011  512 bits
+   eye -> C1 kernels And lag 1 cover, tiles of 128 bits n5 in8 out16 q1/4 tonic 1/4 gate !C1 sparse replicate at 16 (to a neighbour tile)
+   eye -> C1 kernels Shr(21) lag 1 cover, tiles of 128 bits n5 in7 out16 q1/4 tonic 1/4 gate !C1 sparse replicate at 16 (to a neighbour tile)
+   ear -> C1 kernels Rotl(45) lag 1 cover, tiles of 16 bits n4 in16 out16 q2/4 gate C1
+   C1 -> C1 wire Or lag 1 whole
+   eye -> C1 wire Or lag 1 whole
+   eye -> C1 wire Shl(57) lag 1 whole gate C1 sparse
+
+generation 120: #90 shapes->maze
+  made of: 1 populations, 1 channels, 3 kernels, 0 wires; reads eye+host; writes A; memory repeat+grows; gated
+  alone/blind: respond 1/-5 tell -12/-3 discriminate 12/0 reverse 18/2 remember 1/-8 win-stay 9/-13 copy 7/-1 echo 14/25 babble 336/408 surprise -13/-11 maze 13/0 screen -4/-1
+  in maze on turn, with/without: maze 15/0
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in maze (maze +15)
+C1 channel 10101100  1024 bits
+   eye -> A kernels Sub(6) lag 1 cover, tiles of 64 bits n3 in8 out15 q2/4 tonic 1/8 share grow(syn 17, out 8-64, new, repeat 1) gate !C1 runs while !C1
+
+generation 120: #91 prediction->maze
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond 1/3 tell 142/12 discriminate -15/8 reverse -2/17 remember 16/-4 win-stay 42/-16 surprise -38/-1 maze -5/0 screen -20/1
+  in maze on turn, with/without: maze 18/14
+  kind: reflex (senses to act); senses for tell+win-stay; neutral in maze (maze +4)
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 18, out 7-62, new) gate !- runs while !- sparse replicate at 2 (in place) rot 61
+
+generation 120: #92 switching->screen
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: respond 98/0 tell 64/0 discriminate 0/-1 reverse 0/4 win-stay 0/-1 surprise -16/-11 maze 0/-4 screen -18/0
+  in screen on torch, with/without: screen -9/5
+  kind: reflex (senses to act); senses for respond+tell; neutral in screen (screen -14)
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !- runs while !- sparse rot 65475
+
+generation 120: #93 recall->screen
+  made of: 6 populations, 1 channels (1 hold), 17 kernels, 1 wires; reads eye; writes A+hand; memory holds+loop; gated
+  alone/blind: respond 129/0 tell 256/0 discriminate -3/-2 reverse 0/-4 remember 0/1 win-stay 0/6 surprise -44/0 screen 3/3
+  in screen on torch, with/without: screen -16/-16
+  kind: reflex (senses to act); senses for respond+tell; neutral in screen (no change)
+C1 channel 00011111  64 bits  holds
+   C1 -> A kernels Add(3) lag 1 cover, tiles of 8 bits n7 in4 out16 q2/4 tonic 1/2 gate !C1 runs while C1 sparse
+   C1 -> C1 kernels Clear lag 1 cover, tiles of 8 bits n1 in4 out16 q2/4 tonic 1/4 sparse
+   eye -> hand kernels Shr(38) lag 1 cover, tiles of 8 bits n3 in3 out18 q1/4 gate C1
+   C1 -> hand wire Xor lag 1 whole
+   eye -> hand kernels Shr(29) lag 1 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+
+generation 120: #94 recall->shapes
+  made of: 6 populations, 1 channels, 15 kernels, 1 wires; reads eye+host; writes hand+host; memory history+repeat; gated
+  alone/blind: respond 31/0 tell 192/0 discriminate -3/-3 reverse -8/-2 remember 0/-1 surprise -60/0 screen 11/5
+  in shapes on clean, with/without: respond 33/0 tell 113/0
+  kind: reflex (senses to act); senses for tell; helps in shapes (tell +113)
+C1 channel 11100100  512 bits
+   C1 -> hand wire Or lag 1 whole
+   eye -> hand kernels Shr(29) lag 2 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Shr(29) lag 2 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Shr(29) lag 1 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1 replicate at 2 (in place)
+   eye -> hand kernels Shr(29) lag 2 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1
+   eye -> C1 kernels Set lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1 runs while C1
+
+generation 120: #95 recall->shapes
+  made of: 6 populations, 1 channels (1 hold), 13 kernels, 1 wires; reads eye; writes hand; memory holds+loop+history; gated
+  alone/blind: respond -32/0 tell 0/10 discriminate 0/-5 remember 0/5 win-stay 0/-3 surprise -31/-3 screen -5/6
+  in shapes on clean, with/without: respond -105/-42 tell -3/-3
+  kind: reflex (senses to act); senses for nothing alone; neutral in shapes (no change)
+C1 channel 00010001  64 bits  holds
+   C1 -> C1 kernels Clear lag 1 cover, tiles of 8 bits n1 in4 out16 q2/4 tonic 1/4 sparse
+   eye -> hand kernels Shr(38) lag 1 cover, tiles of 8 bits n3 in3 out17 q1/4 gate C1
+   C1 -> hand wire Xor lag 1 whole
+   eye -> hand kernels Shr(29) lag 1 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+   eye -> hand kernels Or lag 1 span 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+
+generation 122: #80 gone from switching after 2 generations (peak 1 of 32)
+generation 122: #81 gone from switching after 2 generations (peak 1 of 32)
+generation 122: #82 gone from recall after 2 generations (peak 1 of 32)
+generation 122: #83 gone from recall after 2 generations (peak 1 of 32)
+generation 122: #84 gone from reading after 2 generations (peak 1 of 32)
+generation 122: #85 gone from reading after 2 generations (peak 1 of 32)
+generation 122: #87 gone from generalist after 2 generations (peak 1 of 32)
+generation 122: #89 gone from prediction after 2 generations (peak 1 of 32)
+generation 122: #90 gone from maze after 2 generations (peak 1 of 32)
+generation 122: #91 gone from maze after 2 generations (peak 1 of 32)
+generation 122: #93 gone from screen after 2 generations (peak 1 of 32)
+generation 122: #94 gone from shapes after 2 generations (peak 1 of 32)
+generation 122: #95 gone from shapes after 2 generations (peak 1 of 32)
+generation 123: #92 gone from screen after 3 generations (peak 1 of 32)
+generation 127: #86 gone from generalist after 7 generations (peak 3 of 32)
+generation 127: #88 gone from prediction after 7 generations (peak 4 of 32)
+generation 140: #96 shapes->switching
+  made of: 6 populations, 1 channels (1 hold), 2 kernels, 5 wires; reads eye+host; writes hand; memory holds+loop+grows; gated
+  alone/blind: respond 32/0 tell 64/0 surprise 11/0
+  in switching on winstay, with/without: respond 222/222 tell 192/192 win-stay 64/64
+  kind: reflex (senses to act); senses for tell; neutral in switching (no change)
+C1 channel 11111000  64 bits  holds
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   C1 -> C1 wire Rotl(34) lag 1 whole grow(syn 16, out 8-64) sparse replicate at 32 (in place)
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (in place)
+   eye -> C1 wire Nand lag 1 whole
+   eye -> hand kernels Shr(63) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 gate C1
+   C1 -> C1 wire Rotl(21) lag 1 whole replicate at 16 (in place)
+
+generation 140: #97 maze->switching
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads eye+host; writes hand; memory history+repeat; gated
+  alone/blind: respond -11/-5 tell 58/7 discriminate 3/-8 reverse -3/-1 remember 2/-2 win-stay 34/67 surprise 5/6 maze -12/-2 screen 16/6
+  in switching on winstay, with/without: respond 118/193 tell 169/128 win-stay 161/128
+  kind: reflex (senses to act); senses for tell; scores win-stay blind; neutral in switching (win-stay +33)
+   eye -> hand kernels Set lag 2 field 4w@53682 -> 1w@1 n5 in3 out16 q1/4 tonic 1/16 share gate !- sparse rot 65475
+
+generation 140: #98 reading->recall
+  made of: 1 populations, 0 channels, 10 kernels, 0 wires; reads eye+host; writes voice; memory history+grows; gated
+  alone/blind: copy -23/-24 echo -19/0 babble 744/744
+  in recall on lag3, with/without: respond 199/199 remember 29/-12
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; helps in recall (remember +41)
+   eye -> voice kernels Shr(3) lag 2 field 2w@59287 -> 2w@0 n10 in15 out17 q4/4 tonic 1/8 share grow(syn 13, out 7-64) runs while - sparse replicate at 2 (to a neighbour tile) rot 61
+
+generation 140: #99 switching->recall
+  made of: 6 populations, 1 channels, 11 kernels, 4 wires; reads eye+host; writes hand+host; memory grows; gated
+  alone/blind: respond 158/0 tell 192/0 surprise 0/-9 screen -1/0
+  in recall on lag3, with/without: respond 98/32
+  kind: reflex (senses to act); senses for respond+tell; neutral in recall (no change)
+C1 channel 01110100  64 bits
+   C1 -> C1 wire And lag 1 whole tonic 1/4 gate !C1 sparse
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64, new) gate !C1 runs while !C1 sparse rot 65475
+   eye -> C1 wire Sub(5) lag 1 whole tonic 1/4 gate !C1 runs while !C1 sparse rot 65475
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate !C1
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+
+generation 140: #100 generalist->reading
+  made of: 6 populations, 1 channels, 26 kernels, 0 wires; reads ear+host; writes hand+host; memory repeat+grows; gated
+  alone/blind: screen 0/2
+  in reading on babble, with/without: babble 0/1024
+  kind: reflex (senses to act); senses for nothing alone; hurts in reading (babble -1024)
+C1 channel 11011001  512 bits
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 32 bits n2 in4 out16 q2/4 gate C1 replicate at 4 (in place)
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   C1 -> C1 kernels Add(6) lag 1 cover, tiles of 128 bits n2 in8 out16 q2/4 sparse
+
+generation 140: #101 maze->reading
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye+host; writes hand; memory history+repeat; gated
+  alone/blind: respond -2/-4 tell 74/-21 discriminate 9/23 reverse 13/13 remember -1/-9 win-stay 10/-28 surprise 20/-56 maze 3/0 screen 14/9
+  in reading on babble, with/without: babble 1024/1024
+  kind: reflex (senses to act); senses for tell+surprise; neutral in reading (no change)
+   eye -> hand kernels Shr(62) lag 1 span 2 field 2w@53682 -> 1w@0 n6 in3 out16 q1/4 tonic 1/16 gate - runs while !-
+
+generation 140: #102 switching->generalist
+  made of: 3 populations, 1 channels, 8 kernels, 2 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: respond 38/-1 tell 66/-7 discriminate 13/6 reverse 28/-6 remember -5/4 win-stay 46/22 surprise 47/-3 maze -1/0 screen 1/3
+  in generalist on all, with/without: respond 89/83 tell 21/45 discriminate -10/-37 reverse 5/-16 remember 41/-22 win-stay -15/-58 echo -1/-1 babble 8/8 surprise -26/-19 maze 4/-2 screen -4/-8
+  kind: reflex (senses to act); senses for tell+surprise; helps in generalist (respond +6, tell -24, discriminate +27, reverse +21, remember +63, win-stay +43, surprise -7, maze +6, screen +4)
+C1 channel 10110001  512 bits
+   C1 -> C1 kernels Set lag 1 cover, tiles of 128 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64) gate C1
+   eye -> C1 wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64, new) gate C1 rot 61
+   C1 -> hand wire Or lag 1 whole
+
+generation 140: #103 reading->generalist
+  made of: 1 populations, 0 channels, 9 kernels, 0 wires; reads eye+host; writes voice; memory history; gated
+  alone/blind: copy -2/16 echo 9/-5 babble 688/688
+  in generalist on all, with/without: respond 21/21 tell 12/12 discriminate -7/-7 reverse -2/-2 remember -18/-18 win-stay -54/-54 copy -4/-4 echo 20/20 babble 664/664 surprise -37/-37 screen 3/3
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in generalist (no change)
+   eye -> voice kernels Nand lag 2 field 2w@59287 -> 2w@0 n9 in15 out16 q3/4 tonic 1/8 share gate - runs while - replicate at 2 (in place) rot 61
+
+generation 140: #104 recall->prediction
+  made of: 6 populations, 1 channels, 13 kernels, 1 wires; reads eye; writes hand; memory loop+history; gated
+  alone/blind: respond 33/0 tell 128/0 remember 0/2 surprise -66/0 maze 1/0 screen 2/12
+  in prediction on cycle1, with/without: surprise 80/75
+  kind: reflex (senses to act); senses for tell; neutral in prediction (surprise +5)
+C1 channel 10101001  64 bits
+   C1 -> C1 kernels Clear lag 1 cover, tiles of 8 bits n1 in4 out16 q2/4 tonic 1/4 sparse
+   eye -> hand kernels Shr(38) lag 1 cover, tiles of 8 bits n3 in3 out17 q1/4 gate C1
+   C1 -> hand wire Xor lag 1 whole
+   eye -> hand kernels Shr(29) lag 1 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+   eye -> hand kernels Or lag 1 span 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+
+generation 140: #105 screen->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in prediction on cycle1, with/without: all 0
+  kind: relay (host to host); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 140: #106 recall->maze
+  made of: 6 populations, 1 channels, 18 kernels, 0 wires; reads eye; writes hand; memory none; gated
+  alone/blind: respond 64/-2 tell 128/-5 discriminate 0/2 reverse 0/4 remember 0/-5 win-stay 0/-9 surprise -8/8 screen 3/0
+  in maze on turn, with/without: maze 66/0
+  kind: reflex (senses to act); senses for respond+tell; helps in maze (maze +66)
+C1 channel 01110001  64 bits
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Shr(38) lag 1 cover, tiles of 8 bits n3 in3 out17 q1/4 gate C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+
+generation 140: #107 shapes->maze
+  made of: 6 populations, 1 channels, 4 kernels, 4 wires; reads eye; writes hand; memory loop+history+grows; gated
+  alone/blind: respond 0/1 tell 0/-14 discriminate 0/4 reverse 0/2 remember 0/-8 surprise 14/0 screen 0/-1
+  in maze on turn, with/without: maze 103/103
+  kind: reflex (senses to act); senses for nothing alone; neutral in maze (no change)
+C1 channel 01111111  128 bits
+   C1 -> C1 wire Rotl(49) lag 1 field 4w@29357 -> 1w@0 tonic 1/4 sparse replicate at 4 (in place)
+   eye -> hand kernels Shr(63) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 grow(syn 16, out 8-64) gate !C1
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   C1 -> C1 wire Rotl(49) lag 1 span 2 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+   eye -> hand kernels Shr(63) lag 1 cover, tiles of 64 bits n2 in4 out16 q2/4 grow(syn 16, out 8-64) gate !C1
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 sparse replicate at 4 (to a neighbour tile)
+
+generation 140: #108 generalist->screen
+  made of: 6 populations, 1 channels (1 hold), 14 kernels, 1 wires; reads eye+host; writes host; memory holds+repeat+grows; gated
+  alone/blind: all 0
+  in screen on torch, with/without: screen -1/-12
+  kind: sensor (senses into the host); senses for nothing alone; neutral in screen (screen +11)
+C1 channel 00101011  512 bits  holds
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out16 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+   eye -> C1 kernels And lag 1 cover, tiles of 128 bits n5 in8 out16 q1/4 tonic 1/4 gate !C1 sparse replicate at 16 (to a neighbour tile)
+   eye -> C1 kernels And lag 1 cover, tiles of 128 bits n5 in8 out16 q1/4 tonic 1/4 gate !C1 sparse replicate at 16 (to a neighbour tile)
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 8 bits n2 in4 out16 q2/4 tonic 1/16 replicate at 16 (to a neighbour tile)
+   C1 -> C1 wire Nor lag 1 whole tonic 1/32 runs while C1 sparse replicate at 16 (to a neighbour tile)
+
+generation 140: #109 maze->screen
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye+host; writes hand; memory history+repeat; gated
+  alone/blind: respond -13/0 tell 50/-4 discriminate 0/-8 reverse 5/-17 remember 5/14 win-stay -7/-15 surprise -2/17 maze 0/2 screen 30/-4
+  in screen on torch, with/without: screen 1/0
+  kind: reflex (senses to act); senses for tell; neutral in screen (screen +1)
+   eye -> hand kernels Shr(62) lag 1 span 2 field 2w@53682 -> 1w@0 n6 in3 out16 q1/4 tonic 1/16 gate - runs while !-
+
+generation 140: #110 switching->shapes
+  made of: 4 populations, 1 channels, 0 kernels, 4 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: all 0
+  in shapes on clean, with/without: respond 0/-94 tell 0/60
+  kind: reflex (senses to act); senses for nothing alone; hurts in shapes (tell -60)
+C1 channel 11110011  512 bits
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+   eye -> C1 wire Sub(5) lag 1 whole tonic 1/4 gate !C1 runs while !C1 sparse rot 65475
+   C1 -> hand wire Or lag 1 whole
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+
+generation 140: #111 screen->shapes
+  made of: 1 populations, 0 channels, 9 kernels, 0 wires; reads M+host; writes hand; memory history+repeat; gated
+  alone/blind: respond 4/4 tell 27/27 discriminate -18/-18 remember -6/-6 win-stay 6/6 surprise -33/-33 maze 7/7 screen 5/5
+  in shapes on clean, with/without: respond -5/0 tell 9/0
+  kind: driver (host to act); senses for nothing alone; neutral in shapes (tell +9)
+   M -> hand kernels Shr(2) lag 2 span 2 cover, tiles of 32 bits n9 in3 out15 q2/4 tonic 1/16 share gate - runs while - sparse replicate at 16 (to a neighbour tile)
+
+generation 142: #96 gone from switching after 2 generations (peak 1 of 32)
+generation 142: #97 gone from switching after 2 generations (peak 1 of 32)
+generation 142: #100 gone from reading after 2 generations (peak 1 of 32)
+generation 142: #101 gone from reading after 2 generations (peak 1 of 32)
+generation 142: #102 gone from generalist after 2 generations (peak 1 of 32)
+generation 142: #104 gone from prediction after 2 generations (peak 1 of 32)
+generation 142: #105 gone from prediction after 2 generations (peak 1 of 32)
+generation 142: #107 gone from maze after 2 generations (peak 1 of 32)
+generation 142: #108 gone from screen after 2 generations (peak 1 of 32)
+generation 142: #109 gone from screen after 2 generations (peak 1 of 32)
+generation 142: #110 gone from shapes after 2 generations (peak 1 of 32)
+generation 142: #111 gone from shapes after 2 generations (peak 1 of 32)
+generation 145: #99 gone from recall after 5 generations (peak 3 of 32)
+generation 146: #103 gone from generalist after 6 generations (peak 3 of 32)
+generation 147: #48 gone from switching after 67 generations (peak 31 of 32)
+generation 160: #112 screen->switching
+  made of: 1 populations, 0 channels, 10 kernels, 0 wires; reads S+host; writes hand; memory history+repeat; gated
+  alone/blind: respond 4/0 tell -32/-51 discriminate 17/14 reverse 24/20 remember -9/28 win-stay 23/-2 surprise 63/52 maze 7/8 screen 0/10
+  in switching on swap1, with/without: respond 10/163 tell 23/209 win-stay -10/27 discriminate -16/15 reverse 3/22
+  kind: reflex (senses to act); senses for nothing alone; scores surprise blind; neutral in switching (reverse -19)
+   S -> hand kernels Rotl(6) lag 2 span 2 cover, tiles of 32 bits n10 in3 out15 q2/4 tonic 1/8 gate - runs while - replicate at 16 (to a neighbour tile) rot 61
+
+generation 160: #113 shapes->switching
+  made of: 6 populations, 1 channels, 4 kernels, 4 wires; reads S+touch+eye+host; writes hand; memory history+repeat+grows; gated
+  alone/blind: respond -2/0 tell 192/3 discriminate 1/12 reverse 0/6 remember 0/1 win-stay -1/12 surprise -64/13 maze 0/-4 screen -1/5
+  in switching on swap1, with/without: respond 72/98 tell 384/192
+  kind: reflex (senses to act); senses for tell; neutral in switching (no change)
+C1 channel 10111011  256 bits
+   S -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 15, out 6-63) gate C1 rot 65475
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   touch -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 15, out 6-64) gate C1 rot 65475
+   C1 -> C1 wire Or lag 1 whole tonic 1/4 share sparse replicate at 4 (to a neighbour tile)
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Shr(63) lag 1 span 2 cover, tiles of 64 bits n2 in4 out16 q3/4 grow(syn 16, out 8-64) gate !C1
+
+generation 160: #114 shapes->recall
+  made of: 6 populations, 1 channels, 0 kernels, 6 wires; reads S+touch+host; writes hand; memory repeat+grows; gated
+  alone/blind: respond 32/0 tell 64/0 surprise 1/0 screen 15/1
+  in recall on lag3, with/without: respond 66/96 remember 320/256
+  kind: reflex (senses to act); senses for tell; helps in recall (remember +64)
+C1 channel 00011110  256 bits
+   S -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 15, out 6-63) gate C1 rot 65475
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   S -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 15, out 6-63) gate C1 rot 65475
+   C1 -> C1 wire Rotl(49) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   touch -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 15, out 6-64) gate C1 rot 65475
+   C1 -> C1 wire Or lag 1 whole tonic 1/4 share sparse replicate at 4 (to a neighbour tile)
+
+generation 160: #115 prediction->recall
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads host; writes host; memory grows
+  alone/blind: all 0
+  in recall on lag3, with/without: respond 154/154 remember 256/256
+  kind: relay (host to host); senses for nothing alone; neutral in recall (no change)
+   (a population with no channel to read or write)
+
+generation 160: #116 generalist->reading
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads eye; writes voice; memory repeat+grows
+  alone/blind: all 0
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for nothing alone; neutral in reading (no change)
+   eye -> voice kernels Nor lag 1 cover, tiles of 32 bits n2 in16 out16 q2/4 grow(syn 16, out 8-63, repeat 5) replicate at 8 (in place)
+
+generation 160: #117 shapes->reading
+  made of: 6 populations, 1 channels, 6 kernels, 3 wires; reads eye; writes hand; memory history+grows; gated
+  alone/blind: respond 71/0 tell 128/-11 discriminate 0/-2 reverse 0/-4 remember 0/-1 win-stay 0/2 surprise 25/-3 screen 0/7
+  in reading on babble, with/without: babble 768/0
+  kind: reflex (senses to act); senses for respond+tell; helps in reading (babble +768)
+C1 channel 01111001  512 bits
+   C1 -> hand wire Or lag 1 whole
+   eye -> hand kernels Shr(63) lag 1 span 2 cover, tiles of 64 bits n2 in4 out16 q2/4 grow(syn 16, out 8-64) gate !C1
+   C1 -> hand wire Or lag 1 whole
+   C1 -> hand wire Or lag 1 whole
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 share grow(syn 16, out 8-64) gate !C1
+
+generation 160: #118 reading->generalist
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads touch; writes A; memory repeat
+  alone/blind: respond 6/11 tell 18/13 discriminate -9/-2 reverse -16/-14 remember 3/3 win-stay -14/-21 copy 21/23 echo 4/14 babble 328/328 surprise 1/2 maze 5/5 screen 5/10
+  in generalist on all, with/without: respond 51/69 tell -7/12 discriminate 1/25 reverse -3/30 remember -13/-5 win-stay -51/50 copy 3/11 echo 3/15 babble 688/552 surprise -12/-20 maze -3/8 screen 6/11
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; mixed in generalist (respond -18, tell -19, discriminate -24, reverse -33, remember -8, win-stay -101, copy -8, echo -12, babble +136, surprise +8, maze -11, screen -5)
+   touch -> A kernels Shl(14) lag 1 cover, tiles of 8 bits n5 in4 out16 q2/4 tonic 1/2 sparse replicate at 4 (in place) rot 61
+
+generation 160: #119 shapes->generalist
+  made of: 6 populations, 1 channels, 4 kernels, 4 wires; reads eye+S+touch+host; writes hand; memory history+repeat+grows; gated
+  alone/blind: respond -71/0 tell 107/13 discriminate -8/0 reverse -3/-4 remember 0/13 win-stay -5/0 surprise -23/19 maze 2/0
+  in generalist on all, with/without: respond 56/-3 tell 22/3 discriminate -3/-28 reverse 9/1 remember 23/-30 win-stay -8/-9 copy -32/-50 echo 6/-35 babble 656/872 surprise -23/0 maze -2/-2 screen 2/-6
+  kind: reflex (senses to act); senses for tell; mixed in generalist (respond +59, tell +19, discriminate +25, reverse +8, remember +53, win-stay +1, copy +18, echo +41, babble -216, surprise -23, screen +8)
+C1 channel 10101100  256 bits
+   C1 -> C1 wire Or lag 1 whole tonic 1/4 share sparse replicate at 4 (to a neighbour tile)
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Shr(63) lag 1 span 2 cover, tiles of 64 bits n2 in4 out16 q3/4 grow(syn 16, out 8-64) gate !C1
+   C1 -> hand wire Or lag 1 whole
+   S -> hand wire Sub(3) lag 1 whole tonic 1/16 grow(syn 15, out 6-64) gate C1 rot 65475
+   touch -> hand wire Sub(3) lag 1 whole tonic 1/8 grow(syn 15, out 6-64) gate C1 rot 65475
+
+generation 160: #120 screen->prediction
+  made of: 1 populations, 0 channels, 10 kernels, 0 wires; reads M+host; writes hand; memory history+repeat; gated
+  alone/blind: tell -23/-23 discriminate 7/7 reverse 17/17 remember -10/-10 win-stay -16/-16 surprise -13/-13 maze 7/7 screen 1/1
+  in prediction on cycle1, with/without: surprise -32/-6
+  kind: driver (host to act); senses for nothing alone; neutral in prediction (surprise -26)
+   M -> hand kernels And lag 2 span 2 cover, tiles of 64 bits n10 in3 out15 q2/4 tonic 1/8 share gate - runs while - replicate at 16 (to a neighbour tile) rot 61
+
+generation 160: #121 screen->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise -6/-6
+  kind: relay (host to host); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 160: #122 generalist->maze
+  made of: 6 populations, 1 channels, 36 kernels, 1 wires; reads ear; writes hand+host; memory none; gated
+  alone/blind: respond 0/-2 tell 12/0 discriminate 3/0 reverse 0/-3 remember -1/-3 win-stay 43/31 surprise -3/-3 maze 2/2 screen 0/-1
+  in maze on turn, with/without: maze 60/90
+  kind: reflex (senses to act); senses for nothing alone; neutral in maze (maze -30)
+C1 channel 00100010  512 bits
+   C1 -> C1 wire Shr(46) lag 1 whole replicate at 4 (in place)
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   C1 -> hand kernels Clear lag 1 cover, tiles of 64 bits n8 in16 out16 q2/4 tonic 1/16
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out17 q2/4 runs while !C1
+
+generation 160: #123 screen->maze
+  made of: 1 populations, 0 channels, 10 kernels, 0 wires; reads M+host; writes hand; memory history+repeat; gated
+  alone/blind: respond 7/7 tell 3/3 discriminate -7/-7 reverse -8/-8 remember -10/-10 win-stay -22/-22 surprise 14/14 maze 2/2 screen -2/-2
+  in maze on turn, with/without: maze -150/-150
+  kind: driver (host to act); senses for nothing alone; neutral in maze (no change)
+   M -> hand kernels Rotl(6) lag 2 span 2 field 1w@38715 -> 1w@0 n10 in3 out15 q2/4 tonic 1/8 share gate - runs while - sparse replicate at 16 (to a neighbour tile) rot 61
+
+generation 160: #124 prediction->screen
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond -3/5 tell 123/7 discriminate -3/2 reverse -40/6 remember 33/-4 win-stay -32/-4 surprise -54/-12 maze 25/-4 screen 22/-2
+  in screen on torch, with/without: screen -18/0
+  kind: reflex (senses to act); senses for tell; neutral in screen (screen -18)
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n7 in15 out16 q3/4 tonic 1/8 grow(syn 19, out 7-61, new) gate !- runs while !- sparse replicate at 2 (in place) rot 61
+
+generation 160: #125 prediction->screen
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in screen on torch, with/without: screen 6/6
+  kind: relay (host to host); senses for nothing alone; neutral in screen (no change)
+   (a population with no channel to read or write)
+
+generation 160: #126 prediction->shapes
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in shapes on winstay, with/without: respond 88/93 tell 173/183 win-stay -86/-86
+  kind: relay (host to host); senses for nothing alone; neutral in shapes (no change)
+   (a population with no channel to read or write)
+
+generation 160: #127 recall->shapes
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: remember 0/5 surprise 12/0 screen -2/0
+  in shapes on winstay, with/without: respond 33/73 tell 106/161 win-stay 117/114
+  kind: reflex (senses to act); senses for nothing alone; neutral in shapes (win-stay +3)
+   eye -> hand kernels Shl(2) lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 gate -
+
+generation 162: #98 gone from recall after 22 generations (peak 10 of 32)
+generation 162: #113 gone from switching after 2 generations (peak 1 of 32)
+generation 162: #114 gone from recall after 2 generations (peak 1 of 32)
+generation 162: #115 gone from recall after 2 generations (peak 1 of 32)
+generation 162: #116 gone from reading after 2 generations (peak 1 of 32)
+generation 162: #117 gone from reading after 2 generations (peak 1 of 32)
+generation 162: #119 gone from generalist after 2 generations (peak 1 of 32)
+generation 162: #120 gone from prediction after 2 generations (peak 1 of 32)
+generation 162: #121 gone from prediction after 2 generations (peak 1 of 32)
+generation 162: #122 gone from maze after 2 generations (peak 1 of 32)
+generation 162: #126 gone from shapes after 2 generations (peak 1 of 32)
+generation 162: #127 gone from shapes after 2 generations (peak 1 of 32)
+generation 163: #112 gone from switching after 3 generations (peak 1 of 32)
+generation 163: #118 gone from generalist after 3 generations (peak 4 of 32)
+generation 164: #125 gone from screen after 4 generations (peak 2 of 32)
+generation 165: #123 gone from maze after 5 generations (peak 4 of 32)
+generation 180: #128 reading->switching
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads S; writes A; memory none
+  alone/blind: tell 0/4 reverse 0/-3 win-stay 0/1 copy -3/0 echo 6/0 babble 24/0 surprise 0/-2
+  in switching on swap1, with/without: respond 1/22 tell 118/119 win-stay 166/160 discriminate 61/58 reverse 58/33
+  kind: reflex (senses to act); senses for nothing alone; neutral in switching (reverse +25)
+   S -> A kernels Shr(32) lag 1 cover, tiles of 32 bits n5 in4 out16 q2/4 sparse
+
+generation 180: #129 maze->switching
+  made of: 4 populations, 1 channels, 8 kernels, 2 wires; reads host; writes nothing; memory loop
+  alone/blind: all 0
+  in switching on swap1, with/without: respond 153/61 tell 250/70 win-stay 51/162 discriminate 35/47 reverse 69/28
+  kind: sealed (reaches nothing); senses for nothing alone; helps in switching (reverse +41)
+C1 channel 00100010  64 bits
+   C1 -> C1 kernels Shl(28) lag 1 cover, tiles of 8 bits n4 in16 out16 q2/4 tonic 1/4 replicate at 8 (to a neighbour tile)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Shl(28) lag 1 cover, tiles of 8 bits n4 in16 out16 q2/4 tonic 1/4 replicate at 8 (to a neighbour tile)
+   C1 -> C1 wire Or lag 1 whole
+
+generation 180: #130 reading->recall
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads S; writes A; memory none
+  alone/blind: respond 26/0 tell 64/0 copy 31/2 echo -14/0 babble 32/24 screen 0/1
+  in recall on lag4, with/without: respond -47/-56 remember 27/32
+  kind: reflex (senses to act); senses for tell; neutral in recall (respond +9, remember -5)
+   S -> A kernels Shr(32) lag 1 cover, tiles of 32 bits n5 in4 out16 q2/4 sparse
+
+generation 180: #131 screen->recall
+  made of: 1 populations, 0 channels, 9 kernels, 0 wires; reads M+host; writes hand; memory history+repeat; gated
+  alone/blind: respond 7/7 tell 8/8 discriminate -4/-4 reverse -16/-16 remember 2/2 win-stay 9/9 surprise 6/6 maze -7/-7 screen -5/-5
+  in recall on lag4, with/without: respond -62/57 remember 2/0
+  kind: driver (host to act); senses for nothing alone; hurts in recall (respond -119, remember +2)
+   M -> hand kernels Shr(8) lag 2 span 2 field 1w@38714 -> 2w@0 n9 in3 out16 q2/4 tonic 1/8 gate - runs while - sparse replicate at 16 (in place)
+
+generation 180: #132 recall->reading
+  made of: 6 populations, 1 channels, 18 kernels, 0 wires; reads eye; writes hand; memory history+repeat; gated
+  alone/blind: respond 30/0 tell 64/5 reverse 0/-2 surprise 9/-14 maze 30/0 screen -9/5
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for tell; neutral in reading (no change)
+C1 channel 10101110  512 bits
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+   eye -> hand kernels Set lag 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Shr(29) lag 1 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1 runs while C1
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+   eye -> hand kernels Add(6) lag 1 span 2 cover, tiles of 16 bits n3 in4 out16 q1/4 gate C1 runs while !C1 sparse
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+
+generation 180: #133 prediction->reading
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads host; writes host; memory none; gated
+  alone/blind: all 0
+  in reading on babble, with/without: all 0
+  kind: relay (host to host); senses for nothing alone; neutral in reading (no change)
+   (a population with no channel to read or write)
+
+generation 180: #134 reading->generalist
+  made of: 1 populations, 1 channels (1 hold), 0 kernels, 1 wires; reads nothing; writes nothing; memory holds+loop; gated
+  alone/blind: all 0
+  in generalist on all, with/without: respond 10/2 tell 4/-13 discriminate -14/-10 reverse -13/4 remember -6/-5 win-stay -5/-11 copy -25/-13 echo 0/9 babble 528/856 surprise -8/-28 screen -4/0
+  kind: sealed (reaches nothing); senses for nothing alone; hurts in generalist (respond +8, tell +17, discriminate -4, reverse -17, remember -1, win-stay +6, copy -12, echo -9, babble -328, surprise +20, screen -4)
+C1 channel 11100110  131072 bits  holds
+   C1 -> C1 wire Nand lag 1 whole tonic 1/16 gate C1 replicate at 32 (in place)
+
+generation 180: #135 recall->generalist
+  made of: 6 populations, 1 channels, 18 kernels, 0 wires; reads eye+host; writes hand+host; memory history+repeat; gated
+  alone/blind: respond 65/0 tell 64/15 discriminate 0/-4 reverse 0/-2 remember 128/-4 surprise -47/-12 maze -29/0 screen -9/7
+  in generalist on all, with/without: respond 2/10 tell 6/4 discriminate 0/-14 reverse 1/-13 remember 6/-6 win-stay 12/-5 copy 31/-25 echo -45/0 babble 512/528 surprise -5/-8 screen 0/-4
+  kind: reflex (senses to act); senses for respond+tell+remember; mixed in generalist (respond -8, tell +2, discriminate +14, reverse +14, remember +12, win-stay +17, copy +56, echo -45, babble -16, surprise +3, screen +4)
+C1 channel 10001101  512 bits
+   eye -> C1 kernels Shr(29) lag 1 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1 runs while C1
+   eye -> hand kernels Set lag 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1 sparse
+   eye -> C1 kernels Set lag 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1
+   eye -> hand kernels Add(5) lag 1 field 4w@25061 -> 2w@1 n3 in3 out16 q1/4 share gate C1 sparse
+   eye -> hand kernels Set lag 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1 sparse
+   eye -> hand kernels Shr(29) lag 1 field 4w@25057 -> 2w@1 n3 in3 out16 q1/4 gate C1 runs while C1
+
+generation 180: #136 screen->prediction
+  made of: 1 populations, 0 channels, 9 kernels, 0 wires; reads M+host; writes hand; memory history+repeat; gated
+  alone/blind: respond -16/-16 tell -58/-58 discriminate -7/-7 reverse -27/-27 remember -5/-5 win-stay 14/14 surprise 4/4 maze -3/-3
+  in prediction on cycle1, with/without: surprise 39/0
+  kind: driver (host to act); senses for nothing alone; neutral in prediction (surprise +39)
+   M -> hand kernels Shr(8) lag 2 span 2 field 1w@38714 -> 2w@0 n9 in3 out16 q2/4 tonic 1/8 gate - runs while - sparse replicate at 16 (in place)
+
+generation 180: #137 reading->prediction
+  made of: 1 populations, 0 channels, 5 kernels, 0 wires; reads S; writes A; memory none
+  alone/blind: copy 18/1 echo 9/-3 babble 32/32 surprise -22/23
+  in prediction on cycle1, with/without: surprise 36/40
+  kind: reflex (senses to act); senses for nothing alone; neutral in prediction (surprise -4)
+   S -> A kernels Shr(32) lag 1 cover, tiles of 32 bits n5 in4 out16 q2/4 sparse
+
+generation 180: #138 recall->maze
+  made of: 6 populations, 1 channels, 18 kernels, 1 wires; reads eye; writes voice+hand; memory loop+history+repeat+grows; gated
+  alone/blind: respond 164/0 tell 320/0 remember 0/-1 copy -19/1 echo 8/-4 babble 528/552 surprise 48/0 maze -34/0 screen 0/1
+  in maze on turn, with/without: maze 33/34
+  kind: reflex (senses to act); senses for respond+tell+surprise; scores babble blind; neutral in maze (maze -1)
+C1 channel 00001101  512 bits
+   eye -> voice kernels Or lag 1 cover, tiles of 128 bits n6 in16 out16 q2/4 tonic 1/2 gate !C1 replicate at 32 (in place)
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+   eye -> hand kernels Add(5) lag 1 field 4w@25061 -> 2w@65535 n3 in3 out16 q1/4 share gate C1 sparse
+   C1 -> C1 wire Clear lag 1 whole grow(syn 16, out 8-64)
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+   eye -> hand kernels Set lag 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1 runs while C1
+
+generation 180: #139 generalist->maze
+  made of: 6 populations, 1 channels, 16 kernels, 1 wires; reads affect+ear+host; writes host; memory loop+history+repeat+grows; gated
+  alone/blind: all 0
+  in maze on turn, with/without: maze 20/27
+  kind: sensor (senses into the host); senses for nothing alone; neutral in maze (maze -7)
+C1 channel 10100011  512 bits
+   C1 -> C1 kernels Nor lag 1 span 2 cover, tiles of 16 bits n1 in4 out15 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+   C1 -> C1 kernels Nor lag 1 cover, tiles of 8 bits n8 in4 out16 q2/4 grow(syn 16, out 8-64)
+   affect -> C1 kernels Rotl(23) lag 1 cover, tiles of 8 bits n4 in16 out16 q2/4 gate C1 sparse
+   ear -> C1 wire Nor lag 1 whole grow(syn 16, out 8-64) sparse
+   C1 -> C1 kernels Clear lag 2 cover, tiles of 16 bits n1 in4 out16 q2/4 grow(syn 15, out 8-64, new, repeat 2) gate C1 replicate at 8 (in place)
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1
+
+generation 180: #140 maze->screen
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 159/0 tell 192/0 discriminate -1/1 remember 0/2 surprise 9/0 screen -5/0
+  in screen on torch, with/without: screen -23/-19
+  kind: reflex (senses to act); senses for respond+tell; neutral in screen (screen -4)
+   eye -> hand kernels Or lag 1 field 4w@25057 -> 2w@0 n3 in3 out16 q1/4 gate -
+
+generation 180: #141 generalist->screen
+  made of: 4 populations, 1 channels, 8 kernels, 0 wires; reads eye+ear+host; writes A+host; memory repeat; gated
+  alone/blind: copy -17/0 echo -5/0 babble 8/0
+  in screen on torch, with/without: screen 0/-5
+  kind: reflex (senses to act); senses for nothing alone; neutral in screen (screen +5)
+C1 channel 11100101  512 bits
+   eye -> C1 kernels Shl(38) lag 1 cover, tiles of 128 bits n3 in16 out16 q2/4 gate !C1 runs while !C1 replicate at 4 (to a neighbour tile)
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1
+   C1 -> C1 kernels Add(6) lag 1 cover, tiles of 128 bits n1 in4 out16 q2/4 sparse
+   ear -> A kernels Clear lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1 sparse replicate at 32 (in place)
+
+generation 180: #142 prediction->shapes
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads host; writes host; memory none; gated
+  alone/blind: all 0
+  in shapes on winstay, with/without: respond 77/77 tell 157/157 win-stay 31/31
+  kind: relay (host to host); senses for nothing alone; neutral in shapes (no change)
+   (a population with no channel to read or write)
+
+generation 180: #143 maze->shapes
+  made of: 2 populations, 1 channels (1 hold), 6 kernels, 0 wires; reads eye; writes hand+host; memory holds; gated
+  alone/blind: respond 32/0 tell 64/0 surprise -28/0 screen 0/1
+  in shapes on winstay, with/without: respond 36/105 tell 155/127 win-stay -10/-8
+  kind: reflex (senses to act); senses for tell; neutral in shapes (win-stay -2)
+C1 channel 01000101  64 bits  holds
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out17 q1/4 share gate C1
+   eye -> C1 kernels Or lag 1 cover, tiles of 8 bits n3 in3 out17 q1/4 share gate C1
+
+generation 182: #130 gone from recall after 2 generations (peak 1 of 32)
+generation 182: #132 gone from reading after 2 generations (peak 1 of 32)
+generation 182: #134 gone from generalist after 2 generations (peak 1 of 32)
+generation 182: #135 gone from generalist after 2 generations (peak 1 of 32)
+generation 182: #136 gone from prediction after 2 generations (peak 1 of 32)
+generation 182: #137 gone from prediction after 2 generations (peak 1 of 32)
+generation 182: #138 gone from maze after 2 generations (peak 1 of 32)
+generation 182: #139 gone from maze after 2 generations (peak 1 of 32)
+generation 182: #141 gone from screen after 2 generations (peak 1 of 32)
+generation 182: #143 gone from shapes after 2 generations (peak 1 of 32)
+generation 183: #129 gone from switching after 3 generations (peak 1 of 32)
+generation 183: #140 gone from screen after 3 generations (peak 1 of 32)
+generation 184: #131 gone from recall after 4 generations (peak 1 of 32)
+generation 184: #133 gone from reading after 4 generations (peak 3 of 32)
+generation 187: #142 gone from shapes after 7 generations (peak 3 of 32)
+generation 189: #106 gone from maze after 49 generations (peak 28 of 32)
+generation 200: #144 generalist->switching
+  made of: 3 populations, 1 channels, 6 kernels, 0 wires; reads ear+host; writes A; memory loop; gated
+  alone/blind: copy -14/0 echo 4/0 babble 16/0
+  in switching on swap1, with/without: respond 2/4 tell 21/0 win-stay -29/6 discriminate -2/2 reverse -12/2
+  kind: reflex (senses to act); senses for nothing alone; neutral in switching (reverse -14)
+C1 channel 01001001  1024 bits
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1
+   ear -> A kernels Clear lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1 sparse replicate at 32 (in place)
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1
+
+generation 200: #145 generalist->switching
+  made of: 3 populations, 1 channels, 5 kernels, 0 wires; reads ear+host; writes A+host; memory none; gated
+  alone/blind: copy -24/0 echo -32/0 babble 16/0
+  in switching on swap1, with/without: respond 17/15 tell 279/279 win-stay 149/196 discriminate 87/77 reverse 122/115
+  kind: reflex (senses to act); senses for nothing alone; neutral in switching (reverse +7)
+C1 channel 00111110  512 bits
+   C1 -> C1 kernels And lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1
+   C1 -> C1 kernels Add(6) lag 1 cover, tiles of 128 bits n1 in4 out16 q2/4 sparse
+   ear -> A kernels Clear lag 1 cover, tiles of 64 bits n2 in8 out16 q2/4 gate C1 sparse replicate at 32 (in place)
+
+generation 200: #146 screen->recall
+  made of: 6 populations, 1 channels, 27 kernels, 1 wires; reads eye+M; writes A+voice+hand; memory loop+history+repeat+grows; gated
+  alone/blind: respond 32/0 tell 64/6 discriminate 0/2 win-stay 0/4 copy 9/0 echo -3/-2 babble 88/40 screen 4/0
+  in recall on lag4, with/without: respond 26/26 remember 1/0
+  kind: reflex (senses to act); senses for tell+babble; neutral in recall (remember +1)
+C1 channel 00100111  1024 bits
+   C1 -> C1 kernels Sub(3) lag 1 cover, tiles of 64 bits n4 in16 out16 q2/4 grow(syn 16, out 8-64) sparse
+   C1 -> A wire Or lag 1 whole
+   eye -> voice kernels Shl(37) lag 1 cover, tiles of 32 bits n2 in4 out16 q2/4 gate !C1 sparse
+   M -> hand kernels Shr(29) lag 2 span 2 field 1w@38714 -> 2w@0 n9 in3 out16 q2/4 tonic 1/8 gate C1 runs while C1 sparse replicate at 16 (in place)
+   eye -> A kernels Xor lag 1 cover, tiles of 64 bits n6 in4 out16 q2/4 gate C1 sparse
+   C1 -> A kernels Sub(3) lag 1 cover, tiles of 64 bits n6 in16 out16 q2/4 grow(syn 16, out 8-64) sparse
+
+generation 200: #147 prediction->recall
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes nothing; memory none
+  alone/blind: all 0
+  in recall on lag4, with/without: respond 285/285
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in recall (no change)
+   (a population with no channel to read or write)
+
+generation 200: #148 generalist->reading
+  made of: 6 populations, 1 channels, 2 kernels, 4 wires; reads host; writes hand+host; memory loop+repeat+grows; gated
+  alone/blind: all 0
+  in reading on babble, with/without: babble 992/992
+  kind: driver (host to act); senses for nothing alone; neutral in reading (no change)
+C1 channel 11010111  512 bits
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q2/4 grow(syn 15, out 8-64, repeat 1) gate !C1 sparse
+   C1 -> hand wire Xor lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+   C1 -> C1 wire Or lag 1 whole
+
+generation 200: #149 maze->reading
+  made of: 1 populations, 0 channels, 4 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 66/0 tell 128/0 surprise -31/-1 screen -4/0
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for respond+tell; neutral in reading (no change)
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n4 in3 out16 q1/4 gate - sparse
+
+generation 200: #150 screen->generalist
+  made of: 1 populations, 0 channels, 1 kernels, 0 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in generalist on all, with/without: respond -40/-40 tell 91/91 discriminate 4/8 reverse 0/6 remember -34/-34 win-stay 33/33 copy -7/-7 echo 23/23 babble 440/440 surprise -16/-16 maze 0/-7 screen -11/4
+  kind: relay (host to host); senses for nothing alone; neutral in generalist (discriminate -4, reverse -6, maze +7, screen -15)
+   (a population with no channel to read or write)
+
+generation 200: #151 reading->generalist
+  made of: 1 populations, 1 channels (1 hold), 4 kernels, 0 wires; reads nothing; writes voice; memory holds+repeat; gated
+  alone/blind: copy -7/-7 babble 400/400
+  in generalist on all, with/without: respond -14/36 tell 122/209 discriminate -4/8 reverse -12/26 remember -19/-1 win-stay 0/-16 copy -10/-8 echo -4/-10 babble 928/888 surprise 15/11 maze 9/-4 screen 8/8
+  kind: babbler (acts on no sense); senses for nothing alone; scores babble blind; mixed in generalist (respond -50, tell -87, discriminate -12, reverse -38, remember -18, win-stay +16, copy -2, echo +6, babble +40, surprise +4, maze +13)
+C1 channel 10100110  64 bits  holds
+   C1 -> voice kernels Shl(41) lag 1 cover, tiles of 32 bits n4 in8 out16 q2/4 tonic 1/8 share gate !C1 sparse replicate at 32 (in place)
+
+generation 200: #152 recall->prediction
+  made of: 1 populations, 0 channels, 4 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 33/0 tell 64/0 surprise 39/2 screen -8/0
+  in prediction on cycle1, with/without: surprise 51/64
+  kind: reflex (senses to act); senses for tell; neutral in prediction (surprise -13)
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n4 in3 out16 q1/4 share gate - runs while !-
+
+generation 200: #153 shapes->prediction
+  made of: 2 populations, 1 channels, 0 kernels, 2 wires; reads eye; writes nothing; memory loop
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise 47/47
+  kind: sealed sensor (reaches nothing); senses for nothing alone; neutral in prediction (no change)
+C1 channel 00111001  512 bits
+   eye -> C1 wire Nand lag 1 whole tonic 1/4 sparse replicate at 32 (in place)
+   C1 -> C1 wire Or lag 1 whole
+
+generation 200: #154 prediction->maze
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads host; writes nothing; memory none
+  alone/blind: all 0
+  in maze on turn, with/without: maze 130/130
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in maze (no change)
+   (a population with no channel to read or write)
+
+generation 200: #155 shapes->maze
+  made of: 6 populations, 1 channels, 2 kernels, 4 wires; reads eye+S; writes hand; memory loop+history+repeat+grows; gated
+  alone/blind: remember 0/-6 surprise -1/0 screen 2/4
+  in maze on turn, with/without: maze 68/12
+  kind: reflex (senses to act); senses for nothing alone; helps in maze (maze +56)
+C1 channel 11010011  256 bits
+   C1 -> C1 wire Or lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   eye -> hand kernels Nand lag 1 cover, tiles of 64 bits n1 in4 out16 q1/4 share grow(syn 16, out 9-64, new) gate C1
+   S -> hand wire Sub(3) lag 2 field 1w@2523 -> 1w@65535 tonic 1/8 grow(syn 15, out 6-63) gate C1
+   C1 -> C1 wire Rotl(48) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 64 bits n1 in4 out16 q1/4 share grow(syn 16, out 9-64, new) gate C1
+   S -> hand wire Sub(3) lag 2 field 1w@2523 -> 1w@65535 tonic 1/8 grow(syn 14, out 6-63, repeat 3) gate C1 rot 65475
+
+generation 200: #156 shapes->screen
+  made of: 6 populations, 1 channels, 6 kernels, 3 wires; reads eye+host; writes hand+host; memory loop+history+grows; gated
+  alone/blind: respond 94/0 tell 64/9 remember 0/-2 surprise 19/0 screen -7/-1
+  in screen on torch, with/without: screen 0/-11
+  kind: reflex (senses to act); senses for respond+tell; neutral in screen (screen +11)
+C1 channel 11111011  1024 bits
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 share grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1 replicate at 2 (in place)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   eye -> hand kernels Shr(63) lag 1 span 2 cover, tiles of 64 bits n2 in4 out16 q2/4 grow(syn 16, out 8-64) gate !C1
+
+generation 200: #157 reading->screen
+  made of: 1 populations, 1 channels (1 hold), 4 kernels, 0 wires; reads nothing; writes voice; memory holds+repeat; gated
+  alone/blind: copy -7/-7 echo 2/2 babble 416/416
+  in screen on torch, with/without: screen -2/3
+  kind: babbler (acts on no sense); senses for nothing alone; scores babble blind; neutral in screen (screen -5)
+C1 channel 01111111  64 bits  holds
+   C1 -> voice kernels Shl(41) lag 1 cover, tiles of 32 bits n4 in8 out16 q2/4 tonic 1/8 gate !C1 sparse replicate at 32 (in place)
+
+generation 200: #158 switching->shapes
+  made of: 5 populations, 1 channels, 8 kernels, 2 wires; reads eye+host; writes hand+host; memory history+repeat+grows; gated
+  alone/blind: respond 32/2 tell 64/-1 discriminate 0/1 reverse 0/-5 remember 0/7 win-stay 0/1 surprise -13/0 screen -6/0
+  in shapes on winstay, with/without: respond 33/46 tell 33/67 win-stay -21/77
+  kind: reflex (senses to act); senses for tell; hurts in shapes (win-stay -98)
+C1 channel 10001100  512 bits
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 wire Xor lag 1 whole runs while !C1 sparse
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 wire Xor lag 1 whole runs while !C1 sparse
+   C1 -> C1 kernels Or lag 2 cover, tiles of 32 bits n2 in17 out16 q2/4 sparse
+
+generation 200: #159 maze->shapes
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory repeat; gated
+  alone/blind: tell 0/-3 reverse 0/-3 surprise 24/0 screen -2/0
+  in shapes on winstay, with/without: respond 108/111 tell 140/124 win-stay -19/-94
+  kind: reflex (senses to act); senses for nothing alone; helps in shapes (win-stay +75)
+   eye -> hand kernels Shr(63) lag 1 cover, tiles of 8 bits n3 in3 out17 q1/4 gate -
+
+generation 202: #144 gone from switching after 2 generations (peak 1 of 32)
+generation 202: #146 gone from recall after 2 generations (peak 1 of 32)
+generation 202: #148 gone from reading after 2 generations (peak 1 of 32)
+generation 202: #149 gone from reading after 2 generations (peak 1 of 32)
+generation 202: #152 gone from prediction after 2 generations (peak 1 of 32)
+generation 202: #153 gone from prediction after 2 generations (peak 1 of 32)
+generation 202: #154 gone from maze after 2 generations (peak 1 of 32)
+generation 202: #155 gone from maze after 2 generations (peak 1 of 32)
+generation 202: #156 gone from screen after 2 generations (peak 1 of 32)
+generation 202: #157 gone from screen after 2 generations (peak 1 of 32)
+generation 202: #159 gone from shapes after 2 generations (peak 1 of 32)
+generation 203: #150 gone from generalist after 3 generations (peak 1 of 32)
+generation 205: #145 gone from switching after 5 generations (peak 3 of 32)
+generation 205: #158 gone from shapes after 5 generations (peak 1 of 32)
+generation 206: #147 gone from recall after 6 generations (peak 2 of 32)
+generation 207: #124 gone from screen after 47 generations (peak 12 of 32)
+generation 213: #128 gone from switching after 33 generations (peak 13 of 32)
+generation 220: #160 shapes->switching
+  made of: 6 populations, 1 channels, 2 kernels, 5 wires; reads ear+touch; writes hand; memory loop+history+grows; gated
+  alone/blind: all 0
+  in switching on swap1, with/without: respond -9/34 tell 9/43 win-stay 144/131 discriminate 70/85 reverse 72/100
+  kind: reflex (senses to act); senses for nothing alone; neutral in switching (reverse -28)
+C1 channel 11100001  512 bits
+   C1 -> C1 wire Sub(6) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   C1 -> C1 wire Sub(6) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   C1 -> C1 wire Or lag 1 whole gate !C1 sparse
+   C1 -> C1 wire Sub(6) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   ear -> C1 kernels Nor lag 1 span 2 cover, tiles of 64 bits n2 in4 out16 q2/4 grow(syn 16, out 8-64) gate !C1
+   touch -> hand wire Sub(3) lag 1 whole tonic 1/8 share grow(syn 15, out 6-64) gate C1 rot 65475
+
+generation 220: #161 recall->switching
+  made of: 6 populations, 1 channels (1 hold), 21 kernels, 0 wires; reads eye+affect; writes hand; memory holds+history+repeat+grows; gated
+  alone/blind: respond -35/0 tell 64/-3 discriminate 0/1 reverse 0/9 remember 64/-2 win-stay 0/1 surprise 45/0
+  in switching on swap1, with/without: respond -3/0 tell 9/2 win-stay 113/68 discriminate 20/10 reverse 11/-10
+  kind: reflex (senses to act); senses for tell+remember+surprise; neutral in switching (reverse +21)
+C1 channel 00000110  512 bits  holds
+   eye -> hand kernels Add(6) lag 1 span 2 cover, tiles of 16 bits n3 in4 out16 q1/4 gate C1 runs while !C1 sparse
+   affect -> C1 kernels And lag 1 cover, tiles of 128 bits n4 in8 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse replicate at 16 (to a neighbour tile)
+   eye -> C1 kernels Nand lag 1 cover, tiles of 128 bits n5 in8 out16 q2/4 sparse
+   eye -> hand kernels Set lag 2 cover, tiles of 8 bits n3 in3 out16 q1/4 gate C1 sparse
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out17 q1/4 gate C1 runs while !C1
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 gate C1 runs while !C1
+
+generation 220: #162 screen->recall
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads host; writes nothing; memory repeat+grows
+  alone/blind: all 0
+  in recall on lag4, with/without: respond -119/20 remember 44/92
+  kind: sealed (reaches nothing); senses for nothing alone; hurts in recall (respond -139, remember -48)
+   (a population with no channel to read or write)
+
+generation 220: #163 prediction->recall
+  made of: 1 populations, 1 channels, 7 kernels, 0 wires; reads eye; writes hand; memory history+grows; gated
+  alone/blind: respond -13/-2 tell 117/-2 discriminate 5/1 reverse -2/-9 remember 65/1 win-stay 15/-1 surprise -1/8 maze -1/0 screen 12/-4
+  in recall on lag4, with/without: respond -84/51 remember -22/0
+  kind: reflex (senses to act); senses for tell+remember; hurts in recall (respond -135, remember -22)
+C1 channel 11110000  65536 bits
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 19, out 7-60) gate !C1 runs while !C1 sparse replicate at 2 (in place)
+
+generation 220: #164 switching->reading
+  made of: 6 populations, 1 channels, 4 kernels, 4 wires; reads eye; writes hand+host; memory none; gated
+  alone/blind: respond 62/0 tell 128/0 remember 0/-2 surprise 31/3 screen -18/7
+  in reading on babble, with/without: babble 1024/1024
+  kind: reflex (senses to act); senses for respond+tell; neutral in reading (no change)
+C1 channel 00011110  512 bits
+   C1 -> C1 wire Set lag 1 whole sparse
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n2 in3 out16 q1/4 gate C1
+   C1 -> C1 wire Xor lag 1 whole sparse
+   C1 -> C1 wire Xor lag 1 field 8w@5825 -> 1w@0 sparse
+   C1 -> C1 wire Set lag 1 whole sparse
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n2 in3 out16 q1/4 gate C1
+
+generation 220: #165 switching->reading
+  made of: 6 populations, 1 channels, 20 kernels, 1 wires; reads eye+ear+host; writes voice+host; memory history+repeat; gated
+  alone/blind: all 0
+  in reading on babble, with/without: babble 992/1024
+  kind: reflex (senses to act); senses for nothing alone; neutral in reading (babble -32)
+C1 channel 11111100  128 bits
+   C1 -> C1 kernels Or lag 2 cover, tiles of 32 bits n2 in17 out16 q2/4 sparse
+   eye -> voice kernels Set lag 1 cover, tiles of 32 bits n5 in16 out16 q2/4 gate !C1 sparse
+   ear -> C1 kernels And lag 1 cover, tiles of 64 bits n5 in4 out17 q2/4 sparse replicate at 32 (to a neighbour tile)
+   C1 -> voice kernels Nor lag 1 cover, tiles of 128 bits n6 in4 out16 q2/4 gate C1 sparse replicate at 32 (in place)
+   C1 -> C1 wire Clear lag 1 whole sparse
+   C1 -> C1 kernels Or lag 2 cover, tiles of 32 bits n2 in17 out16 q2/4 sparse
+
+generation 220: #166 prediction->generalist
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond 12/0 tell 191/0 discriminate 13/0 reverse 27/0 remember 35/0 win-stay 22/0 surprise 25/-4 maze -10/1 screen 13/-1
+  in generalist on all, with/without: respond -10/-10 tell 8/-12 discriminate -7/-10 reverse -9/-7 remember -28/-16 win-stay -9/-6 copy -17/-14 echo 23/25 babble 704/696 surprise -1/8 maze -2/-1 screen 5/9
+  kind: reflex (senses to act); senses for tell; neutral in generalist (tell +20, discriminate +3, reverse -2, remember -12, win-stay -3, copy -3, echo -2, babble +8, surprise -9, maze -1, screen -4)
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 19, out 7-60) gate !- runs while !- sparse replicate at 2 (in place)
+
+generation 220: #167 switching->generalist
+  made of: 6 populations, 1 channels, 2 kernels, 5 wires; reads ear+eye+host; writes hand+host; memory history+repeat+grows; gated
+  alone/blind: respond 32/0 tell 64/0 remember 0/-1 maze 0/-2 screen -4/2
+  in generalist on all, with/without: respond 25/78 tell 39/221 discriminate 19/16 reverse 32/25 remember -21/4 win-stay 76/-26 copy -11/-13 echo -5/-12 babble 848/928 surprise -44/-22 maze 1/2 screen 9/13
+  kind: reflex (senses to act); senses for tell; mixed in generalist (respond -53, tell -182, discriminate +3, reverse +7, remember -25, win-stay +102, copy +2, echo +7, babble -80, surprise -22, maze -1, screen -4)
+C1 channel 01111010  128 bits
+   ear -> C1 wire Clear lag 1 whole tonic 1/4 gate C1 replicate at 8 (to a neighbour tile)
+   ear -> C1 wire Clear lag 1 whole tonic 1/4 gate C1 replicate at 8 (to a neighbour tile)
+   C1 -> C1 kernels Or lag 2 cover, tiles of 32 bits n2 in17 out16 q2/4 sparse replicate at 2 (in place)
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 gate !C1 runs while !C1 sparse rot 65475
+
+generation 220: #168 maze->prediction
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory repeat; gated
+  alone/blind: respond 63/0 discriminate -1/-2 reverse 0/3 win-stay 0/48 surprise -19/0 screen -10/3
+  in prediction on cycle1, with/without: surprise 4/10
+  kind: reflex (senses to act); senses for respond; scores win-stay blind; neutral in prediction (surprise -6)
+   eye -> hand kernels Or lag 1 field 4w@25057 -> 2w@2 n3 in3 out17 q1/4 share gate - replicate at 2 (in place)
+
+generation 220: #169 shapes->prediction
+  made of: 6 populations, 1 channels, 3 kernels, 4 wires; reads ear+host; writes nothing; memory loop+history+grows; gated
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise -19/-1
+  kind: sealed sensor (reaches nothing); senses for nothing alone; neutral in prediction (surprise -18)
+C1 channel 00001001  512 bits
+   C1 -> C1 wire Sub(6) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   C1 -> C1 wire Or lag 1 whole gate !C1 sparse
+   C1 -> C1 wire Or lag 1 whole gate !C1 sparse
+   C1 -> C1 wire Sub(6) lag 1 whole tonic 1/4 share sparse replicate at 8 (to a neighbour tile)
+   ear -> C1 kernels Set lag 1 cover, tiles of 16 bits n1 in16 out16 q2/4 tonic 1/8 gate C1 replicate at 16 (in place)
+   ear -> C1 kernels Nor lag 1 span 2 cover, tiles of 64 bits n2 in4 out16 q2/4 grow(syn 16, out 8-64) gate !C1
+
+generation 220: #170 reading->maze
+  made of: 2 populations, 1 channels, 8 kernels, 0 wires; reads nothing; writes voice; memory repeat; gated
+  alone/blind: copy -8/-8 echo -4/-4 babble 672/672
+  in maze on turn, with/without: maze -40/-40
+  kind: babbler (acts on no sense); senses for nothing alone; scores babble blind; neutral in maze (no change)
+C1 channel 01100101  256 bits
+   C1 -> voice kernels Shl(41) lag 1 cover, tiles of 32 bits n4 in8 out17 q2/4 tonic 1/4 gate !C1 sparse replicate at 32 (in place)
+   C1 -> voice kernels Shl(41) lag 1 cover, tiles of 32 bits n4 in8 out17 q2/4 tonic 1/4 gate !C1 sparse replicate at 32 (in place)
+
+generation 220: #171 reading->maze
+  made of: 1 populations, 1 channels, 4 kernels, 0 wires; reads nothing; writes voice; memory repeat; gated
+  alone/blind: copy -12/-12 echo 23/23 babble 472/472
+  in maze on turn, with/without: maze 15/-16
+  kind: babbler (acts on no sense); senses for nothing alone; scores babble blind; neutral in maze (maze +31)
+C1 channel 01000111  256 bits
+   C1 -> voice kernels Shl(41) lag 1 cover, tiles of 32 bits n4 in8 out17 q2/4 tonic 1/4 gate !C1 sparse replicate at 32 (in place)
+
+generation 220: #172 prediction->screen
+  made of: 1 populations, 1 channels, 7 kernels, 0 wires; reads eye; writes hand; memory history+grows; gated
+  alone/blind: respond -11/1 tell 104/0 discriminate 9/1 reverse -15/0 remember 121/0 win-stay 4/32 surprise -16/-9 maze 21/-3 screen 2/0
+  in screen on torch, with/without: screen 19/0
+  kind: reflex (senses to act); senses for tell+remember; neutral in screen (screen +19)
+C1 channel 11010010  65536 bits
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n7 in15 out16 q2/4 tonic 1/8 grow(syn 19, out 7-60) gate !C1 runs while !C1 sparse replicate at 2 (in place)
+
+generation 220: #173 shapes->screen
+  made of: 6 populations, 1 channels, 6 kernels, 3 wires; reads eye; writes hand+host; memory grows; gated
+  alone/blind: respond 126/-2 tell 256/-8 discriminate 0/-1 reverse 0/11 remember 0/-5 win-stay 0/2 surprise 25/1 maze -6/0 screen -4/0
+  in screen on torch, with/without: screen -19/5
+  kind: reflex (senses to act); senses for respond+tell; neutral in screen (screen -24)
+C1 channel 10101011  2048 bits
+   C1 -> C1 wire Or lag 1 whole
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1 replicate at 2 (in place)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1
+
+generation 220: #174 generalist->shapes
+  made of: 6 populations, 1 channels, 17 kernels, 1 wires; reads ear+host; writes hand+host; memory loop+repeat+grows; gated
+  alone/blind: respond 0/-1 discriminate 0/1 reverse 0/1 win-stay 0/11
+  in shapes on winstay, with/without: respond 20/20 tell 36/39 win-stay -48/-51
+  kind: reflex (senses to act); senses for nothing alone; neutral in shapes (win-stay +3)
+C1 channel 10110111  512 bits
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q3/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+   C1 -> C1 kernels Add(6) lag 1 cover, tiles of 128 bits n1 in4 out16 q2/4 sparse
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   C1 -> C1 kernels Add(6) lag 1 cover, tiles of 128 bits n1 in4 out16 q2/4 sparse
+   C1 -> C1 kernels Rotl(28) lag 1 cover, tiles of 64 bits n7 in16 out16 q2/4 grow(syn 16, out 8-64) gate !C1 sparse replicate at 32 (to a neighbour tile) rot 61
+
+generation 220: #175 maze->shapes
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads S; writes A; memory none
+  alone/blind: respond -2/9 tell -1/-10 discriminate 4/9 reverse 0/-3 win-stay -28/-3 copy -18/-4 echo 16/12 babble 224/224 surprise -21/-15 screen 1/0
+  in shapes on winstay, with/without: respond 172/196 tell 255/284 win-stay -57/-192
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; helps in shapes (win-stay +135)
+   S -> A kernels Shl(6) lag 1 cover, tiles of 8 bits n3 in8 out16 q2/4 tonic 1/16 sparse
+
+generation 222: #161 gone from switching after 2 generations (peak 1 of 32)
+generation 222: #162 gone from recall after 2 generations (peak 1 of 32)
+generation 222: #163 gone from recall after 2 generations (peak 1 of 32)
+generation 222: #164 gone from reading after 2 generations (peak 1 of 32)
+generation 222: #165 gone from reading after 2 generations (peak 1 of 32)
+generation 222: #166 gone from generalist after 2 generations (peak 1 of 32)
+generation 222: #167 gone from generalist after 2 generations (peak 1 of 32)
+generation 222: #168 gone from prediction after 2 generations (peak 1 of 32)
+generation 222: #169 gone from prediction after 2 generations (peak 1 of 32)
+generation 222: #170 gone from maze after 2 generations (peak 1 of 32)
+generation 222: #171 gone from maze after 2 generations (peak 1 of 32)
+generation 222: #172 gone from screen after 2 generations (peak 1 of 32)
+generation 222: #174 gone from shapes after 2 generations (peak 1 of 32)
+generation 222: #175 gone from shapes after 2 generations (peak 1 of 32)
+generation 232: #173 gone from screen after 12 generations (peak 4 of 32)
+generation 240: #176 shapes->switching
+(excluded: the recipient already carries it)
+generation 240: #177 screen->switching
+  made of: 2 populations, 1 channels, 15 kernels, 0 wires; reads eye; writes hand; memory history+grows; gated
+  alone/blind: respond 10/-7 tell 184/44 discriminate 3/13 reverse -5/-7 remember 33/16 win-stay -32/-2 surprise 22/8 maze 26/-1 screen -9/3
+  in switching on swap1, with/without: respond 0/1 tell 29/12 win-stay -10/39 discriminate -6/59 reverse -22/64
+  kind: reflex (senses to act); senses for tell; hurts in switching (reverse -86)
+C1 channel 10111100  131072 bits
+   eye -> hand kernels Add(6) lag 2 span 2 field 1w@51977 -> 4w@0 n8 in15 out16 q2/4 tonic 1/16 share grow(syn 20, out 7-61, new) gate !C1 runs while C1 replicate at 2 (to a neighbour tile) rot 61
+   eye -> hand kernels Add(5) lag 2 cover, tiles of 64 bits n7 in15 out16 q3/4 tonic 1/8 share grow(syn 19, out 7-61, new) gate !C1 runs while !C1 replicate at 2 (in place)
+
+generation 240: #178 shapes->recall
+  made of: 6 populations, 1 channels, 10 kernels, 1 wires; reads eye; writes voice+hand; memory loop+grows; gated
+  alone/blind: respond 30/0 tell -32/-2 discriminate -13/0 reverse -18/2 win-stay -2/1 copy 10/-2 echo 13/-6 babble 208/144 surprise -36/-1 maze 31/0 screen 0/-3
+  in recall on lag4, with/without: respond -61/-69 remember 6/27
+  kind: reflex (senses to act); senses for babble; neutral in recall (respond +8, remember -21)
+C1 channel 00001010  128 bits
+   eye -> voice kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 gate !C1
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1 replicate at 2 (in place)
+   C1 -> C1 wire Or lag 1 whole
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1 replicate at 2 (in place)
+   eye -> voice kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 17, out 8-64) gate !C1
+
+generation 240: #179 screen->recall
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond -16/3 tell 361/-20 discriminate -1/-15 reverse 44/13 remember 81/14 win-stay 3/16 surprise -26/17 maze -27/-4 screen -6/10
+  in recall on lag4, with/without: respond -63/114 remember -8/0
+  kind: reflex (senses to act); senses for tell+remember; hurts in recall (respond -177, remember -8)
+   eye -> hand kernels Add(5) lag 2 cover, tiles of 64 bits n7 in15 out16 q3/4 tonic 1/8 grow(syn 19, out 7-61, new) gate !- runs while !- replicate at 2 (in place)
+
+generation 240: #180 shapes->reading
+  made of: 6 populations, 1 channels, 0 kernels, 6 wires; reads nothing; writes hand+host; memory loop
+  alone/blind: all 0
+  in reading on babble, with/without: babble 992/992
+  kind: babbler (acts on no sense); senses for nothing alone; neutral in reading (no change)
+C1 channel 00100000  128 bits
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> hand wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Rotl(16) lag 1 whole rot 61
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+
+generation 240: #181 switching->reading
+  made of: 5 populations, 1 channels, 12 kernels, 2 wires; reads touch+eye+ear+host; writes hand+voice; memory grows; gated
+  alone/blind: remember 0/1 copy -5/4 echo 1/1 babble 440/64 surprise 17/1 screen -7/0
+  in reading on babble, with/without: babble 704/0
+  kind: reflex (senses to act); senses for babble; helps in reading (babble +704)
+C1 channel 00110011  128 bits
+   C1 -> C1 wire Xor lag 1 whole runs while !C1 sparse
+   touch -> C1 kernels Shl(23) lag 1 cover, tiles of 8 bits n3 in4 out16 q2/4 gate !C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   ear -> C1 wire Add(3) lag 1 whole grow(syn 15, out 8-64) gate C1 sparse
+   C1 -> voice kernels Shr(41) lag 1 cover, tiles of 128 bits n6 in4 out16 q2/4 gate C1 replicate at 16 (to a neighbour tile)
+
+generation 240: #182 maze->generalist
+  made of: 4 populations, 1 channels, 9 kernels, 1 wires; reads eye; writes hand; memory loop+repeat; gated
+  alone/blind: respond 64/0 discriminate 0/2 surprise 25/5 screen -6/6
+  in generalist on all, with/without: respond 18/-12 tell 27/61 discriminate -2/6 reverse 0/4 remember -28/-3 win-stay -24/-49 copy -20/-6 echo -5/-6 babble 936/952 surprise -8/6 maze -4/1 screen 23/2
+  kind: reflex (senses to act); senses for respond; neutral in generalist (respond +30, tell -34, discriminate -8, reverse -4, remember -25, win-stay +25, copy -14, echo +1, babble -16, surprise -14, maze -5, screen +21)
+C1 channel 00010101  64 bits
+   eye -> C1 kernels Set lag 1 field 4w@25057 -> 1w@2 n3 in3 out17 q1/4 share gate C1 replicate at 2 (to a neighbour tile)
+   eye -> hand kernels Shl(13) lag 1 field 4w@25057 -> 1w@2 n3 in3 out17 q1/4 share gate C1 replicate at 2 (to a neighbour tile)
+   eye -> hand kernels Shl(13) lag 1 field 4w@25057 -> 1w@2 n3 in4 out17 q1/4 share gate C1 replicate at 2 (to a neighbour tile)
+   C1 -> C1 wire And lag 1 whole tonic 1/4 gate !C1
+
+generation 240: #183 prediction->generalist
+  made of: 1 populations, 0 channels, 1 kernels, 0 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in generalist on all, with/without: respond -12/-29 tell 23/-2 discriminate 5/1 reverse 13/7 remember -12/-16 win-stay 10/-6 copy -2/39 echo -74/-43 babble 520/496 surprise 17/23 screen 10/-2
+  kind: relay (host to host); senses for nothing alone; hurts in generalist (respond +17, tell +25, discriminate +4, reverse +6, remember +4, win-stay +16, copy -41, echo -31, babble +24, surprise -6, screen +12)
+   (a population with no channel to read or write)
+
+generation 240: #184 shapes->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes nothing; memory none
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise 4/4
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 240: #185 maze->prediction
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory repeat; gated
+  alone/blind: discriminate 0/1 surprise -19/1 screen 0/2
+  in prediction on cycle1, with/without: surprise 4/4
+  kind: reflex (senses to act); senses for nothing alone; neutral in prediction (no change)
+   eye -> hand kernels Shl(13) lag 1 field 4w@25057 -> 1w@2 n3 in3 out17 q1/4 share gate - replicate at 2 (to a neighbour tile)
+
+generation 240: #186 generalist->maze
+  made of: 4 populations, 1 channels, 8 kernels, 2 wires; reads ear; writes hand+host; memory loop; gated
+  alone/blind: all 0
+  in maze on turn, with/without: maze 35/35
+  kind: reflex (senses to act); senses for nothing alone; neutral in maze (no change)
+C1 channel 01101001  512 bits
+   C1 -> C1 wire Or lag 1 whole rot 65475
+   ear -> hand kernels Xor lag 1 cover, tiles of 32 bits n7 in16 out16 q2/4 runs while !C1
+   C1 -> C1 wire Or lag 1 whole rot 65475
+   C1 -> C1 kernels Add(6) lag 1 cover, tiles of 128 bits n1 in4 out16 q2/4 sparse
+
+generation 240: #187 shapes->maze
+  made of: 6 populations, 1 channels, 10 kernels, 1 wires; reads eye; writes hand+voice; memory loop+grows; gated
+  alone/blind: respond 154/-2 tell 126/-1 discriminate 1/1 reverse 0/-7 remember 0/2 win-stay -5/-20 copy -22/14 echo -3/7 babble 144/144 surprise 14/-5 maze 4/0 screen 10/-3
+  in maze on turn, with/without: maze 28/145
+  kind: reflex (senses to act); senses for respond+tell; scores babble blind; hurts in maze (maze -117)
+C1 channel 11110101  128 bits
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1 replicate at 2 (in place)
+   C1 -> C1 wire Or lag 1 whole
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1 replicate at 2 (in place)
+   eye -> voice kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in3 out16 q1/4 grow(syn 17, out 8-64) gate !C1
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !C1 replicate at 2 (in place)
+
+generation 240: #188 reading->screen
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads nothing; writes host; memory none
+  alone/blind: all 0
+  in screen on torch, with/without: screen -12/-12
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in screen (no change)
+   (a population with no channel to read or write)
+
+generation 240: #189 reading->screen
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads touch+host; writes voice; memory history+grows; gated
+  alone/blind: copy 32/3 echo 12/-17 babble 640/608
+  in screen on torch, with/without: screen -17/-17
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in screen (no change)
+   touch -> voice kernels Clear lag 1 span 4 cover, tiles of 16 bits n8 in6 out16 q2/4 tonic 1/16 grow(syn 16, out 8-64) gate !-
+
+generation 240: #190 screen->shapes
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in shapes on winstay, with/without: respond 37/31 tell 82/62 win-stay 93/117
+  kind: relay (host to host); senses for nothing alone; neutral in shapes (win-stay -24)
+   (a population with no channel to read or write)
+
+generation 240: #191 maze->shapes
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 33/0 tell 64/0 discriminate 0/-1 remember 0/-1 win-stay 0/-32 surprise 0/8 screen -7/1
+  in shapes on winstay, with/without: respond 42/0 tell 91/0 win-stay -22/0
+  kind: reflex (senses to act); senses for tell; neutral in shapes (win-stay -22)
+   eye -> hand kernels Or lag 1 field 4w@25058 -> 1w@0 n3 in3 out17 q1/4 gate -
+
+generation 242: #178 gone from recall after 2 generations (peak 1 of 32)
+generation 242: #179 gone from recall after 2 generations (peak 1 of 32)
+generation 242: #180 gone from reading after 2 generations (peak 1 of 32)
+generation 242: #181 gone from reading after 2 generations (peak 1 of 32)
+generation 242: #184 gone from prediction after 2 generations (peak 1 of 32)
+generation 242: #186 gone from maze after 2 generations (peak 1 of 32)
+generation 242: #187 gone from maze after 2 generations (peak 1 of 32)
+generation 242: #188 gone from screen after 2 generations (peak 1 of 32)
+generation 242: #189 gone from screen after 2 generations (peak 1 of 32)
+generation 242: #190 gone from shapes after 2 generations (peak 1 of 32)
+generation 243: #183 gone from generalist after 3 generations (peak 1 of 32)
+generation 243: #185 gone from prediction after 3 generations (peak 2 of 32)
+generation 244: #177 gone from switching after 4 generations (peak 2 of 32)
+generation 247: #151 gone from generalist after 47 generations (peak 14 of 32)
+generation 260: #192 generalist->switching
+  made of: 6 populations, 1 channels, 0 kernels, 6 wires; reads host; writes host; memory loop+repeat
+  alone/blind: all 0
+  in switching on swap1, with/without: respond 164/164 tell 320/320
+  kind: relay (host to host); senses for nothing alone; neutral in switching (no change)
+C1 channel 11011110  512 bits
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+
+generation 260: #193 shapes->switching
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads eye+host; writes hand; memory grows; gated
+  alone/blind: respond 65/0 tell 128/0 surprise -4/0
+  in switching on swap1, with/without: respond 58/45 tell 138/108 win-stay 93/42 discriminate 40/21 reverse 20/35
+  kind: reflex (senses to act); senses for respond+tell; neutral in switching (reverse -15)
+   eye -> hand kernels Rotl(29) lag 1 field 2w@61956 -> 1w@0 n2 in3 out16 q1/4 grow(syn 16, out 8-64) gate !- replicate at 2 (in place)
+
+generation 260: #194 screen->recall
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in recall on lag4, with/without: respond -35/-35 remember 12/12
+  kind: relay (host to host); senses for nothing alone; neutral in recall (no change)
+   (a population with no channel to read or write)
+
+generation 260: #195 reading->recall
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads touch+host; writes voice; memory history+grows; gated
+  alone/blind: copy 15/-7 echo -3/-30 babble 656/616
+  in recall on lag4, with/without: respond 96/96
+  kind: reflex (senses to act); senses for babble; neutral in recall (no change)
+   touch -> voice kernels And lag 2 span 4 cover, tiles of 32 bits n8 in6 out16 q2/4 tonic 1/16 share grow(syn 16, out 8-64, new) gate !- runs while !-
+
+generation 260: #196 recall->reading
+  made of: 1 populations, 0 channels, 4 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 95/0 tell 64/0 remember 0/3 surprise -24/-3 screen -1/0
+  in reading on babble, with/without: all 0
+  kind: reflex (senses to act); senses for respond+tell; neutral in reading (no change)
+   eye -> hand kernels Nor lag 1 cover, tiles of 16 bits n4 in3 out16 q1/4 share gate - runs while !-
+
+generation 260: #197 switching->reading
+  made of: 6 populations, 1 channels, 0 kernels, 6 wires; reads eye+host; writes hand; memory loop+grows; gated
+  alone/blind: respond 32/0 tell 64/0 remember 0/-1 maze 0/-2 screen -4/2
+  in reading on babble, with/without: babble 1024/0
+  kind: reflex (senses to act); senses for tell; helps in reading (babble +1024)
+C1 channel 00110010  128 bits
+   C1 -> C1 wire Nor lag 1 whole
+   C1 -> C1 wire Nor lag 1 whole grow(syn 15, out 8-64)
+   C1 -> C1 wire Shl(52) lag 1 whole gate !C1
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 rot 65475
+   eye -> hand wire Sub(5) lag 1 whole tonic 1/4 grow(syn 16, out 8-64) gate !C1 runs while !C1 sparse rot 65475
+
+generation 260: #198 shapes->generalist
+  made of: 1 populations, 0 channels, 2 kernels, 0 wires; reads eye+host; writes hand; memory repeat+grows; gated
+  alone/blind: remember 0/-2 win-stay 0/16 surprise 0/-5
+  in generalist on all, with/without: respond 78/75 tell 22/-7 discriminate -6/3 reverse 0/22 remember -20/-36 win-stay 24/14 copy -37/-42 echo 1/-35 babble 264/680 surprise -16/-5 maze 1/0 screen 11/-1
+  kind: reflex (senses to act); senses for nothing alone; hurts in generalist (respond +3, tell +29, discriminate -9, reverse -22, remember +16, win-stay +10, copy +5, echo +36, babble -416, surprise -11, maze +1, screen +12)
+   eye -> hand kernels Rotl(29) lag 1 cover, tiles of 128 bits n2 in4 out16 q1/4 grow(syn 15, out 9-64, new, repeat 1) gate -
+
+generation 260: #199 prediction->generalist
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond -1/-4 tell 113/3 discriminate 5/-2 reverse 4/-5 remember -38/1 win-stay 24/5 surprise -15/-5 maze -16/-6 screen 0/-3
+  in generalist on all, with/without: respond -3/-20 tell -13/21 discriminate -17/0 reverse -11/1 remember 0/-32 win-stay -2/41 copy -3/-1 echo 5/2 babble 16/16 surprise -22/3 maze -1/0 screen 9/13
+  kind: reflex (senses to act); senses for tell; hurts in generalist (respond +17, tell -34, discriminate -17, reverse -12, remember +32, win-stay -43, copy -2, echo +3, surprise -25, maze -1, screen -4)
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n7 in15 out15 q2/4 tonic 1/8 grow(syn 19, out 7-60, new) gate !- runs while !- replicate at 4 (in place) rot 65475
+
+generation 260: #200 shapes->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory none
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise -34/-34
+  kind: relay (host to host); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 260: #201 shapes->prediction
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads host; writes host; memory loop; gated
+  alone/blind: all 0
+  in prediction on cycle1, with/without: all 0
+  kind: relay (host to host); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 260: #202 screen->maze
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads host; writes nothing; memory none
+  alone/blind: all 0
+  in maze on turn, with/without: maze 107/107
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in maze (no change)
+   (a population with no channel to read or write)
+
+generation 260: #203 generalist->maze
+  made of: 6 populations, 1 channels, 3 kernels, 3 wires; reads nothing; writes host; memory loop+repeat+grows; gated
+  alone/blind: all 0
+  in maze on turn, with/without: maze 70/72
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in maze (maze -2)
+C1 channel 00110100  512 bits
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q2/4 gate !C1 sparse
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 kernels Or lag 1 cover, tiles of 16 bits n1 in4 out15 q2/4 grow(syn 16, out 8-64, repeat 1) gate !C1 sparse
+
+generation 260: #204 shapes->screen
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads host; writes host; memory grows
+  alone/blind: all 0
+  in screen on torch, with/without: screen -27/-27
+  kind: relay (host to host); senses for nothing alone; neutral in screen (no change)
+   (a population with no channel to read or write)
+
+generation 260: #205 maze->screen
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads nothing; writes host; memory history
+  alone/blind: all 0
+  in screen on torch, with/without: screen 35/35
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in screen (no change)
+   (a population with no channel to read or write)
+
+generation 260: #206 reading->shapes
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads touch+host; writes voice; memory history+grows; gated
+  alone/blind: copy 27/-15 echo 15/-7 babble 584/576
+  in shapes on winstay, with/without: respond 98/112 tell 40/66 win-stay -12/-7
+  kind: reflex (senses to act); senses for copy; scores babble blind; neutral in shapes (win-stay -5)
+   touch -> voice kernels And lag 2 span 4 cover, tiles of 32 bits n7 in6 out16 q2/4 tonic 1/16 share grow(syn 16, out 8-64, new) gate !- runs while !-
+
+generation 260: #207 reading->shapes
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads touch+host; writes voice; memory history+grows; gated
+  alone/blind: copy -13/-2 echo -5/-28 babble 632/600
+  in shapes on winstay, with/without: respond 117/184 tell 131/131 win-stay -37/-69
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in shapes (win-stay +32)
+   touch -> voice kernels And lag 2 span 4 cover, tiles of 32 bits n8 in6 out16 q2/4 tonic 1/16 share grow(syn 16, out 8-64, new) gate !- runs while !-
+
+generation 262: #194 gone from recall after 2 generations (peak 1 of 32)
+generation 262: #196 gone from reading after 2 generations (peak 1 of 32)
+generation 262: #197 gone from reading after 2 generations (peak 1 of 32)
+generation 262: #198 gone from generalist after 2 generations (peak 1 of 32)
+generation 262: #199 gone from generalist after 2 generations (peak 1 of 32)
+generation 262: #200 gone from prediction after 2 generations (peak 1 of 32)
+generation 262: #201 gone from prediction after 2 generations (peak 1 of 32)
+generation 262: #202 gone from maze after 2 generations (peak 1 of 32)
+generation 262: #203 gone from maze after 2 generations (peak 1 of 32)
+generation 262: #204 gone from screen after 2 generations (peak 1 of 32)
+generation 262: #206 gone from shapes after 2 generations (peak 1 of 32)
+generation 262: #207 gone from shapes after 2 generations (peak 1 of 32)
+generation 263: #191 gone from shapes after 23 generations (peak 15 of 32)
+generation 263: #192 gone from switching after 3 generations (peak 1 of 32)
+generation 263: #195 gone from recall after 3 generations (peak 1 of 32)
+generation 267: #182 gone from generalist after 27 generations (peak 15 of 32)
+generation 267: #205 gone from screen after 7 generations (peak 3 of 32)
+generation 274: #193 gone from switching after 14 generations (peak 10 of 32)
+generation 280: #208 prediction->switching
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: respond -6/-4 tell 129/-12 discriminate 3/-4 reverse 12/0 remember 46/-10 win-stay -15/-10 surprise 9/-1 maze 30/-3 screen 5/1
+  in switching on swap1, with/without: respond -26/5 tell 77/109 win-stay 34/129 discriminate 29/58 reverse 44/102
+  kind: reflex (senses to act); senses for tell+remember; hurts in switching (reverse -58)
+   eye -> hand kernels Or lag 2 cover, tiles of 64 bits n6 in15 out15 q2/4 tonic 1/8 grow(syn 19, out 7-59, new) runs while !- replicate at 4 (to a neighbour tile) rot 65475
+
+generation 280: #209 reading->switching
+  made of: 3 populations, 1 channels, 12 kernels, 1 wires; reads touch; writes voice; memory loop+history+grows; gated
+  alone/blind: copy 27/-18 echo -16/-4 babble 736/408
+  in switching on swap1, with/without: respond -79/191 tell 36/256 win-stay 53/1 discriminate 7/0 reverse 17/0
+  kind: reflex (senses to act); senses for copy+babble; neutral in switching (reverse +17)
+C1 channel 00111111  32768 bits
+   touch -> voice kernels Set lag 2 span 4 cover, tiles of 32 bits n8 in6 out17 q2/4 tonic 1/32 share grow(syn 17, out 8-64) gate !C1 runs while !C1
+   touch -> voice wire Shr(12) lag 2 span 4 whole tonic 1/32 share grow(syn 17, out 8-64) gate !C1 runs while !C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 16 bits n4 in4 out16 q2/4 grow(syn 16, out 8-64)
+
+generation 280: #210 reading->recall
+  made of: 6 populations, 1 channels, 24 kernels, 2 wires; reads touch; writes voice; memory loop+history+grows; gated
+  alone/blind: copy 26/15 echo 8/0 babble 872/384
+  in recall on lag4, with/without: respond 2/-20 remember 2/29
+  kind: reflex (senses to act); senses for babble; neutral in recall (respond +22, remember -27)
+C1 channel 11001010  32768 bits
+   touch -> voice kernels Set lag 2 span 4 cover, tiles of 32 bits n8 in6 out17 q2/4 tonic 1/32 share grow(syn 17, out 8-63) gate !C1 runs while !C1
+   touch -> voice wire Shr(12) lag 2 span 4 whole tonic 1/32 share grow(syn 17, out 8-64) gate !C1 runs while !C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 16 bits n4 in4 out16 q2/4 grow(syn 16, out 8-64)
+   touch -> voice kernels Set lag 2 span 4 cover, tiles of 32 bits n8 in6 out17 q2/4 tonic 1/32 share grow(syn 17, out 8-63) gate !C1 runs while !C1
+   touch -> voice wire Shr(12) lag 2 span 4 whole tonic 1/32 share grow(syn 17, out 8-64) gate !C1 runs while !C1
+   C1 -> C1 kernels Set lag 1 cover, tiles of 16 bits n4 in4 out16 q2/4 grow(syn 16, out 8-64)
+
+generation 280: #211 shapes->recall
+  made of: 1 populations, 0 channels, 4 kernels, 0 wires; reads host; writes host; memory grows; gated
+  alone/blind: all 0
+  in recall on lag4, with/without: respond 185/185
+  kind: relay (host to host); senses for nothing alone; neutral in recall (no change)
+   (a population with no channel to read or write)
+
+generation 280: #212 screen->reading
+  made of: 1 populations, 0 channels, 4 kernels, 0 wires; reads nothing; writes host; memory none
+  alone/blind: all 0
+  in reading on echo2, with/without: babble 1024/1024 echo -79/-79
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in reading (no change)
+   (a population with no channel to read or write)
+
+generation 280: #213 recall->reading
+  made of: 1 populations, 0 channels, 0 kernels, 1 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: all 0
+  in reading on echo2, with/without: all 0
+  kind: reflex (senses to act); senses for nothing alone; neutral in reading (no change)
+   eye -> hand wire Shr(29) lag 1 field 4w@25057 -> 2w@65535 gate - runs while -
+
+generation 280: #214 screen->generalist
+  made of: 1 populations, 0 channels, 7 kernels, 0 wires; reads eye+host; writes hand; memory history; gated
+  alone/blind: respond 1/-19 discriminate 5/-8 reverse 8/-29 remember 9/-4 win-stay 2/-10 surprise 16/13 maze -1/0 screen 23/0
+  in generalist on all, with/without: respond 8/5 tell -30/-2 discriminate -5/4 reverse -29/24 remember -1/-3 win-stay -21/69 copy -5/12 echo 3/0 babble 760/760 surprise -9/-23 maze 2/0 screen 8/0
+  kind: reflex (senses to act); senses for nothing alone; hurts in generalist (respond +3, tell -28, discriminate -9, reverse -53, remember +2, win-stay -90, copy -17, echo +3, surprise +14, maze +2, screen +8)
+   eye -> hand kernels Shl(28) lag 1 span 4 cover, tiles of 64 bits n7 in15 out17 q2/4 tonic 1/4 share gate !- runs while - sparse rot 61
+
+generation 280: #215 shapes->generalist
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads host; writes nothing; memory none; gated
+  alone/blind: all 0
+  in generalist on all, with/without: respond -2/-2 tell 81/81 discriminate 7/7 reverse -3/-3 remember 19/19 win-stay -7/-7 surprise 13/13 maze 54/54 screen 7/7
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in generalist (no change)
+   (a population with no channel to read or write)
+
+generation 280: #216 generalist->prediction
+  made of: 2 populations, 1 channels, 0 kernels, 2 wires; reads nothing; writes nothing; memory loop
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise 114/114
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in prediction (no change)
+C1 channel 01110000  256 bits
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+
+generation 280: #217 screen->prediction
+  made of: 1 populations, 0 channels, 4 kernels, 0 wires; reads nothing; writes host; memory none
+  alone/blind: all 0
+  in prediction on cycle1, with/without: surprise 80/80
+  kind: sealed (reaches nothing); senses for nothing alone; neutral in prediction (no change)
+   (a population with no channel to read or write)
+
+generation 280: #218 reading->maze
+  made of: 1 populations, 0 channels, 8 kernels, 0 wires; reads touch+host; writes voice; memory history+grows; gated
+  alone/blind: copy -2/-18 echo -24/-23 babble 640/632
+  in maze on turn, with/without: all 0
+  kind: reflex (senses to act); senses for nothing alone; scores babble blind; neutral in maze (no change)
+   touch -> voice kernels And lag 2 span 4 cover, tiles of 32 bits n8 in6 out17 q2/4 tonic 1/64 grow(syn 17, out 8-64) gate !- runs while !-
+
+generation 280: #219 switching->maze
+  made of: 6 populations, 1 channels (1 hold), 12 kernels, 2 wires; reads touch+eye+host; writes hand+voice; memory holds+repeat+grows; gated
+  alone/blind: respond 68/0 tell 128/0 remember 0/-1 surprise -37/-7 screen 4/-1
+  in maze on turn, with/without: maze -52/0
+  kind: reflex (senses to act); senses for respond+tell; hurts in maze (maze -52)
+C1 channel 00100010  128 bits  holds
+   touch -> C1 kernels Shl(23) lag 1 cover, tiles of 8 bits n3 in4 out16 q2/4 gate !C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   touch -> C1 kernels Shl(23) lag 1 cover, tiles of 8 bits n3 in4 out16 q2/4 gate !C1
+   eye -> hand kernels Or lag 1 cover, tiles of 8 bits n3 in3 out16 q1/4 grow(syn 16, out 8-64) gate C1
+   C1 -> C1 wire Xor lag 1 whole runs while !C1 sparse
+   C1 -> voice wire Set lag 1 whole grow(syn 16, out 8-64, repeat 3) gate C1 sparse
+
+generation 280: #220 generalist->screen
+  made of: 6 populations, 1 channels, 0 kernels, 6 wires; reads ear+host; writes nothing; memory loop+history
+  alone/blind: all 0
+  in screen on torch, with/without: all 0
+  kind: sealed sensor (reaches nothing); senses for nothing alone; neutral in screen (no change)
+C1 channel 10110101  512 bits
+   C1 -> C1 wire Or lag 1 whole
+   ear -> C1 wire Add(3) lag 1 whole sparse replicate at 32 (in place)
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 1 whole
+   C1 -> C1 wire Or lag 2 whole
+   C1 -> C1 wire Or lag 1 whole
+
+generation 280: #221 prediction->screen
+  made of: 1 populations, 0 channels, 6 kernels, 0 wires; reads eye+host; writes hand; memory history+grows; gated
+  alone/blind: tell 119/-4 discriminate 20/-4 reverse 46/-1 remember 58/-7 win-stay 51/-6 surprise -36/-27 maze 24/7 screen 4/4
+  in screen on torch, with/without: screen -10/-24
+  kind: reflex (senses to act); senses for tell+reverse+remember+win-stay; neutral in screen (screen +14)
+   eye -> hand kernels Or lag 2 cover, tiles of 128 bits n6 in15 out15 q1/4 tonic 1/8 grow(syn 19, out 7-59, new) runs while !- replicate at 4 (to a neighbour tile) rot 65475
+
+generation 280: #222 switching->shapes
+  made of: 6 populations, 1 channels, 6 kernels, 5 wires; reads host; writes voice+A; memory repeat+grows; gated
+  alone/blind: all 0
+  in shapes on winstay, with/without: respond 92/137 tell 161/272 win-stay -131/-199
+  kind: driver (host to act); senses for nothing alone; helps in shapes (win-stay +68)
+C1 channel 00101100  128 bits
+   C1 -> voice wire Set lag 1 whole grow(syn 16, out 8-64, repeat 3) gate C1 sparse
+   C1 -> C1 wire Shr(45) lag 1 whole tonic 1/4 sparse
+   C1 -> A wire Clear lag 1 whole grow(syn 16, out 8-64, repeat 3)
+   C1 -> voice kernels Or lag 1 cover, tiles of 128 bits n6 in4 out16 q2/4 gate C1 replicate at 16 (to a neighbour tile)
+   C1 -> A wire Add(6) lag 1 whole grow(syn 16, out 8-64, repeat 3)
+   C1 -> voice wire Set lag 1 whole grow(syn 16, out 8-64, repeat 3) gate C1 sparse
+
+generation 280: #223 recall->shapes
+  made of: 1 populations, 0 channels, 3 kernels, 0 wires; reads eye+host; writes hand; memory none; gated
+  alone/blind: respond 26/0 tell 64/2 discriminate 0/-1 win-stay 0/-3 surprise -88/0 screen -2/0
+  in shapes on winstay, with/without: respond 191/195 tell 151/183 win-stay -19/0
+  kind: reflex (senses to act); senses for tell; neutral in shapes (win-stay -19)
+   eye -> hand kernels Nand lag 1 cover, tiles of 16 bits n3 in3 out16 q1/4 runs while !-
+
+generation 282: #208 gone from switching after 2 generations (peak 1 of 32)
+generation 282: #209 gone from switching after 2 generations (peak 1 of 32)
+generation 282: #210 gone from recall after 2 generations (peak 1 of 32)
+generation 282: #212 gone from reading after 2 generations (peak 1 of 32)
+generation 282: #213 gone from reading after 2 generations (peak 1 of 32)
+generation 282: #215 gone from generalist after 2 generations (peak 1 of 32)
+generation 282: #216 gone from prediction after 2 generations (peak 1 of 32)
+generation 282: #217 gone from prediction after 2 generations (peak 1 of 32)
+generation 282: #218 gone from maze after 2 generations (peak 1 of 32)
+generation 282: #219 gone from maze after 2 generations (peak 1 of 32)
+generation 282: #220 gone from screen after 2 generations (peak 1 of 32)
+generation 282: #221 gone from screen after 2 generations (peak 1 of 32)
+generation 282: #222 gone from shapes after 2 generations (peak 1 of 32)
+generation 284: #214 gone from generalist after 4 generations (peak 1 of 32)
+generation 284: #223 gone from shapes after 4 generations (peak 1 of 32)
+generation 286: #211 gone from recall after 6 generations (peak 3 of 32)

@@ -150,6 +150,35 @@ worlds:
 
 Results to follow.
 
+## Following plasmids
+
+Plasmids grew large late in the run: 23 to 35 populations from switching, 71 into the
+generalist at generation 260. The run could not tell whether any of them helped. From the next
+restart on, each plasmid is numbered and followed:
+
+- **Its carriers.** A moved population's id carries the plasmid's number, and every generation
+  counts the recipient's genomes that carry any of it, the elite among them and those that carry
+  it whole. The log says when the last carrier is gone. Mutation and one-point crossover keep
+  ids. A copied segment, or a circuit taken by crossover inside an island, gets new ones, so
+  spread inside an island is undercounted. A plasmid that was itself moved before names its
+  parent (`#12 (from #5)`).
+- **What it is made of:** populations, channels, kernels and wires, the ports it reads and
+  writes, and whether it names the host's channels. Also anything that could hold state:
+  holding channels, self-loops, history, repeats and growth.
+- **What it does.**
+  - Its role, from its wiring: a reflex (senses to act), a sensor (senses into the host), a
+    driver (host to act), a babbler (acts on no sense), a relay (host to host), or sealed
+    (reaches nothing).
+  - Its scores alone on every probe, set against its blind control (the same circuit, its sense
+    reads moved to the self channel). A probe it scores as well blind is marked as an artefact.
+  - Its recipient's stage probes with it and without it: helps, hurts or neutral, at a change of
+    40.
+
+A short test from the generation-140 checkpoint (4 worlds, so noisy) already showed the pattern.
+Most plasmids were gone within 2-3 generations. Several large reflexes from switching hurt their
+recipients (recall's remember -96, screen -85). Some plasmids scored well blind, so what they
+gave was an artefact, not sight.
+
 ## Speed and scaling
 
 The run moved from the cloud container to a workstation (Ryzen 7 PRO 7840HS, 8 cores, 16

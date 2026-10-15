@@ -563,6 +563,21 @@ impl TagGenome {
         (r, w)
     }
 
+    /// Its blind control: every population that reads the senses (or one sense) reads the self
+    /// channel instead, so the same circuit runs with nothing from the world.
+    pub fn blind(&self) -> TagGenome {
+        let ch = Channels::of(&self.tokens);
+        let mut g = self.clone();
+        for t in &mut g.tokens {
+            if let Token::Pop(p) = t {
+                if p.from_port && ch.input(p.from).node == 0 {
+                    p.from = SELF;
+                }
+            }
+        }
+        g
+    }
+
     /// A plasmid around one of `donor`'s populations (the `k`-th): the circuit of a declared
     /// channel it reads, writes or is gated by, made private; or, when it touches none (it
     /// reads and writes ports), the population alone, with a new id. Appended to this genome;
@@ -1341,6 +1356,19 @@ mod tests {
         assert_eq!((moved.len(), h.channels(), h.populations()), (1, 0, 1));
         let Token::Pop(p) = &h.tokens[0] else { panic!() };
         assert!(p.from_port && p.to_port && p.id >= 4);
+    }
+
+    #[test]
+    fn a_blind_control_reads_the_self_channel_for_the_senses() {
+        let r = 0x3C;
+        let look = Pop { from_port: true, ..Pop::wire(1, EYE, r) };
+        let out = Pop::wire(2, r, ACT);
+        let g = TagGenome { tokens: vec![Token::Channel { tag: r, width: 3, hold: false }, Token::Pop(look), Token::Pop(out)], next_id: 3 };
+        assert_eq!(g.ports().0, vec!["eye".to_string()]);
+        let b = g.blind();
+        assert_eq!(b.ports().0, vec!["M".to_string()]);
+        // the channel's own reader is untouched
+        assert_eq!(b.tokens[2], g.tokens[2]);
     }
 
     #[test]

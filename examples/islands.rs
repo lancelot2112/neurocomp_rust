@@ -20,6 +20,15 @@
 //! recorded (from, to, the circuit) in `ISL_LOG`; at each exchange every island's best genome is
 //! scored on every probe on held-out worlds (does a circuit carry over?).
 //!
+//! Each plasmid is numbered (`#n`): its populations' ids carry the number, so its carriers can be
+//! counted every generation until none is left (mutation and one-point crossover keep ids; a
+//! copied segment or a circuit taken within an island by crossover gets new ones, so spread inside
+//! an island is undercounted). At the exchange each is measured (populations, channels, kernels,
+//! wires, what it reads and writes, what could hold state) and classified: its role from its
+//! wiring (reflex, sensor, driver, babbler, relay, sealed), what it scores alone against its blind
+//! control (`ISL_PLASMID_WORLDS` held-out worlds, 16), and the recipient's stage probes with it and
+//! without it (helps, hurts, neutral: a change of `NOTICE`).
+//!
 //! Every `ISL_REPORT` generations, per island: its population's means on its own probes (training
 //! worlds), its best genome's probes on held-out worlds, its work per step and which ports its
 //! genomes read and write.
@@ -46,9 +55,10 @@
 //! population and generation (islands not in it start naked), so a change to the world or the
 //! probes can be injected into a running experiment: stop it, change, resume.
 
+use std::cell::{Cell, RefCell};
 use std::io::Write;
 
-use neurocomp::evolve::tags::{TagGenome, Token};
+use neurocomp::evolve::tags::{Pop, TagGenome, Token};
 use neurocomp::evolve::{evolve_islands, probe_all_in, probe_means, Island, Lesson, Physics, Stage, ALL_PROBES};
 use neurocomp::world::observe::{ProbeRow, PROBES};
 use rand::rngs::StdRng;
@@ -60,6 +70,92 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 
 fn row(m: &ProbeRow, only: &[usize]) -> String {
     (0..m.len()).map(|p| if only.contains(&p) { format!("{:>7}", m[p]) } else { format!("{:>7}", ".") }).collect::<Vec<_>>().join("")
+}
+
+/// A moved population's id: the top bit, its plasmid's number and its place in the plasmid.
+const TAGGED: u32 = 1 << 31;
+
+fn plasmid_of(id: u32) -> Option<u32> {
+    (id & TAGGED != 0).then_some((id & !TAGGED) >> 8)
+}
+
+/// A probe score change this large counts (a single genome on a few worlds is noisy).
+const NOTICE: i32 = 40;
+
+/// A plasmid moved between islands, followed until no genome of its island carries it.
+struct Moved {
+    n: u32,
+    /// the donor island (none: moved before a resume)
+    from: Option<usize>,
+    to: usize,
+    at: usize,
+    ids: Vec<u32>,
+    peak: usize,
+    alive: bool,
+    kind: String,
+}
+
+/// Whether a genome carries any of a plasmid's populations, and all of them.
+fn carries(g: &TagGenome, ids: &[u32]) -> (bool, bool) {
+    let has: Vec<bool> = ids.iter().map(|id| g.tokens.iter().any(|t| matches!(t, Token::Pop(p) if p.id == *id))).collect();
+    (has.iter().any(|&h| h), has.iter().all(|&h| h))
+}
+
+/// What a plasmid is made of: its size, what it reads and writes (ports, or "host": channels it
+/// names but does not declare, which resolve among the recipient's), and what could hold state;
+/// and its role from that wiring.
+fn measure(tokens: &[Token]) -> (String, &'static str) {
+    let g = TagGenome { tokens: tokens.to_vec(), next_id: 0 };
+    let declared: Vec<u8> = tokens.iter().filter_map(|t| if let Token::Channel { tag, .. } = t { Some(*tag) } else { None }).collect();
+    let pops: Vec<&Pop> = tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p) } else { None }).collect();
+    let host = |t: u8| !declared.contains(&t);
+    let (mut reads, mut writes) = g.ports();
+    if pops.iter().any(|p| (!p.from_port && host(p.from)) || p.gate.is_some_and(|(t, _)| host(t)) || p.pause.is_some_and(|(t, _)| host(t))) {
+        reads.push("host".into());
+    }
+    if pops.iter().any(|p| !p.to_port && host(p.to)) {
+        writes.push("host".into());
+    }
+    let mut memory = Vec::new();
+    let holds = tokens.iter().filter(|t| matches!(t, Token::Channel { hold: true, .. })).count();
+    if holds > 0 { memory.push("holds") }
+    if pops.iter().any(|p| !p.from_port && !p.to_port && p.from == p.to) { memory.push("loop") }
+    if pops.iter().any(|p| p.lag > 1 || p.span > 1) { memory.push("history") }
+    if pops.iter().any(|p| p.repeat) { memory.push("repeat") }
+    if pops.iter().any(|p| p.grow) { memory.push("grows") }
+    let gated = pops.iter().any(|p| p.gate.is_some() || p.pause.is_some());
+    let kernels: usize = pops.iter().filter(|p| !p.wire).map(|p| p.count as usize).sum();
+    let wires = pops.iter().filter(|p| p.wire).count();
+    let sense = reads.iter().any(|r| ["S", "eye", "ear", "touch", "affect"].contains(&r.as_str()));
+    let act = writes.iter().any(|w| ["A", "voice", "hand"].contains(&w.as_str()));
+    let (host_in, host_out) = (reads.iter().any(|r| r == "host"), writes.iter().any(|w| w == "host"));
+    let role = match (sense, act) {
+        (true, true) => "reflex (senses to act)",
+        (true, false) if host_out => "sensor (senses into the host)",
+        (true, false) => "sealed sensor (reaches nothing)",
+        (false, true) if host_in => "driver (host to act)",
+        (false, true) => "babbler (acts on no sense)",
+        (false, false) if host_in && host_out => "relay (host to host)",
+        _ => "sealed (reaches nothing)",
+    };
+    let list = |v: &[String]| if v.is_empty() { "nothing".to_string() } else { v.join("+") };
+    let text = format!(
+        "{} populations, {} channels{}, {kernels} kernels, {wires} wires; reads {}; writes {}; memory {}{}",
+        pops.len(), declared.len(), if holds > 0 { format!(" ({holds} hold)") } else { String::new() },
+        list(&reads), list(&writes), if memory.is_empty() { "none".to_string() } else { memory.join("+") }, if gated { "; gated" } else { "" },
+    );
+    (text, role)
+}
+
+/// The probes where `a` scores at least `NOTICE` above `b`, named.
+fn above(a: &ProbeRow, b: &ProbeRow, only: &[usize]) -> Vec<String> {
+    only.iter().filter(|&&p| a[p] - b[p] >= NOTICE).map(|&p| PROBES[p].to_string()).collect()
+}
+
+/// `name a/b` for each probe in `only` where either is non-zero.
+fn pairs(a: &ProbeRow, b: &ProbeRow, only: &[usize]) -> String {
+    let v: Vec<String> = only.iter().filter(|&&p| a[p] != 0 || b[p] != 0).map(|&p| format!("{} {}/{}", PROBES[p], a[p], b[p])).collect();
+    if v.is_empty() { "all 0".into() } else { v.join(" ") }
 }
 
 /// A probe by (the start of) its name.
@@ -286,24 +382,118 @@ fn main() {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
     }
     let mut was = stages.clone();
+    // plasmids: those already in the populations (moved before a resume), then each one moved
+    let plasmid_worlds: Vec<u64> = held.iter().copied().take(env("ISL_PLASMID_WORLDS", 16usize)).collect();
+    let mut followed: Vec<Moved> = Vec::new();
+    for (i, popn) in start.iter().enumerate() {
+        let mut found: std::collections::BTreeMap<u32, Vec<u32>> = Default::default();
+        for g in popn {
+            for t in &g.tokens {
+                if let Token::Pop(p) = t {
+                    if let Some(n) = plasmid_of(p.id) {
+                        let ids = found.entry(n).or_default();
+                        if !ids.contains(&p.id) { ids.push(p.id) }
+                    }
+                }
+            }
+        }
+        for (n, ids) in found {
+            followed.push(Moved { n, from: None, to: i, at: first.saturating_sub(1), ids, peak: 0, alive: true, kind: "moved before the resume".into() });
+        }
+    }
+    let number = Cell::new(followed.iter().map(|m| m.n + 1).max().unwrap_or(0));
+    // (each transfer's plasmid number, recipient, child, tokens and the plasmids it came from)
+    let pending: RefCell<Vec<(u32, TagGenome, TagGenome, Vec<Token>, Vec<u32>)>> = RefCell::new(Vec::new());
     // each generation's line carries the UTC time and the seconds since the last one
     let clock = || { let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) % 86400; format!("{:02}:{:02}:{:02}Z", t / 3600, t / 60 % 60, t % 60) };
     let mut last = std::time::Instant::now();
     println!("started {}", clock());
     // a plasmid: one circuit of the donor (a random declared channel and what touches it)
     let transfer = |recipient: &TagGenome, donor: &TagGenome, rng: &mut StdRng| -> (TagGenome, String) {
+        let n = number.get();
+        number.set(n + 1);
         if donor.populations() == 0 {
+            pending.borrow_mut().push((n, recipient.clone(), recipient.clone(), vec![], vec![]));
             return (recipient.clone(), "(nothing: the donor has no population)".into());
         }
         let mut child = recipient.clone();
         let k = rng.gen_range(0..donor.populations());
         let moved = child.take_population_plasmid(donor, k, rng);
-        let text = TagGenome { tokens: moved, next_id: 0 }.describe();
+        // the plasmid's populations get numbered ids; one that was itself moved before names the
+        // plasmid it came from (the same population but for its id and channel tags)
+        let bare = |p: &Pop| Pop { id: 0, from: 0, to: 0, gate: p.gate.map(|(_, on)| (0, on)), pause: p.pause.map(|(_, on)| (0, on)), ..p.clone() };
+        let at = child.tokens.len() - moved.len();
+        let mut parents = Vec::new();
+        for (j, t) in child.tokens[at..].iter_mut().enumerate() {
+            if let Token::Pop(q) = t {
+                for d in &donor.tokens {
+                    if let Token::Pop(p) = d {
+                        if let Some(m) = plasmid_of(p.id) {
+                            if bare(p) == bare(q) && !parents.contains(&m) { parents.push(m) }
+                        }
+                    }
+                }
+                q.id = TAGGED | (n << 8) | (j.min(255) as u32);
+            }
+        }
+        let tokens = child.tokens[at..].to_vec();
+        let text = TagGenome { tokens: tokens.clone(), next_id: 0 }.describe();
+        pending.borrow_mut().push((n, recipient.clone(), child.clone(), tokens, parents));
         (child, text)
     };
     evolve_islands(&islands, start, stages, first, pop, trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
-        for (from, to, what) in &r.moved {
-            let _ = writeln!(log, "generation {g}: {} -> {}\n{what}", islands[*from].name, islands[*to].name);
+        // the plasmids followed: how many of their island's genomes carry them (this generation's
+        // new ones are in children, scored from the next)
+        for m in followed.iter_mut().filter(|m| m.alive && m.at < g) {
+            let c = r.ranked[m.to].iter().filter(|x| carries(x, &m.ids).0).count();
+            m.peak = m.peak.max(c);
+            if c == 0 {
+                m.alive = false;
+                println!("{g:>4}  plasmid #{} gone from {} after {} generations (at most {} of {pop} carried it)", m.n, islands[m.to].name, g - m.at, m.peak);
+                let _ = writeln!(log, "generation {g}: #{} gone from {} after {} generations (peak {} of {pop})", m.n, islands[m.to].name, g - m.at, m.peak);
+            }
+        }
+        // the plasmids moved this generation: measured, scored alone against their blind
+        // controls, and their recipients scored with and without them
+        let fresh: Vec<_> = pending.borrow_mut().drain(..).collect();
+        assert_eq!(fresh.len(), r.moved.len(), "one pending plasmid a move");
+        let mut moved_lines = Vec::new();
+        if !fresh.is_empty() {
+            let alone: Vec<TagGenome> = fresh.iter().flat_map(|f| { let a = TagGenome { tokens: f.3.clone(), next_id: 0 }; [a.blind(), a] }).collect();
+            let scored = probe_all_in(alone, trials, Physics::Varied, &plasmid_worlds, gap, &ALL_PROBES, plain());
+            for (k, ((n, recipient, child, tokens, parents), (from, to, what))) in fresh.into_iter().zip(&r.moved).enumerate() {
+                let (from, to) = (*from, *to);
+                let route = format!("#{n} {}->{}", islands[from].name, islands[to].name);
+                if tokens.is_empty() {
+                    moved_lines.push(format!("{route}: nothing"));
+                    let _ = writeln!(log, "generation {g}: {route}\n{what}");
+                    continue;
+                }
+                let (made, role) = measure(&tokens);
+                let blind = probe_means(&scored[2 * k].probes);
+                let solo = probe_means(&scored[2 * k + 1].probes);
+                let sees = above(&solo, &blind, &ALL_PROBES);
+                let artefact: Vec<String> = ALL_PROBES.iter().filter(|&&p| blind[p] >= NOTICE && solo[p] - blind[p] < NOTICE).map(|&p| PROBES[p].to_string()).collect();
+                let st = &islands[to].stages[r.stage[to]];
+                let host = probe_all_in(vec![recipient, child], trials, Physics::Varied, &plasmid_worlds, gap, &st.probes, st.lesson);
+                let (without, with) = (probe_means(&host[0].probes), probe_means(&host[1].probes));
+                let judged: Vec<usize> = if st.goal.is_empty() { st.probes.clone() } else { st.goal.iter().map(|&(p, _)| p).collect() };
+                let verdict = if judged.iter().any(|&p| with[p] - without[p] <= -NOTICE) { "hurts" } else if judged.iter().any(|&p| with[p] - without[p] >= NOTICE) { "helps" } else { "neutral" };
+                let deltas: Vec<String> = judged.iter().filter(|&&p| with[p] != without[p]).map(|&p| format!("{} {:+}", PROBES[p], with[p] - without[p])).collect();
+                let kind = format!(
+                    "{role}; {}{}; {verdict} in {} ({})",
+                    if sees.is_empty() { "senses for nothing alone".to_string() } else { format!("senses for {}", sees.join("+")) },
+                    if artefact.is_empty() { String::new() } else { format!("; scores {} blind", artefact.join("+")) },
+                    islands[to].name, if deltas.is_empty() { "no change".to_string() } else { deltas.join(", ") },
+                );
+                let pops = tokens.iter().filter(|t| matches!(t, Token::Pop(_))).count();
+                moved_lines.push(format!("{route} ({pops} populations): {kind}"));
+                let from_text = if parents.is_empty() { String::new() } else { format!(" (from {})", parents.iter().map(|m| format!("#{m}")).collect::<Vec<_>>().join(", ")) };
+                let _ = writeln!(log, "generation {g}: {route}{from_text}\n  made of: {made}\n  alone/blind: {}\n  in {} on {}, with/without: {}\n  kind: {kind}\n{what}",
+                    pairs(&solo, &blind, &ALL_PROBES), islands[to].name, st.name, pairs(&with, &without, &st.probes));
+                let ids = tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p.id) } else { None }).collect();
+                followed.push(Moved { n, from: Some(from), to, at: g, ids, peak: 0, alive: true, kind });
+            }
         }
         // a checkpoint at every exchange, every `ISL_CKPT` generations, and at the end: each
         // island's population, best first
@@ -338,6 +528,18 @@ fn main() {
         }
         if !r.moved.is_empty() {
             println!("{g:>4}  plasmids moved: {}", r.moved.iter().map(|(f, t, w)| format!("{}->{} ({} populations)", islands[*f].name, islands[*t].name, w.lines().filter(|l| l.contains("->")).count())).collect::<Vec<_>>().join(", "));
+            for l in &moved_lines {
+                println!("      {l}");
+            }
+            // the earlier plasmids still carried, and by how many (in the elite: the kept)
+            let alive: Vec<String> = followed.iter().filter(|m| m.alive && m.at < g).map(|m| {
+                let c = r.ranked[m.to].iter().filter(|x| carries(x, &m.ids).0).count();
+                let e = r.ranked[m.to].iter().take(elite).filter(|x| carries(x, &m.ids).0).count();
+                let whole = r.ranked[m.to].iter().filter(|x| carries(x, &m.ids).1).count();
+                format!("#{} {}->{} (generation {}) {c}/{pop}, {e} in the elite, {whole} whole", m.n, m.from.map_or("?", |f| islands[f].name.as_str()), islands[m.to].name, m.at)
+            }).collect();
+            let gone = followed.iter().filter(|m| !m.alive).count();
+            println!("      plasmids still carried: {} ({gone} gone){}", alive.len(), if alive.is_empty() { String::new() } else { format!(": {}", alive.join("; ")) });
             // every island's best on every probe, held out: does a circuit carry over?
             println!("      every island's best on every probe, held out:{}", "");
             println!("      {:<11}{names}", "");
@@ -359,5 +561,12 @@ fn main() {
             }
         }
     });
+    // the plasmids' fates: those still carried at the end, with what they are
+    let all = followed.iter().filter(|m| m.from.is_some()).count();
+    let kept: Vec<&Moved> = followed.iter().filter(|m| m.alive && m.from.is_some()).collect();
+    println!("plasmids: {all} moved, {} still carried at the end", kept.len());
+    for m in kept {
+        println!("      #{} {}->{} (generation {}, peak {}/{pop}): {}", m.n, m.from.map_or("?", |f| islands[f].name.as_str()), islands[m.to].name, m.at, m.peak, m.kind);
+    }
     println!("plasmids recorded in {log_path}");
 }

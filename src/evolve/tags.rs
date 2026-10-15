@@ -1182,6 +1182,44 @@ mod tests {
     }
 
     #[test]
+    fn in_place_a_network_builds_its_own_delay_and_latch() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        let (a, b, e, c) = (0x3C, 0xC3, 0x5A, 0xA5);
+        // a delay line: B takes A before A takes the senses' word 0 (genome order), so B is A a
+        // step late; both overwrite (Set), so a value passes through and is gone
+        let a_to_b = Pop { cover: true, op: KernelOp::Set, ..Pop::wire(1, a, b) };
+        let in_a = Pop { field: 0, op: KernelOp::Set, ..Pop::wire(2, SENSES, a) };
+        // a latch: E is the senses' word 1 now; C takes word 0 only while E is on, else keeps it
+        let in_e = Pop { at: 1, field: 0, op: KernelOp::Set, ..Pop::wire(3, SENSES, e) };
+        let latch = Pop { field: 0, op: KernelOp::Set, pause: Some((e, true)), ..Pop::wire(4, SENSES, c) };
+        let ch = |t: u8| Token::Channel { tag: t, width: 0, hold: false };
+        let g = TagGenome { tokens: vec![ch(a), ch(b), ch(e), ch(c), Token::Pop(a_to_b), Token::Pop(in_a), Token::Pop(in_e), Token::Pop(latch)], next_id: 5 };
+        let mut w = World::new(1, 4);
+        w.in_place = true;
+        let mut net = g.build(&w, 1);
+        let (x1, x2) = (0xF0F0u64, 0x0F0Fu64);
+        let mut rows = Vec::new();
+        for t in 0..6 {
+            let mut words = vec![0u64; world::SENSE_BITS / 64];
+            words[0] = [x1, 0, x2, 0, 0, 0][t];
+            words[1] = [u64::MAX, 0, 0, 0, 0, 0][t];
+            net.tick(AdvanceMode::Clear, 0);
+            net.write_input(&BitVector::from_words(words), 0);
+            rows.push([1, 2, 4].map(|n| net.read_node(n).as_words()[0]));
+        }
+        // (the senses arrive a step after they are shown)
+        let a_seen: Vec<u64> = rows.iter().map(|r| r[0]).collect();
+        let b_seen: Vec<u64> = rows.iter().map(|r| r[1]).collect();
+        let c_seen: Vec<u64> = rows.iter().map(|r| r[2]).collect();
+        assert_eq!(a_seen, vec![0, x1, 0, x2, 0, 0]);
+        assert_eq!(b_seen, vec![0, 0, x1, 0, x2, 0]);
+        // the latch took x1 while enabled and kept it through x2
+        assert_eq!(c_seen, vec![0, x1, x1, x1, x1, x1]);
+        // no history: every held channel is one frame
+        assert!((1..=4).all(|n| net.nodes[n].frames() == 1));
+    }
+
+    #[test]
     fn in_place_every_channel_holds_in_one_frame_and_order_matters() {
         use crate::bitvec::bithistory::AdvanceMode;
         let (h, k) = (0x3C, 0xC3);

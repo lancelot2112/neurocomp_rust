@@ -11,6 +11,9 @@ pub enum KernelOp {
     Clear, // a & !b
     Nand,  // !(d & m)
     Nor,   // !(d | m)
+    /// the destination word becomes what is written (an overwrite: a held vector stores a new
+    /// value in one write, where `Or` would pile it onto the old)
+    Set,
     /// integer add / subtract, in lanes of 2^k bits (k = 3..6: 8, 16, 32, 64), wrapping in a lane
     Add(u8),
     Sub(u8),
@@ -43,6 +46,7 @@ impl KernelOp {
             KernelOp::Clear => d & !m,
             KernelOp::Nand => !(d & m),
             KernelOp::Nor => !(d | m),
+            KernelOp::Set => m,
             KernelOp::Add(k) => {
                 if k >= 6 { return d.wrapping_add(m); }
                 let h = lane_tops(k);
@@ -69,6 +73,7 @@ impl KernelOp {
             KernelOp::Clear => "clear".into(),
             KernelOp::Nand => "nand".into(),
             KernelOp::Nor => "nor".into(),
+            KernelOp::Set => "set".into(),
             KernelOp::Add(k) => format!("add:{k}"),
             KernelOp::Sub(k) => format!("sub:{k}"),
             KernelOp::Shl(n) => format!("shl:{n}"),
@@ -88,6 +93,7 @@ impl KernelOp {
             ("clear", _) => KernelOp::Clear,
             ("nand", _) => KernelOp::Nand,
             ("nor", _) => KernelOp::Nor,
+            ("set", _) => KernelOp::Set,
             ("add", Some(k)) => KernelOp::Add(k),
             ("sub", Some(k)) => KernelOp::Sub(k),
             ("shl", Some(n)) => KernelOp::Shl(n),
@@ -102,7 +108,7 @@ impl KernelOp {
     pub fn random<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
         let n: u8 = rng.gen_range(0..64);
         let k: u8 = rng.gen_range(3..7);
-        match rng.gen_range(0..12) {
+        match rng.gen_range(0..13) {
             0 => KernelOp::Or,
             1 => KernelOp::And,
             2 => KernelOp::Xor,
@@ -114,6 +120,7 @@ impl KernelOp {
             8 => KernelOp::Shl(n),
             9 => KernelOp::Shr(n),
             10 => KernelOp::Rotl(n),
+            11 => KernelOp::Set,
             _ => KernelOp::Rotr(n),
         }
     }

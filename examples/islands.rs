@@ -38,7 +38,9 @@
 //! `ISL_REPORT` (10), `ISL_LOG` (plasmids.txt), `ISL_SEED` (7), `ISL_THRIFT` (1), `ISL_READS` (0; 1: the words a kernel
 //! population reads count as its work, so thrift sees a wide read), `ISL_INPLACE` (0; 1: every declared channel held in
 //! place, one frame, never cleared or copied: only clearing writes take lines away, and a write
-//! is seen by the populations after it in the same step).
+//! is seen by the populations after it in the same step; no history: every lag reads it as it is
+//! now, so a delay is built by the network, e.g. a `set` wire placed before the write it delays,
+//! or a latch: a `set` population that runs only while an enable channel is on).
 //!
 //! Curricula (`ISL_LADDERS=1`): an island can climb a ladder of stages, each its own probes, its
 //! own world (`Lesson`: tokens and how often the teacher speaks) and a goal; it moves to the next

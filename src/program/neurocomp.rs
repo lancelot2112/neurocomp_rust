@@ -54,8 +54,8 @@ pub struct RuntimeNetwork {
     /// per node: it holds its lines from step to step instead of starting empty
     pub hold: Vec<bool>,
     /// per node: held in place (a declared channel, when built so): one frame, never cleared or
-    /// copied, its lag 1 the frame as it is now (writes earlier in this step included); a ring
-    /// only if something reads it 2 or more steps back
+    /// copied, read as it is now (writes earlier in this step included) whatever the lag: no
+    /// history
     pub live: Vec<bool>,
     /// the words a kernel population reads count as work (so thrift sees a wide read)
     pub count_reads: bool,
@@ -70,10 +70,10 @@ pub struct RuntimeNetwork {
     steps: u64,
 }
 
-/// The frame a read `back` steps reaches: a node held in place is read as it is now for a lag
-/// of 1, its ring (if any) further back.
+/// The frame a read `back` steps reaches: a node held in place has no history, and is read as
+/// it is now whatever the lag (a network that wants the past copies it out and keeps it).
 fn at(live: bool, back: usize) -> usize {
-    if live && back <= 1 { 0 } else { back }
+    if live { 0 } else { back }
 }
 
 /// What an edge reads: frames `read_back .. read_back + span` of a node ORed together, only the
@@ -283,8 +283,8 @@ impl RuntimeNetwork {
     }
 
     /// `from_graph_with`, and with `in_place` every node but the senses (the first), the act and
-    /// the self node is held in place (`live`): one frame where nothing reads it 2 or more steps
-    /// back (half the memory, and no clearing or copying each step).
+    /// the self node is held in place (`live`): one frame, no history (half the memory or less,
+    /// and no clearing or copying each step).
     pub fn from_graph_held<F>(g: &Graph<NodeSpec, EdgeSpec, Directed>, in_bits: usize, out_bits: usize, seed: u64, in_place: bool, mut factory: F) -> Self
     where
         F: FnMut(&EdgeInfo) -> KernelGroup,
@@ -298,7 +298,7 @@ impl RuntimeNetwork {
         for ni in g.node_indices() {
             let ns = g.node_weight(ni).expect("node weight");
             let d = ns.history_depth.max(1);
-            let ring_len = if live[ni.index()] { if d >= 2 { d + 1 } else { 1 } } else { d + 1 };
+            let ring_len = if live[ni.index()] { 1 } else { d + 1 };
             nodes.push(BitVecHistory::new(BitVector::new(bits_of(ni.index()), Some(0)), ring_len));
         }
         let mut edges: Vec<RuntimeEdgeGroup> = Vec::with_capacity(g.edge_count());

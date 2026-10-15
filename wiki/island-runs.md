@@ -1,6 +1,6 @@
 # Island runs compared
 
-Every island run so far (`runs/islands3` to `runs/islands10`), side by side: what each changed,
+Every island run so far (`runs/islands3` to `runs/islands11`), side by side: what each changed,
 and how far each island climbed. Details are in experiments 13 to 16.
 
 ## What each run changed
@@ -15,8 +15,8 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 8 | 24 training worlds; a goal held once before the held-out check | 600 | 99 min |
 | 9 | the win-stay probe fixed (nothing to compare scores 0) | 600 | about 1 h 45 min |
 | 10 | the generalist at the frontier; a repeat rung for learning from reward | 341 (stopped: behind run 9, nothing new) | 1 h |
-| 11 | epigenetic marks; exploration kept in the genome | running | |
-| 12 | kernels that may expect zeros as well as ones | next | |
+| 11 | epigenetic marks; exploration kept in the genome | 600 | 2 h 35 min |
+| 12 | kernels that may expect zeros as well as ones | running | |
 | 13 | a ninth island, task selection | after 12 | |
 | 14 | a feel rung before every repeat rung | after 13 | |
 
@@ -35,6 +35,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 8 | win-stay (172) | lag4 (420) | echo2 (13) | first | first | first | win-stay (89) | 8% of 462 |
 | 9 | win-stay (229) | lag4 (186) | echo2 (20) | cycle2 (415) | first | first | win-stay (101) | 10% of 458 |
 | 10 (to 341) | repeat (129) | lag1 (268) | echo2 (50) | first | first | first | repeat (156) | 13% of 272 |
+| 11 | repeat (67) | lag3 (102) | **fade6 (369)** | first | first | first | repeat (250) | 13% of 462 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.
@@ -54,6 +55,9 @@ Two cautions for reading it:
   held once (run 8)** restored the climbing.
 - **The win-stay fix (run 9)** gave clean readings and the fastest recall (lag4 at 186), and with
   it prediction passed its first rung for the first time.
+- **Marks and exploration (run 11)** got reading past echo2 for the first time (echo2 to fade6
+  between 337 and 369), and kept a gradient on the repeat rung (switching's mean 48). They cost
+  the simpler islands: shapes waited 230 generations on its first rung and recall stalled on lag3.
 - **Plasmids** help on arrival 6-12% of the time in every run, but none has made a lasting
   difference to an island.
 
@@ -68,5 +72,5 @@ Two cautions for reading it:
   is the repeat rung's job too (the maze's new first rung).
 - **Screen's first rung**: no run has passed it, but scores rose from about 0 on the torch to a
   mean of 111 on the dark torch (run 9).
-- **Reading's echo2**: reached in every run, never passed. Its probe is sound (a hand-written
-  echoer scores 483), so the gap is evolving the sound-to-voice circuit.
+- **Reading's echo2**: reached in every run, passed only in run 11 (with marks and
+  exploration), which went on to fade6.

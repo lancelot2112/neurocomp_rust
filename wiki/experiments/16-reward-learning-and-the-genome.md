@@ -177,5 +177,29 @@ One limit: a population gains a mark only through predictions that come true, wh
 defined for the predicting ops (XOR, AND-NOT) by the lines they cancel. Most populations use
 other ops, so marks come mostly from explored and predicting circuits.
 
-Run 11 is run 10 with both (`runs/run11.cmd`, started by `runs/after10.cmd` when run 10 ends).
-Results to follow.
+Run 11 is run 10 with both (`runs/run11.cmd`, started by hand when run 10 was stopped).
+
+**Result** (`runs/islands11`, 600 generations in 2 h 35 min):
+
+| island | run 11 | run 10 (to 341) | run 9 |
+|---|---|---|---|
+| reading | **echo2 passed at 337; echo4 at 355, echo8 at 369; on fade6** | echo2, never passed | echo2, never passed |
+| switching | repeat at 67; repeat mean 48 (best 231) | repeat at 129; mean -12 | win-stay at 229; mean about 0 |
+| shapes | clean until 230, repeat at 250; mean 0 | repeat at 156; mean -4 | win-stay at 101 |
+| recall | lag3 at 102, then stuck (mean 23) | lag1 at 268 | lag4 at 186 |
+| prediction (cycle1 mean) | 78 (best 192) | 20 | passed at 415 |
+| screen (glow mean) | 16 | 21 | 111 |
+
+- **Reading passed echo2 for the first time in any run**, then two more echo rungs within 32
+  generations. Its best then had 87 marked populations and 13 explored; by 580 it had grown to
+  189 populations reading five ports. A circuit that echoes predicts its own voice, which is what
+  marks count, so this is where marks were expected to help most.
+- **Switching's repeat rung held a gradient** (mean 48 over 533 generations, against -12 in run
+  10), but no island passed it.
+- **The cost:** shapes sat on its first rung for 230 generations, recall stalled on lag3 and
+  screen stayed near 0. The generalist bloated to 278 explored connections (69 of its 90
+  populations on loops) before shedding most of them.
+- Plasmids: 13% of 462 helped on arrival, many on the repeat rung (up to +207). One spread to
+  28 of the maze's 32 networks, then died out.
+
+Next: run 12 adds kernels that can expect zeros (below).

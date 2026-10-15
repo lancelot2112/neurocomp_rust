@@ -232,3 +232,8 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     that sees only the senses shows whether the rung can be learned and how noisy its probe is.
     Win-stay's learner scored 1024 and showed a probe flaw; echo2's scored 483 with a sound
     probe, so there the gap is the circuit evolution has to find.
+47. **Letting what a lifetime finds reach the genome got reading past echo2 (experiment 16).**
+    With marks (a population's predictions that came true make it harder to delete and likelier
+    to be copied) and exploration (trial connections kept, tagged), reading passed echo2, echo4
+    and echo8 in run 11, a rung no earlier run passed in 600 generations. An echo circuit predicts
+    its own voice, which is what marks count. The price was bloat and slower simple islands.

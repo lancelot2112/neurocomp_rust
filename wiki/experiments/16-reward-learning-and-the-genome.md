@@ -77,6 +77,46 @@ island's probes, in its world, each probe from the first island that has it.
 
 Run 10 has both the repeat rung and the frontier generalist (`runs/run10.cmd`).
 
+**Result** (`runs/islands10`, stopped after generation 341, behind run 9 and with nothing new).
+Switching reached repeat at 129 and shapes at 156, but the rung averaged about 0 on all three
+islands (switching -12, shapes -4, the maze -2; switching's best was 318 once). Recall reached
+lag1 at 268, against lag4 by 186 in run 9. Prediction's and screen's means over the last 100
+generations were 23 and 51, against 102 and 107.
+
+`examples/maze_check` shows what the genomes did on the repeat rung:
+
+| island (top 4) | turned on | stroked | repeated after a stroke | after none |
+|---|---|---|---|---|
+| switching | 99-100% of trials | 44-46% | 76-96% | 80-96% |
+| maze | 57-86% | 42-61% | 63-88% | 65-81% |
+| shapes | 54-58% | 60-61% | 83-84% | 73-76% |
+
+They choose, but the stroke changes nothing. Acting on a stroke needs two populations at once:
+the affect sense copied into a channel, and a repeating population gated on that channel. A gate
+names a declared channel, not a port.
+
+## A feel rung below repeat (run 13)
+
+The feel rung is one step smaller. Strokes come at random, whatever the program does
+(`World::feel`), and the `feel` probe (a 15th) scores clicks in the 3 steps after a stroke minus
+clicks at other steps. That is one circuit, from the affect port to the hand: the population
+learning from reward builds on. A policy that clicks when touched scores above 250; clicking
+always, at random or never scores about 0 (tested). With `ISL_FEEL=1` it goes before switching's
+and shapes' repeat and the maze's learn.
+
+## Task selection (run 12)
+
+One lifetime with one network: blocks alternating a conditioning block (click at a light) and a
+reading block (tokens shown), each block's task felt as a cue on the touch channel on the first
+rung (`Task::Mixed`). The `select` probe (a 14th) is the mean of responding and babbling, each in
+its own blocks, minus the voice in conditioning blocks and clicks in reading blocks. A selector
+policy scores above 600, one doing both all the time below 0, a silent one 0 (tested). The
+selection island (`ISL_SELECTION=1`) climbs cued, uncued (the task read from the scene), then
+short blocks.
+
+The queue: run 11 (marks and exploration) started at 19:09Z when run 10 was stopped; run 12
+adds the selection island; run 13 the feel rung.
+
 ## Epigenetic marks and exploration (run 11)
 
 Learning steers evolution already: genomes whose networks learn well are selected. Nothing a

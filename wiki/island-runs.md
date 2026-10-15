@@ -14,8 +14,10 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 7 | fresh training worlds each generation; screen's dark torch first; carrying cost 4 | 600 | 50 min |
 | 8 | 24 training worlds; a goal held once before the held-out check | 600 | 99 min |
 | 9 | the win-stay probe fixed (nothing to compare scores 0) | 600 | about 1 h 45 min |
-| 10 | the generalist at the frontier; a repeat rung for learning from reward | running | |
-| 11 | epigenetic marks; exploration kept in the genome | next | |
+| 10 | the generalist at the frontier; a repeat rung for learning from reward | 341 (stopped: behind run 9, nothing new) | 1 h |
+| 11 | epigenetic marks; exploration kept in the genome | running | |
+| 12 | a ninth island, task selection | next | |
+| 13 | a feel rung before every repeat rung | after 12 | |
 
 ## How far each island climbed
 
@@ -31,6 +33,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 7 | win-stay (94) | lag1 (399) | echo2 (129) | first | first | first | win-stay (83) | 12% of 460 |
 | 8 | win-stay (172) | lag4 (420) | echo2 (13) | first | first | first | win-stay (89) | 8% of 462 |
 | 9 | win-stay (229) | lag4 (186) | echo2 (20) | cycle2 (415) | first | first | win-stay (101) | 10% of 458 |
+| 10 (to 341) | repeat (129) | lag1 (268) | echo2 (50) | first | first | first | repeat (156) | 13% of 272 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.
@@ -56,8 +59,9 @@ Two cautions for reading it:
 ## Still stuck in every run
 
 - **Win-stay** (switching, shapes): reached in every run from 6 on, passed in none since fresh
-  worlds. The fixed probe shows no genome learns from reward. Run 10 adds the repeat rung below
-  it.
+  worlds. The fixed probe shows no genome learns from reward. The repeat rung below it (run 10)
+  averaged about 0 too: the genomes choose, but the stroke changes nothing. Run 13 adds a feel
+  rung below that (the stroke reaching the hand at all).
 - **The maze's turn**: never passed honestly. It needs the turn codes learned from reward, which
   is the repeat rung's job too (the maze's new first rung).
 - **Screen's first rung**: no run has passed it, but scores rose from about 0 on the torch to a

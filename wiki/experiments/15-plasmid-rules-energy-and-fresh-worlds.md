@@ -128,3 +128,5 @@ worlds the population has never fitted. Two steps stop every run since fresh wor
   stroke.
 
 Both are lifetime learning from reward, and both are where the next rungs are needed.
+
+Win-stay and learning from reward, from run 9 on, are experiment 16.

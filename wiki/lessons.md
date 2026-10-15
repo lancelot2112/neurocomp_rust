@@ -224,3 +224,11 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     training worlds and the goal checked once on 48 held-out worlds (run 8), recall climbed its
     whole ladder. What is left, win-stay and the maze's turn, is learning from reward within a
     lifetime.
+45. **A probe that compares two kinds of event must score 0 when one is missing (experiment
+    16).** Win-stay compared clicks after a stroke with clicks after none, and counted a missing
+    side as 0. So a clicker that ignored strokes scored +1024 or -1024 by luck, a spread of
+    about 300 in a 12-world mean around a goal of 80, which hid both learners and their absence.
+46. **Before blaming evolution, run a hand-written learner on the rung (experiment 16).** One
+    that sees only the senses shows whether the rung can be learned and how noisy its probe is.
+    Win-stay's learner scored 1024 and showed a probe flaw; echo2's scored 483 with a sound
+    probe, so there the gap is the circuit evolution has to find.

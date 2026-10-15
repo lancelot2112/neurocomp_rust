@@ -205,6 +205,10 @@ pub struct EdgeSpec {
     /// the destination is a part of its node (a port, such as the hand): `dst_len` words from
     /// `dst_word`; wires wrap inside it and topographic outputs land inside it (0: the whole node)
     pub dst_len: usize,
+    /// two-mask kernels: each expects a value on each of its lines, ones and zeros alike (born
+    /// expecting what its lines held, half of them on and half off; starting kernels expect
+    /// every line off), so it can match the absence of input. Off: a kernel counts lines on.
+    pub expect: bool,
 }
 
 impl EdgeSpec {
@@ -250,6 +254,7 @@ impl EdgeSpec {
             replicate: 0,
             replicate_shift: false,
             dst_len: 0,
+            expect: false,
         }
     }
 }

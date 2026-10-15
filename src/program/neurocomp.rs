@@ -646,7 +646,19 @@ impl RuntimeNetwork {
                 let lines: Vec<usize> = (start / 64..=(start + t - 1) / 64)
                     .flat_map(|w| ones(sw[w] & !covered[w] & SimpleKernel::tile_word(start, t, w)).into_iter().map(move |b| w * 64 + b))
                     .collect();
-                let syn: Vec<usize> = lines.choose_multiple(rng, (sp.birth_syn as usize).min(lines.len())).copied().collect();
+                let syn: Vec<usize> = if sp.expect {
+                    // two-mask: half its lines on uncovered input, half on lines of the tile that
+                    // are off (it will expect each as it is now)
+                    let on = (sp.birth_syn as usize).div_ceil(2).min(lines.len());
+                    let mut syn: Vec<usize> = lines.choose_multiple(rng, on).copied().collect();
+                    let off: Vec<usize> = (start / 64..=(start + t - 1) / 64)
+                        .flat_map(|w| ones(!sw[w] & SimpleKernel::tile_word(start, t, w)).into_iter().map(move |b| w * 64 + b))
+                        .collect();
+                    syn.extend(off.choose_multiple(rng, (sp.birth_syn as usize).saturating_sub(on).min(off.len())).copied());
+                    syn
+                } else {
+                    lines.choose_multiple(rng, (sp.birth_syn as usize).min(lines.len())).copied().collect()
+                };
                 let threshold = (sp.birth_quarters as usize * syn.len()).div_ceil(4).max(1);
                 let (out, dw) = if eg.repeat {
                     let prev = nodes[eg.dst].get_frame(at(live[eg.dst], eg.repeat_lag));
@@ -679,11 +691,15 @@ impl RuntimeNetwork {
                     }
                 };
                 let out_mask = BitVector::from_bits(&out, 64);
+                let mut k = SimpleKernel::tile(start, t, &syn, out_mask.clone(), dw, threshold, eg.op);
+                if sp.expect {
+                    k.expecting(Some(src));
+                }
                 if eg.new_code {
                     let d = nodes[eg.dst].current_mut();
                     apply(&mut d.as_words_mut()[dw..dw + 1], out_mask.as_words(), eg.op);
                 }
-                class.add(SimpleKernel::tile(start, t, &syn, out_mask, dw, threshold, eg.op));
+                class.add(k);
                 continue;
             }
             // what it writes: a fresh random code into an empty destination (`new_code`), or the
@@ -759,14 +775,17 @@ impl RuntimeNetwork {
             let threshold = (sp.birth_quarters as usize * syn_mask.count_ones()).div_ceil(4).max(1);
             let out_mask = BitVector::from_bits(&out, 64);
             let _ = dest;
+            let mut k = SimpleKernel::new(syn_mask, sw, out_mask.clone(), dw, threshold, eg.op);
+            if sp.sparse {
+                k.sparsify();
+            }
+            if sp.expect {
+                k.expecting(Some(src));
+            }
             if eg.new_code {
                 // a new code fires as it is born (the input that recruited it is here now)
                 let d = nodes[eg.dst].current_mut();
                 apply(&mut d.as_words_mut()[dw..dw + 1], out_mask.as_words(), eg.op);
-            }
-            let mut k = SimpleKernel::new(syn_mask, sw, out_mask, dw, threshold, eg.op);
-            if sp.sparse {
-                k.sparsify();
             }
             class.add(k);
         }

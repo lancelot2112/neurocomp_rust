@@ -156,6 +156,10 @@ pub struct Pop {
     /// grown in a lifetime by exploration and kept: a trial connection whose predictions came
     /// true often enough was added to the genome (`inherit`)
     pub explored: bool,
+    /// two-mask kernels (`set_zeros`): each expects a value on each of its lines, ones and zeros
+    /// alike, so it can match the absence of input (born expecting what its lines held, half on
+    /// and half off; starting kernels expect every line off)
+    pub expect: bool,
 }
 
 impl Pop {
@@ -167,7 +171,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false,
         }
     }
 
@@ -194,6 +198,19 @@ pub struct TagGenome {
 /// The predictions a trial connection's kernels must have had come true, over a genome's
 /// lifetimes in a generation, for the genome to keep it (`inherit`).
 pub const KEEP: u32 = 16;
+
+/// Two-mask kernels in the grammar (`set_zeros`): a population's `expect` is drawn for a new
+/// population (one in four) and flipped as one of its properties. Off by default, so earlier
+/// runs draw as before.
+static ZEROS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_zeros(on: bool) {
+    ZEROS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn zeros() -> bool {
+    ZEROS.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// What the string's channels resolve to.
 struct Channels {
@@ -339,7 +356,8 @@ impl TagGenome {
                             + &if p.replicate > 0 { format!(" replicate at {} ({})", 1u32 << p.replicate.min(7), if p.replicate_shift { "to a neighbour tile" } else { "in place" }) } else { String::new() },
                         if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() }
                             + &if p.mark > 0 { format!(" mark {}", p.mark) } else { String::new() }
-                            + if p.explored { " explored" } else { "" },
+                            + if p.explored { " explored" } else { "" }
+                            + if p.expect { " expect" } else { "" },
                     );
                 }
             }
@@ -416,6 +434,7 @@ impl TagGenome {
                 pause,
                 replicate: p.replicate,
                 replicate_shift: p.replicate_shift,
+                expect: p.expect && !p.wire,
                 ..EdgeSpec::plain()
             }));
         }
@@ -692,6 +711,10 @@ impl TagGenome {
                         opt(p.gate), p.gate_lag, p.birth_syn, p.birth_quarters, p.out_min, p.out_max, p.cap, p.code_lines, p.out_learn, p.fade,
                         p.rotate, b(p.sparse), b(p.cover), p.tile, opt(p.pause), p.replicate, b(p.replicate_shift), p.mark, b(p.explored)
                     );
+                    // (written only when set, so genomes without it read and write as before)
+                    if p.expect {
+                        out.insert_str(out.len() - 1, " expect=1");
+                    }
                 }
             }
         }
@@ -738,6 +761,7 @@ impl TagGenome {
                         // (absent in genomes written before marks)
                         mark: kv.get("mark").and_then(|x| x.parse().ok()).unwrap_or(0),
                         explored: kv.get("explored") == Some(&"1"),
+                        expect: kv.get("expect") == Some(&"1"),
                     };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
                 }
@@ -804,6 +828,10 @@ impl TagGenome {
         p.repeat_lag = rng.gen_range(1..6);
         if rng.gen_range(0..3) == 0 {
             p.gate = Some((rng.r#gen(), rng.gen_bool(0.5)));
+        }
+        // (with `set_zeros`) sometimes expecting zeros as well as ones
+        if zeros() {
+            p.expect = rng.gen_range(0..4) == 0;
         }
         p
     }
@@ -949,6 +977,10 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
                 }
                 k
             };
+            if sp.expect {
+                // no input yet: it expects every line off
+                k.expecting(None);
+            }
             k.tonic = sp.tonic;
             k
         })
@@ -1121,7 +1153,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..38) {
+                    Token::Pop(p) => match rng.gen_range(0..if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1159,6 +1191,7 @@ impl Evolvable for TagGenome {
                         34 => p.replicate_shift = !p.replicate_shift,
                         36 => p.from_port = !p.from_port,
                         37 => p.to_port = !p.to_port,
+                        38 => p.expect = !p.expect,
                         _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                     },
                 }
@@ -1665,6 +1698,25 @@ mod tests {
         // a genome written before marks reads back unmarked
         let old: String = h.to_text().lines().map(|l| l.split(" mark=").next().unwrap().to_string() + "\n").collect();
         assert!(TagGenome::from_text(&old).unwrap()[0].pops().all(|p| p.mark == 0 && !p.explored));
+    }
+
+    #[test]
+    fn expecting_zeros_is_a_gene_written_only_when_set() {
+        let r = 0x3C;
+        let look = Pop { from_port: true, expect: true, ..Pop::new(1, AFFECT, r) };
+        let out = Pop::wire(2, r, ACT);
+        let g = TagGenome { tokens: vec![Token::Channel { tag: r, width: 3, hold: false }, Token::Pop(look), Token::Pop(out)], next_id: 3 };
+        let text = g.to_text();
+        assert_eq!(text.matches("expect=1").count(), 1);
+        assert_eq!(TagGenome::from_text(&text).unwrap().remove(0), g);
+        // the graph's edge expects; a wire never does
+        let graph = g.graph();
+        let specs: Vec<bool> = graph.edge_weights().map(|e| e.expect).collect();
+        assert_eq!(specs.iter().filter(|&&e| e).count(), 1);
+        // a genome without it reads and writes as before
+        let mut h = g.clone();
+        if let Token::Pop(p) = &mut h.tokens[1] { p.expect = false; }
+        assert!(!h.to_text().contains("expect"));
     }
 
     #[test]

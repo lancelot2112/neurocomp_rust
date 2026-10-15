@@ -54,6 +54,12 @@
 //! writing back into its source, or the destination); one whose predictions come true 16 times
 //! or more over a generation's lifetimes is added to the genome, tagged `explored`.
 //!
+//! `ISL_ZEROS=1`: two-mask kernels in the grammar. A population may expect (a property drawn for
+//! one new population in four, and flipped by mutation): each kernel then expects a value on each
+//! of its lines, ones and zeros alike, so it can match the absence of input (a click that went
+//! unstroked). Born on half on lines and half off, expecting what they held; starting kernels
+//! expect every line off. Without it, a kernel counts only lines that are on.
+//!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
 //! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
@@ -232,7 +238,10 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
     let explored = all.iter().filter(|p| p.explored).count();
     let marked: Vec<u32> = all.iter().filter(|p| p.mark > 0).map(|p| p.mark as u32).collect();
     let marks = if marked.is_empty() { String::new() } else { format!("; marked {} (mean {})", marked.len(), marked.iter().sum::<u32>() / marked.len() as u32) };
-    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
+    // (with ISL_ZEROS: the share of kernel populations that expect zeros as well as ones)
+    let kernels = all.iter().filter(|p| !p.wire).count();
+    let expect = if neurocomp::evolve::tags::zeros() { format!("; expecting {}%", all.iter().filter(|p| p.expect && !p.wire).count() * 100 / kernels.max(1)) } else { String::new() };
+    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}{expect}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
 }
 
 /// The probes where `a` scores at least `NOTICE` above `b`, named.
@@ -412,6 +421,7 @@ fn main() {
     neurocomp::kernel::class::set_op_choice(env("ISL_OPS", 0u8) == 1);
     neurocomp::evolve::set_epigenetics(env("ISL_EPI", 0u8) == 1);
     neurocomp::program::neurocomp::set_explore(env("ISL_EXPLORE", 0u8) == 1);
+    neurocomp::evolve::tags::set_zeros(env("ISL_ZEROS", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
     let ration: u64 = env("ISL_RATION", 0);
@@ -525,8 +535,8 @@ fn main() {
             }
         }
     }
-    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore());
+    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

@@ -87,6 +87,18 @@ impl SimpleKernel {
         let Some((s0, bits)) = self.tile_at else { return self.clone() };
         let lines: Vec<usize> = self.lines_abs().into_iter().map(|b| b - s0 + start).collect();
         let mut k = Self::tile(start, bits, &lines, self.output_mask.clone(), output_idx, self.threshold, self.op);
+        if let Some(p) = &self.pattern {
+            // the same expectation on each moved line
+            let mut q = vec![0u64; k.input_mask.word_len()];
+            for (b, nb) in self.lines_abs().into_iter().zip(lines.iter()) {
+                let j = b / 64 - self.input_idx;
+                if p.as_words()[j] >> (b % 64) & 1 == 1 {
+                    let nj = nb / 64 - k.input_idx;
+                    q[nj] |= 1u64 << (nb % 64);
+                }
+            }
+            k.pattern = Some(BitVector::from_words(q));
+        }
         k.tonic = self.tonic;
         k.learn_held = self.learn_held;
         k.learn_fire = self.learn_fire;
@@ -115,6 +127,14 @@ impl SimpleKernel {
         let mut k = Self::new(care, input_idx, output_mask, output_idx, threshold, op);
         k.pattern = Some(pattern);
         k
+    }
+
+    /// Make it a two-mask kernel that expects, on each of its lines, what `input` holds there now
+    /// (ones and zeros alike), or (None) every line off.
+    pub fn expecting(&mut self, input: Option<&BitVector>) {
+        let m = self.input_mask.as_words();
+        let words = (0..m.len()).map(|j| input.map_or(0, |x| x.as_words().get(self.input_idx + j).copied().unwrap_or(0)) & m[j]).collect();
+        self.pattern = Some(BitVector::from_words(words));
     }
 
     /// Its strength given its match count: the share of its lines that agree (in 1/4096), then
@@ -580,6 +600,38 @@ mod tests {
         let m = k.moved_to(128, 3);
         assert_eq!(m.lines_abs(), vec![136, 137, 166]);
         assert_eq!((m.tile_at, m.output_idx, m.threshold, m.care()), (Some((128, 64)), 3, 2, 3));
+    }
+
+    #[test]
+    fn a_kernel_expecting_zeros_fires_on_absence_and_keeps_it_when_moved() {
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(5);
+        let inhibit = BitVector::new(256, Some(0));
+        let fire = |k: &mut SimpleKernel, input: &BitVector, rng: &mut rand::rngs::StdRng| {
+            let mut out = BitVector::new(256, Some(0));
+            k.learn_fire = false;
+            k.try_fire(&KernelContext { input, inhibit: &inhibit, temperature: 0, phase: 0 }, &mut out, rng)
+        };
+        // four lines in a tile, all four to match, expecting every line off
+        let mut k = SimpleKernel::tile(64, 64, &[64, 70, 100, 127], BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        k.expecting(None);
+        assert!(k.acts_on_nothing());
+        let empty = BitVector::new(256, Some(0));
+        let mut one_on = BitVector::new(256, Some(0));
+        one_on.bit_set(70);
+        assert!(fire(&mut k, &empty, &mut rng));
+        assert!(!fire(&mut k, &one_on, &mut rng));
+        // expecting what was there: line 70 on, the rest off
+        let mut j = SimpleKernel::tile(64, 64, &[64, 70, 100, 127], BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        j.expecting(Some(&one_on));
+        assert!(fire(&mut j, &one_on, &mut rng));
+        assert!(!fire(&mut j, &empty, &mut rng));
+        // moved a tile on (across a word boundary), it expects the same on the same places
+        let mut m = j.moved_to(96, 0);
+        let mut there = BitVector::new(256, Some(0));
+        there.bit_set(102);
+        assert_eq!(m.lines_abs(), vec![96, 102, 132, 159]);
+        assert!(fire(&mut m, &there, &mut rng));
+        assert!(!fire(&mut m, &empty, &mut rng));
     }
 
     #[test]

@@ -16,8 +16,9 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 9 | the win-stay probe fixed (nothing to compare scores 0) | 600 | about 1 h 45 min |
 | 10 | the generalist at the frontier; a repeat rung for learning from reward | 341 (stopped: behind run 9, nothing new) | 1 h |
 | 11 | epigenetic marks; exploration kept in the genome | running | |
-| 12 | a ninth island, task selection | next | |
-| 13 | a feel rung before every repeat rung | after 12 | |
+| 12 | kernels that may expect zeros as well as ones | next | |
+| 13 | a ninth island, task selection | after 12 | |
+| 14 | a feel rung before every repeat rung | after 13 | |
 
 ## How far each island climbed
 
@@ -60,8 +61,9 @@ Two cautions for reading it:
 
 - **Win-stay** (switching, shapes): reached in every run from 6 on, passed in none since fresh
   worlds. The fixed probe shows no genome learns from reward. The repeat rung below it (run 10)
-  averaged about 0 too: the genomes choose, but the stroke changes nothing. Run 13 adds a feel
-  rung below that (the stroke reaching the hand at all).
+  averaged about 0 too: the genomes choose, but the stroke changes nothing. Run 14 adds a feel
+  rung below that (the stroke reaching the hand at all), and run 12 kernels that can match the
+  stroke's absence.
 - **The maze's turn**: never passed honestly. It needs the turn codes learned from reward, which
   is the repeat rung's job too (the maze's new first rung).
 - **Screen's first rung**: no run has passed it, but scores rose from about 0 on the torch to a

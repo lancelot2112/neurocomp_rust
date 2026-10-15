@@ -95,7 +95,7 @@ They choose, but the stroke changes nothing. Acting on a stroke needs two popula
 the affect sense copied into a channel, and a repeating population gated on that channel. A gate
 names a declared channel, not a port.
 
-## A feel rung below repeat (run 13)
+## A feel rung below repeat (run 14)
 
 The feel rung is one step smaller. Strokes come at random, whatever the program does
 (`World::feel`), and the `feel` probe (a 15th) scores clicks in the 3 steps after a stroke minus
@@ -104,7 +104,7 @@ learning from reward builds on. A policy that clicks when touched scores above 2
 always, at random or never scores about 0 (tested). With `ISL_FEEL=1` it goes before switching's
 and shapes' repeat and the maze's learn.
 
-## Task selection (run 12)
+## Task selection (run 13)
 
 One lifetime with one network: blocks alternating a conditioning block (click at a light) and a
 reading block (tokens shown), each block's task felt as a cue on the touch channel on the first
@@ -115,7 +115,36 @@ selection island (`ISL_SELECTION=1`) climbs cued, uncued (the task read from the
 short blocks.
 
 The queue: run 11 (marks and exploration) started at 19:09Z when run 10 was stopped; run 12
-adds the selection island; run 13 the feel rung.
+adds kernels that expect zeros (below); run 13 the selection island; run 14 the feel rung.
+
+## Kernels that expect zeros (run 12)
+
+Every evolved kernel counted only lines that are on. The two-mask kernel (a care mask and the
+value expected on each cared line, counting agreement on ones and zeros alike) was in the kernel
+from the start, but no population could build one. Absence was reachable only through the write
+ops (NOR, NAND, AND-NOT into the destination) or by building an inverted channel (a tonic
+population filling it, an AND-NOT one clearing what is on), two populations in order. Win-stay and
+repeat turn on "my click went unstroked", the affect lines staying off, which a ones-counting
+kernel cannot fire on.
+
+With `ISL_ZEROS=1` a population has one more property, `expect` (drawn for one new population in
+four, and flipped by mutation like any other):
+- **Births.** A kernel is born on half its lines from the uncovered input that recruited it and
+  half from lines of the same tile that are off, expecting each as it is now: "these on, and those
+  off".
+- **Starting kernels** expect every line off: they fire on an empty input, so a population reading
+  the affect port can fire when no stroke came. (A population whose input is all off is not
+  paused when its kernels act on nothing, which these do.)
+- **Learning** moves cared lines and sets their expected value (Hebbian: expect what is there;
+  anti-Hebbian: the opposite), as the kernel always did. A replicated kernel keeps its expectation
+  on the moved lines.
+- The match is still one word operation a word: `!(a ^ q) & m` where it was `a & m`.
+
+Nothing else changes, and with the switch off, genomes draw, mutate and read back as before
+(`expect=1` is written only when set; tested). In a 12-generation smoke run, 67 populations in the
+checkpoint expected, up to 36% of an island elite's kernel populations.
+
+Run 12 is run 11 with it (`runs/run12.cmd`). Results to follow.
 
 ## Epigenetic marks and exploration (run 11)
 

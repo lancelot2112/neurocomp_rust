@@ -86,6 +86,7 @@ pub enum SceneKind {
     Conditioning(Conditioning),
     Sequence,
     Echo,
+    Maze,
 }
 
 /// A record of one step, for the observer (never sent to the program).
@@ -112,6 +113,11 @@ pub struct Event {
     /// sequence: the token shown this step broke the stream's pattern (the observer's mark; the
     /// program only sees the token)
     pub odd: bool,
+    /// maze: the trial's index, the place on the stem (the stem's length: at the junction), and
+    /// the side the food is on (true: right)
+    pub maze: Option<(usize, usize, bool)>,
+    /// maze: a choice at the junction this step, and whether it was the food's side
+    pub chose: Option<bool>,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -163,6 +169,10 @@ enum Scene {
     Echo(usize, bool),
     /// a gap between conditioning trials: (kind, trials left after it, steps left in the gap)
     Gap(Conditioning, usize, usize),
+    /// a T-maze trial: (trials left, place on the stem, steps in the trial, food on the right)
+    Maze(usize, usize, usize, bool),
+    /// between maze trials: (trials left after it, steps left)
+    MazeGap(usize, usize),
 }
 
 /// The world.
@@ -200,6 +210,14 @@ pub struct World {
     pub blur: u32,
     pub shift: usize,
     exemplar: Option<BitVector>,
+    /// maze: steps on the stem before the junction, the cue shown only at the start of the stem
+    /// (not all along it), and the cue a light's code (which side it means must be learned) rather
+    /// than a mark in the eye's left or right half (a side to turn to)
+    pub maze_len: usize,
+    pub cue_gone: bool,
+    pub symbol: bool,
+    junction: BitVector,
+    maze_total: usize,
     present: bool,
     pub events: Vec<Event>,
 }
@@ -307,6 +325,11 @@ impl World {
             blur: 0,
             shift: 0,
             exemplar: None,
+            maze_len: 2,
+            cue_gone: false,
+            symbol: false,
+            junction: codes(1, &mut r(0x7A2E)).remove(0),
+            maze_total: 0,
             present: false,
             events: Vec::new(),
         }
@@ -341,6 +364,47 @@ impl World {
         self.scene = Scene::Sequence(tokens.iter().enumerate().map(|(i, &t)| (t, odd.get(i).copied().unwrap_or(false))).collect());
     }
 
+    /// A T-maze: `trials` trials. Each starts at the foot of a stem `maze_len` steps long; a click
+    /// steps forward, and at the junction (the eye shows its code) a move left or right enters an
+    /// arm: the food's side is stroked (felt the step after), the other gives nothing, and either
+    /// ends the trial, as does taking `maze_len + 6` steps. The cue (where the food is) is on the
+    /// eye all along the stem, or only on the trial's first step, at its foot (`cue_gone`).
+    pub fn maze(&mut self, trials: usize) {
+        self.present = false;
+        self.maze_total = trials;
+        let side = self.rng.gen_bool(0.5);
+        self.scene = Scene::Maze(trials, 0, 0, side);
+    }
+
+    /// The cue for a maze trial: a light's code (symbolic), or the first light's lines moved into
+    /// the eye's left or right half (spatial).
+    fn maze_cue(&self, side: bool) -> BitVector {
+        if self.symbol {
+            return self.lights[side as usize].clone();
+        }
+        let w = self.lights[0].as_words();
+        let half = w.len() / 2;
+        let mut out = vec![0u64; w.len()];
+        for (i, &x) in w.iter().enumerate() {
+            out[i % half + side as usize * half] |= x;
+        }
+        BitVector::from_words(out)
+    }
+
+    /// The scene after a maze trial: a gap of 0 to `gap_max` steps, then the next trial.
+    fn after_maze(&mut self, left: usize) -> Scene {
+        if left <= 1 {
+            return Scene::Idle;
+        }
+        let g = if self.gap_max > 0 { self.rng.gen_range(0..=self.gap_max) } else { 0 };
+        if g > 0 {
+            Scene::MazeGap(left - 1, g)
+        } else {
+            let side = self.rng.gen_bool(0.5);
+            Scene::Maze(left - 1, 0, 0, side)
+        }
+    }
+
     /// Echo play: `steps` steps; a caregiver comes or goes every 8, there half the time.
     pub fn echo(&mut self, steps: usize) {
         self.scene = Scene::Echo(steps, false);
@@ -355,7 +419,7 @@ impl World {
     pub fn step(&mut self, act: &BitVector) -> BitVector {
         let said = self.voice.articulate(&channel(act, VOICE));
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if let Some(w) = said {
@@ -458,6 +522,46 @@ impl World {
                     }
                 }
                 if q.is_empty() { Scene::Idle } else { Scene::Sequence(q) }
+            }
+            Scene::Maze(left, mut pos, t, side) => {
+                ev.scene = SceneKind::Maze;
+                // the move made acts on where the program is (a move that does nothing does
+                // nothing: a click at the junction, a turn on the stem); a trial's first step only
+                // shows where it starts (the move then was made before it began)
+                let mut done = false;
+                if t == 0 {
+                } else if pos < self.maze_len && moved == Some(CLICK) {
+                    pos += 1;
+                } else if pos >= self.maze_len && (moved == Some(LEFT) || moved == Some(RIGHT)) {
+                    let right = moved == Some(RIGHT);
+                    ev.chose = Some(right == side);
+                    if right == side {
+                        self.stroke_next = true;
+                    }
+                    done = true;
+                }
+                ev.maze = Some((self.maze_total - left, pos, side));
+                if done || t + 1 >= self.maze_len + 6 {
+                    self.after_maze(left)
+                } else {
+                    // what the program sees where it now is
+                    if !self.cue_gone || t == 0 {
+                        put(&mut senses, EYE, &self.maze_cue(side));
+                    }
+                    if pos >= self.maze_len {
+                        put(&mut senses, EYE, &self.junction.clone());
+                    }
+                    Scene::Maze(left, pos, t + 1, side)
+                }
+            }
+            Scene::MazeGap(left, g) => {
+                ev.scene = SceneKind::Maze;
+                if g > 1 {
+                    Scene::MazeGap(left, g - 1)
+                } else {
+                    let side = self.rng.gen_bool(0.5);
+                    Scene::Maze(left, 0, 0, side)
+                }
             }
             Scene::Echo(left, mut caregiver) => {
                 ev.scene = SceneKind::Echo;

@@ -199,6 +199,8 @@ pub enum Task {
     Sequence(usize),
     /// reading with a teacher: as `Sequence`, about half the tokens also said aloud
     Reading(usize),
+    /// a T-maze of this many trials (`World::maze`)
+    Maze(usize),
 }
 
 /// Where a lifetime's world physics comes from.
@@ -231,8 +233,10 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
 /// (0: no pattern, each token drawn alone), each token replaced by a random one with chance
 /// `noise` in 8; and how a serial-reversal light is distorted each trial (shapes): `blur` (each
 /// line moved within its word with chance `blur` in 8) and `shift` (the whole light rotated by up
-/// to that many lines). The default is the plain world: 8 tokens, the teacher on half of them, 3
-/// swaps, a delay of 3, no pattern, fixed lights.
+/// to that many lines); and the T-maze: the stem's length, the cue only at its foot, the cue a
+/// light's code rather than a side of the eye. The default is the plain world: 8 tokens, the
+/// teacher on half of them, 3 swaps, a delay of 3, no pattern, fixed lights, a stem of 2 with the
+/// cue on a side of the eye all along it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lesson {
     pub tokens: usize,
@@ -243,11 +247,14 @@ pub struct Lesson {
     pub noise: u32,
     pub blur: u32,
     pub shift: usize,
+    pub maze_len: usize,
+    pub cue_gone: bool,
+    pub symbol: bool,
 }
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false }
     }
 }
 
@@ -266,6 +273,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.delay = lesson.delay;
     w.blur = lesson.blur;
     w.shift = lesson.shift;
+    w.maze_len = lesson.maze_len;
+    w.cue_gone = lesson.cue_gone;
+    w.symbol = lesson.symbol;
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
@@ -296,6 +306,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
             w.teacher = matches!(task, Task::Reading(_));
             w.sequence_marked(&toks, &odd)
         }
+        Task::Maze(n) => w.maze(n),
     }
     let mut net = g.build(&w, seed ^ 0x5EED);
     let mut act = BitVector::new(world::ACT_BITS, Some(0));
@@ -439,7 +450,7 @@ pub fn evolve_population<G: Evolvable>(start: Vec<G>, task: Task, physics: Physi
 /// The probes of one genome in one world seed (see `observe::probes`), and its work per step.
 /// Only the lifetimes the `wanted` probes need are lived (a serial-reversal lifetime for respond,
 /// tell, discriminate, reverse and win-stay; a delayed one for remember; reading with a teacher
-/// for copy, echo and babble; a patterned stream for surprise),
+/// for copy, echo and babble; a patterned stream for surprise; a T-maze for maze),
 /// `trials` trials or tokens each, with gaps of 0 to `gap` steps between trials; the other
 /// probes read 0.
 pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize]) -> (observe::ProbeRow, u64) {
@@ -454,18 +465,19 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (del, w2) = if want(&[4]) { live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap, lesson) } else { (vec![], 0) };
     let (seq, w3) = if want(&[6, 7, 8]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
     let (pat, w4) = if want(&[9]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
-    let steps = (rev.len() + del.len() + seq.len() + pat.len()).max(1) as u64;
-    let mut row = observe::probes(&rev, period, &del, &seq, &pat);
+    let (maz, w5) = if want(&[10]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
+    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len()).max(1) as u64;
+    let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz);
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) {
             *x = 0;
         }
     }
-    (row, (w1 + w2 + w3 + w4) / steps)
+    (row, (w1 + w2 + w3 + w4 + w5) / steps)
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.

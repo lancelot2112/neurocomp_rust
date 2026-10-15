@@ -2,7 +2,8 @@
 //! two-population genomes, over `PC_N` worlds (default 64), gaps of 0-6 steps between trials.
 //! `PC_TOKENS` and `PC_TEACH` set the reading lesson (default the plain world: 8 tokens, 4/8);
 //! `PC_PERIOD` and `PC_NOISE` the surprise stream's cycle and breaks (default none); `PC_BLUR`
-//! and `PC_SHIFT` distort the lights into shapes (default none).
+//! and `PC_SHIFT` distort the lights into shapes (default none); `PC_MAZE` (stem, 2), `PC_GONE`
+//! and `PC_SYMBOL` set the T-maze.
 
 use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, EYE, HAND, SELF, TOUCH, VOICE};
 use neurocomp::evolve::{probe_all_in, probe_means, Lesson, Physics, ALL_PROBES};
@@ -14,7 +15,7 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 
 fn main() {
     let n: u64 = env("PC_N", 64);
-    let lesson = Lesson { tokens: env("PC_TOKENS", 8), teach: env("PC_TEACH", 4), period: env("PC_PERIOD", 0), noise: env("PC_NOISE", 0), blur: env("PC_BLUR", 0), shift: env("PC_SHIFT", 0), ..Lesson::default() };
+    let lesson = Lesson { tokens: env("PC_TOKENS", 8), teach: env("PC_TEACH", 4), period: env("PC_PERIOD", 0), noise: env("PC_NOISE", 0), blur: env("PC_BLUR", 0), shift: env("PC_SHIFT", 0), maze_len: env("PC_MAZE", 2), cue_gone: env("PC_GONE", 0u8) == 1, symbol: env("PC_SYMBOL", 0u8) == 1, ..Lesson::default() };
     let c = 0x3C;
     let ch = Token::Channel { tag: c, width: 3, hold: false };
     let to_hand = |p: Pop| Pop { to: HAND, to_port: true, ..p };
@@ -35,10 +36,10 @@ fn main() {
     ];
     let _ = ACT;
     let seeds: Vec<u64> = (20_000..20_000 + n).collect();
-    println!("{:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", "genome", "respond", "tell", "discr", "reverse", "rememb", "winstay", "copy", "echo", "surpr", "work");
+    println!("{:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", "genome", "respond", "tell", "discr", "reverse", "rememb", "winstay", "copy", "echo", "surpr", "maze", "work");
     for (name, g) in genomes {
         let r = probe_all_in(vec![g], 200, Physics::Varied, &seeds, 6, &ALL_PROBES, lesson);
         let m = probe_means(&r[0].probes);
-        println!("{name:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[9], r[0].work);
+        println!("{name:<38} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>7} {:>6}", m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[9], m[10], r[0].work);
     }
 }

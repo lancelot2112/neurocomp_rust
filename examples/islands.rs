@@ -9,6 +9,7 @@
 //! - generalist: all ten (surprise on a cycle of 3 broken one time in 8);
 //! - prediction (`ISL_PREDICTION=1`): surprise, clicking after a token that broke the stream's
 //!   cycle;
+//! - maze (`ISL_MAZE=1`): a T-maze, turning at the junction to the side of the food the cue shows;
 //! - shapes (`ISL_SHAPES=1`): respond, tell and discriminate with the lights distorted into
 //!   shapes, a fresh exemplar every trial.
 //! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (one population of a
@@ -34,11 +35,11 @@
 //! with the teacher on every token, then the teacher fading (6, 4, 2, 1 in 8) so the glyph must
 //! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
 //! `;`, each `name key=value ...` with keys `probes` (probe names joined by `+`), `tokens`,
-//! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
+//! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `maze`, `gone` and `symbol` (the T-maze), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
 //! delayed light to the response window), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
 //! at each exchange is always in the plain world, on every probe.
 //!
-//! Checkpoints: at every exchange each island's whole population is written to `ISL_CHECKPOINT`
+//! Checkpoints (also every `ISL_CKPT` generations, if set): at every exchange each island's whole population is written to `ISL_CHECKPOINT`
 //! (checkpoint.txt, as text); `ISL_RESUME=<file>` starts every island named in it from its saved
 //! population and generation (islands not in it start naked), so a change to the world or the
 //! probes can be injected into a running experiment: stop it, change, resume.
@@ -82,6 +83,9 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
                 "blur" => stage.lesson.blur = v.parse().expect("blur"),
                 "shift" => stage.lesson.shift = v.parse().expect("shift"),
+                "maze" => stage.lesson.maze_len = v.parse().expect("maze"),
+                "gone" => stage.lesson.cue_gone = v == "1",
+                "symbol" => stage.lesson.symbol = v == "1",
                 "hold" => stage.hold = v.parse().expect("hold"),
                 "goal" => stage.goal = v.split('+').map(|g| {
                     let (p, x) = g.split_once('@').expect("probe@score");
@@ -144,6 +148,18 @@ const SHAPES_LADDER: &str = "clean probes=respond+tell swaps=0 goal=tell@150; \
     shift64 probes=respond+tell swaps=0 blur=2 shift=64 goal=tell@100; \
     paying probes=respond+tell+discriminate swaps=0 blur=2 shift=16";
 
+/// Maze's ladder: a T-maze, stroked at the food's arm. Turn to the side the cue is on with no stem,
+/// then walk a stem of 2 first, then with the cue only at the stem's foot (remember the side), a
+/// longer stem, then a cue that is a light's code (which side it means is learned from the
+/// stroke), then that code only at the foot. The hand's codes are drawn each lifetime, so even
+/// the first stage is learned within a lifetime, not wired in.
+const MAZE_LADDER: &str = "turn probes=maze maze=0 goal=maze@200; \
+    walk probes=maze maze=2 goal=maze@200; \
+    gone probes=maze maze=2 gone=1 goal=maze@150; \
+    long probes=maze maze=4 gone=1 goal=maze@150; \
+    symbol probes=maze maze=0 symbol=1 goal=maze@150; \
+    symbolgone probes=maze maze=2 gone=1 symbol=1";
+
 /// The world the generalist and the cross-island table use: the plain world, with a cycle of 3
 /// broken one time in 8 for surprise (the plain stream has no pattern to break).
 fn plain() -> Lesson {
@@ -171,6 +187,7 @@ fn main() {
         std::fs::File::create(&log_path).expect("plasmid log")
     };
     let ck_path = std::env::var("ISL_CHECKPOINT").unwrap_or_else(|_| "checkpoint.txt".into());
+    let ckpt: usize = env("ISL_CKPT", 0);
     let train: Vec<u64> = (0..lives).collect();
     let held: Vec<u64> = (10_000..10_000 + held_n).collect();
     let mut islands = vec![
@@ -183,6 +200,10 @@ fn main() {
     // from a checkpoint that has it)
     if env("ISL_PREDICTION", 0u8) == 1 {
         islands.push(Island { name: "prediction".into(), stages: vec![Stage { name: "all".into(), probes: vec![9], lesson: plain(), goal: vec![], hold: 0 }] });
+    }
+    // (`ISL_MAZE=1`: a T-maze; starts naked or from a checkpoint)
+    if env("ISL_MAZE", 0u8) == 1 {
+        islands.push(Island { name: "maze".into(), stages: vec![Stage { name: "all".into(), probes: vec![10], lesson: plain(), goal: vec![], hold: 0 }] });
     }
     // (`ISL_SHAPES=1`: shapes, telling two distorted lights apart; starts naked or from a checkpoint)
     if env("ISL_SHAPES", 0u8) == 1 {
@@ -201,6 +222,7 @@ fn main() {
                 "recall" => isl.stages = ladder(RECALL_LADDER),
                 "prediction" => isl.stages = ladder(PREDICTION_LADDER),
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
+                "maze" => isl.stages = ladder(MAZE_LADDER),
                 _ => {}
             }
         }
@@ -250,8 +272,9 @@ fn main() {
         for (from, to, what) in &r.moved {
             let _ = writeln!(log, "generation {g}: {} -> {}\n{what}", islands[*from].name, islands[*to].name);
         }
-        // a checkpoint at every exchange (and at the end): each island's population, best first
-        if (every > 0 && g % every == 0) || g + 1 == gens {
+        // a checkpoint at every exchange, every `ISL_CKPT` generations, and at the end: each
+        // island's population, best first
+        if (every > 0 && g % every == 0) || (ckpt > 0 && g % ckpt == 0) || g + 1 == gens {
             let mut ck = String::new();
             for (i, isl) in islands.iter().enumerate() {
                 ck += &format!("island {} generation {g} stage {}\n", isl.name, r.stage[i]);

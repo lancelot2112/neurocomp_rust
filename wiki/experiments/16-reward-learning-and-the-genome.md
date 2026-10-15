@@ -188,8 +188,29 @@ Tested: a tonic population that is never stuck grows no trial with k = 0 and one
 the rate survives the genome's text form. In a 12-generation smoke run, 823 populations carried
 a rate.
 
-Run 13 is run 12 with it (`runs/run13.cmd`). The selection run started as run 13 was stopped
-after 14 generations and starts again as run 14. Results to follow.
+Run 13 is run 12 with it (`runs/run13.cmd`). (A selection run started as run 13 was stopped
+after 14 generations and started again as run 14.)
+
+**Result** (`runs/islands13`, stopped after generation 250, with nothing new on the repeat rung
+or echo2):
+
+| | run 13 | run 12 | run 11 |
+|---|---|---|---|
+| shapes | repeat by 67 | repeat by 57 | repeat at 250 |
+| switching | repeat at 144 | repeat at 110 | repeat at 67 |
+| recall | lag1 at 138 | lag3 at 191 | lag3 at 102 |
+| reading | echo2, not passed | echo2, not passed | echo2 passed at 337 |
+| switching / shapes on repeat (mean) | -10 / -2 | -4 / 0 | 48 / 0 |
+| prediction cycle1 (mean over the run) | **90** | 14 | 78 |
+
+- **Accidents did not move the repeat rung or echo2.** Evolution kept them rare: the elites'
+  mean k settled at 14 to 17, and a few populations mutated to none.
+- **Prediction** held the highest cycle1 scores of any run (best 188), without passing.
+- **The first plasmid to fix:** #175 (prediction to shapes) was in all 32 of shapes' networks,
+  whole, 20 generations after it arrived. Shapes' repeat score did not change. Another, #142,
+  gave shapes' repeat +543 on arrival, and was gone 20 generations later.
+
+Next: run 14, the task-selection island.
 
 ## Epigenetic marks and exploration (run 11)
 

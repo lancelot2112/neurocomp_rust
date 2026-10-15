@@ -40,6 +40,12 @@
 //! sixteen), not only as one of its many properties, and ops are drawn without `rotr` (the same as
 //! `rotl` by 64 - n), so `clear`, `xor` and the rest are tried far more often.
 //!
+//! `ISL_FRONTIER=1`: the generalist is scored at the frontier, on each other island's current
+//! stage (its probes, in its world; each probe from the first island that has it), not on all
+//! twelve probes in the plain world. In the plain world most probes are the top of another
+//! island's ladder and score about 0 for every genome (run 8's best: babble 845, tell 293, the
+//! other nine 0-13), so lexicase found a gradient only in babble and tell.
+//!
 //! `ISL_FRESH=1`: the training worlds are new every generation (the same for every genome in
 //! it). With fixed training worlds a population can fit them: run 6's maze elite scored 476-658
 //! on its 12 training worlds and -69 to -177 on fresh ones, having wired the hand's codes those
@@ -389,25 +395,25 @@ fn main() {
         Island::plain("switching", vec![0, 1, 2, 3, 5]),
         Island::plain("recall", vec![0, 4]),
         Island::plain("reading", vec![6, 7]),
-        Island { name: "generalist".into(), stages: vec![Stage { name: "all".into(), probes: ALL_PROBES.to_vec(), lesson: plain(), goal: vec![], hold: 0 }] },
+        Island { name: "generalist".into(), frontier: env("ISL_FRONTIER", 0u8) == 1, stages: vec![Stage { name: "all".into(), probes: ALL_PROBES.to_vec(), lesson: plain(), goal: vec![], hold: 0 }] },
     ];
     // (`ISL_PREDICTION=1`: a fifth island, prediction, on the surprise probe; it starts naked, or
     // from a checkpoint that has it)
     if env("ISL_PREDICTION", 0u8) == 1 {
-        islands.push(Island { name: "prediction".into(), stages: vec![Stage { name: "all".into(), probes: vec![9], lesson: plain(), goal: vec![], hold: 0 }] });
+        islands.push(Island { name: "prediction".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![9], lesson: plain(), goal: vec![], hold: 0 }] });
     }
     // (`ISL_MAZE=1`: a T-maze; starts naked or from a checkpoint)
     if env("ISL_MAZE", 0u8) == 1 {
-        islands.push(Island { name: "maze".into(), stages: vec![Stage { name: "all".into(), probes: vec![10], lesson: plain(), goal: vec![], hold: 0 }] });
+        islands.push(Island { name: "maze".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![10], lesson: plain(), goal: vec![], hold: 0 }] });
     }
     // (`ISL_SCREEN=1`: a screen with a cursor; starts naked or from a checkpoint)
     if env("ISL_SCREEN", 0u8) == 1 {
-        islands.push(Island { name: "screen".into(), stages: vec![Stage { name: "all".into(), probes: vec![11], lesson: plain(), goal: vec![], hold: 0 }] });
+        islands.push(Island { name: "screen".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![11], lesson: plain(), goal: vec![], hold: 0 }] });
     }
     // (`ISL_SHAPES=1`: shapes, telling two distorted lights apart; starts naked or from a checkpoint)
     if env("ISL_SHAPES", 0u8) == 1 {
         let lesson = Lesson { swaps: 0, blur: 2, shift: 16, ..Lesson::default() };
-        islands.push(Island { name: "shapes".into(), stages: vec![Stage { name: "all".into(), probes: vec![0, 1, 2], lesson, goal: vec![], hold: 0 }] });
+        islands.push(Island { name: "shapes".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![0, 1, 2], lesson, goal: vec![], hold: 0 }] });
     }
     // (`ISL_LADDERS=1`: the default ladders; `ISL_LADDER_<island>`: one's own)
     let ladders = env("ISL_LADDERS", 0u8) == 1;

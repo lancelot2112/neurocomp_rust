@@ -755,12 +755,15 @@ fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: 
 pub struct Island {
     pub name: String,
     pub stages: Vec<Stage>,
+    /// scored at the frontier: on each other island's current stage, its probes in its world
+    /// (each probe from the first island that has it), not on its own stages
+    pub frontier: bool,
 }
 
 impl Island {
     /// An island with one stage: these probes in the plain world, forever.
     pub fn plain(name: &str, probes: Vec<usize>) -> Self {
-        Self { name: name.into(), stages: vec![Stage { name: "all".into(), probes, lesson: Lesson::default(), goal: vec![], hold: 0 }] }
+        Self { name: name.into(), stages: vec![Stage { name: "all".into(), probes, lesson: Lesson::default(), goal: vec![], hold: 0 }], frontier: false }
     }
 }
 
@@ -861,8 +864,41 @@ pub fn evolve_islands<G: Evolvable>(
         let mut next: Vec<Vec<G>> = Vec::with_capacity(k);
         for (i, isl) in islands.iter().enumerate() {
             let st = &isl.stages[stage[i]];
-            let scored = probe_all_in(pops[i].drain(..).collect(), trials, physics, seeds, gap, &st.probes, st.lesson);
-            let (order, children) = lexicase_breed(&scored, &st.probes, thrift, pop, elite, &mut rng);
+            let (scored, wanted) = if isl.frontier {
+                // at the frontier: each other island's current stage, in its own world, for the
+                // probes no earlier island has given
+                let genomes: Vec<G> = pops[i].drain(..).collect();
+                let mut wanted: Vec<usize> = Vec::new();
+                let mut rows = vec![vec![[0i32; observe::NPROBES]; seeds.len()]; genomes.len()];
+                let mut works = vec![vec![0u64; seeds.len()]; genomes.len()];
+                for (j, other) in islands.iter().enumerate() {
+                    if j == i || other.frontier {
+                        continue;
+                    }
+                    let os = &other.stages[stage[j]];
+                    let new: Vec<usize> = os.probes.iter().copied().filter(|p| !wanted.contains(p)).collect();
+                    if new.is_empty() {
+                        continue;
+                    }
+                    wanted.extend(&new);
+                    for (g, s) in probe_all_in(genomes.clone(), trials, physics, seeds, gap, &new, os.lesson).iter().enumerate() {
+                        for (k, r) in s.probes.iter().enumerate() {
+                            for &p in &new {
+                                rows[g][k][p] = r[p];
+                            }
+                            works[g][k] = works[g][k].saturating_add(s.works[k]);
+                        }
+                    }
+                }
+                let scored: Vec<Probed<G>> = genomes.into_iter().enumerate().map(|(g, genome)| {
+                    let work = works[g].iter().sum::<u64>() / seeds.len().max(1) as u64;
+                    Probed { probes: rows[g].clone(), works: works[g].clone(), work, genome }
+                }).collect();
+                (scored, wanted)
+            } else {
+                (probe_all_in(pops[i].drain(..).collect(), trials, physics, seeds, gap, &st.probes, st.lesson), st.probes.clone())
+            };
+            let (order, children) = lexicase_breed(&scored, &wanted, thrift, pop, elite, &mut rng);
             let m: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
             let mean = probe_means(&m);
             on[i] += 1;

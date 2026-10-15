@@ -628,9 +628,11 @@ pub struct Stage {
 /// training worlds), its probe means and its work per step; and the plasmids moved this
 /// generation: (from island, to island, what moved).
 pub struct IslandGeneration<G> {
-    /// each island's stage this generation (what it was scored on), and generations on it so far
+    /// each island's stage this generation (what it was scored on), generations on it so far,
+    /// and how many generations in a row its goal has been met
     pub stage: Vec<usize>,
     pub held: Vec<usize>,
+    pub met: Vec<usize>,
     pub ranked: Vec<Vec<G>>,
     pub means: Vec<observe::ProbeRow>,
     pub work: Vec<u64>,
@@ -687,6 +689,7 @@ pub fn evolve_islands<G: Evolvable>(
     for generation in first..generations {
         let now = stage.clone();
         let mut held = Vec::with_capacity(k);
+        let mut met_now = Vec::with_capacity(k);
         let mut ranked: Vec<Vec<G>> = Vec::with_capacity(k);
         let mut means = Vec::with_capacity(k);
         let mut work = Vec::with_capacity(k);
@@ -702,11 +705,14 @@ pub fn evolve_islands<G: Evolvable>(
             // the curriculum: the goal met for `hold` generations in a row moves the island on
             if !st.goal.is_empty() && stage[i] + 1 < isl.stages.len() {
                 met[i] = if st.goal.iter().all(|&(p, x)| mean[p] >= x) { met[i] + 1 } else { 0 };
+                met_now.push(met[i]);
                 if met[i] >= st.hold.max(1) {
                     stage[i] += 1;
                     met[i] = 0;
                     on[i] = 0;
                 }
+            } else {
+                met_now.push(0);
             }
             means.push(mean);
             work.push(scored.iter().map(|s| s.work.min(u64::MAX / 4)).sum::<u64>() / scored.len().max(1) as u64);
@@ -727,7 +733,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, ranked: ranked.clone(), means, work, moved });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, ranked: ranked.clone(), means, work, moved });
         last = ranked;
         pops = next;
     }

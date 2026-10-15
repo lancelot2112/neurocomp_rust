@@ -243,12 +243,15 @@ pub struct World {
     /// screen: a grid of `screen_w` x `screen_h` cells of `screen_cell` bits each (64, 32 or 16:
     /// at most 8, 16 or 32 cells on the eye), with `screen_lit` glyphs on it (the target, the
     /// first glyph, and different distractors) and `screen_walls` walls (a 2-D maze: a move into
-    /// a wall does nothing; every free cell is reachable)
+    /// a wall does nothing; every free cell is reachable); with `screen_torch`, a glyph shows only
+    /// while the cursor is on its cell (where the cursor is matters, not how it relates to the
+    /// glyph: clicking at a glyph is enough to score)
     pub screen_w: usize,
     pub screen_h: usize,
     pub screen_lit: usize,
     pub screen_cell: usize,
     pub screen_walls: usize,
+    pub screen_torch: bool,
     cursor_mark: u64,
     wall_mark: u64,
     screen_total: usize,
@@ -369,6 +372,7 @@ impl World {
             screen_lit: 1,
             screen_cell: 64,
             screen_walls: 0,
+            screen_torch: false,
             cursor_mark: {
                 let mut c = StdRng::seed_from_u64(physics ^ 0xC025);
                 let lines: Vec<u64> = (0..64).collect();
@@ -722,7 +726,7 @@ impl World {
                         eye[at / 64] |= fold(x) << (at % 64);
                     };
                     for c in 0..cells {
-                        if let Some(g) = tr.glyph[c] {
+                        if let Some(g) = tr.glyph[c].filter(|_| !self.screen_torch || c == tr.cursor) {
                             place(c, self.glyphs[g].as_words().iter().fold(0, |m, &x| m | x));
                         }
                         if tr.walls >> c & 1 == 1 {

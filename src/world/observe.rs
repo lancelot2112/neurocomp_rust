@@ -514,6 +514,40 @@ mod tests {
             let (o, _) = run(set, &at_once);
             assert!(o.abs() < 150, "{set:?} at once: {o}");
         }
+        // a torch (a glyph shows only under the cursor): blind clickers still score about 0, and a
+        // policy that reads only the eye (click when it holds more lines than the fewest seen,
+        // the cursor alone; otherwise step aside) scores, where on a plain screen it does not
+        let eye_only = |torch: bool| -> (i32, i32) {
+            let mut w = World::new(3, 4);
+            (w.screen_w, w.screen_h, w.screen_torch, w.gap_max) = (2, 1, torch, 2);
+            w.screen(200);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(2);
+            let (mut fewest, mut senses, mut k) = (u32::MAX, BitVector::from_words(vec![0; SENSE_BITS / 64]), 0usize);
+            while !w.done() {
+                let ch = CH_BITS / 64;
+                let lines: u32 = senses.as_words()[EYE * ch..(EYE + 1) * ch].iter().map(|x| x.count_ones()).sum();
+                k += 1;
+                let hand = if lines == 0 { None } else if lines > fewest { Some(CLICK) } else { Some(if k % 2 == 0 { LEFT } else { RIGHT }) };
+                if lines > 0 { fewest = fewest.min(lines) }
+                let a = w.act(None, hand);
+                senses = w.step(&a);
+            }
+            let blind = {
+                let mut w = World::new(3, 4);
+                (w.screen_w, w.screen_h, w.screen_torch, w.gap_max) = (2, 1, torch, 2);
+                w.screen(200);
+                while !w.done() {
+                    let a = w.act(None, Some([LEFT, RIGHT, CLICK][rand::Rng::gen_range(&mut rng, 0..3)]));
+                    w.step(&a);
+                }
+                screen(&w.events)
+            };
+            (screen(&w.events), blind)
+        };
+        let (lit, blind) = eye_only(true);
+        assert!(lit > 600 && blind.abs() < 150, "torch: eye-only {lit}, blind {blind}");
+        let (plain, _) = eye_only(false);
+        assert!(plain < 300, "plain: eye-only {plain}");
         // a wall stops the cursor: on a 4 x 4 screen with walls the cursor never stands on one
         let mut w = World::new(3, 4);
         (w.screen_w, w.screen_h, w.screen_cell, w.screen_walls) = (4, 4, 32, 6);

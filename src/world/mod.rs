@@ -52,7 +52,11 @@ pub const ACT_CHANNELS: usize = 2;
 pub const LEFT: usize = 0;
 pub const RIGHT: usize = 1;
 pub const CLICK: usize = 2;
-const MOVES: usize = 3;
+/// up and down: for a screen (two dimensions). No scene uses them yet, so they do nothing but be
+/// felt, like any move that does nothing.
+pub const UP: usize = 3;
+pub const DOWN: usize = 4;
+const MOVES: usize = 5;
 
 /// Width of the senses vector.
 pub const SENSE_BITS: usize = SENSE_CHANNELS * CH_BITS;
@@ -625,6 +629,10 @@ mod tests {
     #[test]
     fn a_command_drives_its_primitive_and_noise_does_nothing() {
         let w = World::new(1, 8);
+        for m in [LEFT, RIGHT, CLICK, UP, DOWN] {
+            let a = w.act(None, Some(m));
+            assert_eq!(w.hand.articulate(&channel(&a, HAND)), Some(m), "move {m}");
+        }
         let a = w.act(Some(3), Some(CLICK));
         assert_eq!(w.voice.articulate(&channel(&a, VOICE)), Some(3));
         assert_eq!(w.hand.articulate(&channel(&a, HAND)), Some(CLICK));

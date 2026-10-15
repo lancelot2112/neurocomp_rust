@@ -496,24 +496,49 @@ pub fn probe_all<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physi
 
 /// `probe_all` in a world set by a lesson.
 pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, wanted: &[usize], lesson: Lesson) -> Vec<Probed<G>> {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).max(1);
-    let chunk = population.len().div_ceil(threads).max(1);
-    let mut out = Vec::with_capacity(population.len());
+    // one job a (genome, world) lifetime set, taken from a shared counter by whichever thread is
+    // free: genomes differ in cost by orders of magnitude, so splitting by genome left threads
+    // idle, and more cores than genomes went unused. Each job is deterministic by its seed, and
+    // results are put back in order, so the outcome does not depend on the number of threads.
+    let jobs = population.len() * seeds.len();
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).max(1).min(jobs.max(1));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let mut results: Vec<(observe::ProbeRow, u64)> = vec![([0; observe::NPROBES], 0); jobs];
     std::thread::scope(|sc| {
-        let handles: Vec<_> = population
-            .chunks(chunk)
-            .map(|part| sc.spawn(move || part.iter().map(|g| {
-                let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| seeds.iter().map(|&s| probe_scores_in(g, trials, physics, s, gap, wanted, lesson)).collect::<Vec<_>>()))
-                    .unwrap_or_else(|_| vec![([-1024; observe::NPROBES], u64::MAX / 2); seeds.len()]);
-                let work = r.iter().map(|x| x.1).sum::<u64>() / seeds.len().max(1) as u64;
-                Probed { probes: r.iter().map(|x| x.0).collect(), works: r.iter().map(|x| x.1).collect(), work, genome: g.clone() }
-            }).collect::<Vec<_>>()))
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let (next, population) = (&next, &population);
+                sc.spawn(move || {
+                    let mut done = Vec::new();
+                    loop {
+                        let j = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if j >= jobs {
+                            break;
+                        }
+                        let (g, s) = (&population[j / seeds.len()], seeds[j % seeds.len()]);
+                        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe_scores_in(g, trials, physics, s, gap, wanted, lesson)))
+                            .unwrap_or(([-1024; observe::NPROBES], u64::MAX / 2));
+                        done.push((j, r));
+                    }
+                    done
+                })
+            })
             .collect();
         for h in handles {
-            out.extend(h.join().unwrap());
+            for (j, r) in h.join().unwrap() {
+                results[j] = r;
+            }
         }
     });
-    out
+    population
+        .into_iter()
+        .enumerate()
+        .map(|(i, g)| {
+            let r = &results[i * seeds.len()..(i + 1) * seeds.len()];
+            let work = r.iter().map(|x| x.1).sum::<u64>() / seeds.len().max(1) as u64;
+            Probed { probes: r.iter().map(|x| x.0).collect(), works: r.iter().map(|x| x.1).collect(), work, genome: g }
+        })
+        .collect()
 }
 
 /// Mean of each probe over a genome's seeds.

@@ -166,7 +166,30 @@ Run 12 is run 11 with it (`runs/run12.cmd`).
   populations at 250, and 50% of screen's.
 - Prediction fell from 78 to 14 on cycle1.
 
-Next: run 13 adds the task-selection island; run 14 the feel rung.
+Next: run 13 adds freak accidents (below); run 14 the task-selection island; run 15 the feel
+rung.
+
+## Freak accidents (run 13)
+
+Exploration grows a trial connection only from a population that is stuck, all its kernels 64
+steps without firing. A population that works a little never explores, and busy populations are
+often the useful ones. With `ISL_ACCIDENT=1` a population also grows its trial by accident:
+- **The rate is a gene**, `accident`: each step, a chance of 1 in 2^k (0: never). A new population
+  draws k from 12 to 18, about one lifetime in two down to under one in a hundred (lifetimes are
+  1,000-2,000 steps), and mutation moves it a step at a time, so evolution sets how
+  accident-prone each population is.
+- **The draw** is a hash of the population's id and the step, so it is deterministic by seed and
+  takes nothing from any random stream.
+- **The trial is the same** as a stuck population's (an XOR, replicating population back into its
+  source or onto its destination), still once a lifetime, and kept in the genome the same way:
+  16 predictions come true in a generation, then tagged `explored`.
+
+Tested: a tonic population that is never stuck grows no trial with k = 0 and one with k = 1, and
+the rate survives the genome's text form. In a 12-generation smoke run, 823 populations carried
+a rate.
+
+Run 13 is run 12 with it (`runs/run13.cmd`). The selection run started as run 13 was stopped
+after 14 generations and starts again as run 14. Results to follow.
 
 ## Epigenetic marks and exploration (run 11)
 

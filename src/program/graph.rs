@@ -209,6 +209,9 @@ pub struct EdgeSpec {
     /// expecting what its lines held, half of them on and half off; starting kernels expect
     /// every line off), so it can match the absence of input. Off: a kernel counts lines on.
     pub expect: bool,
+    /// a freak accident (with exploration): each step it grows its trial connection with chance
+    /// 2^-accident even when it is not stuck (0: only when stuck)
+    pub accident: u8,
 }
 
 impl EdgeSpec {
@@ -255,6 +258,7 @@ impl EdgeSpec {
             replicate_shift: false,
             dst_len: 0,
             expect: false,
+            accident: 0,
         }
     }
 }

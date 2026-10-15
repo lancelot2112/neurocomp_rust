@@ -810,7 +810,14 @@ impl RuntimeNetwork {
                 continue;
             }
             let Some(class) = eg.group.classes().first() else { continue };
-            if class.kernels().is_empty() || class.kernels().iter().any(|k| k.age < STUCK) {
+            // a freak accident: with chance 2^-accident a step (its own gene), drawn from its id
+            // and the step, it grows the trial whether or not it is stuck
+            let k = eg.spec.accident.min(30) as u32;
+            let accident = k > 0 && {
+                let h = (eg.spec.salt as u64 ^ 0xA5A5_5A5A).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.steps.wrapping_mul(0xD6E8_FEB8_6659_FD93);
+                (h ^ (h >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9) >> (64 - k) == 0
+            };
+            if !accident && (class.kernels().is_empty() || class.kernels().iter().any(|k| k.age < STUCK)) {
                 continue;
             }
             let back = internal(eg.src.idx, self) && eg.src.idx != eg.dst;

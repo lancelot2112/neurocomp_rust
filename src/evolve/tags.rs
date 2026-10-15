@@ -160,6 +160,9 @@ pub struct Pop {
     /// alike, so it can match the absence of input (born expecting what its lines held, half on
     /// and half off; starting kernels expect every line off)
     pub expect: bool,
+    /// a freak accident (`set_accident`, with exploration): each step it grows its trial
+    /// connection with chance 2^-accident even when it is not stuck (0: only when stuck)
+    pub accident: u8,
 }
 
 impl Pop {
@@ -171,7 +174,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0,
         }
     }
 
@@ -210,6 +213,20 @@ pub fn set_zeros(on: bool) {
 
 pub fn zeros() -> bool {
     ZEROS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Freak accidents in the grammar (`set_accident`): a new population draws its own `accident`
+/// rate (one every 2^12 to 2^18 steps) and mutation moves it one step up or down. With
+/// exploration on, a population then grows its trial connection by accident, rarely, even when it
+/// is not stuck. Off by default, so earlier runs draw as before.
+static ACCIDENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_accident(on: bool) {
+    ACCIDENT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn accident() -> bool {
+    ACCIDENT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What the string's channels resolve to.
@@ -357,7 +374,8 @@ impl TagGenome {
                         if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() }
                             + &if p.mark > 0 { format!(" mark {}", p.mark) } else { String::new() }
                             + if p.explored { " explored" } else { "" }
-                            + if p.expect { " expect" } else { "" },
+                            + if p.expect { " expect" } else { "" }
+                            + &if p.accident > 0 { format!(" accident 1/2^{}", p.accident) } else { String::new() },
                     );
                 }
             }
@@ -435,6 +453,7 @@ impl TagGenome {
                 replicate: p.replicate,
                 replicate_shift: p.replicate_shift,
                 expect: p.expect && !p.wire,
+                accident: if p.wire { 0 } else { p.accident },
                 ..EdgeSpec::plain()
             }));
         }
@@ -715,6 +734,9 @@ impl TagGenome {
                     if p.expect {
                         out.insert_str(out.len() - 1, " expect=1");
                     }
+                    if p.accident > 0 {
+                        out.insert_str(out.len() - 1, &format!(" accident={}", p.accident));
+                    }
                 }
             }
         }
@@ -762,6 +784,7 @@ impl TagGenome {
                         mark: kv.get("mark").and_then(|x| x.parse().ok()).unwrap_or(0),
                         explored: kv.get("explored") == Some(&"1"),
                         expect: kv.get("expect") == Some(&"1"),
+                        accident: kv.get("accident").and_then(|x| x.parse().ok()).unwrap_or(0),
                     };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
                 }
@@ -832,6 +855,10 @@ impl TagGenome {
         // (with `set_zeros`) sometimes expecting zeros as well as ones
         if zeros() {
             p.expect = rng.gen_range(0..4) == 0;
+        }
+        // (with `set_accident`) an accident rate of its own, one every 2^12 to 2^18 steps
+        if accident() {
+            p.accident = rng.gen_range(12..=18);
         }
         p
     }
@@ -1153,7 +1180,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1191,7 +1218,8 @@ impl Evolvable for TagGenome {
                         34 => p.replicate_shift = !p.replicate_shift,
                         36 => p.from_port = !p.from_port,
                         37 => p.to_port = !p.to_port,
-                        38 => p.expect = !p.expect,
+                        38 if zeros() => p.expect = !p.expect,
+                        39 => p.accident = step(p.accident, 0, 20),
                         _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                     },
                 }
@@ -1698,6 +1726,34 @@ mod tests {
         // a genome written before marks reads back unmarked
         let old: String = h.to_text().lines().map(|l| l.split(" mark=").next().unwrap().to_string() + "\n").collect();
         assert!(TagGenome::from_text(&old).unwrap()[0].pops().all(|p| p.mark == 0 && !p.explored));
+    }
+
+    #[test]
+    fn a_busy_population_grows_a_trial_only_by_accident() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        let c = 0x3C;
+        // tonic kernels that fire every other step on average: never stuck
+        let run = |accident: u8| {
+            let p = Pop { count: 2, cover: true, from_port: true, tonic: 1, accident, ..Pop::new(1, SENSES, c) };
+            let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 0, hold: false }, Token::Pop(p)], next_id: 2 };
+            let mut w = World::new(1, 4);
+            w.explore = true;
+            let mut net = g.build(&w, 1);
+            let before = net.edges.len();
+            for _ in 0..80 {
+                net.tick(AdvanceMode::Clear, 0);
+                net.write_input(&BitVector::new(world::SENSE_BITS, Some(0)), 0);
+            }
+            net.edges.len() - before
+        };
+        assert_eq!(run(0), 0);
+        // an accident a step in two: one trial, grown once a lifetime
+        assert_eq!(run(1), 1);
+        // and the rate is a gene, written only when set
+        let p = Pop { accident: 12, ..Pop::new(1, SENSES, c) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 0, hold: false }, Token::Pop(p)], next_id: 2 };
+        assert!(g.to_text().contains(" accident=12"));
+        assert_eq!(TagGenome::from_text(&g.to_text()).unwrap().remove(0), g);
     }
 
     #[test]

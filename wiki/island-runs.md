@@ -1,6 +1,6 @@
 # Island runs compared
 
-Every island run so far (`runs/islands3` to `runs/islands11`), side by side: what each changed,
+Every island run so far (`runs/islands3` to `runs/islands12`), side by side: what each changed,
 and how far each island climbed. Details are in experiments 13 to 16.
 
 ## What each run changed
@@ -16,8 +16,8 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 9 | the win-stay probe fixed (nothing to compare scores 0) | 600 | about 1 h 45 min |
 | 10 | the generalist at the frontier; a repeat rung for learning from reward | 341 (stopped: behind run 9, nothing new) | 1 h |
 | 11 | epigenetic marks; exploration kept in the genome | 600 | 2 h 35 min |
-| 12 | kernels that may expect zeros as well as ones | running | |
-| 13 | a ninth island, task selection | after 12 | |
+| 12 | kernels that may expect zeros as well as ones | 250 (stopped: nothing new on repeat) | 57 min |
+| 13 | a ninth island, task selection | running | |
 | 14 | a feel rung before every repeat rung | after 13 | |
 
 ## How far each island climbed
@@ -36,6 +36,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 9 | win-stay (229) | lag4 (186) | echo2 (20) | cycle2 (415) | first | first | win-stay (101) | 10% of 458 |
 | 10 (to 341) | repeat (129) | lag1 (268) | echo2 (50) | first | first | first | repeat (156) | 13% of 272 |
 | 11 | repeat (67) | lag3 (102) | **fade6 (369)** | first | first | first | repeat (250) | 13% of 462 |
+| 12 (to 250) | repeat (110) | lag3 (191) | echo2 (13) | first | first | first | repeat (57) | 13% of 191 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.
@@ -58,6 +59,8 @@ Two cautions for reading it:
 - **Marks and exploration (run 11)** got reading past echo2 for the first time (echo2 to fade6
   between 337 and 369), and kept a gradient on the repeat rung (switching's mean 48). They cost
   the simpler islands: shapes waited 230 generations on its first rung and recall stalled on lag3.
+- **Kernels expecting zeros (run 12)** sped up the simple rungs (shapes reached repeat by 57,
+  recall lag1 by 64) but left the repeat rung at about 0.
 - **Plasmids** help on arrival 6-12% of the time in every run, but none has made a lasting
   difference to an island.
 

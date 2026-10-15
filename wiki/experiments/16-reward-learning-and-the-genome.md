@@ -144,7 +144,29 @@ Nothing else changes, and with the switch off, genomes draw, mutate and read bac
 (`expect=1` is written only when set; tested). In a 12-generation smoke run, 67 populations in the
 checkpoint expected, up to 36% of an island elite's kernel populations.
 
-Run 12 is run 11 with it (`runs/run12.cmd`). Results to follow.
+Run 12 is run 11 with it (`runs/run12.cmd`).
+
+**Result** (`runs/islands12`, stopped after generation 250, with nothing new on the repeat rung):
+
+| | run 12 | run 11 |
+|---|---|---|
+| shapes | clean to repeat by 57 | clean until 230, repeat at 250 |
+| recall | lag1 at 64, lag3 at 191 | lag1 at 78, lag3 at 102 |
+| reading | echo2 at 13, not passed by 250 | echo2 passed at 337 |
+| switching on repeat (mean) | -4 (best 103) | 48 (best 231) |
+| shapes on repeat (mean) | 0 (best 194) | 0 |
+| prediction cycle1 (mean) | 14 | 78 |
+
+- **Expecting zeros sped up the simple rungs**: shapes climbed five rungs by 57, and recall
+  reached lag1 earlier than in any run.
+- **It did not help learning from reward.** Switching kept zero-expecting populations while it
+  climbed (42% at 100), then lost most of them on the repeat rung (2-14%), and the rung
+  averaged about 0. Sensing an absent stroke was not what was missing, or not all of it.
+- Evolution kept them most where absence is the signal of a scene: 60% of the maze's kernel
+  populations at 250, and 50% of screen's.
+- Prediction fell from 78 to 14 on cycle1.
+
+Next: run 13 adds the task-selection island; run 14 the feel rung.
 
 ## Epigenetic marks and exploration (run 11)
 

@@ -48,6 +48,11 @@ impl BitVecHistory {
 
 
 
+    /// How many frames the ring holds.
+    pub fn frames(&self) -> usize {
+        self.frames.len()
+    }
+
     pub fn current(&self) -> &BitVector {
         &self.frames[self.head]
     }

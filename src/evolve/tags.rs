@@ -892,7 +892,7 @@ impl Evolvable for TagGenome {
             .map(|i| w.act(Some(i), None))
             .chain((0..body.hand.len()).map(|i| w.act(None, Some(i))))
             .collect();
-        RuntimeNetwork::from_graph_with(&g, world::SENSE_BITS, world::ACT_BITS, seed, |e: &EdgeInfo| start_kernels(e, &primitives))
+        RuntimeNetwork::from_graph_held(&g, world::SENSE_BITS, world::ACT_BITS, seed, w.in_place, |e: &EdgeInfo| start_kernels(e, &primitives))
     }
 
     fn mutate(&self, rng: &mut StdRng) -> Self {
@@ -1177,6 +1177,44 @@ mod tests {
         // wires read one frame back, so H sees step t's input at step t+1
         assert_eq!(run(true), vec![0, 8, 8, 8, 8, 0]);
         assert_eq!(run(false), vec![0, 8, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn in_place_every_channel_holds_in_one_frame_and_order_matters() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        let (h, k) = (0x3C, 0xC3);
+        let set = Pop { field: 0, ..Pop::wire(1, SENSES, h) };
+        let clear = Pop { at: 1, field: 0, op: KernelOp::Clear, ..Pop::wire(2, SENSES, h) };
+        // K copies H (lag 1): held in place, it sees what H holds now, written earlier this step
+        let copy = Pop { cover: true, ..Pop::wire(3, h, k) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: h, width: 0, hold: false }, Token::Channel { tag: k, width: 0, hold: false }, Token::Pop(set), Token::Pop(clear), Token::Pop(copy)], next_id: 4 };
+        let run = |in_place: bool| -> (Vec<u32>, Vec<u32>, usize) {
+            let mut w = World::new(1, 4);
+            w.in_place = in_place;
+            let mut net = g.build(&w, 1);
+            let (mut hs, mut ks) = (Vec::new(), Vec::new());
+            for t in 0..6 {
+                let mut words = vec![0u64; world::SENSE_BITS / 64];
+                if t == 0 { words[0] = 0xF0F0 }
+                if t == 4 { words[1] = u64::MAX }
+                net.tick(AdvanceMode::Clear, 0);
+                net.write_input(&BitVector::from_words(words), 0);
+                hs.push(net.read_node(1).count_ones() as u32);
+                ks.push(net.read_node(2).count_ones() as u32);
+            }
+            (hs, ks, net.nodes[1].frames())
+        };
+        // held in place: H keeps the code (no hold flag, no carry) until the clearing write, in
+        // one frame; K has it the same step H gets it, and keeps it after H is cleared
+        let (hs, ks, frames) = run(true);
+        assert_eq!(hs, vec![0, 8, 8, 8, 8, 0]);
+        assert_eq!(ks, vec![0, 8, 8, 8, 8, 8]);
+        assert_eq!(frames, 1);
+        // the old runtime: H loses it the next step, K sees it a step late, two frames each
+        let (hs, ks, frames) = run(false);
+        assert_eq!(hs, vec![0, 8, 0, 0, 0, 0]);
+        assert_eq!(ks, vec![0, 0, 8, 0, 0, 0]);
+        assert_eq!(frames, 2);
     }
 
     #[test]

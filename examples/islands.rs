@@ -35,7 +35,9 @@
 //!
 //! `ISL_POP` (16 a island), `ISL_ELITE` (4), `ISL_GENS` (300), `ISL_LIVES` (12 training worlds),
 //! `ISL_HELD` (12), `ISL_TRIALS` (200), `ISL_GAP` (6), `ISL_EVERY` (20), `ISL_PLASMIDS` (2),
-//! `ISL_REPORT` (10), `ISL_LOG` (plasmids.txt), `ISL_SEED` (7), `ISL_THRIFT` (1).
+//! `ISL_REPORT` (10), `ISL_LOG` (plasmids.txt), `ISL_SEED` (7), `ISL_THRIFT` (1), `ISL_INPLACE` (0; 1: every declared channel held in
+//! place, one frame, never cleared or copied: only clearing writes take lines away, and a write
+//! is seen by the populations after it in the same step).
 //!
 //! Curricula (`ISL_LADDERS=1`): an island can climb a ladder of stages, each its own probes, its
 //! own world (`Lesson`: tokens and how often the teacher speaks) and a goal; it moves to the next
@@ -298,6 +300,7 @@ fn plain() -> Lesson {
 }
 
 fn main() {
+    neurocomp::program::neurocomp::set_in_place(env("ISL_INPLACE", 0u8) == 1);
     let pop: usize = env("ISL_POP", 16);
     let elite: usize = env("ISL_ELITE", 4);
     let gens: usize = env("ISL_GENS", 300);
@@ -386,8 +389,8 @@ fn main() {
             }
         }
     }
-    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "));
+    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, channels held in place {}",
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::in_place());
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

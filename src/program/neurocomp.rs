@@ -12,6 +12,20 @@ use rand::seq::SliceRandom;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use rand::Rng;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// The process's default for new worlds (`World::in_place`): declared channels held in place.
+static IN_PLACE: AtomicBool = AtomicBool::new(false);
+
+/// Sets the process's default for worlds made from now on (an experiment's binary sets it once,
+/// before any world is made).
+pub fn set_in_place(on: bool) {
+    IN_PLACE.store(on, Ordering::Relaxed);
+}
+
+pub fn in_place() -> bool {
+    IN_PLACE.load(Ordering::Relaxed)
+}
 
 /// A runnable network: node histories plus per-edge kernel groups.
 /// For now, each edge also carries a simple default kernel used for execution
@@ -27,6 +41,10 @@ pub struct RuntimeNetwork {
     pub noise: Vec<usize>,
     /// per node: it holds its lines from step to step instead of starting empty
     pub hold: Vec<bool>,
+    /// per node: held in place (a declared channel, when built so): one frame, never cleared or
+    /// copied, its lag 1 the frame as it is now (writes earlier in this step included); a ring
+    /// only if something reads it 2 or more steps back
+    pub live: Vec<bool>,
     /// work done since it was built: kernels matched plus words a wire or noise edge wrote (a
     /// paused or idle population adds nothing)
     pub work: u64,
@@ -38,10 +56,16 @@ pub struct RuntimeNetwork {
     steps: u64,
 }
 
+/// The frame a read `back` steps reaches: a node held in place is read as it is now for a lag
+/// of 1, its ring (if any) further back.
+fn at(live: bool, back: usize) -> usize {
+    if live && back <= 1 { 0 } else { back }
+}
+
 /// What an edge reads: frames `read_back .. read_back + span` of a node ORed together, only the
 /// words of its window (the offset wraps; at least one word). Costs the window, not the vector.
-fn view(node: &BitVecHistory, read_back: usize, span: usize, window: Option<(usize, usize)>) -> BitVector {
-    let first = node.get_frame(read_back);
+fn view(node: &BitVecHistory, live: bool, read_back: usize, span: usize, window: Option<(usize, usize)>) -> BitVector {
+    let first = node.get_frame(at(live, read_back));
     let n = first.word_len().max(1);
     let (off, len) = match window {
         Some((o, k)) => { let o = o % n; (o, k.max(1).min(n - o)) }
@@ -49,7 +73,7 @@ fn view(node: &BitVecHistory, read_back: usize, span: usize, window: Option<(usi
     };
     let mut w: Vec<u64> = first.as_words()[off..off + len].to_vec();
     for f in 1..span.max(1) {
-        for (a, b) in w.iter_mut().zip(&node.get_frame(read_back + f).as_words()[off..off + len]) {
+        for (a, b) in w.iter_mut().zip(&node.get_frame(at(live, read_back + f)).as_words()[off..off + len]) {
             *a |= b;
         }
     }
@@ -194,23 +218,37 @@ impl RuntimeNetwork {
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(i as u64 ^ 0xA0A0)).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
-        Self { nodes, edges, node_rngs, output, noise, hold, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        let live = vec![false; g.node_count()];
+        Self { nodes, edges, node_rngs, output, noise, hold, live, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
     /// acts) and each edge's kernels made by `factory`; the network's random stream is seeded
     /// with `seed`.
-    pub fn from_graph_with<F>(g: &Graph<NodeSpec, EdgeSpec, Directed>, in_bits: usize, out_bits: usize, seed: u64, mut factory: F) -> Self
+    pub fn from_graph_with<F>(g: &Graph<NodeSpec, EdgeSpec, Directed>, in_bits: usize, out_bits: usize, seed: u64, factory: F) -> Self
+    where
+        F: FnMut(&EdgeInfo) -> KernelGroup,
+    {
+        Self::from_graph_held(g, in_bits, out_bits, seed, false, factory)
+    }
+
+    /// `from_graph_with`, and with `in_place` every node but the senses (the first), the act and
+    /// the self node is held in place (`live`): one frame where nothing reads it 2 or more steps
+    /// back (half the memory, and no clearing or copying each step).
+    pub fn from_graph_held<F>(g: &Graph<NodeSpec, EdgeSpec, Directed>, in_bits: usize, out_bits: usize, seed: u64, in_place: bool, mut factory: F) -> Self
     where
         F: FnMut(&EdgeInfo) -> KernelGroup,
     {
         // the act node: the one named "output" (else the last)
         let last = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("output")).map_or(g.node_count() - 1, |n| n.index());
+        let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
+        let live: Vec<bool> = (0..g.node_count()).map(|i| in_place && i != 0 && i != last && Some(i) != self_node).collect();
         let bits_of = |i: usize| if i == 0 { in_bits } else if i == last { out_bits } else { g.node_weight(NodeIndex::new(i)).unwrap().bits };
         let mut nodes: Vec<BitVecHistory> = Vec::with_capacity(g.node_count());
         for ni in g.node_indices() {
             let ns = g.node_weight(ni).expect("node weight");
-            let ring_len = ns.history_depth.max(1) + 1;
+            let d = ns.history_depth.max(1);
+            let ring_len = if live[ni.index()] { if d >= 2 { d + 1 } else { 1 } } else { d + 1 };
             nodes.push(BitVecHistory::new(BitVector::new(bits_of(ni.index()), Some(0)), ring_len));
         }
         let mut edges: Vec<RuntimeEdgeGroup> = Vec::with_capacity(g.edge_count());
@@ -242,15 +280,21 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
-        Self { nodes, edges, node_rngs, output: last, noise, hold, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, live, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Advance histories and process all edges once.
     pub fn tick(&mut self, mode: AdvanceMode, adj_temperature: i16) {
         // Advance all nodes first so writes go into a fresh current frame
-        // (a node that holds starts from its last frame: only clearing writes take lines away)
-        for (n, &hold) in self.nodes.iter_mut().zip(&self.hold) {
+        // (a node that holds starts from its last frame: only clearing writes take lines away; one
+        // held in place stays where it is, its ring, if it has one, keeping the frames before)
+        for ((n, &hold), &live) in self.nodes.iter_mut().zip(&self.hold).zip(&self.live) {
+            if live {
+                if n.frames() > 1 {
+                    n.advance(AdvanceMode::CopyPrev);
+                }
+                continue;
+            }
             n.advance(if hold && matches!(mode, AdvanceMode::Clear) { AdvanceMode::CopyPrev } else { mode });
         }
 
@@ -259,7 +303,7 @@ impl RuntimeNetwork {
         // frames ago, never the frame being written, so edges into different vectors do not
         // depend on each other.
         self.write_self();
-        let Self { nodes, edges, node_rngs, noise, .. } = self;
+        let Self { nodes, edges, node_rngs, noise, live, .. } = self;
         // spontaneous activity: random lines on, in the nodes that have it (each its own stream)
         for (i, &k) in noise.iter().enumerate() {
             let bits = nodes[i].current().bit_len();
@@ -276,12 +320,12 @@ impl RuntimeNetwork {
             for (i, eg) in edges.iter_mut().enumerate() {
                 // an execution gate shut: the edge does nothing this step
                 if let Some((g, on)) = eg.spec.pause {
-                    if nodes[g].get_frame(1).as_words().iter().any(|&w| w != 0) != on {
+                    if nodes[g].get_frame(at(live[g], 1)).as_words().iter().any(|&w| w != 0) != on {
                         paused[i] = true;
                         continue;
                     }
                 }
-                let mut src_view = view(&nodes[eg.src.idx], eg.src.read_back, eg.src.span, eg.window);
+                let mut src_view = view(&nodes[eg.src.idx], live[eg.src.idx], eg.src.read_back, eg.src.span, eg.window);
                 let dst_curr = nodes[eg.dst].current_mut();
                 match eg.kind {
                     EdgeKind::Noise => {
@@ -349,7 +393,7 @@ impl RuntimeNetwork {
         self.last_work = work;
         self.last_ran = paused.iter().zip(&seen).filter(|(p, _)| !**p).count() as u64;
         self.steps += 1;
-        let Self { nodes, edges, .. } = self;
+        let Self { nodes, edges, live, .. } = self;
         // After the tick: cancelling kernels learn their outputs, and growing edges give birth
         // where their destination was left uncovered (a paused edge does not learn)
         for (i, eg) in edges.iter_mut().enumerate() {
@@ -374,7 +418,7 @@ impl RuntimeNetwork {
             }
             // a gate: it learns only while the gate node had lines on (or none) a frame ago
             if let Some((g, on)) = eg.gate {
-                let open = (nodes[g].get_frame(sp.gate_lag.max(1)).count_ones() > 0) == on;
+                let open = (nodes[g].get_frame(at(live[g], sp.gate_lag.max(1))).count_ones() > 0) == on;
                 // (replication) a repeating kernel that acted `repeat_lag` steps ago is confirmed
                 // if the gate opened (what should follow its act did), else it counts down
                 if sp.replicate > 0 && eg.repeat {
@@ -389,7 +433,7 @@ impl RuntimeNetwork {
                 // extinction on a repeat edge: a kernel that acted `repeat_lag` steps ago, with
                 // the gate still shut, fades (chance 1/4)
                 if !open && eg.repeat {
-                    let then = view(&nodes[eg.src.idx], eg.src.read_back + eg.repeat_lag, 1, eg.window);
+                    let then = view(&nodes[eg.src.idx], live[eg.src.idx], eg.src.read_back + eg.repeat_lag, 1, eg.window);
                     if let Some(class) = eg.group.classes_mut().first_mut() {
                         for k in class.kernels_mut() {
                             if k.age as usize == eg.repeat_lag && rng.gen_range(0..1u32 << sp.fade.min(31)) == 0 {
@@ -449,7 +493,7 @@ impl RuntimeNetwork {
             // a repeat birth reads its source as it was when the repeated act was made
             let older;
             let src = if eg.repeat && eg.repeat_lag > 1 {
-                older = view(&nodes[eg.src.idx], eg.src.read_back + eg.repeat_lag, 1, eg.window);
+                older = view(&nodes[eg.src.idx], live[eg.src.idx], eg.src.read_back + eg.repeat_lag, 1, eg.window);
                 &older
             } else {
                 seen[i].as_ref().unwrap()
@@ -483,7 +527,7 @@ impl RuntimeNetwork {
                 let syn: Vec<usize> = lines.choose_multiple(rng, (sp.birth_syn as usize).min(lines.len())).copied().collect();
                 let threshold = (sp.birth_quarters as usize * syn.len()).div_ceil(4).max(1);
                 let (out, dw) = if eg.repeat {
-                    let prev = nodes[eg.dst].get_frame(eg.repeat_lag);
+                    let prev = nodes[eg.dst].get_frame(at(live[eg.dst], eg.repeat_lag));
                     let (dw, dn) = busiest_word(prev.as_words());
                     if (dn as usize) < sp.out_min as usize {
                         continue;
@@ -524,7 +568,7 @@ impl RuntimeNetwork {
             // destination word with the most lines its firing kernels left uncovered
             let (out, dw) = if eg.repeat {
                 // what the destination held a frame ago (the act just made)
-                let prev = nodes[eg.dst].get_frame(eg.repeat_lag);
+                let prev = nodes[eg.dst].get_frame(at(live[eg.dst], eg.repeat_lag));
                 let (dw, dn) = busiest_word(prev.as_words());
                 if (dn as usize) < sp.out_min as usize {
                     continue;

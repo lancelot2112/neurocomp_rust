@@ -252,6 +252,10 @@ pub struct World {
     pub screen_cell: usize,
     pub screen_walls: usize,
     pub screen_torch: bool,
+    /// programs built for this world keep each declared channel in one frame, held in place
+    /// from step to step (only clearing writes take lines away, and a write is seen by the edges
+    /// after it in the same step); default: the process's (`neurocomp::set_in_place`)
+    pub in_place: bool,
     cursor_mark: u64,
     wall_mark: u64,
     screen_total: usize,
@@ -373,6 +377,7 @@ impl World {
             screen_cell: 64,
             screen_walls: 0,
             screen_torch: false,
+            in_place: crate::program::neurocomp::in_place(),
             cursor_mark: {
                 let mut c = StdRng::seed_from_u64(physics ^ 0xC025);
                 let lines: Vec<u64> = (0..64).collect();

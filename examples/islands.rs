@@ -682,11 +682,37 @@ fn main() {
             for (i, isl) in islands.iter().enumerate() {
                 let best = &r.ranked[i][0];
                 let st = &isl.stages[r.stage[i]];
-                let h = probe_all_in(vec![best.clone()], trials, Physics::Varied, &held, gap, &st.probes, st.lesson);
+                // what it is scored on, and its best held out on the same: its stage, or (at the
+                // frontier) each other island's current stage in that stage's world, each probe
+                // from the first island that has it
+                let (shown, held_row) = if isl.frontier {
+                    let mut shown: Vec<usize> = Vec::new();
+                    let mut m = [0i32; neurocomp::world::observe::NPROBES];
+                    for (j, other) in islands.iter().enumerate() {
+                        if j == i || other.frontier {
+                            continue;
+                        }
+                        let os = &other.stages[r.stage[j]];
+                        let new: Vec<usize> = os.probes.iter().copied().filter(|p| !shown.contains(p)).collect();
+                        if new.is_empty() {
+                            continue;
+                        }
+                        let h = probe_all_in(vec![best.clone()], trials, Physics::Varied, &held, gap, &new, os.lesson);
+                        let hm = probe_means(&h[0].probes);
+                        for &p in &new {
+                            m[p] = hm[p];
+                        }
+                        shown.extend(new);
+                    }
+                    (shown, m)
+                } else {
+                    let h = probe_all_in(vec![best.clone()], trials, Physics::Varied, &held, gap, &st.probes, st.lesson);
+                    (st.probes.clone(), probe_means(&h[0].probes))
+                };
                 let (rd, wr) = best.ports();
-                let at = if isl.stages.len() > 1 { format!("  [stage {} {}, {} generations]", r.stage[i], st.name, r.held[i]) } else { String::new() };
-                println!("      {:<11}{}  {:>5}  {:>5}  reads {} writes {}  (population, training){at}", isl.name, row(&r.means[i], &st.probes), r.work[i], best.tokens.len(), rd.join("+"), wr.join("+"));
-                println!("      {:<11}{}  (its best, held out)", "", row(&probe_means(&h[0].probes), &st.probes));
+                let at = if isl.stages.len() > 1 { format!("  [stage {} {}, {} generations]", r.stage[i], st.name, r.held[i]) } else if isl.frontier { "  [at the frontier]".to_string() } else { String::new() };
+                println!("      {:<11}{}  {:>5}  {:>5}  reads {} writes {}  (population, training){at}", isl.name, row(&r.means[i], &shown), r.work[i], best.tokens.len(), rd.join("+"), wr.join("+"));
+                println!("      {:<11}{}  (its best, held out)", "", row(&held_row, &shown));
                 println!("      {:<11}{}  (the elite's ops; its best's loops)", "", ops_and_loops(&r.ranked[i][..elite.min(r.ranked[i].len())]));
             }
         }

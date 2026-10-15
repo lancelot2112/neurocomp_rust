@@ -1,10 +1,11 @@
 //! Re-scores each island's best genome in a checkpoint on many fresh worlds (all probes), to tell
 //! a held-out score from noise. `RCK_FILE` (checkpoint.txt), `RCK_WORLDS` (64), `RCK_TRIALS`
 //! (200), `RCK_GAP` (6), `RCK_FROM` (50,000: the first world seed), `RCK_TOP` (1: how many of
-//! each island's ranked genomes, from the top).
+//! each island's ranked genomes, from the top), `RCK_DELAY` (3: steps from the delayed light to
+//! the response window, for remember), `RCK_BLIND` (0; 1: each genome's blind control too).
 
 use neurocomp::evolve::tags::TagGenome;
-use neurocomp::evolve::{probe_all, probe_means, Physics, ALL_PROBES};
+use neurocomp::evolve::{probe_all_in, probe_means, Lesson, Physics, ALL_PROBES};
 use neurocomp::world::observe::PROBES;
 
 fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
@@ -18,6 +19,8 @@ fn main() {
     let gap: usize = env("RCK_GAP", 6);
     let from: u64 = env("RCK_FROM", 50_000);
     let top: usize = env("RCK_TOP", 1);
+    let lesson = Lesson { delay: env("RCK_DELAY", 3), ..Lesson::default() };
+    let blind = env("RCK_BLIND", 0u8) == 1;
     let worlds: Vec<u64> = (from..from + n).collect();
     let text = std::fs::read_to_string(&path).expect("checkpoint");
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
@@ -25,9 +28,14 @@ fn main() {
     for part in text.split("island ").skip(1) {
         let (head, body) = part.split_once('\n').unwrap_or((part, ""));
         let gs = TagGenome::from_text(body).expect("genomes");
-        for (k, best) in gs.iter().take(top).enumerate() {
+        let picked: Vec<(String, TagGenome)> = gs.iter().take(top).enumerate().flat_map(|(k, g)| {
+            let mut v = vec![(format!("rank {k}"), g.clone())];
+            if blind { v.push((format!("rank {k} blind"), g.blind())) }
+            v
+        }).collect();
+        for (k, best) in &picked {
         let (rd, wr) = best.ports();
-        let h = probe_all(vec![best.clone()], trials, Physics::Varied, &worlds, gap, &ALL_PROBES);
+        let h = probe_all_in(vec![best.clone()], trials, Physics::Varied, &worlds, gap, &ALL_PROBES, lesson);
         let m = probe_means(&h[0].probes);
         let row: String = m.iter().map(|x| format!("{x:>7}")).collect();
         // per-world spread of each probe: the standard error of the mean
@@ -37,7 +45,7 @@ fn main() {
             let var = xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (xs.len() as f64 - 1.0).max(1.0);
             format!("{:>7}", format!("±{:.0}", (var / xs.len() as f64).sqrt()))
         }).collect();
-        println!("{:<11}{row}   {} / {}  (rank {k}, work {})", head.split_whitespace().next().unwrap_or(""), rd.join("+"), wr.join("+"), h[0].work);
+        println!("{:<11}{row}   {} / {}  ({k}, work {})", head.split_whitespace().next().unwrap_or(""), rd.join("+"), wr.join("+"), h[0].work);
         println!("{:<11}{se}   (standard error)", "");
         }
     }

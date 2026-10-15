@@ -41,7 +41,7 @@
 //! own world (`Lesson`: tokens and how often the teacher speaks) and a goal; it moves to the next
 //! stage once its population's training mean meets the goal for `hold` generations in a row
 //! (`evolve_islands`). Switching climbs respond, tell, win-stay, discriminate (no swaps), then one
-//! swap, then three; recall clicks after a light gone 1, 2, 3 (the plain task), then 4 steps
+//! swap, then three; recall clicks at a light, then after one gone 1, 2, 3 (the plain task), then 4 steps
 //! before the window. Reading's: babble, then echo with 2, 4 and 8 tokens
 //! with the teacher on every token, then the teacher fading (6, 4, 2, 1 in 8) so the glyph must
 //! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
@@ -221,9 +221,11 @@ const SWITCHING_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100;
     swap1 probes=respond+tell+win-stay+discriminate+reverse swaps=1 goal=reverse@80; \
     swap3 probes=respond+tell+win-stay+discriminate+reverse swaps=3";
 
-/// Recall's ladder: click after a light gone 1 step before the window, then 2, then 3 (the plain
-/// task), then 4.
-const RECALL_LADDER: &str = "lag1 probes=respond+remember delay=1 goal=remember@150; \
+/// Recall's ladder: click at a light (respond, as switching starts: a population that never
+/// clicks at a light scores 0 on every lag, and one that does passes lag1 already), then after a
+/// light gone 1 step before the window, then 2, then 3 (the plain task), then 4.
+const RECALL_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
+    lag1 probes=respond+remember delay=1 goal=remember@150; \
     lag2 probes=respond+remember delay=2 goal=remember@150; \
     lag3 probes=respond+remember delay=3 goal=remember@150; \
     lag4 probes=respond+remember delay=4";

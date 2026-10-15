@@ -6,6 +6,7 @@ use crate::bitvec::{ones_of, select_nth_bit, BitVector};
 use crate::bitvec::bithistory::{AdvanceMode, BitVecHistory};
 use crate::kernel::class::KernelOp;
 use crate::kernel::group::KernelGroup;
+use crate::kernel::KernelClass;
 use crate::kernel::SimpleKernel;
 use crate::program::graph::{EdgeKind, EdgeSpec, GraphProgram, NodeSpec, ProgramDefaults};
 use rand::seq::SliceRandom;
@@ -26,6 +27,22 @@ pub fn set_in_place(on: bool) {
 pub fn in_place() -> bool {
     IN_PLACE.load(Ordering::Relaxed)
 }
+
+/// The process's default for new worlds (`World::explore`): a stuck population grows a trial
+/// connection (`RuntimeNetwork::explore`).
+static EXPLORE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_explore(on: bool) {
+    EXPLORE.store(on, Ordering::Relaxed);
+}
+
+pub fn explore() -> bool {
+    EXPLORE.load(Ordering::Relaxed)
+}
+
+/// Steps a population's kernels must all go without firing before it is stuck and grows a trial
+/// connection (the starting value; kernels count their own age, saturating at 255).
+pub const STUCK: u8 = 64;
 
 /// The process's default for new worlds (`World::count_reads`): the words a kernel population
 /// reads count as its work.
@@ -59,6 +76,12 @@ pub struct RuntimeNetwork {
     pub live: Vec<bool>,
     /// the words a kernel population reads count as work (so thrift sees a wide read)
     pub count_reads: bool,
+    /// exploration: a population whose kernels have all gone `STUCK` steps without firing grows,
+    /// once a lifetime, a trial connection: a predicting (XOR) population reading its destination
+    /// and writing back into its source (a loop), or into its destination itself where the
+    /// source is a port. The trial's kernels are born and replicate by the usual rules, and each
+    /// of their predictions that comes true is counted (`confirms`), for the genome to keep it
+    pub explore: bool,
     /// work done since it was built: kernels matched plus words a wire or noise edge wrote (a
     /// paused or idle population adds nothing)
     pub work: u64,
@@ -193,6 +216,13 @@ pub struct RuntimeEdgeGroup {
     pub can_grow: bool,
     /// it writes the act node
     pub into_act: bool,
+    /// its kernels' predictions that came true (all lines they wrote cancelled), this lifetime
+    pub confirms: u32,
+    /// a trial connection grown by exploration (0: a genome's own; 1: back into the stuck
+    /// population's source; 2: on its destination), its `spec.salt` the stuck population's
+    pub explorer: u8,
+    /// it has grown its trial connection this lifetime
+    pub spawned: bool,
 }
 
 impl RuntimeEdgeGroup {
@@ -260,6 +290,9 @@ impl RuntimeNetwork {
                 rng: StdRng::seed_from_u64((es.salt as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                 can_grow: true,
                 into_act: false,
+                confirms: 0,
+                explorer: 0,
+                spawned: false,
             });
         }
 
@@ -269,7 +302,7 @@ impl RuntimeNetwork {
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, explore: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -325,12 +358,15 @@ impl RuntimeNetwork {
                 rng: StdRng::seed_from_u64(seed ^ (e.weight().salt as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15)),
                 can_grow: dst != last || e.weight().repeat || e.weight().dst_len > 0,
                 into_act: dst == last,
+                confirms: 0,
+                explorer: 0,
+                spawned: false,
             });
         }
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, explore: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Advance histories and process all edges once.
@@ -516,15 +552,19 @@ impl RuntimeNetwork {
             let Some(class) = eg.group.classes_mut().first_mut() else { continue };
             if matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
                 let dest = nodes[eg.dst].current();
+                let mut came_true = 0u32;
                 for &k in &fired[i] {
-                    // (replication) its prediction came true if every line it wrote is now off
+                    // its prediction came true if every line it wrote is now off (counted; and,
+                    // with replication, confirmed)
+                    let kk = &class.kernels()[k];
+                    let left = kk.output_mask.as_words().iter().enumerate().any(|(j, &m)| dest.as_words().get(kk.output_idx + j).is_some_and(|&d| d & m != 0));
+                    came_true += !left as u32;
                     if sp.replicate > 0 {
-                        let kk = &class.kernels()[k];
-                        let left = kk.output_mask.as_words().iter().enumerate().any(|(j, &m)| dest.as_words().get(kk.output_idx + j).is_some_and(|&d| d & m != 0));
                         class.kernels_mut()[k].confirm(!left, None);
                     }
                     class.kernels_mut()[k].learn_output(dest, sp.out_learn, rng);
                 }
+                eg.confirms = eg.confirms.saturating_add(came_true);
             }
             // replication: the first kernel confirmed 2^replicate times (net) is copied, once a
             // step, while there is room under the cap
@@ -730,6 +770,77 @@ impl RuntimeNetwork {
             }
             class.add(k);
         }
+        if self.explore {
+            self.grow_trials();
+        }
+    }
+
+    /// Exploration: each population of kernels (a genome's own) whose kernels have all gone
+    /// `STUCK` steps without firing, and whose destination is a vector it may read (not the act),
+    /// grows once a lifetime a trial connection: a predicting (XOR) population, replicating, that
+    /// reads that destination and writes back into the population's source if the source is a
+    /// channel (a loop), else into the destination itself. It starts with no kernels: they are
+    /// born where its input is uncovered, as any growing population's are.
+    fn grow_trials(&mut self) {
+        let n = self.edges.len();
+        let internal = |i: usize, s: &Self| i != 0 && i != s.output && Some(i) != s.self_node;
+        let mut grown = Vec::new();
+        for i in 0..n {
+            let eg = &self.edges[i];
+            if eg.explorer > 0 || eg.spawned || eg.kind != EdgeKind::Kernels || !internal(eg.dst, self) {
+                continue;
+            }
+            let Some(class) = eg.group.classes().first() else { continue };
+            if class.kernels().is_empty() || class.kernels().iter().any(|k| k.age < STUCK) {
+                continue;
+            }
+            let back = internal(eg.src.idx, self) && eg.src.idx != eg.dst;
+            let mut spec = eg.spec.clone();
+            spec.op = KernelOp::Xor;
+            spec.replicate = spec.replicate.max(3);
+            spec.cap = spec.cap.max(16);
+            spec.gate = None;
+            spec.pause = None;
+            spec.repeat = false;
+            spec.dst_len = 0;
+            spec.dst_word = 0;
+            let rng = StdRng::seed_from_u64((spec.salt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.steps);
+            grown.push((i, RuntimeEdgeGroup {
+                src: RuntimeEdgeTarget { idx: eg.dst, read_back: 1, span: 1 },
+                dst: if back { eg.src.idx } else { eg.dst },
+                group: KernelGroup::from_classes(vec![KernelClass::with_kernels(vec![])]),
+                kind: EdgeKind::Kernels,
+                op: KernelOp::Xor,
+                rotate: 0,
+                grow: true,
+                inhibit: eg.inhibit,
+                gate: None,
+                new_code: false,
+                wide: eg.wide,
+                window: None,
+                dst_word: 0,
+                repeat: false,
+                repeat_lag: 1,
+                spec,
+                rng,
+                can_grow: true,
+                into_act: false,
+                confirms: 0,
+                explorer: if back { 1 } else { 2 },
+                spawned: true,
+            }));
+        }
+        for (i, trial) in grown {
+            self.edges[i].spawned = true;
+            self.edges.push(trial);
+        }
+    }
+
+    /// What this lifetime found, for the genome: per population (by id, its `salt`), the
+    /// predictions that came true, and each trial connection grown from it (kind 1: back into
+    /// its source, 2: on its destination) with its own.
+    pub fn notes(&self) -> Vec<(u32, u32, u8)> {
+        self.edges.iter().filter(|e| e.confirms > 0 || e.explorer > 0).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect()
     }
 
     /// The self node's frame this step, written by the runtime before any edge runs (bits only,

@@ -58,6 +58,10 @@ impl KernelGroup {
         self.available_classes.iter().map(|c| c.len()).sum()
     }
 
+    pub fn classes(&self) -> &[KernelClass<SimpleKernel>] {
+        &self.available_classes
+    }
+
     pub fn classes_mut(&mut self) -> &mut [KernelClass<SimpleKernel>] {
         &mut self.available_classes
     }

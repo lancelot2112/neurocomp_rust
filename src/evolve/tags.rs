@@ -149,6 +149,13 @@ pub struct Pop {
     /// neighbouring tile (`replicate_shift`) or in place
     pub replicate: u8,
     pub replicate_shift: bool,
+    /// the epigenetic mark: evidence from its lifetimes that it is useful (its predictions came
+    /// true), halved each generation and added to; mutation duplicates a marked population more
+    /// often and deletes it less often (`set_epigenetics`)
+    pub mark: u8,
+    /// grown in a lifetime by exploration and kept: a trial connection whose predictions came
+    /// true often enough was added to the genome (`inherit`)
+    pub explored: bool,
 }
 
 impl Pop {
@@ -160,7 +167,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false,
         }
     }
 
@@ -183,6 +190,10 @@ pub struct TagGenome {
     pub next_id: u32,
 }
 
+
+/// The predictions a trial connection's kernels must have had come true, over a genome's
+/// lifetimes in a generation, for the genome to keep it (`inherit`).
+pub const KEEP: u32 = 16;
 
 /// What the string's channels resolve to.
 struct Channels {
@@ -326,7 +337,9 @@ impl TagGenome {
                             + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, gname(g))),
                         if p.sparse { " sparse".to_string() } else { String::new() }
                             + &if p.replicate > 0 { format!(" replicate at {} ({})", 1u32 << p.replicate.min(7), if p.replicate_shift { "to a neighbour tile" } else { "in place" }) } else { String::new() },
-                        if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() },
+                        if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() }
+                            + &if p.mark > 0 { format!(" mark {}", p.mark) } else { String::new() }
+                            + if p.explored { " explored" } else { "" },
                     );
                 }
             }
@@ -673,11 +686,11 @@ impl TagGenome {
                 Token::Channel { tag, width, hold } => out += &format!("channel {tag} {width} {}\n", b(*hold)),
                 Token::Pop(p) => {
                     out += &format!(
-                        "pop id={} from={} from_port={} to={} to_port={} wire={} op={} lag={} span={} at={} field={} place={} spread={} count={} fan_in={} fan_out={} quarters={} tonic={} share={} grow={} new_code={} repeat={} repeat_lag={} gate={} gate_lag={} birth_syn={} birth_quarters={} out_min={} out_max={} cap={} code_lines={} out_learn={} fade={} rotate={} sparse={} cover={} tile={} pause={} replicate={} replicate_shift={}\n",
+                        "pop id={} from={} from_port={} to={} to_port={} wire={} op={} lag={} span={} at={} field={} place={} spread={} count={} fan_in={} fan_out={} quarters={} tonic={} share={} grow={} new_code={} repeat={} repeat_lag={} gate={} gate_lag={} birth_syn={} birth_quarters={} out_min={} out_max={} cap={} code_lines={} out_learn={} fade={} rotate={} sparse={} cover={} tile={} pause={} replicate={} replicate_shift={} mark={} explored={}\n",
                         p.id, p.from, b(p.from_port), p.to, b(p.to_port), b(p.wire), p.op.text(), p.lag, p.span, p.at, p.field, p.place, p.spread,
                         p.count, p.fan_in, p.fan_out, p.quarters, p.tonic, b(p.share), b(p.grow), b(p.new_code), b(p.repeat), p.repeat_lag,
                         opt(p.gate), p.gate_lag, p.birth_syn, p.birth_quarters, p.out_min, p.out_max, p.cap, p.code_lines, p.out_learn, p.fade,
-                        p.rotate, b(p.sparse), b(p.cover), p.tile, opt(p.pause), p.replicate, b(p.replicate_shift)
+                        p.rotate, b(p.sparse), b(p.cover), p.tile, opt(p.pause), p.replicate, b(p.replicate_shift), p.mark, b(p.explored)
                     );
                 }
             }
@@ -722,6 +735,9 @@ impl TagGenome {
                         code_lines: num!("code_lines"), out_learn: num!("out_learn"), fade: num!("fade"), rotate: num!("rotate"),
                         sparse: flag("sparse")?, cover: flag("cover")?, tile: num!("tile"), pause: opt("pause")?,
                         replicate: num!("replicate"), replicate_shift: flag("replicate_shift")?,
+                        // (absent in genomes written before marks)
+                        mark: kv.get("mark").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        explored: kv.get("explored") == Some(&"1"),
                     };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
                 }
@@ -940,6 +956,37 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
     KernelGroup::from_classes(vec![KernelClass::with_kernels(kernels)])
 }
 
+/// `Evolvable::inherit` for the tag grammar (with `set_epigenetics`; here without, for tests).
+pub fn take_notes(g: &mut TagGenome, notes: &[super::Note]) {
+    for t in &mut g.tokens {
+        if let Token::Pop(p) = t {
+            let ev: u32 = notes.iter().filter(|n| n.0 == p.id && n.2 == 0).map(|n| n.1).sum();
+            p.mark = (p.mark / 2).saturating_add(((32 - ev.leading_zeros()) * 16).min(255) as u8);
+        }
+    }
+    for &(id, c, kind) in notes {
+        if kind == 0 || c < KEEP {
+            continue;
+        }
+        let Some(at) = g.tokens.iter().position(|t| matches!(t, Token::Pop(p) if p.id == id)) else { continue };
+        let Token::Pop(parent) = &g.tokens[at] else { continue };
+        if parent.to_port || (kind == 1 && parent.from_port) {
+            continue;
+        }
+        let to = if kind == 1 { parent.from } else { parent.to };
+        if g.pops().any(|p| p.explored && p.from == parent.to && p.to == to && !p.from_port && !p.to_port) {
+            continue;
+        }
+        let q = Pop {
+            id: g.next_id, from: parent.to, from_port: false, to, to_port: false, wire: false, op: KernelOp::Xor, count: 0,
+            grow: true, cover: true, replicate: parent.replicate.max(3), gate: None, pause: None, repeat: false, mark: 128, explored: true,
+            ..parent.clone()
+        };
+        g.next_id += 1;
+        g.tokens.insert(at + 1, Token::Pop(q));
+    }
+}
+
 impl Evolvable for TagGenome {
     fn build(&self, w: &World, seed: u64) -> RuntimeNetwork {
         let g = self.graph();
@@ -950,12 +997,36 @@ impl Evolvable for TagGenome {
             .collect();
         let mut net = RuntimeNetwork::from_graph_held(&g, world::SENSE_BITS, world::ACT_BITS, seed, w.in_place, |e: &EdgeInfo| start_kernels(e, &primitives));
         net.count_reads = w.count_reads;
+        net.explore = w.explore;
         net
     }
+
+    /// With `set_epigenetics`: each population's mark becomes half its old mark plus 16 for each
+    /// doubling of its predictions that came true this generation (over all its lifetimes), and
+    /// each trial connection whose predictions came true `KEEP` times or more is added as a
+    /// population, tagged `explored`, after the one it grew from, with a starting mark: a
+    /// predicting (XOR), replicating population with no starting kernels, reading that
+    /// population's destination and writing back into its source (or into the destination).
+    fn inherit(&mut self, notes: &[super::Note]) {
+        if super::epigenetics() {
+            take_notes(self, notes);
+        }
+    }
+
 
     fn mutate(&self, rng: &mut StdRng) -> Self {
         let mut g = self.clone();
         let n = g.tokens.len();
+        // (epigenetics: a marked population is spared deletion and chosen for duplication more
+        // often, in proportion to its mark)
+        let epi = super::epigenetics();
+        let marked = |g: &TagGenome, rng: &mut StdRng| -> Option<usize> {
+            let w: Vec<(usize, u32)> = g.tokens.iter().enumerate().filter_map(|(i, t)| if let Token::Pop(p) = t { (p.mark > 0).then_some((i, p.mark as u32)) } else { None }).collect();
+            let total: u32 = w.iter().map(|x| x.1).sum();
+            if total == 0 { return None }
+            let mut r = rng.gen_range(0..total);
+            w.into_iter().find(|&(_, m)| if r < m { true } else { r -= m; false }).map(|x| x.0)
+        };
         match rng.gen_range(0..16) {
             // a new token (two chances in sixteen: new populations are the raw material)
             0 | 15 => {
@@ -966,12 +1037,15 @@ impl Evolvable for TagGenome {
             // a token removed
             1 if n > 0 => {
                 let at = rng.gen_range(0..n);
-                g.tokens.remove(at);
+                let spared = epi && matches!(&g.tokens[at], Token::Pop(p) if p.mark > 0 && rng.gen_range(0..256u32) < p.mark as u32);
+                if !spared {
+                    g.tokens.remove(at);
+                }
             }
             // a segment copied elsewhere; sometimes privately (channels declared inside get fresh
             // tags, and the copy's references to them follow, so its inner wiring is its own)
             2 | 3 if n > 0 => {
-                let a = rng.gen_range(0..n);
+                let a = if epi && rng.gen_bool(0.5) { marked(&g, rng).unwrap_or_else(|| rng.gen_range(0..n)) } else { rng.gen_range(0..n) };
                 let len = rng.gen_range(1..=4.min(n - a));
                 let mut seg: Vec<Token> = g.tokens[a..a + len].to_vec();
                 if rng.gen_bool(0.5) {
@@ -1549,6 +1623,48 @@ mod tests {
         let fed = |food: u64| live_lesson(&g, read, Physics::Varied, 1, 0, Lesson { ration: 4, food, ..Lesson::default() }).1;
         let (hungry, eating) = (fed(0), fed(4 * 256));
         assert!(eating > 2 * hungry, "eating {eating}, hungry {hungry}");
+    }
+
+    #[test]
+    fn a_stuck_population_grows_a_trial_connection_and_a_kept_one_joins_the_genome() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        let c = 0x3C;
+        // kernels from the senses into C that never fire (the senses stay empty)
+        let p = Pop { count: 2, cover: true, from_port: true, ..Pop::new(1, SENSES, c) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 0, hold: false }, Token::Pop(p)], next_id: 2 };
+        let run = |explore: bool| {
+            let mut w = World::new(1, 4);
+            w.explore = explore;
+            let mut net = g.build(&w, 1);
+            let before = net.edges.len();
+            for _ in 0..80 {
+                net.tick(AdvanceMode::Clear, 0);
+                net.write_input(&BitVector::new(world::SENSE_BITS, Some(0)), 0);
+            }
+            (before, net.edges.len(), net.notes())
+        };
+        // without exploration nothing grows; with it the stuck population grows one trial, on its
+        // destination (its source is a port), noted with the population's id
+        assert_eq!(run(false).1, run(false).0);
+        let (before, after, notes) = run(true);
+        assert_eq!(after, before + 1);
+        assert!(notes.iter().any(|n| n.0 == 1 && n.2 == 2), "{notes:?}");
+        // a trial whose predictions came true often enough is added, tagged and marked; marks take
+        // half the old one plus 16 a doubling of the population's own predictions that came true
+        let mut h = g.clone();
+        take_notes(&mut h, &[(1, 100, 0), (1, KEEP, 2)]);
+        let pops: Vec<&Pop> = h.pops().collect();
+        assert_eq!(pops.len(), 2);
+        assert_eq!(pops[0].mark, 7 * 16);
+        assert!(pops[1].explored && pops[1].from == c && pops[1].to == c && !pops[1].from_port && pops[1].op == KernelOp::Xor);
+        // once kept it is not added again, and marks and the tag survive the text form
+        take_notes(&mut h, &[(1, KEEP, 2)]);
+        assert_eq!(h.pops().count(), 2);
+        let back = TagGenome::from_text(&h.to_text()).unwrap().remove(0);
+        assert_eq!(back, h);
+        // a genome written before marks reads back unmarked
+        let old: String = h.to_text().lines().map(|l| l.split(" mark=").next().unwrap().to_string() + "\n").collect();
+        assert!(TagGenome::from_text(&old).unwrap()[0].pops().all(|p| p.mark == 0 && !p.explored));
     }
 
     #[test]

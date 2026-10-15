@@ -443,7 +443,7 @@ fn main() {
         pending.borrow_mut().push((n, recipient.clone(), child.clone(), tokens, parents));
         (child, text)
     };
-    evolve_islands(&islands, start, stages, first, pop, trials, Physics::Varied, &train, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
+    evolve_islands(&islands, start, stages, first, pop, trials, Physics::Varied, &train, &held, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
         // the plasmids followed: how many of their island's genomes carry them (this generation's
         // new ones are in children, scored from the next)
         for m in followed.iter_mut().filter(|m| m.alive && m.at < g) {
@@ -521,6 +521,15 @@ fn main() {
         let took = last.elapsed().as_secs_f64();
         last = std::time::Instant::now();
         println!("{g:>4}  {} {took:.0}s{}", clock(), if goals.is_empty() { String::new() } else { format!("  goals: {}", goals.join("; ")) });
+        // an island that held its goal on the training worlds, checked on the held-out ones
+        for (i, isl) in islands.iter().enumerate() {
+            if let Some(m) = &r.rechecked[i] {
+                let st = &isl.stages[r.stage[i]];
+                let pass = st.goal.iter().all(|&(p, x)| m[p] >= x);
+                let g2: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], m[p])).collect();
+                println!("{g:>4}  {} held its goal on training; its elite held out: {} ({})", isl.name, g2.join(" "), if pass { "moves on" } else { "stays" });
+            }
+        }
         // an island that met its stage's goal: it is scored on the next stage from this generation
         for (i, isl) in islands.iter().enumerate() {
             if r.stage[i] != was[i] {

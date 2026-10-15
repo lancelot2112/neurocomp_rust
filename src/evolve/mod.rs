@@ -713,6 +713,8 @@ pub struct IslandGeneration<G> {
     pub stage: Vec<usize>,
     pub held: Vec<usize>,
     pub met: Vec<usize>,
+    /// the elite's means on the held-out worlds, for each island checked before moving on
+    pub rechecked: Vec<Option<observe::ProbeRow>>,
     pub ranked: Vec<Vec<G>>,
     pub means: Vec<observe::ProbeRow>,
     pub work: Vec<u64>,
@@ -727,7 +729,9 @@ pub struct IslandGeneration<G> {
 /// children (not its kept genomes). `start` gives each island's starting population (resized to
 /// `pop`) and `stages` its starting stage, and generations run from `first` to `generations` (so
 /// a checkpoint can be resumed). An island whose population meets its stage's goal for the
-/// stage's `hold` generations in a row moves to the next stage.
+/// stage's `hold` generations in a row moves to the next stage, if its elite also meets the goal
+/// on the `held_out` worlds (none: no check), so a population fitted to its training worlds does
+/// not climb; until it does, it is checked again each generation the training goal holds.
 pub fn evolve_islands<G: Evolvable>(
     islands: &[Island],
     start: Vec<Vec<G>>,
@@ -737,6 +741,7 @@ pub fn evolve_islands<G: Evolvable>(
     trials: usize,
     physics: Physics,
     seeds: &[u64],
+    held_out: &[u64],
     gap: usize,
     elite: usize,
     generations: usize,
@@ -770,6 +775,7 @@ pub fn evolve_islands<G: Evolvable>(
         let now = stage.clone();
         let mut held = Vec::with_capacity(k);
         let mut met_now = Vec::with_capacity(k);
+        let mut rechecked = vec![None; k];
         let mut ranked: Vec<Vec<G>> = Vec::with_capacity(k);
         let mut means = Vec::with_capacity(k);
         let mut work = Vec::with_capacity(k);
@@ -787,9 +793,18 @@ pub fn evolve_islands<G: Evolvable>(
                 met[i] = if st.goal.iter().all(|&(p, x)| mean[p] >= x) { met[i] + 1 } else { 0 };
                 met_now.push(met[i]);
                 if met[i] >= st.hold.max(1) {
-                    stage[i] += 1;
-                    met[i] = 0;
-                    on[i] = 0;
+                    let pass = held_out.is_empty() || {
+                        let top: Vec<G> = order.iter().take(elite.max(1)).map(|&g| scored[g].genome.clone()).collect();
+                        let h = probe_all_in(top, trials, physics, held_out, gap, &st.probes, st.lesson);
+                        let m = probe_means(&h.iter().map(|s| probe_means(&s.probes)).collect::<Vec<_>>());
+                        rechecked[i] = Some(m);
+                        st.goal.iter().all(|&(p, x)| m[p] >= x)
+                    };
+                    if pass {
+                        stage[i] += 1;
+                        met[i] = 0;
+                        on[i] = 0;
+                    }
                 }
             } else {
                 met_now.push(0);
@@ -813,7 +828,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, met: met_now, ranked: ranked.clone(), means, work, moved });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved });
         last = ranked;
         pops = next;
     }

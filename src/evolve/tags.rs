@@ -1522,6 +1522,28 @@ mod tests {
     }
 
     #[test]
+    fn energy_makes_a_network_rest_when_its_work_outruns_its_ration() {
+        use crate::evolve::{live_lesson, Lesson};
+        // a wire copying all the senses (32 words a step) into a channel
+        let h = 0x3C;
+        let copy = Pop { cover: true, ..Pop::wire(1, SENSES, h) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: h, width: 5, hold: false }, Token::Pop(copy)], next_id: 2 };
+        let task = Task::Conditioning(Conditioning::Delayed, 40);
+        let run = |ration: u64, food: u64| live_lesson(&g, task, Physics::Varied, 1, 0, Lesson { ration, food, ..Lesson::default() });
+        let (ev, free) = run(0, 0);
+        let steps = ev.len() as u64;
+        assert_eq!(free, 32 * steps);
+        // a ration of 4 pays an eighth of it: it rests about seven steps in eight (after its
+        // starting store of 64 rations)
+        let (ev2, fed) = run(4, 0);
+        assert_eq!(ev2.len() as u64, steps);
+        assert!(fed <= 4 * steps + 4 * 64 + 32, "{fed} of {free}");
+        // a network that costs less than its ration never rests
+        let cheap = TagGenome { tokens: vec![], next_id: 1 };
+        assert_eq!(live_lesson(&cheap, task, Physics::Varied, 1, 0, Lesson { ration: 4, food: 0, ..Lesson::default() }).1, 0);
+    }
+
+    #[test]
     fn loops_count_self_loops_and_cycles_through_channels() {
         let (a, b, c) = (0x3C, 0xC3, 0x5A);
         let ch = |t: u8| Token::Channel { tag: t, width: 0, hold: false };

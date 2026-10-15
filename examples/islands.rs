@@ -40,6 +40,11 @@
 //! sixteen), not only as one of its many properties, and ops are drawn without `rotr` (the same as
 //! `rotl` by 64 - n), so `clear`, `xor` and the rest are tried far more often.
 //!
+//! `ISL_RATION` (0: none): energy. Each lifetime step a network gets this much and pays its work;
+//! each stroke it feels is `ISL_FOOD` (32) rations; with its store below 0 it rests (does not run
+//! or act) until the ration refills it. Compute beyond the ration must be earned, so cost and
+//! score have to make sense together, and a runaway genome no longer sets a generation's time.
+//!
 //! Every `ISL_REPORT` generations, per island: its population's means on its own probes (training
 //! worlds), its best genome's probes on held-out worlds, its work per step and which ports its
 //! genomes read and write.
@@ -342,6 +347,9 @@ fn main() {
     neurocomp::program::neurocomp::set_count_reads(env("ISL_READS", 0u8) == 1);
     neurocomp::evolve::set_carry(env("ISL_CARRY", 0u64));
     neurocomp::kernel::class::set_op_choice(env("ISL_OPS", 0u8) == 1);
+    // (energy: a ration a step, food a stroke in rations; before any lesson is made)
+    let ration: u64 = env("ISL_RATION", 0);
+    neurocomp::evolve::set_energy(ration, ration * env("ISL_FOOD", 32u64));
     let pop: usize = env("ISL_POP", 16);
     let elite: usize = env("ISL_ELITE", 4);
     let gens: usize = env("ISL_GENS", 300);
@@ -430,8 +438,8 @@ fn main() {
             }
         }
     }
-    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice());
+    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} a stroke",
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1);
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

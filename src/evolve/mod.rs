@@ -261,11 +261,31 @@ pub struct Lesson {
     pub screen_cell: usize,
     pub screen_walls: usize,
     pub screen_torch: bool,
+    /// energy, 0: none. Each step the network gets `ration` and pays its work; each stroke it
+    /// feels is food, `food` more. The store starts at 64 rations and holds at most 256; while it
+    /// is below 0 the network rests (it does not run or act) and the ration refills it. So
+    /// compute beyond the ration must be earned, and a task with no strokes lives on the ration.
+    pub ration: u64,
+    pub food: u64,
+}
+
+/// The default energy for lessons made from now on (`Lesson::ration`, `Lesson::food`): an
+/// experiment's binary sets it once, before any lesson is made. 0: none.
+static RATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static FOOD: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn set_energy(ration: u64, food: u64) {
+    RATION.store(ration, std::sync::atomic::Ordering::Relaxed);
+    FOOD.store(food, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn energy() -> (u64, u64) {
+    (RATION.load(std::sync::atomic::Ordering::Relaxed), FOOD.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -328,11 +348,24 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     }
     let mut net = g.build(&w, seed ^ 0x5EED);
     let mut act = BitVector::new(world::ACT_BITS, Some(0));
+    // energy (`Lesson::ration`): the store, below 0 the network rests
+    let (ration, food) = (lesson.ration as i64, lesson.food as i64);
+    let mut store = ration.saturating_mul(64);
     while !w.done() {
         let senses = w.step(&act);
+        if ration > 0 {
+            let fed = if w.events.last().is_some_and(|e| e.stroked) { food } else { 0 };
+            store = (store + ration + fed).min(ration.saturating_mul(256));
+            if store < 0 {
+                act = BitVector::new(world::ACT_BITS, Some(0));
+                continue;
+            }
+        }
+        let before = net.work;
         net.tick(AdvanceMode::Clear, 0);
         net.write_input(&senses, 0);
         act = net.read_output().clone();
+        store -= (net.work - before).min(i64::MAX as u64 / 4) as i64;
     }
     (w.events, net.work)
 }

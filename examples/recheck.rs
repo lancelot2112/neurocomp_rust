@@ -54,6 +54,18 @@ fn main() {
         }).collect();
         println!("{:<11}{row}   {} / {}  ({k}, work {})", head.split_whitespace().next().unwrap_or(""), rd.join("+"), wr.join("+"), h[0].work);
         println!("{:<11}{se}   (standard error)", "");
+        let (on, selfs, largest, pops) = best.loops();
+        let mut ops: Vec<(String, usize)> = Vec::new();
+        for t in &best.tokens {
+            if let neurocomp::evolve::tags::Token::Pop(p) = t {
+                let name = p.op.text().split(':').next().unwrap_or("").to_string();
+                match ops.iter_mut().find(|c| c.0 == name) { Some(c) => c.1 += 1, None => ops.push((name, 1)) }
+            }
+        }
+        ops.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        let all: usize = ops.iter().map(|c| c.1).sum();
+        let ops: Vec<String> = ops.iter().take(5).map(|(n, k)| format!("{n} {}%", k * 100 / all.max(1))).collect();
+        println!("{:<11}ops {} (of {all} populations); loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels", "", ops.join(", "));
         }
     }
 }

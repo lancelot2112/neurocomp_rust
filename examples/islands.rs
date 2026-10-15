@@ -163,6 +163,30 @@ fn measure(tokens: &[Token]) -> (String, &'static str) {
     (text, role)
 }
 
+/// The ops some genomes write with, most used first (share of their populations), and how
+/// recursive the first is (`TagGenome::loops`): populations on a loop, self-loops among them, and
+/// the largest loop's channels.
+fn ops_and_loops(genomes: &[TagGenome]) -> String {
+    let mut count: Vec<(String, usize)> = Vec::new();
+    let mut total = 0usize;
+    for g in genomes {
+        for t in &g.tokens {
+            if let Token::Pop(p) = t {
+                let name = p.op.text().split(':').next().unwrap_or("").to_string();
+                match count.iter_mut().find(|c| c.0 == name) {
+                    Some(c) => c.1 += 1,
+                    None => count.push((name, 1)),
+                }
+                total += 1;
+            }
+        }
+    }
+    count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let ops: Vec<String> = count.iter().take(5).map(|(n, k)| format!("{n} {}%", k * 100 / total.max(1))).collect();
+    let (on, selfs, largest, pops) = genomes.first().map_or((0, 0, 0, 0), |g| g.loops());
+    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels", if ops.is_empty() { "none".into() } else { ops.join(", ") })
+}
+
 /// The probes where `a` scores at least `NOTICE` above `b`, named.
 fn above(a: &ProbeRow, b: &ProbeRow, only: &[usize]) -> Vec<String> {
     only.iter().filter(|&&p| a[p] - b[p] >= NOTICE).map(|&p| PROBES[p].to_string()).collect()
@@ -611,6 +635,7 @@ fn main() {
                 let at = if isl.stages.len() > 1 { format!("  [stage {} {}, {} generations]", r.stage[i], st.name, r.held[i]) } else { String::new() };
                 println!("      {:<11}{}  {:>5}  {:>5}  reads {} writes {}  (population, training){at}", isl.name, row(&r.means[i], &st.probes), r.work[i], best.tokens.len(), rd.join("+"), wr.join("+"));
                 println!("      {:<11}{}  (its best, held out)", "", row(&probe_means(&h[0].probes), &st.probes));
+                println!("      {:<11}{}  (the elite's ops; its best's loops)", "", ops_and_loops(&r.ranked[i][..elite.min(r.ranked[i].len())]));
             }
         }
     });

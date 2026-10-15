@@ -568,6 +568,37 @@ impl TagGenome {
         (r, w)
     }
 
+    /// How recursive it is, on its channel graph (channels the nodes, populations the edges):
+    /// (populations on a loop, of them self-loops, the largest loop's channels, populations). A
+    /// population is on a loop if it writes the channel it reads, or both its channels lie on one
+    /// cycle; the senses and the act are never on one (nothing writes the senses, nothing reads
+    /// the act).
+    pub fn loops(&self) -> (usize, usize, usize, usize) {
+        let g = self.graph();
+        let scc = petgraph::algo::tarjan_scc(&g);
+        let mut comp = vec![0usize; g.node_count()];
+        let mut size = vec![0usize; scc.len()];
+        for (c, nodes) in scc.iter().enumerate() {
+            size[c] = nodes.len();
+            for n in nodes {
+                comp[n.index()] = c;
+            }
+        }
+        let (mut on, mut selfs, mut largest) = (0, 0, 0);
+        for e in g.edge_indices() {
+            let (a, b) = g.edge_endpoints(e).unwrap();
+            if a == b {
+                on += 1;
+                selfs += 1;
+                largest = largest.max(1);
+            } else if comp[a.index()] == comp[b.index()] {
+                on += 1;
+                largest = largest.max(size[comp[a.index()]]);
+            }
+        }
+        (on, selfs, largest, g.edge_count())
+    }
+
     /// Its blind control: every population that reads the senses (or one sense) reads the self
     /// channel instead, so the same circuit runs with nothing from the world.
     pub fn blind(&self) -> TagGenome {
@@ -1488,6 +1519,18 @@ mod tests {
         // no limit: the whole circuit
         let mut h = TagGenome { tokens: vec![], next_id: 1 };
         assert_eq!(h.take_population_plasmid_upto(&donor, 2, 0, &mut rng).len(), 6);
+    }
+
+    #[test]
+    fn loops_count_self_loops_and_cycles_through_channels() {
+        let (a, b, c) = (0x3C, 0xC3, 0x5A);
+        let ch = |t: u8| Token::Channel { tag: t, width: 0, hold: false };
+        // senses -> A, A -> B, B -> A (a loop of two), C -> C (a self-loop), B -> act
+        let pops = [Pop::wire(1, SENSES, a), Pop::wire(2, a, b), Pop::wire(3, b, a), Pop::wire(4, c, c), Pop::wire(5, b, ACT)];
+        let mut tokens = vec![ch(a), ch(b), ch(c)];
+        tokens.extend(pops.into_iter().map(Token::Pop));
+        let g = TagGenome { tokens, next_id: 6 };
+        assert_eq!(g.loops(), (3, 1, 2, 5));
     }
 
     #[test]

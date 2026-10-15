@@ -93,3 +93,11 @@ needs.
   lifetimes and lost held out (experiment 11 and the 24-lifetime run after it). Starting cells
   are also drawn per lifetime now; before, they were the same in every lifetime of a genome, so
   a lucky draw could be selected like a gene.
+- **Islands and ladders** (experiment 13).
+  - Islands are populations pressed on different probes. They trade one-population plasmids
+    every 20 generations and are checkpointed so a change can be added to a running experiment.
+  - A ladder gives an island stages, each with its own world (`Lesson`) and a goal its population
+    must hold for 3 generations.
+  - Reading climbs babble, then echo, then the teacher fading. Switching climbs respond, tell,
+    win-stay, discriminate, then swaps. Recall climbs longer delays. Prediction is scored by
+    surprise at a broken cycle. Shapes tell apart distorted lights.

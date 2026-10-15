@@ -63,3 +63,6 @@ The root cause matters more than the symptom: most failures came from a few recu
 - A fast loop ran inside slow learning, which was off at test.
 - `HashMap` seeds were random per process (non-deterministic runs).
 - A build without hardware popcount.
+- A probe compared lags each counted from its own start, so near lags had more chances to match
+  than far ones (a blind speaker scored echo 85; experiment 13).
+- A curriculum's world settings did not reach the lifetimes the probes ran in (experiment 13).

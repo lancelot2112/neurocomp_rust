@@ -173,3 +173,22 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     one. A kernel spread across a wide field pays for its mask's whole extent if its mask is
     dense; a sparse kernel (the words it touches) pays for its lines, about 6x cheaper at
     131,072 bits.
+36. **Every probe needs a blind control, under every world it is scored in (experiments 12,
+    13).** A genome that sees nothing must score about 0. Blind controls caught:
+    - a clock-locked clicker scoring respond > 900;
+    - near lags counted with more chances than far ones (a blind speaker's echo 85 with 2
+      tokens, 10 with 8);
+    - copy and win-stay scores from genomes that read no port.
+    A stage's world can make a bias the plain world hides.
+37. **A capacity is reachable only one circuit at a time (experiment 13).**
+    - Copy needs two learned maps chained (glyph to sound, sound to voice) and scored 0 for 100
+      generations on every island. Break such a capacity into stages scored alone, each one
+      circuit beyond the last: babble, echo, then the teacher fading.
+    - A ladder moves an island when the step is one circuit. Switching went from reading no port
+      to passing respond in about 30 generations, then passed tell at once.
+38. **Judge an elite on many fresh worlds, not the top genome on a few (experiment 13).**
+    - One genome's mean on 12 held-out worlds moves by about ±25-50, enough to fake a skill
+      twice in one run.
+    - Lexicase's top genome changes almost every generation, and a capacity most of the
+      population holds can be missing from it.
+    - Report on 48 held-out worlds and recheck claims on 64 fresh ones (`examples/recheck`).

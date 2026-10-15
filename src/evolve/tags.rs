@@ -1527,7 +1527,7 @@ mod tests {
         // a wire copying all the senses (32 words a step) into a channel
         let h = 0x3C;
         let copy = Pop { cover: true, ..Pop::wire(1, SENSES, h) };
-        let g = TagGenome { tokens: vec![Token::Channel { tag: h, width: 5, hold: false }, Token::Pop(copy)], next_id: 2 };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: h, width: 5, hold: false }, Token::Pop(copy.clone())], next_id: 2 };
         let task = Task::Conditioning(Conditioning::Delayed, 40);
         let run = |ration: u64, food: u64| live_lesson(&g, task, Physics::Varied, 1, 0, Lesson { ration, food, ..Lesson::default() });
         let (ev, free) = run(0, 0);
@@ -1541,6 +1541,14 @@ mod tests {
         // a network that costs less than its ration never rests
         let cheap = TagGenome { tokens: vec![], next_id: 1 };
         assert_eq!(live_lesson(&cheap, task, Physics::Varied, 1, 0, Lesson { ration: 4, food: 0, ..Lesson::default() }).1, 0);
+        // it eats what it scores: the same costly network, babbling as well (a varied voice
+        // scores babble in a reading lifetime), runs more of its lifetime with food than without
+        let babble = Pop { count: 8, tonic: 1, ..Pop::new(2, SELF, ACT) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: h, width: 5, hold: false }, Token::Pop(copy), Token::Pop(babble)], next_id: 3 };
+        let read = Task::Reading(200);
+        let fed = |food: u64| live_lesson(&g, read, Physics::Varied, 1, 0, Lesson { ration: 4, food, ..Lesson::default() }).1;
+        let (hungry, eating) = (fed(0), fed(4 * 256));
+        assert!(eating > 2 * hungry, "eating {eating}, hungry {hungry}");
     }
 
     #[test]

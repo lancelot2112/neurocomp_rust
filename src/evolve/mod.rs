@@ -261,13 +261,17 @@ pub struct Lesson {
     pub screen_cell: usize,
     pub screen_walls: usize,
     pub screen_torch: bool,
-    /// energy, 0: none. Each step the network gets `ration` and pays its work; each stroke it
-    /// feels is food, `food` more. The store starts at 64 rations and holds at most 256; while it
-    /// is below 0 the network rests (it does not run or act) and the ration refills it. So
-    /// compute beyond the ration must be earned, and a task with no strokes lives on the ration.
+    /// energy, 0: none. Each step the network gets `ration` and pays its work; and it eats what it
+    /// scores: every `FOOD_BLOCK` steps the lifetime's last block is scored by its task's probes,
+    /// and each 1024 points (positive scores only) are `food` more. The store starts at 64 rations
+    /// and holds at most 256; while it is below 0 the network rests (it does not run or act) and
+    /// the ration refills it. So compute beyond the ration must be earned by scoring.
     pub ration: u64,
     pub food: u64,
 }
+
+/// Steps a lifetime is scored over for its food (`Lesson::food`).
+pub const FOOD_BLOCK: usize = 50;
 
 /// The default energy for lessons made from now on (`Lesson::ration`, `Lesson::food`): an
 /// experiment's binary sets it once, before any lesson is made. 0: none.
@@ -351,10 +355,25 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     // energy (`Lesson::ration`): the store, below 0 the network rests
     let (ration, food) = (lesson.ration as i64, lesson.food as i64);
     let mut store = ration.saturating_mul(64);
+    let mut block = 0usize;
     while !w.done() {
         let senses = w.step(&act);
         if ration > 0 {
-            let fed = if w.events.last().is_some_and(|e| e.stroked) { food } else { 0 };
+            // it eats what it scores: the last block of steps, by its task's probes
+            let mut fed = 0i64;
+            if w.events.len() - block >= FOOD_BLOCK {
+                let (b, e): (&[world::Event], &[world::Event]) = (&w.events[block..], &[]);
+                let row = match task {
+                    Task::Reversal { period, .. } => observe::probes(b, period, e, e, e, e, e),
+                    Task::Conditioning(..) => observe::probes(e, 1, b, e, e, e, e),
+                    Task::Reading(_) => observe::probes(e, 1, e, b, e, e, e),
+                    Task::Sequence(_) => observe::probes(e, 1, e, e, b, e, e),
+                    Task::Maze(_) => observe::probes(e, 1, e, e, e, b, e),
+                    Task::Screen(_) => observe::probes(e, 1, e, e, e, e, b),
+                };
+                fed = food.saturating_mul(row.iter().map(|&x| x.max(0) as i64).sum::<i64>()) / 1024;
+                block = w.events.len();
+            }
             store = (store + ration + fed).min(ration.saturating_mul(256));
             if store < 0 {
                 act = BitVector::new(world::ACT_BITS, Some(0));

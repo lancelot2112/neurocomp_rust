@@ -146,3 +146,5 @@ difference to an island.
 - **Plasmids spread by lineage as much as by use.** Helping on arrival and spreading come apart.
   Run 5 tests plasmids as bacteria keep them (small units, exclusion, a carrying cost) together
   with the op choice (an op mutation of its own, no redundant `rotr`).
+
+Runs 5 to 7, which build on this runtime, are experiment 15.

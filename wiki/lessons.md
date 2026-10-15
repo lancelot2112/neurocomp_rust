@@ -205,3 +205,16 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     wide channel scanned all of its tiles every step, 120 of 131 thread-seconds on one genome,
     and reads were not counted as work. So the costliest genomes looked cheap. Profile before
     you optimise: copying reads and clearing channels, the first suspects, cost little.
+41. **Fixed training worlds get fitted; draw them fresh each generation (experiment 15).** With
+    the same 12 worlds every generation, maze's elite wired the hand's codes those worlds drew
+    instead of learning them each lifetime. It scored 476-658 on them and -69 to -177 on fresh
+    worlds, so a held-out check stopped it but evolution spent 50 generations there. Compare
+    the genomes of a generation on the same worlds, but not the same worlds every generation.
+42. **Check that a rung asks what you think it asks (experiment 15).** Screen's torch was meant
+    to be a respond, but the cursor's mark was always on the eye, so it was a tell, and three
+    runs scored about 0. A hand-written policy for the intended skill, tried on the rung (here
+    "click at anything seen"), shows it at once.
+43. **Make compute earn its keep (experiment 15).** Energy that a network eats by scoring and
+    spends on work (a ration a step, food for each 1024 points) cut runaway genomes, which
+    had set a generation's time at 10-40 times their island's best, without costing any
+    capacity. Run 6 was 3-10 times faster per genome than run 5.

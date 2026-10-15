@@ -89,4 +89,28 @@ Run 6 plus:
 
     runs/run7.cmd (started with Win32_Process.Create, so it outlives the session)
 
-Results to follow in `runs/islands7`.
+**Result** (`runs/islands7`, 600 generations in 50 minutes).
+
+| island | run 6 | run 7 |
+|---|---|---|
+| shapes | clean to win-stay at 147-159 | clean to win-stay at 61-83 |
+| reading | echo2 at 268 | echo2 at 129 |
+| switching | to swap1 by 153 | tell 91, win-stay 94, then stuck (mean 3 over 500 generations) |
+| recall | lag4 by 173 | lag1 at 399 |
+| maze | fitted its worlds | honest: mean 37, best 275 on turn |
+| screen | about 0 on the torch | mean 45, best 126 on the dark torch |
+
+Final bests rescored on 48 fresh worlds (plain world; blind controls about 0 throughout): shapes
+told the lights apart at 318 (run 6: 231), recall at 277 (235), prediction at 277 (165).
+
+The dark torch and the lighter carrying cost did what they were for. Fresh worlds removed the
+fitting, but they also made every generation's population mean swing by 50-100. A goal met 3
+generations in a row on 12 such worlds became rare, so switching, shapes and recall, which each
+got near a goal many times, mostly stopped climbing. The held-out check on 48 worlds is the
+reliable test of a stage, and holding 3 in a row on few noisy worlds now only delays it.
+
+## Run 8: more training worlds, a goal held once
+
+Run 7 plus `ISL_LIVES=24` (24 training worlds, halving the noise of a mean) and `ISL_HOLD=1`
+(the goal met once on the training worlds, then the held-out check on 48 decides). 600
+generations, `runs/run8.cmd`. Results to follow in `runs/islands8`.

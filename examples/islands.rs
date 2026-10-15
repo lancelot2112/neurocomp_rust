@@ -74,7 +74,7 @@
 //! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
 //! `;`, each `name key=value ...` with keys `probes` (probe names joined by `+`), `tokens`,
 //! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `maze`, `gone` and `symbol` (the T-maze), `sw`, `sh`, `lit`, `cell`, `walls`, `torch` and `dark` (the screen), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
-//! delayed light to the response window), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
+//! delayed light to the response window), `goal` (`probe@score`, joined by `+`) and `hold` (`ISL_HOLD`, 3: generations in a row the goal is met on the training worlds before the held-out check). The cross-island table
 //! at each exchange is always in the plain world, on every probe.
 //!
 //! Checkpoints (also every `ISL_CKPT` generations, if set): at every exchange each island's whole population is written to `ISL_CHECKPOINT`
@@ -219,7 +219,7 @@ fn ladder(text: &str) -> Vec<Stage> {
     text.split(';').filter(|x| !x.trim().is_empty()).map(|st| {
         let mut it = st.split_whitespace();
         let name = it.next().unwrap_or("stage").to_string();
-        let mut stage = Stage { name, probes: vec![], lesson: Lesson::default(), goal: vec![], hold: 3 };
+        let mut stage = Stage { name, probes: vec![], lesson: Lesson::default(), goal: vec![], hold: env("ISL_HOLD", 3) };
         for kv in it {
             let (k, v) = kv.split_once('=').expect("key=value");
             match k {

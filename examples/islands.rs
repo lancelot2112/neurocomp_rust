@@ -245,13 +245,17 @@ const PREDICTION_LADDER: &str = "cycle1 probes=surprise period=1 noise=1 goal=su
 /// Shapes' ladder: the two lights become shapes, a fresh exemplar every trial (each line moved
 /// within its word with chance `blur` in 8, the whole pattern rotated by up to `shift` lines,
 /// which carries it into other words and tiles), and the program must still tell them apart;
-/// then prefer the paying one. No swaps, so only the shapes are hard.
+/// then repeat what was stroked (win-stay, as switching's ladder: shapes' best told the shapes
+/// apart, tell 191 held out, but clicked the stroked one less, win-stay -112, discriminate
+/// -108), then prefer the paying one, then follow one swap of it.
 const SHAPES_LADDER: &str = "clean probes=respond+tell swaps=0 goal=tell@150; \
     blur1 probes=respond+tell swaps=0 blur=1 goal=tell@150; \
     blur2 probes=respond+tell swaps=0 blur=2 goal=tell@150; \
     shift8 probes=respond+tell swaps=0 blur=1 shift=8 goal=tell@120; \
     shift64 probes=respond+tell swaps=0 blur=2 shift=64 goal=tell@100; \
-    paying probes=respond+tell+discriminate swaps=0 blur=2 shift=16";
+    winstay probes=respond+tell+win-stay swaps=0 blur=2 shift=16 goal=win-stay@80; \
+    paying probes=respond+tell+win-stay+discriminate swaps=0 blur=2 shift=16 goal=discriminate@100; \
+    swap1 probes=respond+tell+discriminate+reverse swaps=1 blur=2 shift=16";
 
 /// Maze's ladder: a T-maze, stroked at the food's arm. Turn to the side the cue is on with no stem,
 /// then walk a stem of 2 first, then with the cue only at the stem's foot (remember the side), a

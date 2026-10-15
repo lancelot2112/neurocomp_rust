@@ -2,7 +2,9 @@
 //! a held-out score from noise. `RCK_FILE` (checkpoint.txt), `RCK_WORLDS` (64), `RCK_TRIALS`
 //! (200), `RCK_GAP` (6), `RCK_FROM` (50,000: the first world seed), `RCK_TOP` (1: how many of
 //! each island's ranked genomes, from the top), `RCK_DELAY` (3: steps from the delayed light to
-//! the response window, for remember), `RCK_BLIND` (0; 1: each genome's blind control too).
+//! the response window, for remember), `RCK_BLIND` (0; 1: each genome's blind control too),
+//! `RCK_SWAPS` (3), `RCK_BLUR` (0) and `RCK_SHIFT` (0) (the reversal lifetime: shapes' stages),
+//! `RCK_ISLAND` (all: only the island of that name).
 
 use neurocomp::evolve::tags::TagGenome;
 use neurocomp::evolve::{probe_all_in, probe_means, Lesson, Physics, ALL_PROBES};
@@ -19,7 +21,8 @@ fn main() {
     let gap: usize = env("RCK_GAP", 6);
     let from: u64 = env("RCK_FROM", 50_000);
     let top: usize = env("RCK_TOP", 1);
-    let lesson = Lesson { delay: env("RCK_DELAY", 3), ..Lesson::default() };
+    let lesson = Lesson { delay: env("RCK_DELAY", 3), swaps: env("RCK_SWAPS", 3), blur: env("RCK_BLUR", 0), shift: env("RCK_SHIFT", 0), ..Lesson::default() };
+    let only = std::env::var("RCK_ISLAND").ok();
     let blind = env("RCK_BLIND", 0u8) == 1;
     let worlds: Vec<u64> = (from..from + n).collect();
     let text = std::fs::read_to_string(&path).expect("checkpoint");
@@ -27,6 +30,7 @@ fn main() {
     println!("{:<11}{names}   reads / writes  ({n} worlds)", "");
     for part in text.split("island ").skip(1) {
         let (head, body) = part.split_once('\n').unwrap_or((part, ""));
+        if only.as_deref().is_some_and(|o| head.split_whitespace().next() != Some(o)) { continue }
         let gs = TagGenome::from_text(body).expect("genomes");
         let picked: Vec<(String, TagGenome)> = gs.iter().take(top).enumerate().flat_map(|(k, g)| {
             let mut v = vec![(format!("rank {k}"), g.clone())];

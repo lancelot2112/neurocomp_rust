@@ -804,7 +804,8 @@ pub struct IslandGeneration<G> {
 /// a checkpoint can be resumed). An island whose population meets its stage's goal for the
 /// stage's `hold` generations in a row moves to the next stage, if its elite also meets the goal
 /// on the `held_out` worlds (none: no check), so a population fitted to its training worlds does
-/// not climb; until it does, it is checked again each generation the training goal holds.
+/// not climb (and with `fresh` the training worlds are new each generation, so there is no fixed
+/// set to fit); until it does, it is checked again each generation the training goal holds.
 pub fn evolve_islands<G: Evolvable>(
     islands: &[Island],
     start: Vec<Vec<G>>,
@@ -814,6 +815,7 @@ pub fn evolve_islands<G: Evolvable>(
     trials: usize,
     physics: Physics,
     seeds: &[u64],
+    fresh: bool,
     held_out: &[u64],
     gap: usize,
     elite: usize,
@@ -845,6 +847,10 @@ pub fn evolve_islands<G: Evolvable>(
     let mut met = vec![0usize; k];
     let mut on = vec![0usize; k];
     for generation in first..generations {
+        // (`fresh`: the training worlds are new every generation, the same for every genome in
+        // it, so a population cannot fit a fixed set of worlds: their codes and sequences)
+        let train: Vec<u64> = if fresh { seeds.iter().map(|s| s.wrapping_add((generation as u64 + 1).wrapping_mul(1_000_003))).collect() } else { seeds.to_vec() };
+        let seeds = &train[..];
         let now = stage.clone();
         let mut held = Vec::with_capacity(k);
         let mut met_now = Vec::with_capacity(k);

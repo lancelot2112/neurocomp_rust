@@ -183,10 +183,12 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
             lost += next.3 as i64;
         }
     }
-    // (a side with no clicks counts 0: one that only ever clicks where it is stroked scores its
-    // repeat rate; one that never clicks scores 0)
-    let r = |c: i64, n: i64| if n == 0 { 0 } else { c * 1024 / n };
-    let win_stay = (r(won, won_n) - r(lost, lost_n)) as i32;
+    // (a lifetime with no stroked click to compare against an unstroked one scores 0: with no
+    // swaps a light either always pays or never does, so a clicker that ignores strokes and keeps
+    // to one light had only one side, and scored +1024 or -1024 by which light it kept to, a
+    // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
+    // did not pay once, and stops)
+    let win_stay = if won_n == 0 || lost_n == 0 { 0 } else { (won * 1024 / won_n - lost * 1024 / lost_n) as i32 };
     [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events)]
 }
 
@@ -707,12 +709,57 @@ mod tests {
         // the blind and any-light clickers average 0 on tell and reverse (no noise bias)
         assert!(blind[1].abs() < 80 && blind[3].abs() < 120 && any_light[3].abs() < 120, "{blind:?} {any_light:?}");
         assert!(follows[2] > 800 && follows[3] > 800, "{follows:?}");
-        // win-stay: 0 for clickers that ignore strokes (blind, any light, light A only); high for
-        // the one whose clicks follow what pays
+        // win-stay: 0 for clickers that ignore strokes (blind, any light, light A only); the
+        // oracle, which almost never clicks the light that does not pay, has little to compare
+        // (a learner that does is `win_stay_scores_a_learner_and_not_a_stubborn_clicker`)
         assert!(blind[5].abs() < 80 && any_light[5].abs() < 80 && light_a[5].abs() < 80, "{blind:?} {any_light:?} {light_a:?}");
-        assert!(follows[5] > 500, "{follows:?}");
+        assert!(follows[5] > -80, "{follows:?}");
         // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
         assert!(blind[4] > 500, "{blind:?}");
+    }
+
+    #[test]
+    fn win_stay_scores_a_learner_and_not_a_stubborn_clicker() {
+        // policies that see only the eye and the affect channel: a learner clicks a light (on its
+        // second step, inside the window) unless its last click went unstroked; a stubborn one
+        // always clicks the first light it saw. With no swaps and with swaps every 50 trials, on
+        // 12 worlds each
+        let run = |learner: bool, period: usize, seed: u64| -> i32 {
+            let mut w = World::new(seed, 4);
+            (w.gap_max, w.reversal_period) = (6, period);
+            w.conditioning(Conditioning::Reversal, 200);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let (mut lights, mut first, mut clicked, mut before): (Vec<(Vec<u64>, Option<bool>)>, Option<Vec<u64>>, Option<usize>, bool) = (vec![], None, None, false);
+            while !w.done() {
+                let eye = channel(&senses, EYE).as_words().to_vec();
+                let shown = eye.iter().any(|&x| x != 0);
+                if channel(&senses, AFFECT).count_ones() > 0 {
+                    if let Some(k) = clicked.take() { lights[k].1 = Some(true) }
+                }
+                if shown && !before {
+                    if let Some(k) = clicked.take() { lights[k].1 = Some(false) }
+                }
+                let second = shown && before;
+                before = shown;
+                let mut hand = None;
+                if second && clicked.is_none() {
+                    let k = lights.iter().position(|l| l.0 == eye).unwrap_or_else(|| { lights.push((eye.clone(), None)); lights.len() - 1 });
+                    first.get_or_insert(eye.clone());
+                    if if learner { lights[k].1 != Some(false) } else { first.as_ref() == Some(&eye) } {
+                        hand = Some(CLICK);
+                        clicked = Some(k);
+                    }
+                }
+                let a = w.act(None, hand);
+                senses = w.step(&a);
+            }
+            probes(&w.events, period, &[], &[], &[], &[], &[])[5]
+        };
+        for period in [200, 50] {
+            let mean = |learner: bool| (0..12u64).map(|s| run(learner, period, 100 + s)).sum::<i32>() / 12;
+            let (l, s) = (mean(true), mean(false));
+            assert!(l > 500 && s.abs() < 80, "period {period}: learner {l}, stubborn {s}");
+        }
     }
 
     #[test]

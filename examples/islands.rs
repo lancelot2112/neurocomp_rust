@@ -46,6 +46,14 @@
 //! `repeat` probe scores a learner high and a turner that ignores strokes 0. Win-stay, with the
 //! probe fixed, averaged about 0 in run 9: no genome learned from reward.
 //!
+//! `ISL_EPI=1`: epigenetic marks. Each population's lifetimes count its predictions that came
+//! true; its mark becomes half the old one plus 16 for each doubling, children inherit it, and
+//! mutation duplicates a marked population more often and deletes it less often.
+//! `ISL_EXPLORE=1` (with `ISL_EPI`): a population whose kernels all go 64 steps without firing
+//! grows, once a lifetime, a trial connection (an XOR population reading its destination and
+//! writing back into its source, or the destination); one whose predictions come true 16 times
+//! or more over a generation's lifetimes is added to the genome, tagged `explored`.
+//!
 //! `ISL_FRONTIER=1`: the generalist is scored at the frontier, on each other island's current
 //! stage (its probes, in its world; each probe from the first island that has it), not on all
 //! twelve probes in the plain world. In the plain world most probes are the top of another
@@ -207,7 +215,12 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
     count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     let ops: Vec<String> = count.iter().take(5).map(|(n, k)| format!("{n} {}%", k * 100 / total.max(1))).collect();
     let (on, selfs, largest, pops) = genomes.first().map_or((0, 0, 0, 0), |g| g.loops());
-    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels", if ops.is_empty() { "none".into() } else { ops.join(", ") })
+    // (explored: populations kept from exploration; marked: populations with a mark, and the mean)
+    let all: Vec<&Pop> = genomes.iter().flat_map(|g| g.tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p) } else { None })).collect();
+    let explored = all.iter().filter(|p| p.explored).count();
+    let marked: Vec<u32> = all.iter().filter(|p| p.mark > 0).map(|p| p.mark as u32).collect();
+    let marks = if marked.is_empty() { String::new() } else { format!("; marked {} (mean {})", marked.len(), marked.iter().sum::<u32>() / marked.len() as u32) };
+    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
 }
 
 /// The probes where `a` scores at least `NOTICE` above `b`, named.
@@ -375,6 +388,8 @@ fn main() {
     neurocomp::program::neurocomp::set_count_reads(env("ISL_READS", 0u8) == 1);
     neurocomp::evolve::set_carry(env("ISL_CARRY", 0u64));
     neurocomp::kernel::class::set_op_choice(env("ISL_OPS", 0u8) == 1);
+    neurocomp::evolve::set_epigenetics(env("ISL_EPI", 0u8) == 1);
+    neurocomp::program::neurocomp::set_explore(env("ISL_EXPLORE", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
     let ration: u64 = env("ISL_RATION", 0);
@@ -467,8 +482,8 @@ fn main() {
             }
         }
     }
-    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1);
+    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}",
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore());
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
@@ -514,7 +529,7 @@ fn main() {
         let k = rng.gen_range(0..donor.populations());
         let moved = child.take_population_plasmid_upto(donor, k, plasmid_max, rng);
         // (the same population but for its id and channel tags)
-        let bare = |p: &Pop| Pop { id: 0, from: 0, to: 0, gate: p.gate.map(|(_, on)| (0, on)), pause: p.pause.map(|(_, on)| (0, on)), ..p.clone() };
+        let bare = |p: &Pop| Pop { id: 0, from: 0, to: 0, gate: p.gate.map(|(_, on)| (0, on)), pause: p.pause.map(|(_, on)| (0, on)), mark: 0, explored: false, ..p.clone() };
         // exclusion: a recipient that already carries every population of it takes nothing (two
         // copies of one circuit would pile up, as a cell holds one plasmid of a kind)
         if exclude && moved.iter().all(|t| match t { Token::Pop(q) => recipient.tokens.iter().any(|r| matches!(r, Token::Pop(p) if bare(p) == bare(q))), _ => true }) {

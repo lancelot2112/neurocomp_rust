@@ -79,6 +79,9 @@ pub trait Evolvable: Clone + Send + Sync {
     fn mutate(&self, rng: &mut StdRng) -> Self;
     /// A size (reported).
     fn size(&self) -> usize;
+    /// What its lifetimes found (`Note`s, summed over worlds), written into the genome: by default
+    /// nothing (the tag grammar's epigenetic marks and explored connections).
+    fn inherit(&mut self, _notes: &[Note]) {}
     /// A child of this genome and another: part from each (recombination). By default, this one.
     fn crossover(&self, _other: &Self, _rng: &mut StdRng) -> Self {
         self.clone()
@@ -296,6 +299,42 @@ impl Default for Lesson {
     }
 }
 
+/// What a lifetime found about one population, for its genome: (its id, a count, a kind). Kind
+/// 0: its kernels' predictions that came true. Kind 1 or 2: a trial connection grown from it by
+/// exploration (back into its source, or on its destination), and that trial's predictions that
+/// came true.
+pub type Note = (u32, u32, u8);
+
+thread_local! {
+    /// The notes of the lifetimes run on this thread, while a probing job collects them (each
+    /// job runs on one thread, so a lifetime adds to its own job's).
+    static NOTES: std::cell::RefCell<Option<Vec<Note>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Notes summed by (id, kind).
+fn merge_notes(notes: impl IntoIterator<Item = Note>) -> Vec<Note> {
+    let mut out: Vec<Note> = Vec::new();
+    for (id, c, k) in notes {
+        match out.iter_mut().find(|n| n.0 == id && n.2 == k) {
+            Some(n) => n.1 = n.1.saturating_add(c),
+            None => out.push((id, c, k)),
+        }
+    }
+    out
+}
+
+/// The epigenetic marks and the keeping of explored connections (`Evolvable::inherit`) are
+/// on for every genome from now on. Off by default.
+static EPIGENETICS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_epigenetics(on: bool) {
+    EPIGENETICS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn epigenetics() -> bool {
+    EPIGENETICS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// `live_work` in a world set by a lesson.
 pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, gap: usize, lesson: Lesson) -> (Vec<world::Event>, u64) {
     let p = match physics {
@@ -392,6 +431,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         act = net.read_output().clone();
         store -= (net.work - before).min(i64::MAX as u64 / 4) as i64;
     }
+    NOTES.with(|n| if let Some(v) = n.borrow_mut().as_mut() { v.extend(net.notes()) });
     (w.events, net.work)
 }
 
@@ -563,6 +603,8 @@ pub struct Probed<G> {
     pub works: Vec<u64>,
     pub work: u64,
     pub genome: G,
+    /// what its lifetimes found (summed over worlds)
+    pub notes: Vec<Note>,
 }
 
 /// Each genome's probes in each seed, spread over the machine's cores (a genome whose network
@@ -594,6 +636,7 @@ pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Ph
     let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).max(1).min(jobs.max(1));
     let next = std::sync::atomic::AtomicUsize::new(0);
     let mut results: Vec<(observe::ProbeRow, u64)> = vec![([0; observe::NPROBES], 0); jobs];
+    let mut notes: Vec<Vec<Note>> = vec![Vec::new(); jobs];
     std::thread::scope(|sc| {
         let handles: Vec<_> = (0..threads)
             .map(|_| {
@@ -606,17 +649,20 @@ pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Ph
                             break;
                         }
                         let (g, s) = (&population[j / seeds.len()], seeds[j % seeds.len()]);
+                        NOTES.with(|n| *n.borrow_mut() = Some(Vec::new()));
                         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| probe_scores_in(g, trials, physics, s, gap, wanted, lesson)))
                             .unwrap_or(([-1024; observe::NPROBES], u64::MAX / 2));
-                        done.push((j, r));
+                        let found = NOTES.with(|n| n.borrow_mut().take()).unwrap_or_default();
+                        done.push((j, r, found));
                     }
                     done
                 })
             })
             .collect();
         for h in handles {
-            for (j, r) in h.join().unwrap() {
+            for (j, r, found) in h.join().unwrap() {
                 results[j] = r;
+                notes[j] = found;
             }
         }
     });
@@ -629,7 +675,8 @@ pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Ph
             let cost = carry * g.size() as u64;
             let works: Vec<u64> = r.iter().map(|x| x.1.saturating_add(cost)).collect();
             let work = works.iter().sum::<u64>() / seeds.len().max(1) as u64;
-            Probed { probes: r.iter().map(|x| x.0).collect(), works, work, genome: g }
+            let found = merge_notes(notes[i * seeds.len()..(i + 1) * seeds.len()].iter().flatten().copied());
+            Probed { probes: r.iter().map(|x| x.0).collect(), works, work, genome: g, notes: found }
         })
         .collect()
 }
@@ -875,6 +922,7 @@ pub fn evolve_islands<G: Evolvable>(
                 let mut wanted: Vec<usize> = Vec::new();
                 let mut rows = vec![vec![[0i32; observe::NPROBES]; seeds.len()]; genomes.len()];
                 let mut works = vec![vec![0u64; seeds.len()]; genomes.len()];
+                let mut found: Vec<Vec<Note>> = vec![Vec::new(); genomes.len()];
                 for (j, other) in islands.iter().enumerate() {
                     if j == i || other.frontier {
                         continue;
@@ -892,16 +940,25 @@ pub fn evolve_islands<G: Evolvable>(
                             }
                             works[g][k] = works[g][k].saturating_add(s.works[k]);
                         }
+                        found[g].extend(&s.notes);
                     }
                 }
                 let scored: Vec<Probed<G>> = genomes.into_iter().enumerate().map(|(g, genome)| {
                     let work = works[g].iter().sum::<u64>() / seeds.len().max(1) as u64;
-                    Probed { probes: rows[g].clone(), works: works[g].clone(), work, genome }
+                    Probed { probes: rows[g].clone(), works: works[g].clone(), work, genome, notes: merge_notes(found[g].iter().copied()) }
                 }).collect();
                 (scored, wanted)
             } else {
                 (probe_all_in(pops[i].drain(..).collect(), trials, physics, seeds, gap, &st.probes, st.lesson), st.probes.clone())
             };
+            // what each genome's lifetimes found goes into it before it breeds (its marks, and any
+            // explored connection it keeps), so the elite and the children carry it
+            let mut scored = scored;
+            for s in scored.iter_mut() {
+                let notes = std::mem::take(&mut s.notes);
+                s.genome.inherit(&notes);
+                s.notes = notes;
+            }
             let (order, children) = lexicase_breed(&scored, &wanted, thrift, pop, elite, &mut rng);
             let m: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
             let mean = probe_means(&m);

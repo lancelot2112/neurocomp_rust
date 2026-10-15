@@ -268,6 +268,9 @@ pub struct World {
     /// programs built for this world count the words their kernel populations read as work;
     /// default: the process's (`neurocomp::set_count_reads`)
     pub count_reads: bool,
+    /// programs built for this world explore: a stuck population grows a trial connection;
+    /// default: the process's (`neurocomp::set_explore`)
+    pub explore: bool,
     cursor_mark: u64,
     wall_mark: u64,
     screen_total: usize,
@@ -395,6 +398,7 @@ impl World {
             screen_dark: false,
             in_place: crate::program::neurocomp::in_place(),
             count_reads: crate::program::neurocomp::count_reads(),
+            explore: crate::program::neurocomp::explore(),
             cursor_mark: {
                 let mut c = StdRng::seed_from_u64(physics ^ 0xC025);
                 let lines: Vec<u64> = (0..64).collect();

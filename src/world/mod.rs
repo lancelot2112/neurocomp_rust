@@ -194,6 +194,12 @@ pub struct World {
     pub delay: usize,
     scene: Scene,
     stroke_next: bool,
+    /// serial reversal: shapes, not fixed lights. Each trial shows a fresh exemplar of its light:
+    /// each line moved, with chance `blur` in 8, to another place in its word, and the whole
+    /// pattern rotated by 0 to `shift` lines across the eye (0 and 0, the default: the light as is)
+    pub blur: u32,
+    pub shift: usize,
+    exemplar: Option<BitVector>,
     present: bool,
     pub events: Vec<Event>,
 }
@@ -230,6 +236,45 @@ fn put(v: &mut BitVector, ch: usize, x: &BitVector) {
 }
 
 impl World {
+    /// An exemplar of a code: each line moved, with chance `blur` in 8, to a line off in its word,
+    /// then the whole code rotated by 0 to `shift` lines (draws from the world's own stream).
+    fn distort(&mut self, code: &BitVector) -> BitVector {
+        let mut w: Vec<u64> = code.as_words().to_vec();
+        if self.blur > 0 {
+            for word in w.iter_mut() {
+                let mut x = *word;
+                while x != 0 {
+                    let b = x.trailing_zeros();
+                    x &= x - 1;
+                    if self.rng.gen_ratio(self.blur.min(8), 8) && word.count_ones() < 64 {
+                        // to a random line of the word that is off
+                        let free = !*word;
+                        let k = self.rng.gen_range(0..free.count_ones());
+                        let mut f = free;
+                        for _ in 0..k {
+                            f &= f - 1;
+                        }
+                        *word &= !(1u64 << b);
+                        *word |= 1u64 << f.trailing_zeros();
+                    }
+                }
+            }
+        }
+        let bits = w.len() * 64;
+        let r = if self.shift > 0 { self.rng.gen_range(0..=self.shift) % bits } else { 0 };
+        if r == 0 {
+            return BitVector::from_words(w);
+        }
+        let mut out = vec![0u64; w.len()];
+        for i in 0..bits {
+            if w[i / 64] >> (i % 64) & 1 == 1 {
+                let j = (i + r) % bits;
+                out[j / 64] |= 1 << (j % 64);
+            }
+        }
+        BitVector::from_words(out)
+    }
+
     /// A world with `tokens` distinct tokens (seen, heard and sayable); its physics (every code)
     /// and its draws both come from `seed`.
     pub fn new(seed: u64, tokens: usize) -> Self {
@@ -259,6 +304,9 @@ impl World {
             delay: 3,
             scene: Scene::Idle,
             stroke_next: false,
+            blur: 0,
+            shift: 0,
+            exemplar: None,
             present: false,
             events: Vec::new(),
         }
@@ -359,7 +407,11 @@ impl World {
                     }
                     Conditioning::Reversal => {
                         if (2..=4).contains(&t) {
-                            put(&mut senses, EYE, &self.lights[!cue as usize].clone());
+                            if t == 2 || self.exemplar.is_none() {
+                                let light = self.lights[!cue as usize].clone();
+                                self.exemplar = Some(if self.blur > 0 || self.shift > 0 { self.distort(&light) } else { light });
+                            }
+                            put(&mut senses, EYE, &self.exemplar.clone().unwrap());
                         }
                         if click && (3..=5).contains(&t) && !stroked && pays {
                             self.stroke_next = true;

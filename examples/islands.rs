@@ -8,7 +8,9 @@
 //!   the teacher said a few steps before: the stepping stone, sound to voice with no glyph);
 //! - generalist: all ten (surprise on a cycle of 3 broken one time in 8);
 //! - prediction (`ISL_PREDICTION=1`): surprise, clicking after a token that broke the stream's
-//!   cycle.
+//!   cycle;
+//! - shapes (`ISL_SHAPES=1`): respond, tell and discriminate with the lights distorted into
+//!   shapes, a fresh exemplar every trial.
 //! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (one population of a
 //! donor with the circuit of any channel it touches, made private; or the population alone if it
 //! only reads and writes ports) from the best genomes of other islands into its new children, so a circuit grown under one pressure is tried under another. Each plasmid is
@@ -32,7 +34,7 @@
 //! with the teacher on every token, then the teacher fading (6, 4, 2, 1 in 8) so the glyph must
 //! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
 //! `;`, each `name key=value ...` with keys `probes` (probe names joined by `+`), `tokens`,
-//! `teach` (eighths), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
+//! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
 //! delayed light to the response window), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
 //! at each exchange is always in the plain world, on every probe.
 //!
@@ -78,6 +80,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "delay" => stage.lesson.delay = v.parse().expect("delay"),
                 "period" => stage.lesson.period = v.parse().expect("period"),
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
+                "blur" => stage.lesson.blur = v.parse().expect("blur"),
+                "shift" => stage.lesson.shift = v.parse().expect("shift"),
                 "hold" => stage.hold = v.parse().expect("hold"),
                 "goal" => stage.goal = v.split('+').map(|g| {
                     let (p, x) = g.split_once('@').expect("probe@score");
@@ -129,6 +133,17 @@ const PREDICTION_LADDER: &str = "cycle1 probes=surprise period=1 noise=1 goal=su
     order2 probes=surprise period=6 tokens=3 noise=1 goal=surprise@150; \
     cycle8 probes=surprise period=8 noise=1";
 
+/// Shapes' ladder: the two lights become shapes, a fresh exemplar every trial (each line moved
+/// within its word with chance `blur` in 8, the whole pattern rotated by up to `shift` lines,
+/// which carries it into other words and tiles), and the program must still tell them apart;
+/// then prefer the paying one. No swaps, so only the shapes are hard.
+const SHAPES_LADDER: &str = "clean probes=respond+tell swaps=0 goal=tell@150; \
+    blur1 probes=respond+tell swaps=0 blur=1 goal=tell@150; \
+    blur2 probes=respond+tell swaps=0 blur=2 goal=tell@150; \
+    shift8 probes=respond+tell swaps=0 blur=1 shift=8 goal=tell@120; \
+    shift64 probes=respond+tell swaps=0 blur=2 shift=64 goal=tell@100; \
+    paying probes=respond+tell+discriminate swaps=0 blur=2 shift=16";
+
 /// The world the generalist and the cross-island table use: the plain world, with a cycle of 3
 /// broken one time in 8 for surprise (the plain stream has no pattern to break).
 fn plain() -> Lesson {
@@ -169,6 +184,11 @@ fn main() {
     if env("ISL_PREDICTION", 0u8) == 1 {
         islands.push(Island { name: "prediction".into(), stages: vec![Stage { name: "all".into(), probes: vec![9], lesson: plain(), goal: vec![], hold: 0 }] });
     }
+    // (`ISL_SHAPES=1`: shapes, telling two distorted lights apart; starts naked or from a checkpoint)
+    if env("ISL_SHAPES", 0u8) == 1 {
+        let lesson = Lesson { swaps: 0, blur: 2, shift: 16, ..Lesson::default() };
+        islands.push(Island { name: "shapes".into(), stages: vec![Stage { name: "all".into(), probes: vec![0, 1, 2], lesson, goal: vec![], hold: 0 }] });
+    }
     // (`ISL_LADDERS=1`: the default ladders; `ISL_LADDER_<island>`: one's own)
     let ladders = env("ISL_LADDERS", 0u8) == 1;
     for isl in islands.iter_mut() {
@@ -180,6 +200,7 @@ fn main() {
                 "switching" => isl.stages = ladder(SWITCHING_LADDER),
                 "recall" => isl.stages = ladder(RECALL_LADDER),
                 "prediction" => isl.stages = ladder(PREDICTION_LADDER),
+                "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 _ => {}
             }
         }

@@ -1,7 +1,8 @@
 //! Why do sense readers not survive selection? The probes and work per step of a few one- or
 //! two-population genomes, over `PC_N` worlds (default 64), gaps of 0-6 steps between trials.
 //! `PC_TOKENS` and `PC_TEACH` set the reading lesson (default the plain world: 8 tokens, 4/8);
-//! `PC_PERIOD` and `PC_NOISE` the surprise stream's cycle and breaks (default none).
+//! `PC_PERIOD` and `PC_NOISE` the surprise stream's cycle and breaks (default none); `PC_BLUR`
+//! and `PC_SHIFT` distort the lights into shapes (default none).
 
 use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, EYE, HAND, SELF, TOUCH, VOICE};
 use neurocomp::evolve::{probe_all_in, probe_means, Lesson, Physics, ALL_PROBES};
@@ -13,7 +14,7 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 
 fn main() {
     let n: u64 = env("PC_N", 64);
-    let lesson = Lesson { tokens: env("PC_TOKENS", 8), teach: env("PC_TEACH", 4), period: env("PC_PERIOD", 0), noise: env("PC_NOISE", 0), ..Lesson::default() };
+    let lesson = Lesson { tokens: env("PC_TOKENS", 8), teach: env("PC_TEACH", 4), period: env("PC_PERIOD", 0), noise: env("PC_NOISE", 0), blur: env("PC_BLUR", 0), shift: env("PC_SHIFT", 0), ..Lesson::default() };
     let c = 0x3C;
     let ch = Token::Channel { tag: c, width: 3, hold: false };
     let to_hand = |p: Pop| Pop { to: HAND, to_port: true, ..p };

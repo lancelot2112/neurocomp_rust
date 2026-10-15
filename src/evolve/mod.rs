@@ -229,8 +229,10 @@ pub fn live_work<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, g
 /// lifetime; how many steps before the response window the delayed light flashes (1 to 5); and
 /// the pattern of a prediction lifetime's stream: a cycle of `period` tokens drawn each lifetime
 /// (0: no pattern, each token drawn alone), each token replaced by a random one with chance
-/// `noise` in 8. The default is the plain world: 8 tokens, the teacher on half of them, 3 swaps, a
-/// delay of 3, no pattern.
+/// `noise` in 8; and how a serial-reversal light is distorted each trial (shapes): `blur` (each
+/// line moved within its word with chance `blur` in 8) and `shift` (the whole light rotated by up
+/// to that many lines). The default is the plain world: 8 tokens, the teacher on half of them, 3
+/// swaps, a delay of 3, no pattern, fixed lights.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Lesson {
     pub tokens: usize,
@@ -239,11 +241,13 @@ pub struct Lesson {
     pub delay: usize,
     pub period: usize,
     pub noise: u32,
+    pub blur: u32,
+    pub shift: usize,
 }
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0 }
     }
 }
 
@@ -260,6 +264,8 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.gap_max = gap;
     w.teacher_rate = lesson.teach;
     w.delay = lesson.delay;
+    w.blur = lesson.blur;
+    w.shift = lesson.shift;
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
@@ -444,8 +450,8 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
 pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize], lesson: Lesson) -> (observe::ProbeRow, u64) {
     let period = (trials / (lesson.swaps + 1)).max(1);
     let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
-    let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_work(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap) } else { (vec![], 0) };
-    let (del, w2) = if want(&[4]) { live_work(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap) } else { (vec![], 0) };
+    let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_lesson(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap, lesson) } else { (vec![], 0) };
+    let (del, w2) = if want(&[4]) { live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap, lesson) } else { (vec![], 0) };
     let (seq, w3) = if want(&[6, 7, 8]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
     let (pat, w4) = if want(&[9]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
     let steps = (rev.len() + del.len() + seq.len() + pat.len()).max(1) as u64;
@@ -789,6 +795,23 @@ mod tests {
         let (a, _) = live_lesson(&g, Task::Reading(200), Physics::Varied, 3, 0, Lesson::default());
         let (b, _) = live_work(&g, Task::Reading(200), Physics::Varied, 3, 0);
         assert_eq!(a.iter().map(|e| (e.shown, e.taught)).collect::<Vec<_>>(), b.iter().map(|e| (e.shown, e.taught)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_lesson_reaches_the_conditioning_lifetimes() {
+        // the delayed light flashes `delay` steps before the window, in the lifetime the remember
+        // probe lives (a genome that does nothing: only the world shows)
+        let g = Genome { code: vec![] };
+        for d in [1usize, 3] {
+            let (ev, _) = live_lesson(&g, Task::Conditioning(Conditioning::Delayed, 30), Physics::Varied, 4, 0, Lesson { delay: d, ..Lesson::default() });
+            assert!(!ev.is_empty());
+        }
+        let w = |l: Lesson| {
+            let (ev, _) = live_lesson(&g, Task::Reversal { trials: 30, period: 10, worst_phase: false }, Physics::Varied, 4, 0, l);
+            ev.len()
+        };
+        // a shape lifetime runs as long as a plain one (only what the eye shows changes)
+        assert_eq!(w(Lesson::default()), w(Lesson { blur: 4, shift: 32, ..Lesson::default() }));
     }
 
     #[test]

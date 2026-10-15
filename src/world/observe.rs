@@ -342,6 +342,33 @@ mod tests {
     }
 
     #[test]
+    fn shapes_are_fresh_exemplars_of_the_lights() {
+        // with blur and shift, each trial's light is a distorted copy: the same number of lines,
+        // different from trial to trial, still overlapping its own light more than the other one
+        let mut w = World::new(5, 4);
+        w.blur = 2;
+        w.shift = 0;
+        w.conditioning(Conditioning::Reversal, 60);
+        let none = BitVector::new(ACT_BITS, Some(0));
+        let mut seen: Vec<(bool, BitVector)> = vec![];
+        while !w.done() {
+            let senses = w.step(&none);
+            let e = w.events.last().unwrap();
+            if let Some((_, 2, cue, _)) = e.trial {
+                seen.push((cue, channel(&senses, EYE)));
+            }
+        }
+        assert!(seen.iter().all(|(_, x)| x.count_ones() == ACTIVE));
+        let same = |a: &BitVector, b: &BitVector| a.as_words().iter().zip(b.as_words()).map(|(x, y)| (x & y).count_ones()).sum::<u32>();
+        let a: Vec<&BitVector> = seen.iter().filter(|x| x.0).map(|x| &x.1).collect();
+        let b: Vec<&BitVector> = seen.iter().filter(|x| !x.0).map(|x| &x.1).collect();
+        assert!(a.windows(2).any(|p| p[0].as_words() != p[1].as_words()), "fresh each trial");
+        let within: u32 = a.windows(2).map(|p| same(p[0], p[1])).sum::<u32>() / (a.len() as u32 - 1);
+        let across: u32 = a.iter().zip(&b).map(|(x, y)| same(x, y)).sum::<u32>() / a.len().min(b.len()) as u32;
+        assert!(within > across + 4, "within {within} across {across}");
+    }
+
+    #[test]
     fn the_delayed_light_flashes_delay_steps_before_the_window() {
         for d in 1..=5 {
             let mut w = World::new(5, 4);

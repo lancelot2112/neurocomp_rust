@@ -36,6 +36,10 @@
 //! of it (one plasmid of a kind); `ISL_CARRY` (0) charges that much work per step for each token
 //! a genome carries, so what does nothing costs something.
 //!
+//! `ISL_OPS=1`: the op choice. A population's op is drawn again by a mutation of its own (one in
+//! sixteen), not only as one of its many properties, and ops are drawn without `rotr` (the same as
+//! `rotl` by 64 - n), so `clear`, `xor` and the rest are tried far more often.
+//!
 //! Every `ISL_REPORT` generations, per island: its population's means on its own probes (training
 //! worlds), its best genome's probes on held-out worlds, its work per step and which ports its
 //! genomes read and write.
@@ -313,6 +317,7 @@ fn main() {
     neurocomp::program::neurocomp::set_in_place(env("ISL_INPLACE", 0u8) == 1);
     neurocomp::program::neurocomp::set_count_reads(env("ISL_READS", 0u8) == 1);
     neurocomp::evolve::set_carry(env("ISL_CARRY", 0u64));
+    neurocomp::kernel::class::set_op_choice(env("ISL_OPS", 0u8) == 1);
     let pop: usize = env("ISL_POP", 16);
     let elite: usize = env("ISL_ELITE", 4);
     let gens: usize = env("ISL_GENS", 300);
@@ -401,8 +406,8 @@ fn main() {
             }
         }
     }
-    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1);
+    println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}",
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice());
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

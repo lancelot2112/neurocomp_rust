@@ -25,6 +25,20 @@ pub enum KernelOp {
     Rotr(u8),
 }
 
+/// The op choice (`set_op_choice`): ops drawn without the redundant `Rotr`, and a population's op
+/// re-drawn by its own mutation (in the tag grammar), so an op such as `clear` or `xor` is tried
+/// far more often than when it changes only as one of a population's many properties. Off by
+/// default.
+static OP_CHOICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_op_choice(on: bool) {
+    OP_CHOICE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn op_choice() -> bool {
+    OP_CHOICE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The top bit of each lane of 2^k bits.
 fn lane_tops(k: u8) -> u64 {
     match k.clamp(3, 6) {
@@ -104,10 +118,27 @@ impl KernelOp {
         })
     }
 
-    /// A random op, with a random lane width or amount where it takes one.
+    /// A random op, with a random lane width or amount where it takes one (with `set_op_choice`
+    /// on, never `Rotr`: `rotr:n` is `rotl:64-n`, so its draw goes to the other ops).
     pub fn random<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
         let n: u8 = rng.gen_range(0..64);
         let k: u8 = rng.gen_range(3..7);
+        if op_choice() {
+            return match rng.gen_range(0..12) {
+                0 => KernelOp::Or,
+                1 => KernelOp::And,
+                2 => KernelOp::Xor,
+                3 => KernelOp::Clear,
+                4 => KernelOp::Nand,
+                5 => KernelOp::Nor,
+                6 => KernelOp::Add(k),
+                7 => KernelOp::Sub(k),
+                8 => KernelOp::Shl(n),
+                9 => KernelOp::Shr(n),
+                10 => KernelOp::Rotl(n),
+                _ => KernelOp::Set,
+            };
+        }
         match rng.gen_range(0..13) {
             0 => KernelOp::Or,
             1 => KernelOp::And,

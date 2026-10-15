@@ -989,6 +989,15 @@ impl Evolvable for TagGenome {
                 let rewire = if rng.gen_bool(0.5) { Some((rng.r#gen(), rng.gen_bool(0.5))) } else { None };
                 g.copy_circuit(c, rewire, rng);
             }
+            // (with the op choice) one population's op drawn again: one mutation in sixteen, where as
+            // one of a population's 38 properties it is about one in a hundred
+            11 if crate::kernel::class::op_choice() && g.pops().count() > 0 => {
+                let pops: Vec<usize> = (0..n).filter(|&i| matches!(g.tokens[i], Token::Pop(_))).collect();
+                let at = *pops.choose(rng).unwrap();
+                if let Token::Pop(p) = &mut g.tokens[at] {
+                    p.op = KernelOp::random(rng);
+                }
+            }
             // a stage split into a population's path, or a population turned back on its source
             12 | 13 if g.pops().count() > 0 => {
                 let pops: Vec<usize> = (0..n).filter(|&i| matches!(g.tokens[i], Token::Pop(_))).collect();

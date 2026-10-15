@@ -3,7 +3,7 @@
 //! `PC_TOKENS` and `PC_TEACH` set the reading lesson (default the plain world: 8 tokens, 4/8);
 //! `PC_PERIOD` and `PC_NOISE` the surprise stream's cycle and breaks (default none); `PC_BLUR`
 //! and `PC_SHIFT` distort the lights into shapes (default none); `PC_MAZE` (stem, 2), `PC_GONE`
-//! and `PC_SYMBOL` set the T-maze; `PC_SW`, `PC_SH` and `PC_LIT` the screen.
+//! and `PC_SYMBOL` set the T-maze; `PC_SW`, `PC_SH`, `PC_LIT`, `PC_CELL` and `PC_WALLS` the screen.
 
 use neurocomp::evolve::tags::{Pop, TagGenome, Token, ACT, EYE, HAND, SELF, TOUCH, VOICE};
 use neurocomp::evolve::{probe_all_in, probe_means, Lesson, Physics, ALL_PROBES};
@@ -15,7 +15,7 @@ fn env<T: std::str::FromStr>(k: &str, d: T) -> T {
 
 fn main() {
     let n: u64 = env("PC_N", 64);
-    let lesson = Lesson { tokens: env("PC_TOKENS", 8), teach: env("PC_TEACH", 4), period: env("PC_PERIOD", 0), noise: env("PC_NOISE", 0), blur: env("PC_BLUR", 0), shift: env("PC_SHIFT", 0), maze_len: env("PC_MAZE", 2), cue_gone: env("PC_GONE", 0u8) == 1, symbol: env("PC_SYMBOL", 0u8) == 1, screen_w: env("PC_SW", 2), screen_h: env("PC_SH", 2), screen_lit: env("PC_LIT", 1), ..Lesson::default() };
+    let lesson = Lesson { tokens: env("PC_TOKENS", 8), teach: env("PC_TEACH", 4), period: env("PC_PERIOD", 0), noise: env("PC_NOISE", 0), blur: env("PC_BLUR", 0), shift: env("PC_SHIFT", 0), maze_len: env("PC_MAZE", 2), cue_gone: env("PC_GONE", 0u8) == 1, symbol: env("PC_SYMBOL", 0u8) == 1, screen_w: env("PC_SW", 2), screen_h: env("PC_SH", 2), screen_lit: env("PC_LIT", 1), screen_cell: env("PC_CELL", 64), screen_walls: env("PC_WALLS", 0), ..Lesson::default() };
     let c = 0x3C;
     let ch = Token::Channel { tag: c, width: 3, hold: false };
     let to_hand = |p: Pop| Pop { to: HAND, to_port: true, ..p };

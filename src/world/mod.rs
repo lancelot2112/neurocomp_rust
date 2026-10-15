@@ -167,6 +167,16 @@ pub struct Body<'a> {
     pub hand: &'a Effector,
 }
 
+/// A screen trial's layout: the cursor's cell, the target's cell, the glyph in each cell, and the
+/// walls (one bit a cell).
+#[derive(Clone)]
+struct ScreenTrial {
+    cursor: usize,
+    target: usize,
+    glyph: [Option<usize>; 32],
+    walls: u32,
+}
+
 enum Scene {
     Idle,
     /// (kind, trials left, step in the trial, a cue trial, stroked this trial)
@@ -181,9 +191,8 @@ enum Scene {
     Maze(usize, usize, usize, bool),
     /// between maze trials: (trials left after it, steps left)
     MazeGap(usize, usize),
-    /// a screen trial: (trials left, steps in the trial, the cursor's cell, the target's cell,
-    /// the glyph in each cell)
-    Screen(usize, usize, usize, usize, [Option<usize>; 8]),
+    /// a screen trial: (trials left, steps in the trial, its layout)
+    Screen(usize, usize, Box<ScreenTrial>),
     /// between screen trials: (trials left after it, steps left)
     ScreenGap(usize, usize),
 }
@@ -231,12 +240,17 @@ pub struct World {
     pub symbol: bool,
     junction: BitVector,
     maze_total: usize,
-    /// screen: a grid of `screen_w` x `screen_h` cells, one eye word each (at most 8), with
-    /// `screen_lit` glyphs on it: the target (the first glyph) and the others as distractors
+    /// screen: a grid of `screen_w` x `screen_h` cells of `screen_cell` bits each (64, 32 or 16:
+    /// at most 8, 16 or 32 cells on the eye), with `screen_lit` glyphs on it (the target, the
+    /// first glyph, and different distractors) and `screen_walls` walls (a 2-D maze: a move into
+    /// a wall does nothing; every free cell is reachable)
     pub screen_w: usize,
     pub screen_h: usize,
     pub screen_lit: usize,
+    pub screen_cell: usize,
+    pub screen_walls: usize,
     cursor_mark: u64,
+    wall_mark: u64,
     screen_total: usize,
     present: bool,
     pub events: Vec<Event>,
@@ -353,10 +367,17 @@ impl World {
             screen_w: 2,
             screen_h: 2,
             screen_lit: 1,
+            screen_cell: 64,
+            screen_walls: 0,
             cursor_mark: {
                 let mut c = StdRng::seed_from_u64(physics ^ 0xC025);
                 let lines: Vec<u64> = (0..64).collect();
                 lines.choose_multiple(&mut c, 8).fold(0u64, |m, &b| m | 1 << b)
+            },
+            wall_mark: {
+                let mut c = StdRng::seed_from_u64(physics ^ 0x3A11);
+                let lines: Vec<u64> = (0..64).collect();
+                lines.choose_multiple(&mut c, 24).fold(0u64, |m, &b| m | 1 << b)
             },
             screen_total: 0,
             present: false,
@@ -434,30 +455,63 @@ impl World {
         }
     }
 
-    /// A screen: `trials` trials. The eye shows a grid of `screen_w` x `screen_h` cells, one eye
-    /// word each: `screen_lit` cells hold a glyph (the target, the first glyph, and different
-    /// distractors), and the cell under the cursor also holds the cursor's mark. Left, right, up
-    /// and down move the cursor one cell (off the edge: nothing); a click selects the cell under
-    /// it, stroked (the step after) if it is the target, and ends the trial, as do 12 steps. The
-    /// cursor and the glyphs start on random cells.
+    /// A screen: `trials` trials. The eye shows a grid of `screen_w` x `screen_h` cells of
+    /// `screen_cell` bits: `screen_lit` cells hold a glyph (the target, the first glyph, and
+    /// different distractors; in a cell under 64 bits, a glyph's lines folded to its width),
+    /// `screen_walls` hold the wall's mark, and the cell under the cursor also holds the cursor's
+    /// mark. Left, right, up and down move the cursor one cell (off the edge or into a wall:
+    /// nothing); a click selects the cell under it, stroked (the step after) if it is the target,
+    /// and ends the trial, as do 4 x (columns + rows) + 4 steps. The cursor, glyphs and walls are
+    /// placed at random, every free cell reachable from every other.
     pub fn screen(&mut self, trials: usize) {
         self.present = false;
         self.screen_total = trials;
         self.scene = self.screen_trial(trials);
     }
 
-    /// A new screen trial's layout.
+    /// The screen's columns and cells, within what the eye holds at this cell size.
+    fn screen_shape(&self) -> (usize, usize) {
+        let most = CH_BITS / self.screen_cell.clamp(16, 64).next_power_of_two();
+        let w = self.screen_w.clamp(1, most);
+        (w, (w * self.screen_h.max(1)).clamp(2, most.min(32)))
+    }
+
+    /// A new screen trial's layout: walls first, then the cursor and the glyphs on free cells,
+    /// drawn again until every free cell can be reached from every other.
     fn screen_trial(&mut self, left: usize) -> Scene {
-        let cells = (self.screen_w * self.screen_h).clamp(2, 8);
-        let mut order: Vec<usize> = (0..cells).collect();
-        order.shuffle(&mut self.rng);
-        let mut layout = [None; 8];
-        let lit = self.screen_lit.clamp(1, cells.min(self.glyphs.len()));
-        for (k, &c) in order.iter().take(lit).enumerate() {
-            layout[c] = Some(k);
+        let (w, cells) = self.screen_shape();
+        loop {
+            let mut order: Vec<usize> = (0..cells).collect();
+            order.shuffle(&mut self.rng);
+            let walls_n = self.screen_walls.min(cells.saturating_sub(2));
+            let walls = order[..walls_n].iter().fold(0u32, |m, &c| m | 1 << c);
+            let free = &order[walls_n..];
+            let lit = self.screen_lit.clamp(1, (free.len() - 1).min(self.glyphs.len()).max(1));
+            let mut glyph = [None; 32];
+            for (k, &c) in free.iter().take(lit).enumerate() {
+                glyph[c] = Some(k);
+            }
+            let (target, cursor) = (free[0], free[self.rng.gen_range(0..free.len())]);
+            // reachable: a flood from the cursor through free cells
+            let mut seen = 1u32 << cursor;
+            let mut stack = vec![cursor];
+            while let Some(c) = stack.pop() {
+                let next = [(c % w > 0).then(|| c - 1), (c % w + 1 < w && c + 1 < cells).then(|| c + 1), (c >= w).then(|| c - w), (c + w < cells).then(|| c + w)];
+                for n in next.into_iter().flatten() {
+                    if walls >> n & 1 == 0 && seen >> n & 1 == 0 {
+                        seen |= 1 << n;
+                        stack.push(n);
+                    }
+                }
+            }
+            // every free cell reachable (so the walls cut no pocket off: a blind click then hits
+            // the target 1 time in the free cells, not 1 in a smaller pocket shared with it)
+            let all_free = free.iter().fold(0u32, |m, &c| m | 1 << c);
+            if seen == all_free {
+                let _ = target;
+                return Scene::Screen(left, 0, Box::new(ScreenTrial { cursor, target, glyph, walls }));
+            }
         }
-        let cursor = self.rng.gen_range(0..cells);
-        Scene::Screen(left, 0, cursor, order[0], layout)
     }
 
     /// The scene after a screen trial: a gap of 0 to `gap_max` steps, then the next trial.
@@ -622,41 +676,62 @@ impl World {
                     Scene::Maze(left, pos, t + 1, side)
                 }
             }
-            Scene::Screen(left, t, mut cursor, target, layout) => {
+            Scene::Screen(left, t, mut tr) => {
                 ev.scene = SceneKind::Screen;
-                let (w, cells) = (self.screen_w.clamp(1, 8), (self.screen_w * self.screen_h).clamp(2, 8));
-                ev.screen = Some((self.screen_total - left, cells));
+                let (w, cells) = self.screen_shape();
+                let bits = self.screen_cell.clamp(16, 64).next_power_of_two();
+                ev.screen = Some((self.screen_total - left, cells - (tr.walls.count_ones() as usize)));
                 // the move made acts on the cursor (a trial's first step only shows the screen)
                 let mut done = false;
                 if t > 0 {
-                    match moved {
-                        Some(LEFT) if cursor % w > 0 => cursor -= 1,
-                        Some(RIGHT) if cursor % w + 1 < w && cursor + 1 < cells => cursor += 1,
-                        Some(UP) if cursor >= w => cursor -= w,
-                        Some(DOWN) if cursor + w < cells => cursor += w,
-                        Some(CLICK) => {
-                            ev.chose = Some(cursor == target);
-                            if cursor == target {
-                                self.stroke_next = true;
-                            }
-                            done = true;
+                    let c = tr.cursor;
+                    let to = match moved {
+                        Some(LEFT) if c % w > 0 => Some(c - 1),
+                        Some(RIGHT) if c % w + 1 < w && c + 1 < cells => Some(c + 1),
+                        Some(UP) if c >= w => Some(c - w),
+                        Some(DOWN) if c + w < cells => Some(c + w),
+                        _ => None,
+                    };
+                    if let Some(n) = to.filter(|&n| tr.walls >> n & 1 == 0) {
+                        tr.cursor = n;
+                    }
+                    if moved == Some(CLICK) {
+                        ev.chose = Some(tr.cursor == tr.target);
+                        if tr.cursor == tr.target {
+                            self.stroke_next = true;
                         }
-                        _ => {}
+                        done = true;
                     }
                 }
-                if done || t + 1 >= 12 {
+                if done || t + 1 >= 4 * (w + cells / w) + 4 {
                     self.after_screen(left)
                 } else {
+                    // each cell's lines (a pattern folded to the cell's width), at its place
+                    let fold = |x: u64| -> u64 {
+                        let mut f = 0u64;
+                        let mut y = x;
+                        while y != 0 {
+                            f |= y & (u64::MAX >> (64 - bits));
+                            y = if bits == 64 { 0 } else { y >> bits };
+                        }
+                        f
+                    };
                     let mut eye = vec![0u64; CH_BITS / 64];
-                    for (c, g) in layout.iter().enumerate().take(cells) {
-                        if let Some(g) = g {
-                            // the glyph's lines, in its cell's word
-                            eye[c] = self.glyphs[*g].as_words().iter().fold(0, |m, &x| m | x);
+                    let mut place = |c: usize, x: u64| {
+                        let at = c * bits;
+                        eye[at / 64] |= fold(x) << (at % 64);
+                    };
+                    for c in 0..cells {
+                        if let Some(g) = tr.glyph[c] {
+                            place(c, self.glyphs[g].as_words().iter().fold(0, |m, &x| m | x));
+                        }
+                        if tr.walls >> c & 1 == 1 {
+                            place(c, self.wall_mark);
                         }
                     }
-                    eye[cursor] |= self.cursor_mark;
+                    place(tr.cursor, self.cursor_mark);
                     put(&mut senses, EYE, &BitVector::from_words(eye));
-                    Scene::Screen(left, t + 1, cursor, target, layout)
+                    Scene::Screen(left, t + 1, tr)
                 }
             }
             Scene::ScreenGap(left, g) => {
@@ -713,10 +788,12 @@ impl World {
         senses
     }
 
-    /// The screen's cursor and target cells, if a screen trial is on (for tests' policies only).
-    pub fn screen_state_for_test(&self) -> Option<(usize, usize)> {
+    /// The screen's cursor and target cells, its walls, its columns and cells, if a screen trial
+    /// is on (for tests' policies only).
+    pub fn screen_state_for_test(&self) -> Option<(usize, usize, u32, usize, usize)> {
+        let (w, cells) = self.screen_shape();
         match self.scene {
-            Scene::Screen(_, _, cursor, target, _) => Some((cursor, target)),
+            Scene::Screen(_, _, ref tr) => Some((tr.cursor, tr.target, tr.walls, w, cells)),
             _ => None,
         }
     }

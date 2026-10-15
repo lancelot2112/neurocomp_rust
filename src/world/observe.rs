@@ -466,12 +466,14 @@ mod tests {
     fn the_screen_scores_pointing_at_the_target_and_not_a_blind_clicker() {
         // test-only policies that read the world's state: one moves the cursor to the target and
         // clicks; one moves at random and clicks at random; one clicks at once
-        let run = |w_: usize, h_: usize, lit: usize, policy: &dyn Fn(&World, &mut rand::rngs::StdRng) -> Option<usize>| -> (i32, usize) {
+        let run = |(w_, h_, lit, cell, walls): (usize, usize, usize, usize, usize), policy: &dyn Fn(&World, &mut rand::rngs::StdRng) -> Option<usize>| -> (i32, usize) {
             let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
             let mut w = World::new(3, 4);
             w.screen_w = w_;
             w.screen_h = h_;
             w.screen_lit = lit;
+            w.screen_cell = cell;
+            w.screen_walls = walls;
             w.gap_max = 2;
             w.screen(200);
             while !w.done() {
@@ -480,31 +482,50 @@ mod tests {
             }
             (screen(&w.events), w.events.iter().filter(|e| e.stroked).count())
         };
+        // (the first move of a shortest path around the walls, by a flood back from the target)
         let points = |w: &World, _: &mut rand::rngs::StdRng| -> Option<usize> {
-            let Some((cursor, target)) = w.screen_state_for_test() else { return None };
-            let cols = w.screen_w;
-            Some(if cursor == target {
-                CLICK
-            } else if cursor / cols < target / cols {
-                DOWN
-            } else if cursor / cols > target / cols {
-                UP
-            } else if cursor % cols < target % cols {
-                RIGHT
-            } else {
-                LEFT
-            })
+            let (cursor, target, walls, cols, cells) = w.screen_state_for_test()?;
+            if cursor == target {
+                return Some(CLICK);
+            }
+            let near = |c: usize| [(LEFT, (c % cols > 0).then(|| c - 1)), (RIGHT, (c % cols + 1 < cols && c + 1 < cells).then(|| c + 1)), (UP, (c >= cols).then(|| c - cols)), (DOWN, (c + cols < cells).then(|| c + cols))];
+            let mut dist = vec![usize::MAX; cells];
+            dist[target] = 0;
+            let mut q = std::collections::VecDeque::from([target]);
+            while let Some(c) = q.pop_front() {
+                for (_, n) in near(c) {
+                    if let Some(n) = n.filter(|&n| walls >> n & 1 == 0 && dist[n] == usize::MAX) {
+                        dist[n] = dist[c] + 1;
+                        q.push_back(n);
+                    }
+                }
+            }
+            near(cursor).into_iter().filter_map(|(m, n)| n.filter(|&n| walls >> n & 1 == 0).map(|n| (dist[n], m))).min().map(|x| x.1)
         };
         let wanders = |_: &World, r: &mut rand::rngs::StdRng| Some([LEFT, RIGHT, UP, DOWN, CLICK][rand::Rng::gen_range(r, 0..5)]);
         let at_once = |_: &World, _: &mut rand::rngs::StdRng| Some(CLICK);
-        for (w_, h_, lit) in [(2, 1, 1), (2, 2, 1), (4, 2, 3)] {
-            let (p, strokes) = run(w_, h_, lit, &points);
-            assert!(p > 1000, "{w_}x{h_}: {p}");
+        // (columns, rows, glyphs, cell bits, walls): up to a 2-D maze on 32-bit cells
+        for set in [(2, 1, 1, 64, 0), (2, 2, 1, 64, 0), (4, 2, 3, 64, 0), (4, 4, 1, 32, 5), (8, 4, 2, 16, 10)] {
+            let (p, strokes) = run(set, &points);
+            assert!(p > 1000, "{set:?}: {p}");
             assert!(strokes > 190, "the target is felt: {strokes}");
-            let (r, _) = run(w_, h_, lit, &wanders);
-            assert!(r.abs() < 150, "{w_}x{h_} wanders: {r}");
-            let (o, _) = run(w_, h_, lit, &at_once);
-            assert!(o.abs() < 150, "{w_}x{h_} at once: {o}");
+            let (r, _) = run(set, &wanders);
+            assert!(r.abs() < 150, "{set:?} wanders: {r}");
+            let (o, _) = run(set, &at_once);
+            assert!(o.abs() < 150, "{set:?} at once: {o}");
+        }
+        // a wall stops the cursor: on a 4 x 4 screen with walls the cursor never stands on one
+        let mut w = World::new(3, 4);
+        (w.screen_w, w.screen_h, w.screen_cell, w.screen_walls) = (4, 4, 32, 6);
+        w.screen(50);
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(5);
+        while !w.done() {
+            if let Some((cursor, _, walls, _, _)) = w.screen_state_for_test() {
+                assert_eq!(walls >> cursor & 1, 0);
+                assert_eq!(walls.count_ones(), 6);
+            }
+            let a = w.act(None, Some([LEFT, RIGHT, UP, DOWN][rand::Rng::gen_range(&mut rng, 0..4)]));
+            w.step(&a);
         }
     }
 

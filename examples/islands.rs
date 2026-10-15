@@ -10,7 +10,8 @@
 //! - prediction (`ISL_PREDICTION=1`): surprise, clicking after a token that broke the stream's
 //!   cycle;
 //! - maze (`ISL_MAZE=1`): a T-maze, turning at the junction to the side of the food the cue shows;
-//! - screen (`ISL_SCREEN=1`): move a cursor over a grid of cells to the target glyph and click;
+//! - screen (`ISL_SCREEN=1`): move a cursor over a grid of cells to the target glyph and click,
+//!   later round walls (a 2-D maze);
 //! - shapes (`ISL_SHAPES=1`): respond, tell and discriminate with the lights distorted into
 //!   shapes, a fresh exemplar every trial.
 //! Every `ISL_EVERY` generations each island takes `ISL_PLASMIDS` plasmids (one population of a
@@ -36,7 +37,7 @@
 //! with the teacher on every token, then the teacher fading (6, 4, 2, 1 in 8) so the glyph must
 //! carry more of the work. `ISL_LADDER_<island>` replaces an island's ladder: stages separated by
 //! `;`, each `name key=value ...` with keys `probes` (probe names joined by `+`), `tokens`,
-//! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `maze`, `gone` and `symbol` (the T-maze), `sw`, `sh` and `lit` (the screen), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
+//! `teach` (eighths), `period` and `noise` (surprise's stream), `blur` and `shift` (shapes), `maze`, `gone` and `symbol` (the T-maze), `sw`, `sh`, `lit`, `cell` and `walls` (the screen), `swaps` (of the paying light in a reversal lifetime), `delay` (steps from the
 //! delayed light to the response window), `goal` (`probe@score`, joined by `+`) and `hold` (3). The cross-island table
 //! at each exchange is always in the plain world, on every probe.
 //!
@@ -90,6 +91,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "sw" => stage.lesson.screen_w = v.parse().expect("sw"),
                 "sh" => stage.lesson.screen_h = v.parse().expect("sh"),
                 "lit" => stage.lesson.screen_lit = v.parse().expect("lit"),
+                "cell" => stage.lesson.screen_cell = v.parse().expect("cell"),
+                "walls" => stage.lesson.screen_walls = v.parse().expect("walls"),
                 "hold" => stage.hold = v.parse().expect("hold"),
                 "goal" => stage.goal = v.split('+').map(|g| {
                     let (p, x) = g.split_once('@').expect("probe@score");
@@ -166,12 +169,18 @@ const MAZE_LADDER: &str = "turn probes=maze maze=0 goal=maze@200; \
 
 /// Screen's ladder: move a cursor to the glyph on the screen and click it (stroked on the target).
 /// Two cells side by side, then four in a row, then a 2 x 2 grid (up and down too), then 4 x 2;
-/// then a distractor beside the target (which glyph is the target is learned from the stroke),
-/// then three distractors on the full screen.
+/// then a 2-D maze: a 4 x 4 grid of 32-bit cells, then with 3 walls, then 6 (a move into a wall
+/// does nothing; the way round must be found), then 8 x 4 of 16-bit cells with 10 walls; then a
+/// distractor beside the target (which glyph is the target is learned from the stroke), then
+/// three distractors on the full screen.
 const SCREEN_LADDER: &str = "two probes=screen sw=2 sh=1 lit=1 goal=screen@300; \
     row probes=screen sw=4 sh=1 lit=1 goal=screen@250; \
     square probes=screen sw=2 sh=2 lit=1 goal=screen@250; \
     full probes=screen sw=4 sh=2 lit=1 goal=screen@200; \
+    grid probes=screen sw=4 sh=4 cell=32 lit=1 goal=screen@200; \
+    walls probes=screen sw=4 sh=4 cell=32 walls=3 lit=1 goal=screen@150; \
+    maze probes=screen sw=4 sh=4 cell=32 walls=6 lit=1 goal=screen@120; \
+    bigmaze probes=screen sw=8 sh=4 cell=16 walls=10 lit=1 goal=screen@100; \
     pick probes=screen sw=2 sh=2 lit=2 goal=screen@150; \
     crowd probes=screen sw=4 sh=2 lit=4";
 

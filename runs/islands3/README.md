@@ -3,7 +3,7 @@
 The island run of experiment 13 (`wiki/experiments/13-islands-and-ladders.md`), saved to move
 machines.
 
-- `checkpoint-140.txt`: every island's population at generation 140, with its ladder stage.
+- `checkpoint-150.txt`: every island's population at generation 150, with its ladder stage.
 - `log.txt`: the run's output up to the move: rows, goal progress, stage moves, exchanges, and
   each restart, marked with `----` and what changed.
 - `plasmids.txt`: every plasmid moved, with the circuit it carried.
@@ -11,7 +11,7 @@ machines.
 Resume (from the repository root, after `cargo build --release`):
 
     ISL_SCREEN=1 ISL_MAZE=1 ISL_PREDICTION=1 ISL_SHAPES=1 ISL_LADDERS=1 ISL_CKPT=5 ISL_HELD=48 \
-    ISL_RESUME=runs/islands3/checkpoint-140.txt \
+    ISL_RESUME=runs/islands3/checkpoint-150.txt \
     ISL_CHECKPOINT=runs/islands3/checkpoint.txt ISL_LOG=runs/islands3/plasmids.txt \
     cargo run --release --example islands >> runs/islands3/log.txt 2>&1
 

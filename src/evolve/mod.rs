@@ -255,6 +255,8 @@ pub struct Lesson {
     pub maze_len: usize,
     pub cue_gone: bool,
     pub symbol: bool,
+    pub maze_fixed: bool,
+    pub maze_nocue: bool,
     pub screen_w: usize,
     pub screen_h: usize,
     pub screen_lit: usize,
@@ -290,7 +292,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -312,6 +314,8 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.maze_len = lesson.maze_len;
     w.cue_gone = lesson.cue_gone;
     w.symbol = lesson.symbol;
+    w.maze_fixed = lesson.maze_fixed;
+    w.maze_nocue = lesson.maze_nocue;
     w.screen_w = lesson.screen_w;
     w.screen_h = lesson.screen_h;
     w.screen_lit = lesson.screen_lit;
@@ -537,7 +541,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (del, w2) = if want(&[4]) { live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap, lesson) } else { (vec![], 0) };
     let (seq, w3) = if want(&[6, 7, 8]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
     let (pat, w4) = if want(&[9]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
-    let (maz, w5) = if want(&[10]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
+    let (maz, w5) = if want(&[10, 12]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
     let (scr, w6) = if want(&[11]) { live_lesson(g, Task::Screen(trials), physics, seed ^ 0x5C2E, gap, lesson) } else { (vec![], 0) };
     let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
@@ -550,7 +554,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.

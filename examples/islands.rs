@@ -40,6 +40,12 @@
 //! sixteen), not only as one of its many properties, and ops are drawn without `rotr` (the same as
 //! `rotl` by 64 - n), so `clear`, `xor` and the rest are tried far more often.
 //!
+//! Learning from reward has a rung of its own (`repeat`), below switching's and shapes'
+//! win-stay and maze's turn: a maze with no stem, the food on one side all lifetime and no cue
+//! (ladder keys `fixed` and `nocue`), so which turn pays is learned from the stroke alone; the
+//! `repeat` probe scores a learner high and a turner that ignores strokes 0. Win-stay, with the
+//! probe fixed, averaged about 0 in run 9: no genome learned from reward.
+//!
 //! `ISL_FRONTIER=1`: the generalist is scored at the frontier, on each other island's current
 //! stage (its probes, in its world; each probe from the first island that has it), not on all
 //! twelve probes in the plain world. In the plain world most probes are the top of another
@@ -241,6 +247,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "maze" => stage.lesson.maze_len = v.parse().expect("maze"),
                 "gone" => stage.lesson.cue_gone = v == "1",
                 "symbol" => stage.lesson.symbol = v == "1",
+                "fixed" => stage.lesson.maze_fixed = v == "1",
+                "nocue" => stage.lesson.maze_nocue = v == "1",
                 "sw" => stage.lesson.screen_w = v.parse().expect("sw"),
                 "sh" => stage.lesson.screen_h = v.parse().expect("sh"),
                 "lit" => stage.lesson.screen_lit = v.parse().expect("lit"),
@@ -275,6 +283,7 @@ const READING_LADDER: &str = "babble probes=babble tokens=2 teach=8 goal=babble@
 /// paying light, then follow one swap, then three.
 const SWITCHING_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
     tell probes=respond+tell swaps=0 goal=tell@100; \
+    repeat probes=respond+tell+repeat swaps=0 maze=0 fixed=1 nocue=1 goal=repeat@300; \
     winstay probes=respond+tell+win-stay swaps=0 goal=win-stay@80; \
     discrim probes=respond+tell+win-stay+discriminate swaps=0 goal=discriminate@100; \
     swap1 probes=respond+tell+win-stay+discriminate+reverse swaps=1 goal=reverse@80; \
@@ -312,6 +321,7 @@ const SHAPES_LADDER: &str = "clean probes=respond+tell swaps=0 goal=tell@150; \
     blur2 probes=respond+tell swaps=0 blur=2 goal=tell@150; \
     shift8 probes=respond+tell swaps=0 blur=1 shift=8 goal=tell@120; \
     shift64 probes=respond+tell swaps=0 blur=2 shift=64 goal=tell@100; \
+    repeat probes=respond+tell+repeat swaps=0 blur=2 shift=16 maze=0 fixed=1 nocue=1 goal=repeat@300; \
     winstay probes=respond+tell+win-stay swaps=0 blur=2 shift=16 goal=win-stay@80; \
     paying probes=respond+tell+win-stay+discriminate swaps=0 blur=2 shift=16 goal=discriminate@100; \
     swap1 probes=respond+tell+discriminate+reverse swaps=1 blur=2 shift=16";
@@ -321,7 +331,8 @@ const SHAPES_LADDER: &str = "clean probes=respond+tell swaps=0 goal=tell@150; \
 /// longer stem, then a cue that is a light's code (which side it means is learned from the
 /// stroke), then that code only at the foot. The hand's codes are drawn each lifetime, so even
 /// the first stage is learned within a lifetime, not wired in.
-const MAZE_LADDER: &str = "turn probes=maze maze=0 goal=maze@200; \
+const MAZE_LADDER: &str = "learn probes=repeat+maze maze=0 fixed=1 nocue=1 goal=repeat@300; \
+    turn probes=maze maze=0 goal=maze@200; \
     walk probes=maze maze=2 goal=maze@200; \
     gone probes=maze maze=2 gone=1 goal=maze@150; \
     long probes=maze maze=4 gone=1 goal=maze@150; \

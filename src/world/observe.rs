@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat"];
 /// How many probes there are.
-pub const NPROBES: usize = 12;
+pub const NPROBES: usize = 13;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -189,7 +189,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = if won_n == 0 || lost_n == 0 { 0 } else { (won * 1024 / won_n - lost * 1024 / lost_n) as i32 };
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -280,6 +280,25 @@ pub fn surprise(events: &[Event]) -> i32 {
         return 0;
     }
     (odd_c * 1024 / odd - kept_c * 1024 / kept) as i32
+}
+
+/// Repeating what paid: over a maze lifetime's choices in order, how often the next turn is the
+/// same as this one when this one was stroked, minus when it was not, in parts per 1024. With
+/// the food on one side all lifetime and no cue (`maze_fixed`, `maze_nocue`), it is learning from
+/// reward alone: a learner turns the other way after a miss and keeps the paying turn. A lifetime
+/// with no stroked choice to compare against an unstroked one scores 0, so a turner that ignores
+/// strokes and keeps to one side scores 0 whichever side pays, as do random turners on average.
+pub fn repeat(events: &[Event]) -> i32 {
+    let turns: Vec<(Option<usize>, bool)> = events.iter().filter_map(|e| e.chose.filter(|_| e.scene == SceneKind::Maze).map(|c| (e.moved, c))).collect();
+    let (mut won, mut won_n, mut lost, mut lost_n) = (0i64, 0i64, 0i64, 0i64);
+    for w in turns.windows(2) {
+        let same = (w[0].0 == w[1].0) as i64;
+        if w[0].1 { won_n += 1; won += same } else { lost_n += 1; lost += same }
+    }
+    if won_n == 0 || lost_n == 0 {
+        return 0;
+    }
+    (won * 1024 / won_n - lost * 1024 / lost_n) as i32
 }
 
 /// The T-maze: choices at the junction toward the food minus away from it, per trial, in parts
@@ -716,6 +735,40 @@ mod tests {
         assert!(follows[5] > -80, "{follows:?}");
         // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
         assert!(blind[4] > 500, "{blind:?}");
+    }
+
+    #[test]
+    fn repeat_scores_learning_which_turn_pays_from_the_stroke_alone() {
+        // a maze with no stem, the food on one side all lifetime and no cue: policies that feel
+        // only the affect channel. A learner turns the other way after a miss and keeps a turn
+        // that paid; a stubborn one always turns left; a random one turns either way
+        let run = |kind: u8, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 4);
+            (w.maze_len, w.maze_fixed, w.maze_nocue, w.gap_max) = (0, true, true, 2);
+            w.maze(100);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let (mut senses, mut turn, mut pending) = (BitVector::new(SENSE_BITS, Some(0)), LEFT, false);
+            while !w.done() {
+                // a stroke after a turn: it paid, keep it; a new trial with none: turn the other way
+                let at_junction = channel(&senses, EYE).count_ones() > 0;
+                if channel(&senses, AFFECT).count_ones() > 0 { pending = false }
+                if at_junction && pending && kind == 0 {
+                    turn = if turn == LEFT { RIGHT } else { LEFT };
+                    pending = false;
+                }
+                let hand = if !at_junction { None } else {
+                    match kind { 0 => Some(turn), 1 => Some(LEFT), _ => Some([LEFT, RIGHT][rand::Rng::gen_range(&mut rng, 0..2)]) }
+                };
+                if hand.is_some() { pending = true }
+                let a = w.act(None, hand);
+                senses = w.step(&a);
+            }
+            (repeat(&w.events), maze(&w.events))
+        };
+        let mean = |kind: u8| { let v: Vec<(i32, i32)> = (0..12u64).map(|s| run(kind, 300 + s)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 12, v.iter().map(|x| x.1).sum::<i32>() / 12) };
+        let (learner, stubborn, random) = (mean(0), mean(1), mean(2));
+        assert!(learner.0 > 500 && learner.1 > 500, "learner {learner:?}");
+        assert!(stubborn.0.abs() < 80 && random.0.abs() < 120, "stubborn {stubborn:?}, random {random:?}");
     }
 
     #[test]

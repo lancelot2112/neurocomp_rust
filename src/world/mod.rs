@@ -238,6 +238,11 @@ pub struct World {
     pub maze_len: usize,
     pub cue_gone: bool,
     pub symbol: bool,
+    /// the maze's food stays on one side for the whole lifetime (drawn by its seed), and with
+    /// `maze_nocue` no cue shows where: which turn pays is learned from the stroke alone
+    pub maze_fixed: bool,
+    pub maze_nocue: bool,
+    maze_first: Option<bool>,
     junction: BitVector,
     maze_total: usize,
     /// screen: a grid of `screen_w` x `screen_h` cells of `screen_cell` bits each (64, 32 or 16:
@@ -376,6 +381,9 @@ impl World {
             maze_len: 2,
             cue_gone: false,
             symbol: false,
+            maze_fixed: false,
+            maze_nocue: false,
+            maze_first: None,
             junction: codes(1, &mut r(0x7A2E)).remove(0),
             maze_total: 0,
             screen_w: 2,
@@ -440,7 +448,7 @@ impl World {
     pub fn maze(&mut self, trials: usize) {
         self.present = false;
         self.maze_total = trials;
-        let side = self.rng.gen_bool(0.5);
+        let side = self.maze_side();
         self.scene = Scene::Maze(trials, 0, 0, side);
     }
 
@@ -459,6 +467,12 @@ impl World {
         BitVector::from_words(out)
     }
 
+    /// A maze trial's food side: drawn each trial, or (`maze_fixed`) drawn once for the lifetime.
+    fn maze_side(&mut self) -> bool {
+        let s = self.rng.gen_bool(0.5);
+        if self.maze_fixed { *self.maze_first.get_or_insert(s) } else { s }
+    }
+
     /// The scene after a maze trial: a gap of 0 to `gap_max` steps, then the next trial.
     fn after_maze(&mut self, left: usize) -> Scene {
         if left <= 1 {
@@ -468,7 +482,7 @@ impl World {
         if g > 0 {
             Scene::MazeGap(left - 1, g)
         } else {
-            let side = self.rng.gen_bool(0.5);
+            let side = self.maze_side();
             Scene::Maze(left - 1, 0, 0, side)
         }
     }
@@ -685,7 +699,7 @@ impl World {
                     self.after_maze(left)
                 } else {
                     // what the program sees where it now is
-                    if !self.cue_gone || t == 0 {
+                    if !self.maze_nocue && (!self.cue_gone || t == 0) {
                         put(&mut senses, EYE, &self.maze_cue(side));
                     }
                     if pos >= self.maze_len {
@@ -767,7 +781,7 @@ impl World {
                 if g > 1 {
                     Scene::MazeGap(left, g - 1)
                 } else {
-                    let side = self.rng.gen_bool(0.5);
+                    let side = self.maze_side();
                     Scene::Maze(left, 0, 0, side)
                 }
             }

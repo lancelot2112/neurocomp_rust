@@ -1,10 +1,11 @@
 @echo off
-rem Island run 10: run 9 with the generalist scored at the frontier (ISL_FRONTIER=1: on each
+rem Island run 10: run 9 with the generalist scored at the frontier (ISL_FRONTIER=1) and a repeat
+rem rung for learning from reward below win-stay and the maze's turn. (Frontier: on each
 rem other island's current stage, in its world), 600 generations. Started with
 rem Win32_Process.Create so it does not end with the session that launched it.
 cd /d C:\Software\source\neurocomp
 if not exist runs\islands10 mkdir runs\islands10
-echo ---- run 10: run 9's settings (fresh training worlds, 24 of them, a goal held once before the held-out check, the fixed win-stay probe, the dark torch first, a carrying cost of 4, population 32, elite 8, energy) with the generalist scored at the frontier (ISL_FRONTIER=1): on each other island's current stage, its probes in its world, instead of all twelve probes in the plain world, where nine scored about 0 for every genome; 600 generations> runs\islands10\log.txt
+echo ---- run 10: run 9's settings (fresh training worlds, 24 of them, a goal held once before the held-out check, the fixed win-stay probe, the dark torch first, a carrying cost of 4, population 32, elite 8, energy) with the generalist scored at the frontier (ISL_FRONTIER=1: on each other island's current stage, its probes in its world, instead of all twelve probes in the plain world, where nine scored about 0 for every genome) and a repeat rung for learning from reward (a maze with the food on one side all lifetime and no cue; the repeat probe) below switching's and shapes' win-stay and maze's turn; 600 generations> runs\islands10\log.txt
 set ISL_RATION=256
 set ISL_FOOD=32
 set ISL_POP=32

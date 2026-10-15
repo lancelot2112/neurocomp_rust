@@ -150,6 +150,24 @@ worlds:
 
 Results to follow.
 
+## Speed and scaling
+
+The run moved from the cloud container to a workstation (Ryzen 7 PRO 7840HS, 8 cores, 16
+threads) at generation 140. With eight islands, a generation took about 60 s in the container
+(generations 131-140, timed from commits) and about 20 s on the workstation. Scoring splits each
+generation into (genome, world) jobs, about 8 islands x 16 genomes x 12 worlds = 1,536, and
+spreads them over every thread `available_parallelism` reports. From the next restart on, every
+generation's line carries its UTC time and its seconds.
+
+If the run needs more speed, in order of cost:
+1. **One bigger machine.** No code changes: the jobs already fill every core, and 1,536 of them
+   leave room well past 16 threads. Clone, build and resume from a checkpoint as on the
+   workstation.
+2. **Islands across machines.** Islands meet only at the plasmid exchange every 20 generations,
+   so each machine could run some islands and swap populations through checkpoint files at each
+   exchange. This needs a coordinator, a merge of checkpoints and restarts kept in step. It waits
+   until the results show it is worth it.
+
 ## What it means
 
 - **A capacity that needs two unlearned maps scores nothing**, and evolution has no gradient to

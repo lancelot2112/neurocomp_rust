@@ -286,6 +286,10 @@ fn main() {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
     }
     let mut was = stages.clone();
+    // each generation's line carries the UTC time and the seconds since the last one
+    let clock = || { let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) % 86400; format!("{:02}:{:02}:{:02}Z", t / 3600, t / 60 % 60, t % 60) };
+    let mut last = std::time::Instant::now();
+    println!("started {}", clock());
     // a plasmid: one circuit of the donor (a random declared channel and what touches it)
     let transfer = |recipient: &TagGenome, donor: &TagGenome, rng: &mut StdRng| -> (TagGenome, String) {
         if donor.populations() == 0 {
@@ -322,9 +326,9 @@ fn main() {
             let g: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], r.means[i][p])).collect();
             Some(format!("{} {} {} (met {}/{})", isl.name, st.name, g.join(" "), r.met[i], st.hold.max(1)))
         }).collect();
-        if !goals.is_empty() {
-            println!("{g:>4}  goals: {}", goals.join("; "));
-        }
+        let took = last.elapsed().as_secs_f64();
+        last = std::time::Instant::now();
+        println!("{g:>4}  {} {took:.0}s{}", clock(), if goals.is_empty() { String::new() } else { format!("  goals: {}", goals.join("; ")) });
         // an island that met its stage's goal: it is scored on the next stage from this generation
         for (i, isl) in islands.iter().enumerate() {
             if r.stage[i] != was[i] {

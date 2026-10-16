@@ -237,3 +237,8 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     to be copied) and exploration (trial connections kept, tagged), reading passed echo2, echo4
     and echo8 in run 11, a rung no earlier run passed in 600 generations. An echo circuit predicts
     its own voice, which is what marks count. The price was bloat and slower simple islands.
+48. **What a gate can name decides what evolution can reach (experiment 16).** Learning only after
+    a stroke took three tokens lined up while a gate could name only a channel (each worth nothing
+    alone); with gates on ports it is one population, and in run 16 the stroke reached the hand on
+    all three feel islands. Where an addressing rule makes a useful circuit several coordinated
+    mutations away, open the address before adding a mechanism.

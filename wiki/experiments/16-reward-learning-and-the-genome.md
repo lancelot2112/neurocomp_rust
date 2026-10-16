@@ -361,8 +361,27 @@ port gate lines up with the stroke at lag 3. The goal is 300, and the lose-shift
 missing (88% repeats after none).
 
 In a 12-generation smoke run, 322 populations were gated on an input port, 264 on an output port,
-62 paused on a port and 13 wrote a sense. Run 16 is run 15 with it (`runs/run16.cmd`, started by
-`runs/after15.cmd`). Results to follow.
+62 paused on a port and 13 wrote a sense. Run 16 is run 15 with it (`runs/run16.cmd`).
+
+**Result** (`runs/islands16`, 600 generations in 3 h 22 min):
+
+| | run 16 | run 15 (to 250) |
+|---|---|---|
+| switching on feel (mean) | **67** (574 generations, best 99) | 11 |
+| shapes on feel | **46** (73 over the last 100, best 96) | 0 |
+| maze on feel | 36 (69 over the last 100) | 47 |
+| screen's glow | **62** (best 163) | 2 |
+| prediction | **cycle1 passed at 332** (run 9: 415) | mean 79 |
+| recall | lag4 at 353 | lag4 at 105 |
+
+- **Port gates made the stroke reach the hand on all three feel islands at once**, the first time;
+  none reached the goal of 300. Screen's glow, about 0 in most runs, averaged 62.
+- **The port features spread in turn:** gates first (100% of screen's elite by 50), pauses next
+  without any help (selection 100% at 550, screen 50% at 500, recall and prediction 20-30% for a
+  time), writing a sense last (5-23% on six islands from 300).
+- **A feel circuit moved between islands:** #248 (switching to shapes) was in all of shapes' elite
+  as its feel rose from 0, and the score kept rising after the plasmid died out.
+- Recall and prediction paid early: recall reached lag1 at 33 but lag4 only at 353.
 
 ## Shadow explorers (run 17)
 

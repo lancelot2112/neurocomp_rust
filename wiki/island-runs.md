@@ -1,6 +1,6 @@
 # Island runs compared
 
-Every island run so far (`runs/islands3` to `runs/islands15`), side by side: what each changed,
+Every island run so far (`runs/islands3` to `runs/islands16`), side by side: what each changed,
 and how far each island climbed. Details are in experiments 13 to 16.
 
 ## What each run changed
@@ -20,8 +20,8 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 13 | freak accidents: a trial connection grown now and then even when not stuck | 250 (stopped: nothing new on repeat) | 1 h 5 min |
 | 14 | a ninth island, task selection | 250 (stopped: reward rungs flat, selection falling) | 1 h 19 min |
 | 15 | a feel rung before every repeat rung | 250 (stopped: feel rising slowly, moved to port gates) | 1 h 10 min |
-| 16 | ports for gates, pauses and writes: one population can learn only after a stroke | running | |
-| 17 | shadow explorers: predictions made without touching the network, the best kept as an internal channel | after 16 | |
+| 16 | ports for gates, pauses and writes: one population can learn only after a stroke | 600 | 3 h 22 min |
+| 17 | shadow explorers, and recall's long ladder | running | |
 | 18 | pauses drawn as gates are: a port pause one step away | after 17 | |
 
 ## How far each island climbed
@@ -44,6 +44,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 13 (to 250) | repeat (144) | lag1 (138) | echo2 (14) | first | first | first | repeat (67) | 11% of 192 |
 | 14 (to 250) | repeat (59) | **lag4 (139)** | echo2 (14) | first | first | first | repeat (36) | 9% of 215 |
 | 15 (to 250) | feel (59) | **lag4 (105)** | echo2 (12) | first | first (feel: mean 47) | first | feel (33) | 6% of 216 |
+| 16 | feel (26; mean 67) | lag4 (353) | echo2 (23) | **cycle2 (332)** | first (feel: mean 36) | first (glow: mean 62) | feel (157; mean 46) | 4% of 523 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.
@@ -70,6 +71,9 @@ Two cautions for reading it:
   recall lag1 by 64) but left the repeat rung at about 0.
 - **Freak accidents (run 13)** left the repeat rung and echo2 where they were; evolution kept
   them rare. Prediction's cycle1 averaged 90, the highest of any run.
+- **Port gates (run 16)** got the stroke to the hand on all three feel islands at once (switching's
+  mean 67, shapes' 46), screen's glow off 0 (mean 62), and prediction past cycle1 for the second
+  time. Pauses on ports and writing a sense spread later, unaided.
 - **Plasmids** help on arrival 6-12% of the time in every run, but none has made a lasting
   difference to an island. The first to fix whole in an island was run 13's #175 (all 32 of shapes'
   networks), and shapes' score did not change.

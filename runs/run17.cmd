@@ -1,5 +1,5 @@
 @echo off
-rem Island run 17: run 16 with shadow explorers (ISL_SHADOW=1). 600 generations.
+rem Island run 17: run 16 with shadow explorers (ISL_SHADOW=1) and recall's long ladder (ISL_RECALL_LONG=1). 600 generations.
 rem Started with Win32_Process.Create so it does not end with the session that launched it.
 cd /d C:\Software\source\neurocomp
 if not exist runs\islands17 mkdir runs\islands17
@@ -36,6 +36,7 @@ set ISL_SELECTION=1
 set ISL_FEEL=1
 set ISL_PORTGATE=1
 set ISL_SHADOW=1
+set ISL_RECALL_LONG=1
 set ISL_LIVES=24
 set ISL_HOLD=1
 set ISL_CHECKPOINT=runs/islands17/checkpoint.txt

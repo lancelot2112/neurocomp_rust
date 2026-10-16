@@ -426,3 +426,31 @@ what it names in the same step. Tested; off, nothing is drawn. In a 6-generation
 of 752 populations were paused, 103 of them on a port. Run 18 is run 17 with it
 (`runs/run18.cmd`, started by `runs/after17.cmd`).
 
+## Recall's long ladder (runs 17 and 18)
+
+Recall climbed its whole ladder (lag1 to lag4) in runs 9, 14 and 15, the fastest by generation
+105. With `ISL_RECALL_LONG=1` its ladder goes on after lag4:
+
+| rung | the delayed trial | what it asks |
+|---|---|---|
+| lag5 | the light at step 0, the window at 5-7 | hold 5 steps |
+| lag8, lag16 | the window opens 8 or 16 steps after the light; the trial lengthened to fit | hold past what a frame of history carries: held state |
+| distract | delay 8; on half the trials the other light flashes once during the delay and does not pay (on a no-cue trial it is all that shows) | remember which light came, not that one did |
+| vary | each trial's delay drawn from 1 to 8 | hold until the window opens, without timing it |
+| two | delay 8; the other light shows on no-cue trials | which light came (the last rung) |
+
+- **The world:** a delayed trial's window starts at step max(5, delay), with the light `delay`
+  steps before it, so up to a delay of 5 the trial is what it always was. The draws (a varied
+  delay, a distractor) happen only when asked for.
+- **The observer:** each event carries the world's window mark, and `remember` counts clicks in
+  the window by that mark. Up to a delay of 5 the mark is steps 5-7, so scores are unchanged.
+- **Tests:**
+  - lag5, lag8 and lag16: a hand-written holder scores above 600, a blind clicker about 0;
+  - vary: holding until the window scores, the fixed-timing holder does not;
+  - distract: remembering light A scores, remembering any light much less;
+  - two: remembering which light scores, remembering that one came about 0;
+  - at a delay of 3 the window is unchanged.
+
+It goes into the next runs (17 and 18), since it extends one island's rungs only and leaves the
+other islands' comparisons as they were.
+

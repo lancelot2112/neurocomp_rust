@@ -737,3 +737,9 @@ the same spot (an echo of one sound by more than one code), which the half rule 
 `share` turns inhibition off for the whole population. Run 25 is run 21 with both
 (`runs/run25.cmd`), after run 24.
 
+From run 23 on the plasmid exchange stays off (`ISL_EVERY=0`), at the user's choice after run 22's
+first half: without it run 22 was level with or ahead of run 21 on every island but recall (whose
+fast delay rungs the exchange helped), and reached shapes' feel rung 183 generations sooner. Run 23
+is so run 22 with thrift off and carrying paid as energy, compared with run 22; runs 24 and 25
+build on it as before.
+

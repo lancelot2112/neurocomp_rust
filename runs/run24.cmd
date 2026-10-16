@@ -3,7 +3,7 @@ rem Island run 24: run 23 (run 21 with thrift off and carrying paid as energy) w
 rem Started with Win32_Process.Create so it does not end with the session that launched it.
 cd /d C:\Software\source\neurocomp
 if not exist runs\islands24 mkdir runs\islands24
-echo ---- run 24: run 23's settings (thrift off, carrying paid as energy, heat inputs, loops closed, self writes, hint bands, output reads, edges on hints toward feedback, shadows as hints, pauses drawn, recall's long ladder, shadow explorers, port gates, the feel rung, task selection, accidents, two-mask kernels, marks, exploration, the frontier generalist, fresh worlds) with goals judged on the elite (ISL_ELITE_PASS=1: a rung's goal is checked on the elite's mean, not the whole population's, before the held-out check) and partial credit (ISL_PARTIAL=1: selection uses graded echo, surprise and feel, a near or late answer counting in part; goals stay on the probes themselves); 600 generations> runs\islands24\log.txt
+echo ---- run 24: run 23's settings (no plasmid exchange, thrift off, carrying paid as energy, heat inputs, loops closed, self writes, hint bands, output reads, edges on hints toward feedback, shadows as hints, pauses drawn, recall's long ladder, shadow explorers, port gates, the feel rung, task selection, accidents, two-mask kernels, marks, exploration, the frontier generalist, fresh worlds) with goals judged on the elite (ISL_ELITE_PASS=1: a rung's goal is checked on the elite's mean, not the whole population's, before the held-out check) and partial credit (ISL_PARTIAL=1: selection uses graded echo, surprise and feel, a near or late answer counting in part; goals stay on the probes themselves); 600 generations> runs\islands24\log.txt
 set ISL_RATION=256
 set ISL_FOOD=32
 set ISL_POP=32
@@ -45,6 +45,7 @@ set ISL_HINT_BAND=1
 set ISL_SELF_WRITE=1
 set ISL_LOOPS=1
 set ISL_HEAT=1
+set ISL_EVERY=0
 set ISL_THRIFT=0
 set ISL_CARRY_ENERGY=1
 set ISL_ELITE_PASS=1

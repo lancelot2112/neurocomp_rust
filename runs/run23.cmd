@@ -1,9 +1,9 @@
 @echo off
-rem Island run 23: run 21 (exchange on) with thrift off (ISL_THRIFT=0) and the carrying cost paid as energy (ISL_CARRY_ENERGY=1): energy alone prices compute and carrying. 600 generations.
+rem Island run 23: run 22 (run 21 with no plasmid exchange) with thrift off (ISL_THRIFT=0) and the carrying cost paid as energy (ISL_CARRY_ENERGY=1): energy alone prices compute and carrying. 600 generations.
 rem Started with Win32_Process.Create so it does not end with the session that launched it.
 cd /d C:\Software\source\neurocomp
 if not exist runs\islands23 mkdir runs\islands23
-echo ---- run 23: run 21's settings (heat inputs, loops closed, self writes, hint bands, output reads, edges on hints toward feedback, shadows as hints, pauses drawn, recall's long ladder, shadow explorers, port gates, the feel rung, task selection, accidents, two-mask kernels, marks, exploration, the frontier generalist, fresh worlds, plasmid exchange every 20) with thrift off (ISL_THRIFT=0: no lexicase case for less work; energy alone prices compute, and a network doing more than its ration must earn it by scoring) and the carrying cost paid as energy (ISL_CARRY_ENERGY=1: 4 a token a step out of the same store); 600 generations> runs\islands23\log.txt
+echo ---- run 23: run 22's settings (no plasmid exchange, heat inputs, loops closed, self writes, hint bands, output reads, edges on hints toward feedback, shadows as hints, pauses drawn, recall's long ladder, shadow explorers, port gates, the feel rung, task selection, accidents, two-mask kernels, marks, exploration, the frontier generalist, fresh worlds) with thrift off (ISL_THRIFT=0: no lexicase case for less work; energy alone prices compute, and a network doing more than its ration must earn it by scoring) and the carrying cost paid as energy (ISL_CARRY_ENERGY=1: 4 a token a step out of the same store); 600 generations> runs\islands23\log.txt
 set ISL_RATION=256
 set ISL_FOOD=32
 set ISL_POP=32
@@ -45,6 +45,7 @@ set ISL_HINT_BAND=1
 set ISL_SELF_WRITE=1
 set ISL_LOOPS=1
 set ISL_HEAT=1
+set ISL_EVERY=0
 set ISL_THRIFT=0
 set ISL_CARRY_ENERGY=1
 set ISL_LIVES=24

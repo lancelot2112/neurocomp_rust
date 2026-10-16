@@ -27,9 +27,9 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 20 | edges built on hints: a mutation of its own adds a population of any kind on a hinted path, the way that feeds back (closes a loop, or runs from a higher level to a lower) three times in four; output ports readable by any population (ISL_READ_OUT); hint bands (ISL_HINT_BAND); self channel writable (ISL_SELF_WRITE); loops closed (ISL_LOOPS) | 600 | 3 h 8 min |
 | 21 | heat inputs: a channel or port whose fullness moves a population's thresholds, down when warm, up when cool | 600 | 4 h 24 min |
 | 22 | no plasmid exchange (ISL_EVERY=0): run 21 with the islands apart, to measure the exchange | after 21 | |
-| 23 | thrift off (ISL_THRIFT=0) and carrying paid as energy (ISL_CARRY_ENERGY=1): run 21 with energy alone pricing compute and carrying | after 22 | |
-| 24 | goals judged on the elite (ISL_ELITE_PASS=1) and partial credit in selection (ISL_PARTIAL=1): run 23 with both (run 21 with both if run 23 shows no promise: runs/run24-base21.cmd) | after 23 | |
-| 25 | inhibit inputs (ISL_INHIBIT=1) and the overlap rule as a gene (ISL_OVERLAP=1): run 24 with both (fallback runs/run25-base21.cmd) | after 24 | |
+| 23 | thrift off (ISL_THRIFT=0) and carrying paid as energy (ISL_CARRY_ENERGY=1): run 22 (no plasmid exchange) with energy alone pricing compute and carrying | after 22 | |
+| 24 | goals judged on the elite (ISL_ELITE_PASS=1) and partial credit in selection (ISL_PARTIAL=1): run 23 with both (run 22 with both if run 23 shows no promise: runs/run24-base21.cmd); no plasmid exchange | after 23 | |
+| 25 | inhibit inputs (ISL_INHIBIT=1) and the overlap rule as a gene (ISL_OVERLAP=1): run 24 with both (fallback runs/run25-base21.cmd); no plasmid exchange | after 24 | |
 
 ## How far each island climbed
 

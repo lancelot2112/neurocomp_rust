@@ -181,6 +181,9 @@ pub struct Pop {
     /// a predictor's kernel was right when at least this many quarters of the lines it wrote came
     /// on (the residue, prediction XOR actual on its lines, under a quarter of them by default)
     pub hit_quarters: u8,
+    /// (`set_hint_band`) a shadow grown from it scores a target by its kernels that are partly
+    /// right: more than `hint_low` quarters of their lines came on, fewer than `hit_quarters`
+    pub hint_low: u8,
     /// (`set_shadow_hints`) what a shadow grown from this population found its input predicts
     /// (a tag, and what it names: 0 a channel, 1 an input port, 2 an output port): an indicator
     /// of shared information, built into nothing; its gate or pause, when they mutate, take it
@@ -197,7 +200,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, hint: None,
         }
     }
 
@@ -311,6 +314,35 @@ pub fn set_read_outputs(on: bool) {
 
 pub fn read_outputs() -> bool {
     READ_OUTPUTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Hint bands (`set_hint_band`, with shadows as hints): a shadow scores a target by its kernels
+/// that are partly right (more than its population's `hint_low` quarters of their lines came on,
+/// fewer than `hit_quarters`), less those at or under `hint_low`; kernels fully right count for
+/// nothing. A target the source determines (a copy of it, or what the network computes from it)
+/// stops scoring once the shadow has learned it; one correlated with the source keeps scoring.
+/// `hint_low` is a gene (1 to 3, starting at 1). Off by default.
+static HINT_BAND: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_hint_band(on: bool) {
+    HINT_BAND.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn hint_band() -> bool {
+    HINT_BAND.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Writes into the self channel (`set_self_writes`): a population writing an input port may write
+/// the self channel like a sense, its writes landing on what the runtime wrote there this step.
+/// Off by default (the self channel read-only).
+static SELF_WRITES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_self_writes(on: bool) {
+    SELF_WRITES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn self_writes() -> bool {
+    SELF_WRITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A new population `q` placed on `h`'s hint: from `h`'s input to the hinted vector (an output
@@ -453,9 +485,10 @@ impl Channels {
     }
 
     /// The input port nearest a tag that a population may write: all the senses or one of them
-    /// (the self channel is the runtime's, read-only).
+    /// (the self channel is the runtime's, read-only, unless `set_self_writes`).
     fn writable_input(&self, tag: u8) -> Place {
-        let k = (0..INPUTS.len() - 1).min_by_key(|&i| ((INPUTS[i].0 ^ tag).count_ones(), i)).unwrap();
+        let ports = if self_writes() { INPUTS.len() } else { INPUTS.len() - 1 };
+        let k = (0..ports).min_by_key(|&i| ((INPUTS[i].0 ^ tag).count_ones(), i)).unwrap();
         self.input(INPUTS[k].0)
     }
 
@@ -642,6 +675,7 @@ impl TagGenome {
                 pause_window: window_of(pause_at),
                 teacher: p.teacher.and_then(|(t, at)| ch.gate_place(t, at)).filter(|_| !p.wire).map(|g| (g.node, window_of(Some(g)), 0)),
                 hit_quarters: p.hit_quarters,
+                hint_low: if hint_band() { p.hint_low.min(p.hit_quarters.saturating_sub(1)).max(1) } else { 0 },
                 ..EdgeSpec::plain()
             }));
         }
@@ -832,7 +866,7 @@ impl TagGenome {
         };
         let hinted = if at == 1 { Some(ch.input(t).node) } else { ch.gate_place(t, at).map(|p| p.node) };
         let (src, dst) = (ch.from(h).map(|p| p.node), ch.to(h).map(|p| p.node));
-        let writable = !(at == 1 && t == SELF);
+        let writable = self_writes() || !(at == 1 && t == SELF);
         [writable.then(|| feeds_back(src, hinted)), Some(feeds_back(hinted, dst))]
     }
 
@@ -971,6 +1005,9 @@ impl TagGenome {
                     if p.from_output {
                         out.insert_str(out.len() - 1, " from_output=1");
                     }
+                    if p.hint_low != 1 {
+                        out.insert_str(out.len() - 1, &format!(" hint_low={}", p.hint_low));
+                    }
                     if p.gate_at > 0 {
                         out.insert_str(out.len() - 1, &format!(" gate_at={}", p.gate_at));
                     }
@@ -1033,6 +1070,7 @@ impl TagGenome {
                         accident: kv.get("accident").and_then(|x| x.parse().ok()).unwrap_or(0),
                         to_input: kv.get("to_input") == Some(&"1"),
                         from_output: kv.get("from_output") == Some(&"1"),
+                        hint_low: kv.get("hint_low").and_then(|x| x.parse().ok()).unwrap_or(1),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         teacher: kv.get("teacher").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
@@ -1556,7 +1594,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1607,6 +1645,7 @@ impl Evolvable for TagGenome {
                         42 if port_gates() => p.pause_at = (p.pause_at + if up { 1 } else { 2 }) % 3,
                         43 if p.teacher.is_some() => p.hit_quarters = step(p.hit_quarters, 1, 4),
                         44 if read_outputs() => p.from_output = !p.from_output,
+                        45 if hint_band() => p.hint_low = step(p.hint_low, 1, 3),
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
                             let (t, at) = p.hint.unwrap();

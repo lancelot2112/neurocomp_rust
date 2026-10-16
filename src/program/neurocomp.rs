@@ -58,6 +58,23 @@ pub fn shadow() -> bool {
 /// Steps a shadow predicts one target before it moves to the next, unless its predictions came
 /// true at least `KEEP_SHADOW` more often than they failed.
 pub const RETARGET: u32 = 128;
+
+/// Where a shadow's kernel stands against a hint band (`EdgeSpec::hint_low`): 1 when it is partly
+/// right (more than `low` quarters of its `lines` came on, fewer than `high`), -1 when at or under
+/// `low`, 0 when fully right (or it wrote nothing).
+pub fn in_band(lines: u32, residue: u32, low: u8, high: u8) -> i32 {
+    if lines == 0 {
+        return 0;
+    }
+    let agree = 4 * (lines - residue);
+    if agree <= low as u32 * lines {
+        -1
+    } else if agree < high.clamp(1, 4) as u32 * lines {
+        1
+    } else {
+        0
+    }
+}
 pub const KEEP_SHADOW: i32 = 16;
 
 /// Steps a population's kernels must all go without firing before it is stuck and grows a trial
@@ -627,6 +644,9 @@ impl RuntimeNetwork {
                 let fired_then = std::mem::take(&mut eg.teach_fired);
                 let mut predicted = vec![0u64; t.len()];
                 let (mut hits, mut misses) = (0i32, 0i32);
+                // (a shadow with a hint band) kernels between its bounds, and under them
+                let (mut within, mut under) = (0i32, 0i32);
+                let band = eg.silent && sp.hint_low > 0;
                 if let Some(class) = eg.group.classes_mut().first_mut() {
                     for &k in &fired_then {
                         if k >= class.len() {
@@ -640,6 +660,13 @@ impl RuntimeNetwork {
                         let lines: u32 = m.iter().map(|w| w.count_ones()).sum();
                         let residue: u32 = m.iter().enumerate().map(|(j, &w)| (w & !t.get(o + j).copied().unwrap_or(0)).count_ones()).sum();
                         let hit = lines > 0 && 4 * (lines - residue) >= sp.hit_quarters.clamp(1, 4) as u32 * lines;
+                        if band {
+                            match in_band(lines, residue, sp.hint_low, sp.hit_quarters) {
+                                -1 => under += 1,
+                                1 => within += 1,
+                                _ => {}
+                            }
+                        }
                         for (j, &w) in m.iter().enumerate() {
                             if let Some(p) = predicted.get_mut(o + j) { *p |= w; }
                         }
@@ -679,7 +706,7 @@ impl RuntimeNetwork {
                     }
                 }
                 eg.confirms = eg.confirms.saturating_add(hits.max(0) as u32);
-                eg.score += hits - misses;
+                eg.score += if band { within - under } else { hits - misses };
                 eg.teach_fired = fired[i].clone();
                 eg.teach_src = seen[i].as_ref().map(|v| v.get(nodes).clone());
                 // a shadow moves to its next target after `RETARGET` steps, unless it predicts this one
@@ -1185,6 +1212,18 @@ impl RuntimeNetwork {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_hint_band_counts_kernels_partly_right() {
+        // 16 lines, a band over 1/4 and under 3/4 of them
+        assert_eq!(super::in_band(16, 16, 1, 3), -1); // none came on
+        assert_eq!(super::in_band(16, 12, 1, 3), -1); // 4 of 16: at the lower bound
+        assert_eq!(super::in_band(16, 8, 1, 3), 1); // half
+        assert_eq!(super::in_band(16, 5, 1, 3), 1); // 11 of 16
+        assert_eq!(super::in_band(16, 4, 1, 3), 0); // 12 of 16: fully right, counts for nothing
+        assert_eq!(super::in_band(16, 0, 1, 3), 0);
+        assert_eq!(super::in_band(0, 0, 1, 3), 0);
+    }
+
     use super::*;
     use crate::kernel::KernelClass;
     use crate::program::graph::GraphInstruction as I;

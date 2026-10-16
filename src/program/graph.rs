@@ -225,6 +225,11 @@ pub struct EdgeSpec {
     /// a predictor's kernel was right when the residue on the lines it wrote (its prediction XOR
     /// what came on) is under a threshold: at least `hit_quarters` quarters of its lines came on
     pub hit_quarters: u8,
+    /// (a shadow, with hint bands) a kernel counts toward its target's score only when more than
+    /// `hint_low` quarters of its lines came on and fewer than `hit_quarters`: the target is
+    /// correlated with what it reads, not determined by it; at or under `hint_low` it counts
+    /// against. 0: no band (every hit counts, every miss against)
+    pub hint_low: u8,
 }
 
 impl EdgeSpec {
@@ -276,6 +281,7 @@ impl EdgeSpec {
             pause_window: None,
             teacher: None,
             hit_quarters: 3,
+            hint_low: 0,
         }
     }
 }

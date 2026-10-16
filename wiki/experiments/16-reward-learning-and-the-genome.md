@@ -212,6 +212,58 @@ or echo2):
 
 Next: run 14, the task-selection island.
 
+## Run 14: task selection
+
+`runs/islands14`, stopped after generation 250. The fastest climbs of any run: shapes to repeat by
+36, switching to repeat by 59, and recall's whole ladder by 139 (lag4; run 9 at 186). The
+selection island's cued rung averaged 296 (goal 600, best 475): above 400 from 50 to 140 while
+its best network was mostly loops (10 of 13 populations), then down to 146 as it lost them.
+The repeat rung averaged -7 (switching) and 4 (shapes); echo2 -7.
+
+## How far from learning from reward: hand edits (`examples/surgery`)
+
+A measure, not a seed: hand edits to the evolved networks nearest the repeat rung, each scored
+on fresh worlds of that rung (goal 300). The edits:
+- **aff:** a channel copying the affect port (a wire). A gate names a channel, not a port, so
+  this comes first.
+- **learner:** a population from the eye to the hand that grows kernels repeating the act made
+  `lag` steps back, learning only while the affect copy is on. One channel and two populations
+  in all, with the wire.
+- **gatehand:** the network's own populations into the hand made such learners. Three property
+  changes each, no new population.
+- **The control:** the grammar's hand-written act learner alone (`act_seed`) scores about 0 here
+  (-33 and 1 on two sets of worlds).
+
+The nearest network was **run 11's shapes, rank 6**: 3 populations, 107 on 32 worlds but -6 on
+64 others (the first was luck).
+
+| the network, 64 fresh worlds | repeat | after a stroke | after none |
+|---|---|---|---|
+| as evolved | -6 | 77% | 86% |
+| + aff + gatehand (lags 2-5) | 4 to 24 | 76-82% | 86-88% |
+| **+ aff + learner, lag 3** | **197** | **95%** | 90% |
+| + aff + learner, lag 4 / 5 | 157 / 141 | 93% | 90% |
+| + aff + learner + a babbler | 69 to 98 | 69-71% | 66% |
+
+On the other candidates the learner graft did little:
+- run 11's switching: 0;
+- run 14's switching: up to 43;
+- run 14's maze: about 50;
+- run 14's shapes: 0;
+- run 11's maze: about 0.
+
+Networks that always make the same turn (100% repeat either way) give it nothing to learn from.
+
+- **The distance is three tokens, needed together:** a channel, a wire from the affect port into
+  it, and a gated repeating population with the right lag. Each alone scores about 0, so there is
+  no gradient through them one mutation at a time. That is the same wall `maze_check` showed
+  (affect into a channel, and a population gated on it).
+- **Even then it is win-stay without lose-shift.** The edited network repeats a stroked turn 95%
+  of the time, and an unstroked one 90%, because the evolved network's own habit of repeating
+  remains. 197 of the goal's 300. A babbler breaks the habit but drowns the learning.
+- **Kernel fading on the learner changed nothing** (identical scores), so extinction of unstroked
+  repeats did not engage here.
+
 ## Epigenetic marks and exploration (run 11)
 
 Learning steers evolution already: genomes whose networks learn well are selected. Nothing a

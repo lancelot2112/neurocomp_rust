@@ -248,3 +248,8 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     reaching their best means. What went wrong in runs 17 and 18 was what the extra populations
     were (kept predictors of steady targets, protected by their marks) and that the islands
     carrying them scored worse, not their number. Judge growth by the scores, not by the count.
+50. **Measure the signal before changing the climb (experiment 16).** Scoring a population on many
+    fresh worlds splits a stalled rung into kinds: no difference between genomes above noise
+    (run 20's echo2, cycle1), a difference in the mean that one world's case hides (feel), or none
+    of that, where the rung's own pass rule held it back (lag4 and cued: their best genomes pass,
+    but the goal was checked against the whole population's mean). Each needs a different fix.

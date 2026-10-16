@@ -657,3 +657,34 @@ on early rungs, and large networks may be what the higher rungs need (lesson 49)
 a network pays 4 a token of its genome from the store its work comes out of, so carrying and
 computing compete for the same energy, earned by scoring. It is compared with run 21.
 
+## Is there a gradient on the hard rungs? (signal, after run 20)
+
+The harder rungs stall for hundreds of generations (run 20: echo2 at -5 over 587, cycle1 at 20
+over 600, feel at 48-51, lag4 at 67). `ISL_SIGNAL=48` with `ISL_RESUME=runs/islands20/checkpoint.txt`
+(run 20's settings, measure only) scored each island's 32 genomes on 48 fresh worlds on its rung's
+goal probe, and on the rung below. The icc is the share of one world's spread that is between
+genomes (what one lexicase case sees); the split-half r sets genome means on odd worlds against
+even ones (whether a mean ranks genomes).
+
+| island, rung | mean | best | icc | split-half r |
+|---|---|---|---|---|
+| reading echo2 | -26 | 137 | 0.00 | -0.46 |
+| prediction cycle1 | 5 | 47 | 0.00 | 0.14 |
+| maze feel | 51 | 97 | 0.05 | 0.82 |
+| shapes shift8 | 96 | 164 | 0.05 | 0.67 |
+| switching feel | 48 | 115 | 0.16 | 0.94 |
+| screen glow | 136 | 214 | 0.30 | 0.90 |
+| recall lag4 | 117 | 261 (goal 150) | 0.52 | 0.97 |
+| selection cued | 305 | 650 (goal 600) | 0.85 | 1.00 |
+| reading babble (passed) | 546 | 1024 | 0.63 | 0.98 |
+
+Three kinds of stall:
+- **No gradient** (echo2, cycle1): the differences between genomes are noise, so selection is
+  random there. They need graded probes or a smaller step.
+- **A gradient lexicase does not see** (feel, shapes): means over many worlds rank genomes, but one
+  world is mostly noise, and lexicase takes cases one world at a time (on the maze most genomes
+  tie on most worlds: epsilon 0). Cases pooled over a few worlds would keep the signal.
+- **No gradient problem** (lag4, cued): the best genomes pass on fresh worlds, but a rung's goal
+  is checked against the mean of the whole population, mutated children included
+  (`src/evolve/mod.rs:1047`), before the elite's held-out check; that mean stays near 117 and 305.
+

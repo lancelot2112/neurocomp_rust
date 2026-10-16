@@ -126,6 +126,10 @@
 //! pays `ISL_CARRY` a token of its genome from its energy store, the store its work comes out of,
 //! so carrying and computing compete for what it earns; the cost is no longer added to its work.
 //!
+//! `ISL_SIGNAL=n` (with `ISL_RESUME`): measure only. Each island's resumed genomes are scored on n
+//! fresh worlds on their rung's goal probe and on the rung below, and the spread between genomes
+//! is set against the noise across worlds (icc, split-half r, epsilon). Nothing evolves.
+//!
 //! `ISL_HEAT=1`: heat inputs. A population may carry one (a channel or a port): each step every
 //! one of its kernels' thresholds moves by its own threshold times how full that vector was a
 //! frame ago, down when warm, up when cool. A new population has one one time in four.
@@ -676,6 +680,43 @@ fn main() {
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
+    }
+    // (`ISL_SIGNAL=n`, with `ISL_RESUME`: measure only, nothing evolves. Each island's genomes as
+    // resumed are scored on n fresh worlds on their rung's goal probe, and on the rung below: how
+    // much of the spread between genomes stands above the noise across worlds, which is what
+    // selection on that rung has to go on.)
+    let signal: u64 = env("ISL_SIGNAL", 0);
+    if signal > 0 {
+        let worlds: Vec<u64> = (50_000..50_000 + signal).collect();
+        println!("signal on {signal} fresh worlds (island, rung, goal probe, genomes): mean, best genome; sd between genome means; sd across worlds in a genome; noise in one mean; icc (share of one world's spread that is between genomes); split-half r (genome means on odd worlds against even); epsilon (median over worlds of the spread across genomes)");
+        let sd = |v: &[f64]| { let m = v.iter().sum::<f64>() / v.len().max(1) as f64; (v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (v.len().max(2) - 1) as f64).sqrt() };
+        let median = |mut v: Vec<f64>| { v.sort_by(|a, b| a.partial_cmp(b).unwrap()); v[v.len() / 2] };
+        for (i, isl) in islands.iter().enumerate() {
+            let mut ks = vec![stages[i]];
+            if stages[i] > 0 { ks.push(stages[i] - 1) }
+            for k in ks {
+                let st = &isl.stages[k];
+                let Some(&(p, goal)) = st.goal.first() else { continue };
+                let scored = probe_all_in(start[i].clone(), trials, Physics::Varied, &worlds, gap, &st.probes, st.lesson.clone());
+                let v: Vec<Vec<f64>> = scored.iter().map(|s| s.probes.iter().map(|r| r[p] as f64).collect()).collect();
+                let means: Vec<f64> = v.iter().map(|w| w.iter().sum::<f64>() / w.len() as f64).collect();
+                let within = v.iter().map(|w| sd(w).powi(2)).sum::<f64>() / v.len() as f64;
+                let between = sd(&means).powi(2);
+                let sigma_b = (between - within / signal as f64).max(0.0);
+                let icc = sigma_b / (sigma_b + within).max(1e-9);
+                let half = |odd: usize| -> Vec<f64> { v.iter().map(|w| { let h: Vec<f64> = w.iter().skip(odd).step_by(2).copied().collect(); h.iter().sum::<f64>() / h.len().max(1) as f64 }).collect() };
+                let (a, b) = (half(0), half(1));
+                let (ma, mb) = (a.iter().sum::<f64>() / a.len() as f64, b.iter().sum::<f64>() / b.len() as f64);
+                let cov = a.iter().zip(&b).map(|(x, y)| (x - ma) * (y - mb)).sum::<f64>();
+                let r = cov / ((a.iter().map(|x| (x - ma).powi(2)).sum::<f64>() * b.iter().map(|y| (y - mb).powi(2)).sum::<f64>()).sqrt()).max(1e-9);
+                let eps = median((0..signal as usize).map(|w| { let col: Vec<f64> = v.iter().map(|g| g[w]).collect(); let m = median(col.clone()); median(col.iter().map(|x| (x - m).abs()).collect()) }).collect());
+                let grand = means.iter().sum::<f64>() / means.len() as f64;
+                let best = means.iter().cloned().fold(f64::MIN, f64::max);
+                println!("  {:<10} {:<8} {} (goal {goal}), {} genomes: mean {grand:.0}, best {best:.0}; between {:.1}; within {:.1}; noise {:.1}; icc {icc:.2}; split-half r {r:.2}; epsilon {eps:.1}{}",
+                    isl.name, st.name, PROBES[p], v.len(), sd(&means), within.sqrt(), (within / signal as f64).sqrt(), if k == stages[i] { "" } else { "  (the rung below)" });
+            }
+        }
+        return;
     }
     let mut was = stages.clone();
     // plasmids: those already in the populations (moved before a resume), then each one moved

@@ -278,6 +278,33 @@ pub fn shadow_hints() -> bool {
     SHADOW_HINTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Hints tried more often (`set_hint_use`, with hints): a mutation of its own, one in sixteen
+/// while any population carries a hint, sets a hinted population's gate or pause on its hint.
+/// Without it a hint is taken only when that population's gate or pause mutates (one property
+/// mutation in about forty). Off by default.
+static HINT_USE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_hint_use(on: bool) {
+    HINT_USE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn hint_use() -> bool {
+    HINT_USE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A hint tried: the population's gate (learn only while the hinted vector had lines on, or
+/// none) or its pause (run only while ...), half the time each, on the hint.
+fn use_hint(p: &mut Pop, rng: &mut StdRng) {
+    let Some((t, at)) = p.hint else { return };
+    if rng.gen_bool(0.5) {
+        p.gate = Some((t, rng.gen_bool(0.5)));
+        p.gate_at = at;
+    } else {
+        p.pause = Some((t, rng.gen_bool(0.5)));
+        p.pause_at = at;
+    }
+}
+
 /// Pauses drawn as gates are (`set_pause_draws`): a new population runs only while some channel
 /// (or, with port gates, a port) had lines on, or none, one time in four; and a pause made by
 /// mutation draws what it names (with port gates: a channel, an input or an output port, a third
@@ -1382,6 +1409,15 @@ impl Evolvable for TagGenome {
                 let rewire = if rng.gen_bool(0.5) { Some((rng.r#gen(), rng.gen_bool(0.5))) } else { None };
                 g.copy_circuit(c, rewire, rng);
             }
+            // (with `set_hint_use`) a hint tried: one mutation in sixteen, while any population
+            // carries one, sets a hinted population's gate or pause on its hint
+            10 if hint_use() && g.pops().any(|p| p.hint.is_some()) => {
+                let hinted: Vec<usize> = (0..n).filter(|&i| matches!(&g.tokens[i], Token::Pop(p) if p.hint.is_some())).collect();
+                let at = *hinted.choose(rng).unwrap();
+                if let Token::Pop(p) = &mut g.tokens[at] {
+                    use_hint(p, rng);
+                }
+            }
             // (with the op choice) one population's op drawn again: one mutation in sixteen, where as
             // one of a population's 38 properties it is about one in a hundred
             11 if crate::kernel::class::op_choice() && g.pops().count() > 0 => {
@@ -2055,6 +2091,29 @@ mod tests {
         let on_port = pops.iter().filter(|p| p.pause.is_some() && p.pause_at > 0).count();
         assert!((60..140).contains(&paused), "{paused}");
         assert!(on_port * 3 > paused, "{on_port} of {paused}");
+    }
+
+    #[test]
+    fn a_tried_hint_sets_the_gate_or_the_pause_on_it() {
+        let mut rng = StdRng::seed_from_u64(4);
+        let (mut gates, mut pauses) = (0, 0);
+        for _ in 0..200 {
+            let mut p = Pop { hint: Some((AFFECT, 1)), ..Pop::new(1, EYE, HAND) };
+            use_hint(&mut p, &mut rng);
+            if p.gate.is_some() {
+                assert_eq!((p.gate.unwrap().0, p.gate_at), (AFFECT, 1));
+                gates += 1;
+            }
+            if p.pause.is_some() {
+                assert_eq!((p.pause.unwrap().0, p.pause_at), (AFFECT, 1));
+                pauses += 1;
+            }
+        }
+        assert!(gates > 60 && pauses > 60 && gates + pauses == 200, "{gates} {pauses}");
+        // no hint, nothing changes
+        let mut q = Pop::new(1, EYE, HAND);
+        use_hint(&mut q, &mut rng);
+        assert!(q.gate.is_none() && q.pause.is_none());
     }
 
     #[test]

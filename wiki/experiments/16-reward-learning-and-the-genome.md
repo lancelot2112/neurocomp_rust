@@ -517,3 +517,14 @@ populations, but only a few gates or pauses (2-7 an island) have taken one, sinc
 only when its population's gate or pause mutates. Switching's feel (49) and prediction (2) are
 behind run 16.
 
+## Hints tried more often (run 20)
+
+In run 19 hints sat on 11-49% of the populations, but only 2-19 gates or pauses an island had
+taken one by 350: a hint was used only when that population's gate or pause mutated, one
+property mutation in about forty. With `ISL_HINT_USE=1`, trying a hint is a mutation of its own:
+one mutation in sixteen, while any population in the genome carries a hint, picks a hinted
+population and sets its gate or its pause (half the time each) on the hint, with the polarity
+(lines on, or none) drawn. Selection then keeps it or not. Off, the mutation draws as before.
+Tested. In a 12-generation smoke run, hints were taken on three islands by 12 (run 19: about
+100). Run 20 is run 19 with it (`runs/run20.cmd`, started by `runs/after19.cmd`).
+

@@ -99,6 +99,10 @@
 //! between its input and that target), which its gate or pause takes, half the time, when they
 //! mutate. Nothing is added to the network.
 //!
+//! `ISL_HINT_USE=1` (with `ISL_SHADOW_HINT`): hints tried more often. A mutation of its own, one
+//! in sixteen while any population carries a hint, sets a hinted population's gate or pause on
+//! its hint (half the time each).
+//!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
 //! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
@@ -512,6 +516,7 @@ fn main() {
     neurocomp::program::neurocomp::set_shadow(env("ISL_SHADOW", 0u8) == 1);
     neurocomp::evolve::tags::set_pause_draws(env("ISL_PAUSES", 0u8) == 1);
     neurocomp::evolve::tags::set_shadow_hints(env("ISL_SHADOW_HINT", 0u8) == 1);
+    neurocomp::evolve::tags::set_hint_use(env("ISL_HINT_USE", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
     let ration: u64 = env("ISL_RATION", 0);
@@ -626,7 +631,7 @@ fn main() {
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" });
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", hints tried true" } else { "" });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

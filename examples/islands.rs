@@ -102,7 +102,10 @@
 //! `ISL_HINT_USE=1` (with `ISL_SHADOW_HINT`): edges built on hints. A mutation of its own, one
 //! in sixteen while any population carries a hint, adds a new population of any kind on a hinted
 //! path: from the hinted population's input to the hinted vector, or from the hinted vector to its
-//! destination. A hint makes an edge likelier there; the edge's kind is drawn as usual.
+//! destination. A hint makes an edge likelier there; the edge's kind is drawn as usual. Where one
+//! way feeds back (closes a loop, or runs from a higher level to a lower) and the other does not,
+//! it goes the way that feeds back three times in four. An output port is read too (the act a step
+//! ago), so a hint at the hand can also go from the hand to the hinted population's destination.
 //!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the

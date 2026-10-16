@@ -525,10 +525,28 @@ relationship the shadow measured (the population's input carries information abo
 - **The mutation:** one in sixteen, while any population in the genome carries a hint, adds a new
   population after a hinted one. Its kind (wire or kernels), op, gate, pause and the rest are
   drawn as any new population's; only its endpoints come from the hint.
-- **The path,** half the time each: from the hinted population's input to the hinted vector (to an
-  output port: a reflex; to a sense: written, sensed next step beside what arrives; to a channel),
-  or from the hinted vector to the hinted population's destination (the vector used as an input).
-  An output port cannot be read and the self channel cannot be written, so those go one way.
+- **The path:** from the hinted population's input to the hinted vector (to an output port: a
+  reflex; to a sense: written, sensed next step beside what arrives; to a channel), or from the
+  hinted vector to the hinted population's destination (the vector used as an input). The self
+  channel cannot be written, so a hint there goes back only.
+- **Output ports are read too** (`from_output`, made only by this mutation in run 20): a population
+  may read the act, voice or hand as it was a step ago, so a hint at the hand can also go from the
+  hand to the hinted population's destination, the network sensing its own last move. The runtime
+  already kept the act's history; only the genome had no way to name it as a source.
+- **Biased toward feedback:** where one way feeds back and the other does not, it goes the way that
+  feeds back three times in four (else half and half). An edge feeds back when it closes a loop on
+  the channel graph (its destination already reaches its source; every channel reaches the self
+  channel, which the runtime writes from all the network's work) or runs from a higher level to a
+  lower one (a level: the fewest populations from the senses), so a deeper vector is written back
+  toward the input.
+
+Why the bias: in run 19's elites at 445 (checkpoint), **hinted populations sat on loops less than
+the others,** 45 of 790 (6%) against 1,051 of 4,390 (24%). Hints mostly name the self channel (357),
+a channel (316) or the hand (110), and 562 of the 790 (71%) have a way that feeds back: the
+generalist 266 of 331, the maze all 116, shapes 87 of 120, recall 65 of 107; screen's hints (81 at
+the hand) almost none. Over the elites' best networks, run 19 had 33-35% of populations on a loop at
+300-400, against 26-27% in run 16 and 8-20% in run 18; the hints, which only steered gates and
+pauses, did not do it.
 - It is a plain population: no teacher, no starting mark. It pays its carrying cost and selection
   keeps it or not. Gates and pauses still take hints when they mutate, as in run 19.
 

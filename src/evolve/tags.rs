@@ -167,6 +167,9 @@ pub struct Pop {
     /// touch or affect, nearest `to`) instead of an output port: the network adds to what it senses
     /// next step (the world never reads it). The self channel stays read-only.
     pub to_input: bool,
+    /// (`set_hint_use`) with `from_port`, it reads an output port (the act, voice or hand, nearest
+    /// `from`) instead of an input port: what the network did a step ago (an efference copy)
+    pub from_output: bool,
     /// (`set_port_gates`) what its gate and its pause name: 0 a declared channel, 1 an input port
     /// (a sense or the self channel), 2 an output port (the act, voice or hand)
     pub gate_at: u8,
@@ -194,7 +197,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint: None,
         }
     }
 
@@ -281,7 +284,8 @@ pub fn shadow_hints() -> bool {
 /// Edges built on hints (`set_hint_use`, with hints): a mutation of its own, one in sixteen while
 /// any population carries a hint, adds a new population of any kind (its op, kind, gate, pause and
 /// the rest drawn as any new population's) on a hinted path: from the hinted population's input
-/// to the hinted vector, or from the hinted vector to the hinted population's destination. A hint
+/// to the hinted vector, or from the hinted vector to the hinted population's destination, the
+/// way that feeds back three times in four when only one does (`TagGenome::hint_feedback`). A hint
 /// makes an edge likelier there; what the edge is, and whether it stays, is evolution's. Off by
 /// default.
 static HINT_USE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -294,25 +298,33 @@ pub fn hint_use() -> bool {
     HINT_USE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// A new population `q` placed on `h`'s hint: half the time from `h`'s input to the hinted vector
-/// (an output port, a sense, which it then writes, or a channel), else from the hinted vector to
-/// `h`'s destination (a sense, the self channel or a channel; an output port cannot be read, so
-/// there it always goes forward, and the self channel cannot be written, so there it always goes
-/// back). Only the endpoints are set; everything else is `q`'s own.
-fn on_hint(q: &mut Pop, h: &Pop, rng: &mut StdRng) {
+/// A new population `q` placed on `h`'s hint: from `h`'s input to the hinted vector (an output
+/// port, a sense, which it then writes, or a channel), or from the hinted vector to `h`'s
+/// destination (a sense, the self channel, an output port, read as the act a step ago, or a
+/// channel; the self channel cannot be written, so there it always goes back).
+/// `feedback` is `TagGenome::hint_feedback`'s: when one way feeds back and the other does not, it
+/// goes the way that feeds back three times in four, else either way half the time. Only the
+/// endpoints are set; everything else is `q`'s own.
+fn on_hint(q: &mut Pop, h: &Pop, feedback: [Option<bool>; 2], rng: &mut StdRng) {
     let Some((t, at)) = h.hint else { return };
-    let readable = at != 2;
-    let writable = !(at == 1 && t == SELF);
-    let forward = if !readable { true } else if !writable { false } else { rng.gen_bool(0.5) };
+    let forward = match feedback {
+        [Some(_), None] => true,
+        [None, Some(_)] => false,
+        [None, None] => return,
+        [Some(f), Some(b)] if f != b => (rng.gen_range(0..4) != 0) == f,
+        _ => rng.gen_bool(0.5),
+    };
     if forward {
         q.from = h.from;
         q.from_port = h.from_port;
+        q.from_output = h.from_output;
         q.to = t;
         q.to_port = at != 0;
         q.to_input = at == 1;
     } else {
         q.from = t;
-        q.from_port = at == 1;
+        q.from_port = at != 0;
+        q.from_output = at == 2;
         q.to = h.to;
         q.to_port = h.to_port;
         q.to_input = h.to_input;
@@ -417,7 +429,7 @@ impl Channels {
 
     /// Where a population reads, if anywhere.
     fn from(&self, p: &Pop) -> Option<Place> {
-        if p.from_port { Some(self.input(p.from)) } else { self.internal(p.from).map(|i| self.whole(i)) }
+        if p.from_port && p.from_output { Some(self.output(p.from)) } else if p.from_port { Some(self.input(p.from)) } else { self.internal(p.from).map(|i| self.whole(i)) }
     }
 
     /// Where a population writes, if anywhere.
@@ -456,6 +468,25 @@ impl Channels {
         }
         format!("C{}", at.node)
     }
+}
+
+/// The fewest edges from any of `from` to each node (usize::MAX where none reaches).
+fn distances(next: &[Vec<usize>], from: &[usize]) -> Vec<usize> {
+    let mut d = vec![usize::MAX; next.len()];
+    let mut queue = std::collections::VecDeque::new();
+    for &s in from {
+        d[s] = 0;
+        queue.push_back(s);
+    }
+    while let Some(x) = queue.pop_front() {
+        for &y in &next[x] {
+            if d[y] == usize::MAX {
+                d[y] = d[x] + 1;
+                queue.push_back(y);
+            }
+        }
+    }
+    d
 }
 
 fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
@@ -761,6 +792,46 @@ impl TagGenome {
         (r, w)
     }
 
+    /// The two ways an edge may run on `h`'s hint (from `h`'s input to the hinted vector, then from
+    /// the hinted vector to `h`'s destination): None where it cannot (the self channel is not
+    /// written), else whether it feeds back: it closes a loop (its
+    /// destination already reaches its source, on the channel graph, where every channel reaches
+    /// the self channel) or runs from a higher level to a lower one (a level: the fewest
+    /// populations from the senses; one nothing reaches is the highest).
+    pub fn hint_feedback(&self, h: &Pop) -> [Option<bool>; 2] {
+        let Some((t, at)) = h.hint else { return [None, None] };
+        let ch = Channels::of(&self.tokens);
+        let mut next = self.channel_next(&ch);
+        // the runtime writes the self channel from all the network's work: every node reaches it
+        let me = ch.self_index();
+        for (x, out) in next.iter_mut().enumerate() {
+            if x != me {
+                out.push(me);
+            }
+        }
+        let dist = |from: &[usize]| distances(&next, from);
+        let level = dist(&[0]);
+        let feeds_back = |x: Option<usize>, y: Option<usize>| match (x, y) {
+            (Some(x), Some(y)) => dist(&[y])[x] != usize::MAX || level[x] > level[y],
+            _ => false,
+        };
+        let hinted = if at == 1 { Some(ch.input(t).node) } else { ch.gate_place(t, at).map(|p| p.node) };
+        let (src, dst) = (ch.from(h).map(|p| p.node), ch.to(h).map(|p| p.node));
+        let writable = !(at == 1 && t == SELF);
+        [writable.then(|| feeds_back(src, hinted)), Some(feeds_back(hinted, dst))]
+    }
+
+    /// For each node of the channel graph, the nodes its populations write.
+    fn channel_next(&self, ch: &Channels) -> Vec<Vec<usize>> {
+        let mut next = vec![Vec::new(); ch.list.len()];
+        for p in self.pops() {
+            if let (Some(a), Some(b)) = (ch.from(p), ch.to(p)) {
+                next[a.node].push(b.node);
+            }
+        }
+        next
+    }
+
     /// How recursive it is, on its channel graph (channels the nodes, populations the edges):
     /// (populations on a loop, of them self-loops, the largest loop's channels, populations). A
     /// population is on a loop if it writes the channel it reads, or both its channels lie on one
@@ -799,7 +870,7 @@ impl TagGenome {
         let mut g = self.clone();
         for t in &mut g.tokens {
             if let Token::Pop(p) = t {
-                if p.from_port && ch.input(p.from).node == 0 {
+                if p.from_port && !p.from_output && ch.input(p.from).node == 0 {
                     p.from = SELF;
                 }
             }
@@ -882,6 +953,9 @@ impl TagGenome {
                     if p.to_input {
                         out.insert_str(out.len() - 1, " to_input=1");
                     }
+                    if p.from_output {
+                        out.insert_str(out.len() - 1, " from_output=1");
+                    }
                     if p.gate_at > 0 {
                         out.insert_str(out.len() - 1, &format!(" gate_at={}", p.gate_at));
                     }
@@ -943,6 +1017,7 @@ impl TagGenome {
                         expect: kv.get("expect") == Some(&"1"),
                         accident: kv.get("accident").and_then(|x| x.parse().ok()).unwrap_or(0),
                         to_input: kv.get("to_input") == Some(&"1"),
+                        from_output: kv.get("from_output") == Some(&"1"),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         teacher: kv.get("teacher").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
@@ -1244,7 +1319,7 @@ fn keep_predictor(g: &mut TagGenome, id: u32, kind: u8, _c: u32) {
     }
     let Some(c) = safe_tag(g) else { return };
     let q = Pop {
-        id: g.next_id, to: c, to_port: false, to_input: false, wire: false, op: KernelOp::Or, count: 0, grow: true, cover: false,
+        id: g.next_id, to: c, to_port: false, to_input: false, from_output: false, wire: false, op: KernelOp::Or, count: 0, grow: true, cover: false,
         replicate: parent.replicate.max(3), cap: parent.cap.max(16), gate: None, pause: None, repeat: false, mark: 128, explored: true,
         teacher: Some((tag, tat)), ..parent
     };
@@ -1430,8 +1505,9 @@ impl Evolvable for TagGenome {
                 let hinted: Vec<usize> = (0..n).filter(|&i| matches!(&g.tokens[i], Token::Pop(p) if p.hint.is_some())).collect();
                 let at = *hinted.choose(rng).unwrap();
                 let Token::Pop(h) = g.tokens[at].clone() else { unreachable!() };
+                let feedback = g.hint_feedback(&h);
                 let mut q = g.random_pop(rng);
-                on_hint(&mut q, &h, rng);
+                on_hint(&mut q, &h, feedback, rng);
                 g.tokens.insert(at + 1, Token::Pop(q));
             }
             // (with the op choice) one population's op drawn again: one mutation in sixteen, where as
@@ -2119,7 +2195,7 @@ mod tests {
         let (mut fwd, mut back) = (0, 0);
         for i in 0..200 {
             let mut q = Pop { op: KernelOp::Xor, wire: i % 2 == 0, ..Pop::new(2, 0, 0) };
-            on_hint(&mut q, &h, &mut rng);
+            on_hint(&mut q, &h, [Some(false), Some(false)], &mut rng);
             assert_eq!(q.op, KernelOp::Xor);
             if (q.from, q.from_port, q.to, q.to_port, q.to_input) == (EYE, true, AFFECT, true, true) {
                 fwd += 1;
@@ -2130,11 +2206,64 @@ mod tests {
             }
         }
         assert!(fwd > 60 && back > 60, "{fwd} {back}");
-        // a hint at the hand (an output) always goes forward: eye -> hand
+        // a hint at the hand (an output): eye -> hand, or the hand (as it was a step ago) -> C,
+        // which feeds back (nothing here writes the hand, so it is the highest level)
         let h = Pop { from_port: true, hint: Some((HAND, 2)), ..Pop::new(1, EYE, c) };
-        let mut q = Pop::new(2, 0, 0);
-        on_hint(&mut q, &h, &mut rng);
-        assert_eq!((q.from, q.from_port, q.to, q.to_port, q.to_input), (EYE, true, HAND, true, false));
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Pop(h.clone())], next_id: 2 };
+        assert_eq!(g.hint_feedback(&h), [Some(false), Some(true)]);
+        let (mut fwd, mut back) = (0, 0);
+        for _ in 0..100 {
+            let mut q = Pop::new(2, 0, 0);
+            on_hint(&mut q, &h, g.hint_feedback(&h), &mut rng);
+            match (q.from, q.from_port, q.from_output, q.to, q.to_port, q.to_input) {
+                (EYE, true, false, HAND, true, false) => fwd += 1,
+                (HAND, true, true, t, false, false) if t == c => back += 1,
+                x => panic!("{x:?}"),
+            }
+        }
+        assert!(fwd > 10 && back > 60, "{fwd} {back}");
+        // read, it is the act's hand channel
+        let mut g = g;
+        let mut q = Pop::new(2, HAND, c);
+        q.from_port = true;
+        q.from_output = true;
+        g.tokens.push(Token::Pop(q));
+        let ch = Channels::of(&g.tokens);
+        let Token::Pop(q) = &g.tokens[2] else { unreachable!() };
+        assert_eq!(ch.from(q).map(|p| ch.name(p)), Some("hand".to_string()));
+        assert_eq!(TagGenome::from_text(&g.to_text()).unwrap().remove(0), g);
+    }
+
+    #[test]
+    fn a_hint_edge_goes_the_way_that_feeds_back_three_times_in_four() {
+        let mut rng = StdRng::seed_from_u64(5);
+        let (a, b) = (0x3C, 0xC3);
+        // eye -> A -> B -> hand, and the population eye -> A predicts B: forward (eye -> B) runs
+        // up, from level 0 to level 2; back (B -> A) closes the loop A -> B -> A
+        let h = Pop { from_port: true, hint: Some((b, 0)), ..Pop::new(1, EYE, a) };
+        let g = TagGenome {
+            tokens: vec![
+                Token::Channel { tag: a, width: 3, hold: false },
+                Token::Channel { tag: b, width: 3, hold: false },
+                Token::Pop(h.clone()),
+                Token::Pop(Pop::new(2, a, b)),
+                Token::Pop(Pop { to_port: true, ..Pop::new(3, b, HAND) }),
+            ],
+            next_id: 4,
+        };
+        assert_eq!(g.hint_feedback(&h), [Some(false), Some(true)]);
+        let back = (0..400)
+            .filter(|_| {
+                let mut q = Pop::new(9, 0, 0);
+                on_hint(&mut q, &h, g.hint_feedback(&h), &mut rng);
+                (q.from, q.from_port, q.to, q.to_port) == (b, false, a, false)
+            })
+            .count();
+        assert!((260..340).contains(&back), "{back}");
+        // B -> hand hinted at the eye: forward (B -> eye, written) runs down to the senses; back
+        // (eye -> hand) does not
+        let h = Pop { to_port: true, hint: Some((EYE, 1)), ..Pop::new(3, b, HAND) };
+        assert_eq!(g.hint_feedback(&h), [Some(true), Some(false)]);
     }
 
     #[test]

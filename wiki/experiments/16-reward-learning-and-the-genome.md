@@ -561,6 +561,16 @@ relationship the shadow measured (the population's input carries information abo
   act (read). Until now only self-loops came in one mutation (`self_loop`, one in thirty-two), and
   a loop across channels needed two whose tags lined up.
 
+**Results** (`runs/islands20/README.md`, 600 generations): recall passed lag1 to lag3 by 36, the
+earliest of any run; screen's glow averaged 117 and selection's cued 388 (best 589 of 600), both
+the best of any run; recall's lag4 averaged 67 (run 19: 40); shapes passed blur2 and shift8 in
+the last 30 generations. The feel rung stayed short of run 16 on switching (51 against 67) and of
+run 19 on the maze (48 against 55). Loops crossed channels from generation 50 (in run 19 never),
+and networks grew and trimmed in cycles: the generalist's best 37, 72, 149, 78, 192, 77, 84, 47,
+5 populations at 50-generation checks, at most 184 of 192 on loops through 17 channels; by 550
+every island had trimmed to 1 to 8 populations. Reading the act spread (a quarter of populations
+on several islands, up to 94% on screen). 54 of 521 plasmids helped (10%, the most of any run).
+
 Run 20 so carries six changes on run 19 (edges on hints, the feedback bias, output reads, hint
 bands, self writes, loops closed), at the user's choice; its results are for the set, not any one
 of them.

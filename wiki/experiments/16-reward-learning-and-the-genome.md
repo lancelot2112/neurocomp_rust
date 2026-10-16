@@ -322,6 +322,15 @@ Run 11 is run 10 with both (`runs/run11.cmd`, started by hand when run 10 was st
 
 Next: run 12 adds kernels that can expect zeros (below).
 
+## Run 15: the feel rung
+
+`runs/islands15`, stopped after generation 250. The stroke reached the hand on two islands,
+weakly: the maze's feel averaged 47 (63 over the last 50 generations, best 97) and switching's
+rose from about 0 to 36 over the last 50 (54 at 250). Shapes' stayed at 0 over 218 generations.
+None passed (goal 300). Recall climbed its whole ladder by 105, the fastest of any run. A
+plasmid from the maze (#145) was in 23 of switching's 32 networks at 200, as switching's feel
+score rose.
+
 ## Ports for gates, pauses and writes (run 16)
 
 A population could read a sense (`from_port`) and write an output port (`to_port`), but its gate

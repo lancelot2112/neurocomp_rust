@@ -1,6 +1,6 @@
 # Island runs compared
 
-Every island run so far (`runs/islands3` to `runs/islands14`), side by side: what each changed,
+Every island run so far (`runs/islands3` to `runs/islands15`), side by side: what each changed,
 and how far each island climbed. Details are in experiments 13 to 16.
 
 ## What each run changed
@@ -19,8 +19,8 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 12 | kernels that may expect zeros as well as ones | 250 (stopped: nothing new on repeat) | 57 min |
 | 13 | freak accidents: a trial connection grown now and then even when not stuck | 250 (stopped: nothing new on repeat) | 1 h 5 min |
 | 14 | a ninth island, task selection | 250 (stopped: reward rungs flat, selection falling) | 1 h 19 min |
-| 15 | a feel rung before every repeat rung | running | |
-| 16 | ports for gates, pauses and writes: one population can learn only after a stroke | after 15 | |
+| 15 | a feel rung before every repeat rung | 250 (stopped: feel rising slowly, moved to port gates) | 1 h 10 min |
+| 16 | ports for gates, pauses and writes: one population can learn only after a stroke | running | |
 | 17 | shadow explorers: predictions made without touching the network, the best kept as an internal channel | after 16 | |
 
 ## How far each island climbed
@@ -42,6 +42,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 12 (to 250) | repeat (110) | lag3 (191) | echo2 (13) | first | first | first | repeat (57) | 13% of 191 |
 | 13 (to 250) | repeat (144) | lag1 (138) | echo2 (14) | first | first | first | repeat (67) | 11% of 192 |
 | 14 (to 250) | repeat (59) | **lag4 (139)** | echo2 (14) | first | first | first | repeat (36) | 9% of 215 |
+| 15 (to 250) | feel (59) | **lag4 (105)** | echo2 (12) | first | first (feel: mean 47) | first | feel (33) | 6% of 216 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.

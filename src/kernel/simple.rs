@@ -294,12 +294,14 @@ impl SimpleKernel {
 
     #[inline]
     fn is_inhibited(&self, ctx: &KernelContext, _stats: &InputStats) -> bool {
-        // held down when more than half of our mask overlaps lines a fired kernel took
+        // held down when the lines a fired kernel took (or an inhibit input's) cover more than
+        // `inhibit_quarters` quarters of our mask: more than half by default
         let taken = match &self.words {
             Some(ws) => { let m = self.input_mask.as_words(); ws.iter().map(|&w| (self.at(ctx.inhibit, w) & m[w as usize]).count_ones() as usize).sum() }
             None => ctx.inhibit.mask_and_count(self.input_idx, &self.input_mask, |a, m| a & m),
         };
-        2 * taken > self.care()
+        let q = if ctx.inhibit_quarters == 0 { 2 } else { ctx.inhibit_quarters.min(4) } as usize;
+        4 * taken > q * self.care()
     }
 
     #[inline]
@@ -610,12 +612,12 @@ mod tests {
         // a cool heat input (threshold 4 raised by half, to 6) holds it down; a warm one (to 3) lets
         // it fire on less
         let mut held = sparse.clone();
-        assert!(!held.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: -128, phase: 0 }, &mut out, &mut rng));
+        assert!(!held.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: -128, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
         let mut weak = SimpleKernel::new(BitVector::from_bits(&[1, 2, 3, 9], 64 * 1024), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
-        assert!(!weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, &mut rng));
-        assert!(weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 64, phase: 0 }, &mut out, &mut rng));
+        assert!(!weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
+        assert!(weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 64, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
         out.as_words_mut().fill(0);
-        assert!(sparse.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, &mut rng));
+        assert!(sparse.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
         assert_eq!(sparse.care(), 8);
         assert_eq!(sparse.agreement(&input), 6);
         let m = sparse.input_mask.as_words();
@@ -637,7 +639,7 @@ mod tests {
         let inhibit = BitVector::new(256, Some(0));
         let mut out = BitVector::new(64, Some(0));
         for _ in 0..8 {
-            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, &mut rng);
+            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng);
         }
         // Hebbian moves went to on lines inside the tile (72, 73), never to 10 or 200
         assert_eq!(k.agreement(&input), 4);
@@ -661,7 +663,7 @@ mod tests {
         let fire = |k: &mut SimpleKernel, input: &BitVector, rng: &mut rand::rngs::StdRng| {
             let mut out = BitVector::new(256, Some(0));
             k.learn_fire = false;
-            k.try_fire(&KernelContext { input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, rng)
+            k.try_fire(&KernelContext { input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, rng)
         };
         // four lines in a tile, all four to match, expecting every line off
         let mut k = SimpleKernel::tile(64, 64, &[64, 70, 100, 127], BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
@@ -702,7 +704,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0, heat: 0,
+            temperature: 0, heat: 0, inhibit_quarters: 2,
             phase: 0,
         };
 
@@ -725,7 +727,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0, heat: 0,
+            temperature: 0, heat: 0, inhibit_quarters: 2,
             phase: 0,
         };
 
@@ -747,7 +749,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0, heat: 0,
+            temperature: 0, heat: 0, inhibit_quarters: 2,
             phase: 0,
         };
 
@@ -772,7 +774,7 @@ mod tests {
         k.try_fire(&KernelContext {
             input: &input,
             inhibit: &inhibit,
-            temperature: 0, heat: 0,
+            temperature: 0, heat: 0, inhibit_quarters: 2,
             phase: 0,
         }, &mut output, &mut rng);
 
@@ -785,7 +787,7 @@ mod tests {
             &KernelContext {
                 input: &input,
                 inhibit: &inhibit,
-                temperature: 0, heat: 0,
+                temperature: 0, heat: 0, inhibit_quarters: 2,
                 phase: 0,
             }, 
             &mut output,
@@ -800,7 +802,7 @@ mod tests {
             &KernelContext {
                 input: &input,
                 inhibit: &inhibit,
-                temperature: 0, heat: 0,
+                temperature: 0, heat: 0, inhibit_quarters: 2,
                 phase: 0,
             }, 
             &mut output,

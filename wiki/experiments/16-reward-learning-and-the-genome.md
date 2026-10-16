@@ -706,3 +706,24 @@ From the signal measurement above, two changes, each behind a switch:
 
 Run 24 is run 21 with both (`runs/run24.cmd`), after run 23.
 
+## Inhibit inputs (run 25)
+
+Inhibition among a population's own kernels was already a gene (`share` turns it off): a kernel
+whose mask lies more than half on lines a better-matched kernel took is held down and learns
+anti-Hebbian. Nothing outside the population could hold it down. With `ISL_INHIBIT=1` a population
+may carry an **inhibit input**, as it carries a gate, a pause or a heat input: a tag naming a
+channel, an input port or an output port. Each step the lines that vector had on a frame ago are
+taken before any of the population's kernels fires (folded onto its input words in order), so a
+kernel whose mask lies more than half on them is held down, as if a rival had fired there.
+Unlike a cool heat input, which raises every threshold in the population, it suppresses only the
+kernels looking at the lines that vector is active on: inhibition between populations, a
+winner-take-all across them, a loop quietening what feeds it. A new population has one one time
+in four; two properties change it and what it names; with hints it takes the hint half the time.
+With it, **the overlap rule as a gene** (`ISL_OVERLAP=1`): each population's `inhibit_quarters`
+(1 to 4, starting at 2) sets how much of a kernel's mask the taken lines must cover to hold it
+down, more than that many quarters (2 is the old "more than half"; 4: never), for its own kernels
+and its inhibit input alike. The thought behind it: reading may need several kernels matched on
+the same spot (an echo of one sound by more than one code), which the half rule forbids unless
+`share` turns inhibition off for the whole population. Run 25 is run 21 with both
+(`runs/run25.cmd`), after run 24.
+

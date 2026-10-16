@@ -173,6 +173,42 @@ impl KernelOp {
 }
 
 #[cfg(test)]
+mod veto_tests {
+    use super::*;
+    use crate::kernel::SimpleKernel;
+
+    #[test]
+    fn an_inhibit_input_holds_down_a_kernel_on_its_lines() {
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
+        let input = BitVector::from_bits(&[1, 2, 3, 4], 64);
+        let kernel = || SimpleKernel::new(BitVector::from_bits(&[1, 2, 3, 4], 64), 0, BitVector::from_words(vec![1]), 0, 3, KernelOp::Or);
+        let fires = |veto: &[u64], rng: &mut rand::rngs::StdRng| {
+            let mut class = KernelClass::with_kernels(vec![kernel()]);
+            class.set_veto(veto);
+            let mut out = BitVector::new(64, Some(0));
+            class.process(&input, &mut out, 0, 0, false, rng).len()
+        };
+        assert_eq!(fires(&[], &mut rng), 1);
+        // another vector on three of its four lines: held down
+        assert_eq!(fires(&[0b11100], &mut rng), 0);
+        // on one of them: it fires
+        assert_eq!(fires(&[0b10], &mut rng), 1);
+        // with the overlap rule at 3 quarters, three of four lines still let it fire; at 1, two
+        // of four hold it down
+        let with = |veto: &[u64], q: u8, rng: &mut rand::rngs::StdRng| {
+            let mut class = KernelClass::with_kernels(vec![kernel()]);
+            class.set_veto(veto);
+            class.set_inhibit_quarters(q);
+            let mut out = BitVector::new(64, Some(0));
+            class.process(&input, &mut out, 0, 0, false, rng).len()
+        };
+        assert_eq!(with(&[0b11100], 3, &mut rng), 1);
+        assert_eq!(with(&[0b00110], 1, &mut rng), 0);
+        assert_eq!(with(&[0b00110], 2, &mut rng), 1);
+    }
+}
+
+#[cfg(test)]
 mod op_tests {
     use super::KernelOp::*;
 
@@ -241,6 +277,9 @@ pub struct KernelContext<'a> {
     /// a heat input's pull on every threshold this step, in 256ths of the kernel's own threshold:
     /// positive lowers it (to at least one line), negative raises it; 0 leaves it
     pub heat: i16,
+    /// how much of a kernel's mask taken lines must cover to hold it down, in quarters: held down
+    /// when they cover more than this many quarters (2: more than half; 4: never). 0 reads as 2
+    pub inhibit_quarters: u8,
 }
 
 pub trait KernelTrait {
@@ -276,15 +315,20 @@ pub struct KernelClass<K: KernelTrait> {
     /// this step's heat (`KernelContext::heat`), set by the runtime from the population's heat
     /// input before it runs
     heat: i16,
+    /// this step's inhibit input (`set_veto`): lines another vector had on, taken before any
+    /// kernel fires, so a kernel whose mask lies more than half on them is held down
+    veto: Vec<u64>,
+    /// (`KernelContext::inhibit_quarters`) this population's overlap rule
+    inhibit_quarters: u8,
 }
 
 impl<K: KernelTrait> KernelClass<K> {
     pub fn default() -> Self {
-        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0 }
+        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0, veto: Vec::new(), inhibit_quarters: 2 }
     }
 
     pub fn with_kernels(kernels: Vec<K>) -> Self {
-        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0 }
+        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0, veto: Vec::new(), inhibit_quarters: 2 }
     }
 
     pub fn add(&mut self, k: K) {
@@ -304,6 +348,17 @@ impl<K: KernelTrait> KernelClass<K> {
             self.inhibit = BitVector::new(input.bit_len(), Some(0));
         }
         let mut fired = Vec::new();
+        // (an inhibit input) its lines are taken before any kernel fires
+        let vetoed = !self.veto.is_empty();
+        if vetoed {
+            let iw = self.inhibit.as_words_mut();
+            let (n, v) = (iw.len(), self.veto.len());
+            if n > 0 {
+                for j in 0..n.max(v) {
+                    iw[j % n] |= self.veto[j % v];
+                }
+            }
+        }
         // the better-matched kernels go first, so where masks overlap the best match fires and
         // the others are held down (ties: the older kernel)
         let mut order = std::mem::take(&mut self.order);
@@ -318,6 +373,7 @@ impl<K: KernelTrait> KernelClass<K> {
                 temperature: self.temperature.current + adj_temperature,
                 phase,
                 heat: self.heat,
+                inhibit_quarters: self.inhibit_quarters,
             };
             if k.try_fire_counted(&ctx, count, output, rng) {
                 if inhibit_on {
@@ -332,6 +388,9 @@ impl<K: KernelTrait> KernelClass<K> {
                 self.active_kernels[i].clear_inhibit(&mut self.inhibit);
             }
         }
+        if vetoed {
+            self.inhibit.as_words_mut().fill(0);
+        }
         fired
     }
 
@@ -342,6 +401,18 @@ impl<K: KernelTrait> KernelClass<K> {
     /// This step's heat (`KernelContext::heat`).
     pub fn set_heat(&mut self, heat: i16) {
         self.heat = heat;
+    }
+
+    /// The population's overlap rule (`KernelContext::inhibit_quarters`).
+    pub fn set_inhibit_quarters(&mut self, q: u8) {
+        self.inhibit_quarters = q;
+    }
+
+    /// This step's inhibit input: the words of the vector that holds this population down, folded
+    /// onto its input in order (wrapping where the widths differ). Empty: none.
+    pub fn set_veto(&mut self, words: &[u64]) {
+        self.veto.clear();
+        self.veto.extend_from_slice(words);
     }
 
     pub fn clear(&mut self) { self.active_kernels.clear() }

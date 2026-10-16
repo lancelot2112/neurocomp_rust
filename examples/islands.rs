@@ -138,6 +138,15 @@
 //! versions (echo~, surprise~, feel~: a late or near answer counts in part); the rung's goal is
 //! still checked on the probe itself.
 //!
+//! `ISL_INHIBIT=1`: inhibit inputs. A population may carry one (a channel or a port): each step
+//! the lines it had on a frame ago are taken before any of the population's kernels fires, so a
+//! kernel whose mask lies more than half on them is held down. A new population has one one time
+//! in four.
+//!
+//! `ISL_OVERLAP=1`: the overlap rule as a gene. A population's `inhibit_quarters` (1 to 4,
+//! starting at 2) sets how much of a kernel's mask taken lines must cover to hold it down (more
+//! than that many quarters; 4: never), for its own kernels and its inhibit input alike.
+//!
 //! `ISL_HEAT=1`: heat inputs. A population may carry one (a channel or a port): each step every
 //! one of its kernels' thresholds moves by its own threshold times how full that vector was a
 //! frame ago, down when warm, up when cool. A new population has one one time in four.
@@ -334,6 +343,16 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
         let wi = all.iter().filter(|p| p.to_port && p.to_input).count();
         let ro = all.iter().filter(|p| p.from_port && p.from_output).count();
         let mut reading = if neurocomp::evolve::tags::hint_use() || neurocomp::evolve::tags::read_outputs() { format!(", reading an output {}%", ro * 100 / all.len().max(1)) } else { String::new() };
+        // (with ISL_INHIBIT: populations with an inhibit input)
+        if neurocomp::evolve::tags::inhibit_inputs() {
+            let held = all.iter().filter(|p| !p.wire && p.inhibitor.is_some()).count();
+            reading += &format!(", inhibited {}%", held * 100 / all.len().max(1));
+        }
+        // (with ISL_OVERLAP: the overlap rule, in quarters, among the kernel populations)
+        if neurocomp::evolve::tags::overlap_genes() {
+            let q: Vec<usize> = (1..=4).map(|k| all.iter().filter(|p| !p.wire && p.inhibit_quarters.clamp(1, 4) == k).count()).collect();
+            reading += &format!(", overlap quarters 1:{} 2:{} 3:{} 4:{}", q[0], q[1], q[2], q[3]);
+        }
         // (with ISL_HEAT: populations with a heat input, warm and cool)
         if neurocomp::evolve::tags::heat_inputs() {
             let warm = all.iter().filter(|p| !p.wire && p.heat.is_some_and(|h| h.1)).count();
@@ -570,6 +589,8 @@ fn main() {
     neurocomp::evolve::tags::set_self_writes(env("ISL_SELF_WRITE", 0u8) == 1);
     neurocomp::evolve::tags::set_close_loops(env("ISL_LOOPS", 0u8) == 1);
     neurocomp::evolve::tags::set_heat_inputs(env("ISL_HEAT", 0u8) == 1);
+    neurocomp::evolve::tags::set_inhibit_inputs(env("ISL_INHIBIT", 0u8) == 1);
+    neurocomp::evolve::tags::set_overlap_genes(env("ISL_OVERLAP", 0u8) == 1);
     neurocomp::evolve::set_elite_pass(env("ISL_ELITE_PASS", 0u8) == 1);
     neurocomp::evolve::set_partial(env("ISL_PARTIAL", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
@@ -686,7 +707,7 @@ fn main() {
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" } + if neurocomp::evolve::carry_energy() { ", carrying paid as energy true" } else { "" } + if neurocomp::evolve::elite_pass() { ", goals judged on the elite true" } else { "" } + if neurocomp::evolve::partial() { ", partial credit true" } else { "" });
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" } + if neurocomp::evolve::carry_energy() { ", carrying paid as energy true" } else { "" } + if neurocomp::evolve::elite_pass() { ", goals judged on the elite true" } else { "" } + if neurocomp::evolve::partial() { ", partial credit true" } else { "" } + if neurocomp::evolve::tags::inhibit_inputs() { ", inhibit inputs true" } else { "" } + if neurocomp::evolve::tags::overlap_genes() { ", overlap genes true" } else { "" });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

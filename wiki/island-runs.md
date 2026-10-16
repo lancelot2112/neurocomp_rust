@@ -29,6 +29,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 22 | no plasmid exchange (ISL_EVERY=0): run 21 with the islands apart, to measure the exchange | after 21 | |
 | 23 | thrift off (ISL_THRIFT=0) and carrying paid as energy (ISL_CARRY_ENERGY=1): run 21 with energy alone pricing compute and carrying | after 22 | |
 | 24 | goals judged on the elite (ISL_ELITE_PASS=1) and partial credit in selection (ISL_PARTIAL=1): run 21 with both | after 23 | |
+| 25 | inhibit inputs (ISL_INHIBIT=1) and the overlap rule as a gene (ISL_OVERLAP=1): run 21 with both | after 24 | |
 
 ## How far each island climbed
 

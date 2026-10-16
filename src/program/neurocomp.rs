@@ -494,6 +494,13 @@ impl RuntimeNetwork {
                     let h = (on * 256 / (f.len() as u64 * 64).max(1)) as i16;
                     eg.group.set_heat(if warm { h } else { -h });
                 }
+                eg.group.set_inhibit_quarters(eg.spec.inhibit_quarters);
+                // an inhibit input: the lines its vector had on a frame ago are taken first
+                if let Some((vn, vw)) = eg.spec.inhibitor {
+                    let f = nodes[vn].get_frame(at(live[vn], 1)).as_words();
+                    let f = vw.map_or(f, |(o, n)| &f[o.min(f.len())..(o + n).min(f.len())]);
+                    eg.group.set_veto(f);
+                }
                 // what it reads: a whole vector one frame is borrowed where it lies (no copy); a
                 // window, a span of frames, a rotation or its own destination is copied
                 let frame = at(live[eg.src.idx], eg.src.read_back);

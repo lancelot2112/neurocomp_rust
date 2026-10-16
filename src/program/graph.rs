@@ -234,6 +234,13 @@ pub struct EdgeSpec {
     /// moves by its own threshold times the node's popcount a frame ago over its bits: down when
     /// warm, up when cool. None: no heat
     pub heat: Option<(usize, Option<(usize, usize)>, bool)>,
+    /// an inhibit input: (node, its words if part of it). Each step the node's lines a frame ago
+    /// are taken before any kernel fires, so a kernel whose mask lies more than half on them is
+    /// held down (and learns anti-Hebbian, as an inhibited kernel does). None: no inhibit input
+    pub inhibitor: Option<(usize, Option<(usize, usize)>)>,
+    /// how much of a kernel's mask taken lines must cover to hold it down, in quarters (more
+    /// than this many; 2: more than half, the default; 4: never)
+    pub inhibit_quarters: u8,
 }
 
 impl EdgeSpec {
@@ -287,6 +294,8 @@ impl EdgeSpec {
             hit_quarters: 3,
             hint_low: 0,
             heat: None,
+            inhibitor: None,
+            inhibit_quarters: 2,
         }
     }
 }

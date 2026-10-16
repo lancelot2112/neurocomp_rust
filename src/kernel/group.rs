@@ -62,6 +62,20 @@ impl KernelGroup {
         &self.available_classes
     }
 
+    /// The overlap rule on every class (`KernelContext::inhibit_quarters`).
+    pub fn set_inhibit_quarters(&mut self, q: u8) {
+        for c in self.classes_mut() {
+            c.set_inhibit_quarters(q);
+        }
+    }
+
+    /// This step's inhibit input on every class (`KernelClass::set_veto`).
+    pub fn set_veto(&mut self, words: &[u64]) {
+        for c in self.classes_mut() {
+            c.set_veto(words);
+        }
+    }
+
     /// This step's heat on every class (`KernelContext::heat`).
     pub fn set_heat(&mut self, heat: i16) {
         for c in self.classes_mut() {

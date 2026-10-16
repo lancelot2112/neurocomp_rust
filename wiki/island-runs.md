@@ -39,6 +39,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 11 | repeat (67) | lag3 (102) | **fade6 (369)** | first | first | first | repeat (250) | 13% of 462 |
 | 12 (to 250) | repeat (110) | lag3 (191) | echo2 (13) | first | first | first | repeat (57) | 13% of 191 |
 | 13 (to 250) | repeat (144) | lag1 (138) | echo2 (14) | first | first | first | repeat (67) | 11% of 192 |
+| 14 (running, to 180) | repeat (59) | **lag4 (139)** | echo2 (14) | first | first | first | repeat (36) | 6% of 108 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.
@@ -68,6 +69,72 @@ Two cautions for reading it:
 - **Plasmids** help on arrival 6-12% of the time in every run, but none has made a lasting
   difference to an island. The first to fix whole in an island was run 13's #175 (all 32 of shapes'
   networks), and shapes' score did not change.
+
+## Patterns in the evolved networks (runs 9-14)
+
+`python runs/patterns.py` reads each run's log and last checkpoint. Two views:
+- **Recursion against score:** each island's best at every 10-generation table (1,561 readings):
+  its share of populations on a loop, against its held-out score on its current goal (as a share
+  of the goal).
+- **Wiring in the elites:** the top 8 of each island in each run's last checkpoint (6,465
+  populations).
+
+**Recursion helps memory and responding, not prediction or echo.** With loops against without,
+same island and rung:
+
+| island, rung | without loops | with loops |
+|---|---|---|
+| recall lag3 | 0.29 | **0.90** |
+| recall respond | 0.61 | 0.93 |
+| switching respond | 0.57 | 0.93 |
+| screen glow | 0.19 | 0.36 |
+| switching repeat | 0.02 (n 105) | 0.21 (n 9) |
+| prediction cycle1 | **0.56** | 0.33 |
+| reading echo2 | 0.06 | -0.01 |
+
+Loops scored better on 9 island-rungs and worse on 7. Across all islands, heavy recursion (half
+or more of the populations on a loop) did slightly worse (mean 0.20, 4% at the goal) than none
+(0.27, 9%). It suits the tasks that need held state (recall's lags); prediction's best networks
+were arithmetic without loops (sub and shr, runs 13-14).
+
+**Inhibition between populations evolves everywhere.** A quarter of the elites' populations
+(25%) write a clearing op (clear, and, nor, nand) into a channel that another population writes
+with an exciting op. That is competition for a channel, on top of the built-in inhibition between
+kernels. 28% clear a channel that something reads, or an output port. Run 14's switching had 52%
+competing, run 12's shapes 57%.
+
+**Switching circuits on and off is common.** 22% of the elites' populations run only while some
+channel had lines on (or none) a frame ago: an execution gate, so one channel switches another
+circuit on or off. It is high on islands that read context, such as run 9's generalist (53%) and
+run 11's prediction (70%). Run 14's recall, which climbed its whole ladder by 139, had 59%.
+
+**Learning gated by a channel: the shape internal reward would take.** 48% of the populations
+learn only while a channel is on (or off). For 993 the gate channel is fed, within three hops,
+from the affect port (the stroke); for 2,153 it is internal. That is reward-gated learning in
+structure, but the repeat rung stayed near 0 in every run, so the stroke-gated ones are not used
+that way yet. The genome shows the gate is there, not that the channel ever changes in a
+lifetime.
+
+**Strengthening populations that come true.** 41% of the populations replicate kernels that keep
+coming true; 9% have repeat births (copying an act that was followed). With marks (runs 11-14),
+populations whose predictions came true are duplicated more and deleted less: 90% of run 11's
+generalist elite and 60% of run 12's recall were marked.
+
+**What goes with a better best** (each island's last best against its last held-out score, 43
+islands):
+
+| in the best genome | islands with it | mean score | islands without | mean score |
+|---|---|---|---|---|
+| repeat births | 17 | **0.39** | 26 | 0.16 |
+| loops | 17 | 0.34 | 26 | 0.19 |
+| learn gates | 18 | 0.32 | 25 | 0.21 |
+| run-while gates | 18 | 0.30 | 25 | 0.22 |
+| clearing that competes | 20 | 0.28 | 23 | 0.23 |
+| replication | 29 | 0.20 | 14 | **0.36** |
+
+These are small samples and confounded (islands differ in difficulty, and the features are
+correlated with each other and with genome size). They point the same way as the time series:
+loops, gates and repeat births come with better networks; kernel replication does not.
 
 ## Still stuck in every run
 

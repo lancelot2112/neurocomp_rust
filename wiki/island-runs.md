@@ -1,6 +1,6 @@
 # Island runs compared
 
-Every island run so far (`runs/islands3` to `runs/islands17`), side by side: what each changed,
+Every island run so far (`runs/islands3` to `runs/islands18`), side by side: what each changed,
 and how far each island climbed. Details are in experiments 13 to 16.
 
 ## What each run changed
@@ -22,8 +22,8 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 15 | a feel rung before every repeat rung | 250 (stopped: feel rising slowly, moved to port gates) | 1 h 10 min |
 | 16 | ports for gates, pauses and writes: one population can learn only after a stroke | 600 | 3 h 22 min |
 | 17 | shadow explorers, and recall's long ladder | 250 (stopped: predictor bloat, feel at 0) | 1 h 11 min |
-| 18 | pauses drawn as gates are: a port pause one step away | running | |
-| 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | after 18 | |
+| 18 | pauses drawn as gates are: a port pause one step away | 548 (stopped for run 19) | 3 h 32 min |
+| 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | running | |
 
 ## How far each island climbed
 
@@ -47,6 +47,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 15 (to 250) | feel (59) | **lag4 (105)** | echo2 (12) | first | first (feel: mean 47) | first | feel (33) | 6% of 216 |
 | 16 | feel (26; mean 67) | lag4 (353) | echo2 (23) | **cycle2 (332)** | first (feel: mean 36) | first (glow: mean 62) | feel (157; mean 46) | 4% of 523 |
 | 17 (to 250) | feel (135; mean 0) | lag3 (209) | echo2 (12) | first | first (feel: mean 3) | first (glow: mean 43) | feel (96; mean 0) | 8% of 215 |
+| 18 (to 548) | feel (158; mean 36) | lag3 (93) | echo2 (18) | first | first (feel: mean 26) | first (**glow: mean 105**) | first | 5% of 485 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.
@@ -78,6 +79,9 @@ Two cautions for reading it:
   time. Pauses on ports and writing a sense spread later, unaided.
 - **Shadow explorers (run 17)** kept predictors that bloated islands in turn (recall 264, the
   generalist 605), each island doing worse while it carried them; the feel rung fell to 0.
+- **Pauses drawn as gates are (run 18)** spread port pauses at once and gave screen its best
+  glow (mean 105, best 201) from 1-4 populations mostly paused on a port; the kept predictors
+  still held the other islands back.
 - **Plasmids** help on arrival 6-12% of the time in every run, but none has made a lasting
   difference to an island. The first to fix whole in an island was run 13's #175 (all 32 of shapes'
   networks), and shapes' score did not change.

@@ -452,7 +452,15 @@ With `ISL_PAUSES=1`, a new population is paused one time in four (on a channel, 
 gates a channel, input port or output port, a third each), and a pause made by mutation draws
 what it names in the same step. Tested; off, nothing is drawn. In a 6-generation smoke run, 118
 of 752 populations were paused, 103 of them on a port. Run 18 is run 17 with it
-(`runs/run18.cmd`, started by `runs/after17.cmd`).
+(`runs/run18.cmd`).
+
+**Result** (`runs/islands18`, stopped at 548 to start run 19): **port pauses spread at once**,
+28-55% of the elite on four islands by 50 (run 16: 4 of 4,180 populations at 55), and screen's
+glow averaged 105 over the run (best 201), the highest of any run, from networks of 1 to 4
+populations, 67-92% paused on a port. The rest was held back by run 17's kept predictors, which
+bloated islands in turn again (the generalist 410, selection 258, switching 155, recall 144):
+switching's feel averaged 36 (run 16: 67), recall stalled on lag3, and shapes never left its
+first rung.
 
 ## Recall's long ladder (runs 17 and 18)
 

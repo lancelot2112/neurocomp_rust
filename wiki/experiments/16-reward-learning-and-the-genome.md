@@ -321,3 +321,37 @@ Run 11 is run 10 with both (`runs/run11.cmd`, started by hand when run 10 was st
   28 of the maze's 32 networks, then died out.
 
 Next: run 12 adds kernels that can expect zeros (below).
+
+## Ports for gates, pauses and writes (run 16)
+
+A population could read a sense (`from_port`) and write an output port (`to_port`), but its gate
+(it learns only while X had lines on) and its pause (it runs only while X ...) could name only the
+genome's own channels. So "learn only after a stroke" took three tokens lined up (a channel, a
+wire copying the affect port into it, and a learner gated on that channel), each worth nothing
+alone. With `ISL_PORTGATE=1`:
+- **`gate_at`, `pause_at`:** a gate or pause may name a declared channel (0), an input port (1:
+  all the senses, the eye, ear, touch, affect, or the self channel), or an output port (2: the act,
+  voice or hand). A port that is part of a node is checked on its own words only. A new
+  population's gate draws its kind a third each; mutation steps it.
+- **`to_input`:** a population writing outward may write a sense port instead (the self channel
+  stays read-only). What it writes is sensed, with the world's input, a step later; the world never
+  reads it. A new population writing outward does so one time in eight.
+- Off by default, and written to the genome only when set, so earlier runs draw and read back as
+  before (tested).
+
+`examples/surgery` on the same network as above (run 11's shapes, rank 6), the same 64 worlds:
+
+| edit | added | repeat |
+|---|---|---|
+| affect copy + gated learner, lag 3 | 1 channel, 2 populations | 197 |
+| **learner gated on the affect port, lag 3** | **1 population** | **273** |
+| learner gated on the affect port, lag 4 | 1 population | -6 |
+
+One population now does what three tokens did, and better: the copy channel cost a frame, so the
+port gate lines up with the stroke at lag 3. The goal is 300, and the lose-shift half is still
+missing (88% repeats after none).
+
+In a 12-generation smoke run, 322 populations were gated on an input port, 264 on an output port,
+62 paused on a port and 13 wrote a sense. Run 16 is run 15 with it (`runs/run16.cmd`, started by
+`runs/after15.cmd`). Results to follow.
+

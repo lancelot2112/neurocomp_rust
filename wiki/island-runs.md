@@ -20,6 +20,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 13 | freak accidents: a trial connection grown now and then even when not stuck | 250 (stopped: nothing new on repeat) | 1 h 5 min |
 | 14 | a ninth island, task selection | 250 (stopped: reward rungs flat, selection falling) | 1 h 19 min |
 | 15 | a feel rung before every repeat rung | running | |
+| 16 | ports for gates, pauses and writes: one population can learn only after a stroke | after 15 | |
 
 ## How far each island climbed
 

@@ -10,6 +10,7 @@
 //! - `aff`: a channel copying the affect port (a wire), which a gate can name;
 //! - `learner`: with `aff`, a population from the eye to the hand, growing kernels that repeat the
 //!   act made `lag` steps back, learning only while the affect copy is on;
+//! - `port learner`: the learner gated on the affect port itself (port gates), one population;
 //! - `fade`: the learner's repeat kernels fading at chance 2^-fade a step (2 or 4);
 //! - `babbler`: a tonic population from the eye into the hand, firing at random;
 //! - `gatehand`: with `aff`, every existing population into the hand or act made such a learner
@@ -139,6 +140,15 @@ fn main() {
         add_learner(&mut g, aff, lag, 0);
         let (s, how) = score(&g, &worlds, trials, lesson);
         println!("  + aff + learner lag {lag} (1 channel, 2 populations): repeat {s:5}  ({how})");
+    }
+    for &lag in &lags {
+        // with port gates: the learner gated on the affect port itself, one population and no copy
+        let mut g = base.clone();
+        let id = g.next_id;
+        g.next_id += 1;
+        g.tokens.push(Token::Pop(Pop { from_port: true, to_port: true, cover: true, tile: 6, grow: true, repeat: true, repeat_lag: lag, gate: Some((AFFECT, true)), gate_at: 1, ..Pop::new(id, EYE, HAND) }));
+        let (s, how) = score(&g, &worlds, trials, lesson);
+        println!("  + learner gated on the affect port, lag {lag} (1 population): repeat {s:5}  ({how})");
     }
     for &lag in &lags {
         for fade in [2u8, 4] {

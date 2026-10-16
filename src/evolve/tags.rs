@@ -163,6 +163,14 @@ pub struct Pop {
     /// a freak accident (`set_accident`, with exploration): each step it grows its trial
     /// connection with chance 2^-accident even when it is not stuck (0: only when stuck)
     pub accident: u8,
+    /// (`set_port_gates`) with `to_port`, it writes an input port (all the senses, the eye, ear,
+    /// touch or affect, nearest `to`) instead of an output port: the network adds to what it senses
+    /// next step (the world never reads it). The self channel stays read-only.
+    pub to_input: bool,
+    /// (`set_port_gates`) what its gate and its pause name: 0 a declared channel, 1 an input port
+    /// (a sense or the self channel), 2 an output port (the act, voice or hand)
+    pub gate_at: u8,
+    pub pause_at: u8,
 }
 
 impl Pop {
@@ -174,7 +182,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0,
         }
     }
 
@@ -227,6 +235,21 @@ pub fn set_accident(on: bool) {
 
 pub fn accident() -> bool {
     ACCIDENT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Ports for gates, pauses and writes (`set_port_gates`): a population's gate and pause may name
+/// an input port (a sense, or the self channel) or an output port (the act, voice or hand) as well
+/// as a declared channel, and a population writing outward may write a sense instead. A new
+/// population draws its gate's kind (a third each) and writes a sense one time in eight when it
+/// writes outward; mutation changes each. Off by default, so earlier runs draw as before.
+static PORT_GATES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_port_gates(on: bool) {
+    PORT_GATES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn port_gates() -> bool {
+    PORT_GATES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What the string's channels resolve to.
@@ -306,7 +329,24 @@ impl Channels {
 
     /// Where a population writes, if anywhere.
     fn to(&self, p: &Pop) -> Option<Place> {
-        if p.to_port { Some(self.output(p.to)) } else { self.internal(p.to).map(|i| self.whole(i)) }
+        if p.to_port && p.to_input { Some(self.writable_input(p.to)) } else if p.to_port { Some(self.output(p.to)) } else { self.internal(p.to).map(|i| self.whole(i)) }
+    }
+
+    /// The input port nearest a tag that a population may write: all the senses or one of them
+    /// (the self channel is the runtime's, read-only).
+    fn writable_input(&self, tag: u8) -> Place {
+        let k = (0..INPUTS.len() - 1).min_by_key(|&i| ((INPUTS[i].0 ^ tag).count_ones(), i)).unwrap();
+        self.input(INPUTS[k].0)
+    }
+
+    /// What a gate or a pause names: a declared channel (`at` 0), an input port (1) or an output
+    /// port (2).
+    fn gate_place(&self, tag: u8, at: u8) -> Option<Place> {
+        match at {
+            1 => Some(self.input(tag)),
+            2 => Some(self.output(tag)),
+            _ => self.internal(tag).map(|i| self.whole(i)),
+        }
     }
 
     /// A short name for a place.
@@ -340,7 +380,7 @@ impl TagGenome {
     /// its properties.
     pub fn describe(&self) -> String {
         let ch = Channels::of(&self.tokens);
-        let gname = |t: u8| ch.internal(t).map_or("-".to_string(), |i| format!("C{i}"));
+        let gname = |t: u8, at: u8| ch.gate_place(t, at).map_or("-".to_string(), |p| ch.name(p));
         let mut out = String::new();
         let mut c = 0;
         for t in &self.tokens {
@@ -367,8 +407,8 @@ impl TagGenome {
                         if p.tonic > 0 { format!(" tonic 1/{}", 1u32 << p.tonic) } else { String::new() },
                         if p.share { " share" } else { "" },
                         if p.grow { format!(" grow(syn {}, out {}-{}{}{})", p.birth_syn, p.out_min, p.out_max, if p.new_code { ", new" } else { "" }, if p.repeat { format!(", repeat {}", p.repeat_lag) } else { String::new() }) } else { String::new() },
-                        p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, gname(g)))
-                            + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, gname(g))),
+                        p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, gname(g, p.gate_at)))
+                            + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, gname(g, p.pause_at))),
                         if p.sparse { " sparse".to_string() } else { String::new() }
                             + &if p.replicate > 0 { format!(" replicate at {} ({})", 1u32 << p.replicate.min(7), if p.replicate_shift { "to a neighbour tile" } else { "in place" }) } else { String::new() },
                         if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() }
@@ -399,11 +439,14 @@ impl TagGenome {
                 depth[a.node] = depth[a.node].max(lag + p.repeat_lag as usize + 1);
                 depth[b.node] = depth[b.node].max(p.repeat_lag as usize);
             }
-            let gate = p.gate.and_then(|(t, on)| ch.internal(t).map(|i| (i, on)));
+            let gate_at = p.gate.and_then(|(t, _)| ch.gate_place(t, p.gate_at));
+            let gate = p.gate.zip(gate_at).map(|((_, on), g)| (g.node, on));
             if let Some((g, _)) = gate {
                 depth[g] = depth[g].max((p.gate_lag as usize).max(1));
             }
-            let pause = p.pause.and_then(|(t, on)| ch.internal(t).map(|i| (i, on)));
+            let pause_at = p.pause.and_then(|(t, _)| ch.gate_place(t, p.pause_at));
+            let pause = p.pause.zip(pause_at).map(|((_, on), g)| (g.node, on));
+            let window_of = |g: Option<Place>| g.filter(|g| !g.whole).map(|g| (g.off, g.len));
             let field = 1usize << p.field.min(MAX_WIDTH);
             // what it reads: all of its port or channel (cover), or a field placed inside it
             let window = if p.cover {
@@ -454,6 +497,8 @@ impl TagGenome {
                 replicate_shift: p.replicate_shift,
                 expect: p.expect && !p.wire,
                 accident: if p.wire { 0 } else { p.accident },
+                gate_window: window_of(gate_at),
+                pause_window: window_of(pause_at),
                 ..EdgeSpec::plain()
             }));
         }
@@ -737,6 +782,15 @@ impl TagGenome {
                     if p.accident > 0 {
                         out.insert_str(out.len() - 1, &format!(" accident={}", p.accident));
                     }
+                    if p.to_input {
+                        out.insert_str(out.len() - 1, " to_input=1");
+                    }
+                    if p.gate_at > 0 {
+                        out.insert_str(out.len() - 1, &format!(" gate_at={}", p.gate_at));
+                    }
+                    if p.pause_at > 0 {
+                        out.insert_str(out.len() - 1, &format!(" pause_at={}", p.pause_at));
+                    }
                 }
             }
         }
@@ -785,6 +839,9 @@ impl TagGenome {
                         explored: kv.get("explored") == Some(&"1"),
                         expect: kv.get("expect") == Some(&"1"),
                         accident: kv.get("accident").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        to_input: kv.get("to_input") == Some(&"1"),
+                        gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                     };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
                 }
@@ -859,6 +916,12 @@ impl TagGenome {
         // (with `set_accident`) an accident rate of its own, one every 2^12 to 2^18 steps
         if accident() {
             p.accident = rng.gen_range(12..=18);
+        }
+        // (with `set_port_gates`) its gate on a channel, a sense or an output port, a third each;
+        // and now and then writing into a sense instead of an output port
+        if port_gates() {
+            p.gate_at = rng.gen_range(0..3);
+            p.to_input = p.to_port && rng.gen_range(0..8) == 0;
         }
         p
     }
@@ -1180,7 +1243,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1219,7 +1282,10 @@ impl Evolvable for TagGenome {
                         36 => p.from_port = !p.from_port,
                         37 => p.to_port = !p.to_port,
                         38 if zeros() => p.expect = !p.expect,
-                        39 => p.accident = step(p.accident, 0, 20),
+                        39 if accident() => p.accident = step(p.accident, 0, 20),
+                        40 if port_gates() => p.to_input = !p.to_input,
+                        41 if port_gates() => p.gate_at = (p.gate_at + if up { 1 } else { 2 }) % 3,
+                        42 if port_gates() => p.pause_at = (p.pause_at + if up { 1 } else { 2 }) % 3,
                         _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                     },
                 }
@@ -1726,6 +1792,62 @@ mod tests {
         // a genome written before marks reads back unmarked
         let old: String = h.to_text().lines().map(|l| l.split(" mark=").next().unwrap().to_string() + "\n").collect();
         assert!(TagGenome::from_text(&old).unwrap()[0].pops().all(|p| p.mark == 0 && !p.explored));
+    }
+
+    #[test]
+    fn gates_and_pauses_name_ports_and_a_population_can_write_a_sense() {
+        let c = 0x3C;
+        let ch = Token::Channel { tag: c, width: 3, hold: false };
+        // a learner gated on the affect port, a population paused on the hand, and one writing the eye
+        let learner = Pop { from_port: true, to_port: true, gate: Some((AFFECT, true)), gate_at: 1, ..Pop::new(1, EYE, HAND) };
+        let paused = Pop { pause: Some((HAND, false)), pause_at: 2, ..Pop::new(2, c, c) };
+        let writer = Pop { to_port: true, to_input: true, ..Pop::wire(3, c, EYE) };
+        let g = TagGenome { tokens: vec![ch, Token::Pop(learner), Token::Pop(paused), Token::Pop(writer)], next_id: 4 };
+        let graph = g.graph();
+        let specs: Vec<&EdgeSpec> = graph.edge_weights().collect();
+        let cw = world::CH_BITS / 64;
+        // the gate is the senses node, on the affect's words only
+        assert_eq!(specs[0].gate.map(|x| x.0), Some(0));
+        assert_eq!(specs[0].gate_window, Some((world::AFFECT * cw, cw)));
+        // the pause is the act node, on the hand's words
+        let act = graph.node_count() - 1;
+        assert_eq!(specs[1].pause.map(|x| x.0), Some(act));
+        assert_eq!(specs[1].pause_window, Some((world::HAND * cw, cw)));
+        // the writer's destination is the senses node, at the eye
+        let e = graph.edge_indices().nth(2).unwrap();
+        assert_eq!(graph.edge_endpoints(e).map(|(_, b)| b.index()), Some(0));
+        assert_eq!((specs[2].dst_word, specs[2].dst_len), (world::EYE * cw, cw));
+        // the properties survive the text form, and are written only when set
+        assert_eq!(TagGenome::from_text(&g.to_text()).unwrap().remove(0), g);
+        let plain = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Pop(Pop::new(1, c, c))], next_id: 2 };
+        assert!(!plain.to_text().contains("gate_at") && !plain.to_text().contains("to_input"));
+    }
+
+    #[test]
+    fn a_learner_gated_on_the_affect_port_learns_only_after_a_stroke() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        // the eye on every step; a stroke on some: births (repeat ones, of the act just made) only
+        // while the affect port had lines on a frame ago
+        let run = |stroke: bool| {
+            let babble = Pop { from_port: true, to_port: true, count: 4, tonic: 1, ..Pop::new(1, EYE, HAND) };
+            let learner = Pop { from_port: true, to_port: true, cover: true, grow: true, repeat: true, repeat_lag: 1, gate: Some((AFFECT, true)), gate_at: 1, ..Pop::new(2, EYE, HAND) };
+            let g = TagGenome { tokens: vec![Token::Pop(babble), Token::Pop(learner)], next_id: 3 };
+            let w = World::new(1, 4);
+            let mut net = g.build(&w, 1);
+            let cw = world::CH_BITS / 64;
+            for _ in 0..40 {
+                net.tick(AdvanceMode::Clear, 0);
+                let mut s = BitVector::new(world::SENSE_BITS, Some(0));
+                s.as_words_mut()[world::EYE * cw] = 0xFF;
+                if stroke {
+                    s.as_words_mut()[world::AFFECT * cw] = 0xF0;
+                }
+                net.write_input(&s, 0);
+            }
+            net.edges[1].group.kernel_count()
+        };
+        assert_eq!(run(false), 0);
+        assert!(run(true) > 0);
     }
 
     #[test]

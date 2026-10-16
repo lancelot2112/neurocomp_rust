@@ -406,7 +406,9 @@ impl RuntimeNetwork {
             for (i, eg) in edges.iter_mut().enumerate() {
                 // an execution gate shut: the edge does nothing this step
                 if let Some((g, on)) = eg.spec.pause {
-                    if nodes[g].get_frame(at(live[g], 1)).as_words().iter().any(|&w| w != 0) != on {
+                    let f = nodes[g].get_frame(at(live[g], 1)).as_words();
+                    let f = eg.spec.pause_window.map_or(f, |(o, n)| &f[o.min(f.len())..(o + n).min(f.len())]);
+                    if f.iter().any(|&w| w != 0) != on {
                         paused[i] = true;
                         continue;
                     }
@@ -521,7 +523,9 @@ impl RuntimeNetwork {
             }
             // a gate: it learns only while the gate node had lines on (or none) a frame ago
             if let Some((g, on)) = eg.gate {
-                let open = (nodes[g].get_frame(at(live[g], sp.gate_lag.max(1))).count_ones() > 0) == on;
+                let f = nodes[g].get_frame(at(live[g], sp.gate_lag.max(1))).as_words();
+                let f = sp.gate_window.map_or(f, |(o, n)| &f[o.min(f.len())..(o + n).min(f.len())]);
+                let open = f.iter().any(|&w| w != 0) == on;
                 // (replication) a repeating kernel that acted `repeat_lag` steps ago is confirmed
                 // if the gate opened (what should follow its act did), else it counts down
                 if sp.replicate > 0 && eg.repeat {

@@ -65,6 +65,13 @@
 //! connection by accident at that rate even when it is not stuck, still once a lifetime and kept
 //! the same way.
 //!
+//! `ISL_PORTGATE=1`: ports for gates, pauses and writes. A population's gate (it learns only while
+//! X had lines on, or none) and its pause (it runs only while X ...) may name an input port (a
+//! sense, or the self channel) or an output port (the act, voice or hand), as well as a declared
+//! channel; a population writing outward may write a sense instead (what it writes is sensed
+//! with the world's input a step later; the world never reads it). So one population can learn
+//! only after a stroke, with no channel copying the affect first.
+//!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
 //! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
@@ -250,7 +257,14 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
     // exponent: one accident every 2^k steps)
     let prone: Vec<u32> = all.iter().filter(|p| !p.wire && p.accident > 0).map(|p| p.accident as u32).collect();
     let accident = if neurocomp::evolve::tags::accident() { format!("; accident-prone {}% (1 in 2^{})", prone.len() * 100 / kernels.max(1), prone.iter().sum::<u32>() / (prone.len() as u32).max(1)) } else { String::new() };
-    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}{expect}{accident}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
+    // (with ISL_PORTGATE: populations gated or paused on a port, and writing a sense)
+    let ported = if neurocomp::evolve::tags::port_gates() {
+        let gp = all.iter().filter(|p| p.gate.is_some() && p.gate_at > 0).count();
+        let pp = all.iter().filter(|p| p.pause.is_some() && p.pause_at > 0).count();
+        let wi = all.iter().filter(|p| p.to_port && p.to_input).count();
+        format!("; port-gated {}%, port-paused {}%, writing a sense {}%", gp * 100 / all.len().max(1), pp * 100 / all.len().max(1), wi * 100 / all.len().max(1))
+    } else { String::new() };
+    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}{expect}{accident}{ported}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
 }
 
 /// The probes where `a` scores at least `NOTICE` above `b`, named.
@@ -432,6 +446,7 @@ fn main() {
     neurocomp::program::neurocomp::set_explore(env("ISL_EXPLORE", 0u8) == 1);
     neurocomp::evolve::tags::set_zeros(env("ISL_ZEROS", 0u8) == 1);
     neurocomp::evolve::tags::set_accident(env("ISL_ACCIDENT", 0u8) == 1);
+    neurocomp::evolve::tags::set_port_gates(env("ISL_PORTGATE", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
     let ration: u64 = env("ISL_RATION", 0);
@@ -546,7 +561,7 @@ fn main() {
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }));
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }));
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

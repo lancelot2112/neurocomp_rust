@@ -212,6 +212,10 @@ pub struct EdgeSpec {
     /// a freak accident (with exploration): each step it grows its trial connection with chance
     /// 2^-accident even when it is not stuck (0: only when stuck)
     pub accident: u8,
+    /// the words of its gate's node (and of its pause's) that it looks at (offset, count): a port
+    /// that is part of a node, such as the affect sense or the hand (None: the whole node)
+    pub gate_window: Option<(usize, usize)>,
+    pub pause_window: Option<(usize, usize)>,
 }
 
 impl EdgeSpec {
@@ -259,6 +263,8 @@ impl EdgeSpec {
             dst_len: 0,
             expect: false,
             accident: 0,
+            gate_window: None,
+            pause_window: None,
         }
     }
 }

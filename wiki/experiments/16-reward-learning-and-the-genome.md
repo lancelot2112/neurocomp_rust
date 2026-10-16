@@ -615,3 +615,14 @@ homeostasis that would stop an OR loop saturating). A new population has one one
 two properties change it (warm or cool, its tag, or none) and what it names; with hints it takes
 the hint half the time. Run 21 is run 20 with it (`runs/run21.cmd`).
 
+## No plasmid exchange (run 22)
+
+Every run since 3 moved plasmids between islands every 20 generations (two into each island), and
+some carried a rung: in run 20, #2 (shapes to recall, generation 20, remember +74 on arrival) was
+in recall's elite while recall passed lag1 to lag3 between 28 and 36, and #141 (prediction to
+shapes, tell +46 at 160) came seven generations before shapes passed clean. But only 4-8% of
+plasmids helped on arrival and most were gone within a few generations, so what the exchange adds
+over each island's own evolution has not been measured. Run 22 is run 21 with the exchange off
+(`ISL_EVERY=0`): the same settings, the islands evolving apart. Compared with run 21 island by
+island, it measures the exchange: rungs, goal means, and whether loops and network sizes differ.
+

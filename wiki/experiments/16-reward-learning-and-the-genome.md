@@ -367,8 +367,11 @@ without touching them:
   channel, less what it reads.
 - **It writes nothing into the network.** Its kernels fire into a scratch vector of its own.
 - **The check, each step, against the target a frame later:**
-  - a kernel whose written lines all came on is reinforced (Hebbian: a synapse moves onto a line
-    that was on in what it read then) and confirmed, so it can replicate;
+  - a kernel is right when the residue on the lines it wrote (its prediction XOR what came on)
+    has a popcount under its threshold: at least `hit_quarters` quarters of its lines came on (a
+    gene of the population, 3 to start, moved by mutation from 1 to 4). Not every line needs to;
+  - a right kernel is reinforced (Hebbian: a synapse moves onto a line that was on in what it
+    read then) and confirmed, so it can replicate;
   - one that missed is weakened (anti-Hebbian: a synapse moves off a line that was on) and moves
     its output toward lines that came on;
   - target lines no kernel predicted recruit a kernel, on the busiest word of what was read,
@@ -381,6 +384,7 @@ without touching them:
   the target (`teacher`), tagged explored and marked. The channel's tag is chosen so that no
   existing tag resolves to it, so nothing else is rewired.
 
+Like CRISPR, the explorer finds a sequence that works and splices a tagged copy into the genome.
 This is an internalized prediction: the network gets "what X will be next step" in a channel,
 which other populations can read, gate on (with port gates, on the target itself too) or
 compare. A predictor's own kernels learn only by the check, not on firing.

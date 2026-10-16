@@ -222,6 +222,9 @@ pub struct EdgeSpec {
     /// (anti-Hebbian) and moves its output toward what came on, and lines nobody predicted
     /// recruit new kernels. The last number is the target's kind (`RuntimeNetwork::targets`).
     pub teacher: Option<(usize, Option<(usize, usize)>, u8)>,
+    /// a predictor's kernel was right when the residue on the lines it wrote (its prediction XOR
+    /// what came on) is under a threshold: at least `hit_quarters` quarters of its lines came on
+    pub hit_quarters: u8,
 }
 
 impl EdgeSpec {
@@ -272,6 +275,7 @@ impl EdgeSpec {
             gate_window: None,
             pause_window: None,
             teacher: None,
+            hit_quarters: 3,
         }
     }
 }

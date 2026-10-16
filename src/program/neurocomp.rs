@@ -632,7 +632,11 @@ impl RuntimeNetwork {
                         let kk = &mut class.kernels_mut()[k];
                         let o = kk.output_idx;
                         let m: Vec<u64> = kk.output_mask.as_words().to_vec();
-                        let hit = m.iter().enumerate().all(|(j, &w)| t.get(o + j).is_some_and(|&x| w & !x == 0));
+                        // the residue on the lines it wrote: its prediction XOR what came on there;
+                        // right when that popcount is under its threshold (a fraction of its lines)
+                        let lines: u32 = m.iter().map(|w| w.count_ones()).sum();
+                        let residue: u32 = m.iter().enumerate().map(|(j, &w)| (w & !t.get(o + j).copied().unwrap_or(0)).count_ones()).sum();
+                        let hit = lines > 0 && 4 * (lines - residue) >= sp.hit_quarters.clamp(1, 4) as u32 * lines;
                         for (j, &w) in m.iter().enumerate() {
                             if let Some(p) = predicted.get_mut(o + j) { *p |= w; }
                         }

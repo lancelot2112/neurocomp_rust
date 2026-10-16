@@ -175,6 +175,9 @@ pub struct Pop {
     /// and learns against this tag a frame ahead (at: 0 a channel, 1 an input port, 2 an output
     /// port), not against what it writes
     pub teacher: Option<(u8, u8)>,
+    /// a predictor's kernel was right when at least this many quarters of the lines it wrote came
+    /// on (the residue, prediction XOR actual on its lines, under a quarter of them by default)
+    pub hit_quarters: u8,
 }
 
 impl Pop {
@@ -186,7 +189,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0, teacher: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3,
         }
     }
 
@@ -505,6 +508,7 @@ impl TagGenome {
                 gate_window: window_of(gate_at),
                 pause_window: window_of(pause_at),
                 teacher: p.teacher.and_then(|(t, at)| ch.gate_place(t, at)).filter(|_| !p.wire).map(|g| (g.node, window_of(Some(g)), 0)),
+                hit_quarters: p.hit_quarters,
                 ..EdgeSpec::plain()
             }));
         }
@@ -798,7 +802,7 @@ impl TagGenome {
                         out.insert_str(out.len() - 1, &format!(" pause_at={}", p.pause_at));
                     }
                     if let Some((t, at)) = p.teacher {
-                        out.insert_str(out.len() - 1, &format!(" teacher={t}:{at}"));
+                        out.insert_str(out.len() - 1, &format!(" teacher={t}:{at} hit_quarters={}", p.hit_quarters));
                     }
                 }
             }
@@ -852,6 +856,7 @@ impl TagGenome {
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         teacher: kv.get("teacher").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
+                        hit_quarters: kv.get("hit_quarters").and_then(|x| x.parse().ok()).unwrap_or(3),
                     };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
                 }
@@ -1326,7 +1331,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1369,6 +1374,7 @@ impl Evolvable for TagGenome {
                         40 if port_gates() => p.to_input = !p.to_input,
                         41 if port_gates() => p.gate_at = (p.gate_at + if up { 1 } else { 2 }) % 3,
                         42 if port_gates() => p.pause_at = (p.pause_at + if up { 1 } else { 2 }) % 3,
+                        43 if p.teacher.is_some() => p.hit_quarters = step(p.hit_quarters, 1, 4),
                         _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                     },
                 }

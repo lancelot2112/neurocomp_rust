@@ -76,7 +76,8 @@
 //! unlucky) population grows a shadow instead of a trial XOR loop: it reads what the population
 //! reads and predicts, a step ahead, one vector after another (a sense, the self channel, the
 //! voice or hand, a channel), writing nothing into the network. Each step it checks: a kernel
-//! whose lines all came on is reinforced (Hebbian on what it fired on), one that missed is
+//! whose residue (prediction XOR what came on, on its lines) is under a quarter of its lines
+//! (`hit_quarters`, a gene) is reinforced (Hebbian on what it fired on), one that missed is
 //! weakened (anti-Hebbian) and moves its output toward what came on, and unpredicted lines recruit
 //! kernels. A target it cannot predict within 128 steps is dropped for the next. Over a
 //! generation, the best-predicted target (net 64 true) is kept: a channel of its own and a

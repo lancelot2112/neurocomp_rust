@@ -278,6 +278,9 @@ pub struct World {
     /// programs built for this world explore: a stuck population grows a trial connection;
     /// default: the process's (`neurocomp::set_explore`)
     pub explore: bool,
+    /// (with `explore`) explorers are shadow predictors; default: the process's
+    /// (`neurocomp::set_shadow`)
+    pub shadow: bool,
     cursor_mark: u64,
     wall_mark: u64,
     screen_total: usize,
@@ -408,6 +411,7 @@ impl World {
             in_place: crate::program::neurocomp::in_place(),
             count_reads: crate::program::neurocomp::count_reads(),
             explore: crate::program::neurocomp::explore(),
+            shadow: crate::program::neurocomp::shadow(),
             cursor_mark: {
                 let mut c = StdRng::seed_from_u64(physics ^ 0xC025);
                 let lines: Vec<u64> = (0..64).collect();

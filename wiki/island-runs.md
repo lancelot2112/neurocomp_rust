@@ -21,6 +21,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 14 | a ninth island, task selection | 250 (stopped: reward rungs flat, selection falling) | 1 h 19 min |
 | 15 | a feel rung before every repeat rung | running | |
 | 16 | ports for gates, pauses and writes: one population can learn only after a stroke | after 15 | |
+| 17 | shadow explorers: predictions made without touching the network, the best kept as an internal channel | after 16 | |
 
 ## How far each island climbed
 

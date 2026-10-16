@@ -332,5 +332,6 @@ impl<K: KernelTrait> KernelClass<K> {
     pub fn kernels_mut(&mut self) -> &mut [K] { &mut self.active_kernels }
 
     pub fn len(&self) -> usize { self.active_kernels.len() }
+    pub fn clear(&mut self) { self.active_kernels.clear() }
     pub fn is_empty(&self) -> bool { self.active_kernels.is_empty() }
 }

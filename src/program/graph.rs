@@ -216,6 +216,12 @@ pub struct EdgeSpec {
     /// that is part of a node, such as the affect sense or the hand (None: the whole node)
     pub gate_window: Option<(usize, usize)>,
     pub pause_window: Option<(usize, usize)>,
+    /// a predictor: it learns against this node (its words `window`, or all) a frame ahead of
+    /// what it read, not against its own destination. A kernel whose written lines all came on
+    /// there is reinforced (Hebbian on the input it fired on), one that missed is weakened
+    /// (anti-Hebbian) and moves its output toward what came on, and lines nobody predicted
+    /// recruit new kernels. The last number is the target's kind (`RuntimeNetwork::targets`).
+    pub teacher: Option<(usize, Option<(usize, usize)>, u8)>,
 }
 
 impl EdgeSpec {
@@ -265,6 +271,7 @@ impl EdgeSpec {
             accident: 0,
             gate_window: None,
             pause_window: None,
+            teacher: None,
         }
     }
 }

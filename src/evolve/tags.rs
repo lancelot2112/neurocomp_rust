@@ -171,6 +171,10 @@ pub struct Pop {
     /// (a sense or the self channel), 2 an output port (the act, voice or hand)
     pub gate_at: u8,
     pub pause_at: u8,
+    /// a predictor (kept from a shadow explorer): it writes its prediction into its destination
+    /// and learns against this tag a frame ahead (at: 0 a channel, 1 an input port, 2 an output
+    /// port), not against what it writes
+    pub teacher: Option<(u8, u8)>,
 }
 
 impl Pop {
@@ -182,7 +186,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0, teacher: None,
         }
     }
 
@@ -415,7 +419,8 @@ impl TagGenome {
                             + &if p.mark > 0 { format!(" mark {}", p.mark) } else { String::new() }
                             + if p.explored { " explored" } else { "" }
                             + if p.expect { " expect" } else { "" }
-                            + &if p.accident > 0 { format!(" accident 1/2^{}", p.accident) } else { String::new() },
+                            + &if p.accident > 0 { format!(" accident 1/2^{}", p.accident) } else { String::new() }
+                            + &p.teacher.map_or(String::new(), |(t, at)| format!(" predicts {}", ch.gate_place(t, at).map_or("-".to_string(), |g| ch.name(g)))),
                     );
                 }
             }
@@ -499,6 +504,7 @@ impl TagGenome {
                 accident: if p.wire { 0 } else { p.accident },
                 gate_window: window_of(gate_at),
                 pause_window: window_of(pause_at),
+                teacher: p.teacher.and_then(|(t, at)| ch.gate_place(t, at)).filter(|_| !p.wire).map(|g| (g.node, window_of(Some(g)), 0)),
                 ..EdgeSpec::plain()
             }));
         }
@@ -791,6 +797,9 @@ impl TagGenome {
                     if p.pause_at > 0 {
                         out.insert_str(out.len() - 1, &format!(" pause_at={}", p.pause_at));
                     }
+                    if let Some((t, at)) = p.teacher {
+                        out.insert_str(out.len() - 1, &format!(" teacher={t}:{at}"));
+                    }
                 }
             }
         }
@@ -842,6 +851,7 @@ impl TagGenome {
                         to_input: kv.get("to_input") == Some(&"1"),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        teacher: kv.get("teacher").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
                     };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
                 }
@@ -1071,11 +1081,78 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
                 // no input yet: it expects every line off
                 k.expecting(None);
             }
+            if sp.teacher.is_some() {
+                k.learn_fire = false;
+            }
             k.tonic = sp.tonic;
             k
         })
         .collect();
     KernelGroup::from_classes(vec![KernelClass::with_kernels(kernels)])
+}
+
+/// A shadow's target kind as a tag and what it names (0 a channel, 1 an input port, 2 an output
+/// port), and its width in words (as a channel width: 2^width words).
+fn target_of(g: &TagGenome, kind: u8) -> Option<(u8, u8, u8)> {
+    let cw = (world::CH_BITS / 64).trailing_zeros() as u8;
+    match kind {
+        17 => Some((EYE, 1, cw)),
+        18 => Some((EAR, 1, cw)),
+        19 => Some((TOUCH, 1, cw)),
+        20 => Some((AFFECT, 1, cw)),
+        21 => Some((SELF, 1, (SELF_BITS / 64).trailing_zeros() as u8)),
+        23 => Some((VOICE, 2, cw)),
+        24 => Some((HAND, 2, cw)),
+        k if k >= 32 => {
+            let ch = Channels::of(&g.tokens);
+            let i = (k - 32) as usize + 1;
+            (i < ch.self_index()).then(|| (ch.list[i].0, 0, (ch.list[i].1 as u32).trailing_zeros() as u8))
+        }
+        _ => None,
+    }
+}
+
+/// A channel tag no existing tag would move to (each stays nearer, or as near, the channel it
+/// resolves to now), as far as possible from every channel; None if there is none.
+fn safe_tag(g: &TagGenome) -> Option<u8> {
+    let ch = Channels::of(&g.tokens);
+    let chans: Vec<u8> = g.tokens.iter().filter_map(|t| if let Token::Channel { tag, .. } = t { Some(*tag) } else { None }).collect();
+    let mut tags: Vec<u8> = Vec::new();
+    for p in g.pops() {
+        if !p.from_port { tags.push(p.from) }
+        if !p.to_port { tags.push(p.to) }
+        if let (Some((t, _)), 0) = (p.gate, p.gate_at) { tags.push(t) }
+        if let (Some((t, _)), 0) = (p.pause, p.pause_at) { tags.push(t) }
+        if let Some((t, 0)) = p.teacher { tags.push(t) }
+    }
+    let near = |t: u8| ch.internal(t).map(|i| (ch.list[i].0 ^ t).count_ones());
+    if chans.is_empty() && !tags.is_empty() {
+        return None;
+    }
+    (0..=255u8)
+        .filter(|&c| tags.iter().all(|&t| near(t).is_some_and(|d| (c ^ t).count_ones() >= d)))
+        .max_by_key(|&c| chans.iter().map(|&x| (c ^ x).count_ones()).min().unwrap_or(8))
+}
+
+/// A shadow's prediction kept: a channel of its own (as wide as the target) and a predictor into
+/// it, reading what the population `id` reads, learning against the target; tagged explored,
+/// marked, after the population. Once per (population source, target).
+fn keep_predictor(g: &mut TagGenome, id: u32, kind: u8, _c: u32) {
+    let Some(at) = g.tokens.iter().position(|t| matches!(t, Token::Pop(p) if p.id == id)) else { return };
+    let Token::Pop(parent) = g.tokens[at].clone() else { return };
+    let Some((tag, tat, width)) = target_of(g, kind) else { return };
+    if g.pops().any(|p| p.explored && p.teacher == Some((tag, tat)) && p.from == parent.from && p.from_port == parent.from_port) {
+        return;
+    }
+    let Some(c) = safe_tag(g) else { return };
+    let q = Pop {
+        id: g.next_id, to: c, to_port: false, to_input: false, wire: false, op: KernelOp::Or, count: 0, grow: true, cover: false,
+        replicate: parent.replicate.max(3), cap: parent.cap.max(16), gate: None, pause: None, repeat: false, mark: 128, explored: true,
+        teacher: Some((tag, tat)), ..parent
+    };
+    g.next_id += 1;
+    g.tokens.insert(at + 1, Token::Pop(q));
+    g.tokens.push(Token::Channel { tag: c, width, hold: false });
 }
 
 /// `Evolvable::inherit` for the tag grammar (with `set_epigenetics`; here without, for tests).
@@ -1086,8 +1163,13 @@ pub fn take_notes(g: &mut TagGenome, notes: &[super::Note]) {
             p.mark = (p.mark / 2).saturating_add(((32 - ev.leading_zeros()) * 16).min(255) as u8);
         }
     }
+    // a shadow's best target over the generation: kept as a predictor into a channel of its
+    // own (one a genome a generation)
+    if let Some(&(id, c, kind)) = notes.iter().filter(|n| n.2 >= 16 && n.1 >= KEEP * 4).max_by_key(|n| n.1) {
+        keep_predictor(g, id, kind, c);
+    }
     for &(id, c, kind) in notes {
-        if kind == 0 || c < KEEP {
+        if kind == 0 || kind >= 16 || c < KEEP {
             continue;
         }
         let Some(at) = g.tokens.iter().position(|t| matches!(t, Token::Pop(p) if p.id == id)) else { continue };
@@ -1120,6 +1202,7 @@ impl Evolvable for TagGenome {
         let mut net = RuntimeNetwork::from_graph_held(&g, world::SENSE_BITS, world::ACT_BITS, seed, w.in_place, |e: &EdgeInfo| start_kernels(e, &primitives));
         net.count_reads = w.count_reads;
         net.explore = w.explore;
+        net.shadow = w.shadow;
         net
     }
 
@@ -1792,6 +1875,68 @@ mod tests {
         // a genome written before marks reads back unmarked
         let old: String = h.to_text().lines().map(|l| l.split(" mark=").next().unwrap().to_string() + "\n").collect();
         assert!(TagGenome::from_text(&old).unwrap()[0].pops().all(|p| p.mark == 0 && !p.explored));
+    }
+
+    #[test]
+    fn a_shadow_predicts_a_sense_writes_nothing_and_a_kept_predictor_gets_a_channel_of_its_own() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        let c = 0x3C;
+        let cw = world::CH_BITS / 64;
+        // a population from the eye into C, made to explore at once (an accident a step in two);
+        // the touch sense follows the eye a step later, so the eye predicts it
+        let p = Pop { from_port: true, cover: true, count: 2, accident: 1, ..Pop::new(1, EYE, c) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Pop(p)], next_id: 2 };
+        let mut w = World::new(1, 4);
+        w.explore = true;
+        w.shadow = true;
+        let mut net = g.build(&w, 1);
+        let mut c_before_shadow = 0u32;
+        let mut last_eye = 0u64;
+        for step in 0..600u64 {
+            net.tick(AdvanceMode::Clear, 0);
+            if step == 1 {
+                c_before_shadow = net.edges.len() as u32;
+            }
+            let mut s = BitVector::new(world::SENSE_BITS, Some(0));
+            let eye = if step % 2 == 0 { 0x0F0Fu64 } else { 0xF0F0u64 };
+            s.as_words_mut()[world::EYE * cw] = eye;
+            s.as_words_mut()[world::TOUCH * cw] = last_eye;
+            last_eye = eye;
+            net.write_input(&s, 0);
+        }
+        let sh: Vec<&crate::program::neurocomp::RuntimeEdgeGroup> = net.edges.iter().filter(|e| e.explorer == 3).collect();
+        assert_eq!(sh.len(), 1, "one shadow (grown at step {c_before_shadow})");
+        assert!(sh[0].silent);
+        let notes = net.notes();
+        let touch = notes.iter().find(|n| n.0 == 1 && n.2 == 19).copied();
+        assert!(touch.is_some_and(|n| n.1 >= KEEP * 4), "{notes:?}");
+        // kept: a predictor from the eye into a new channel, learning against the touch, and the
+        // first population still writes C
+        let mut h = g.clone();
+        take_notes(&mut h, &[touch.unwrap()]);
+        let pops: Vec<&Pop> = h.pops().collect();
+        assert_eq!(pops.len(), 2);
+        assert!(pops[1].explored && pops[1].teacher == Some((TOUCH, 1)) && pops[1].from_port && pops[1].from == EYE);
+        assert_eq!(h.channels(), 2);
+        let ch = Channels::of(&h.tokens);
+        assert_eq!(ch.to(pops[0]).map(|x| x.node), Some(1));
+        assert_eq!(ch.to(pops[1]).map(|x| x.node), Some(2));
+        assert_eq!(TagGenome::from_text(&h.to_text()).unwrap().remove(0), h);
+        // and the kept predictor writes its prediction of the touch into its channel
+        let mut net = h.build(&World::new(1, 4), 1);
+        let mut last_eye = 0u64;
+        let mut wrote = 0;
+        for step in 0..400u64 {
+            net.tick(AdvanceMode::Clear, 0);
+            wrote += (net.read_node(2).count_ones() > 0) as u32;
+            let mut s = BitVector::new(world::SENSE_BITS, Some(0));
+            let eye = if step % 2 == 0 { 0x0F0Fu64 } else { 0xF0F0u64 };
+            s.as_words_mut()[world::EYE * cw] = eye;
+            s.as_words_mut()[world::TOUCH * cw] = last_eye;
+            last_eye = eye;
+            net.write_input(&s, 0);
+        }
+        assert!(wrote > 100, "{wrote}");
     }
 
     #[test]

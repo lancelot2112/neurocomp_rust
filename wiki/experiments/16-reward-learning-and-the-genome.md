@@ -355,3 +355,45 @@ In a 12-generation smoke run, 322 populations were gated on an input port, 264 o
 62 paused on a port and 13 wrote a sense. Run 16 is run 15 with it (`runs/run16.cmd`, started by
 `runs/after15.cmd`). Results to follow.
 
+## Shadow explorers (run 17)
+
+The explorer (run 11) grows a trial XOR loop that writes into the network, and it can grow only
+predicting loops between the genome's own channels: no ports, no gates. With `ISL_SHADOW=1` it is
+replaced by a **shadow predictor**, which looks for things its population's input can predict
+without touching them:
+- **What it reads:** what the stuck (or, with accidents, unlucky) population reads.
+- **What it predicts**, one target after another from a place drawn from the population's id:
+  the eye, ear, touch and affect senses, the self channel, the voice and hand, and every declared
+  channel, less what it reads.
+- **It writes nothing into the network.** Its kernels fire into a scratch vector of its own.
+- **The check, each step, against the target a frame later:**
+  - a kernel whose written lines all came on is reinforced (Hebbian: a synapse moves onto a line
+    that was on in what it read then) and confirmed, so it can replicate;
+  - one that missed is weakened (anti-Hebbian: a synapse moves off a line that was on) and moves
+    its output toward lines that came on;
+  - target lines no kernel predicted recruit a kernel, on the busiest word of what was read,
+    writing those lines.
+- **Moving on:** after 128 steps on a target, unless its predictions came true at least 16 more
+  often than they failed, it clears its kernels and moves to the next target.
+- **Into the genome, tagged:** over a generation's lifetimes, the best target whose net score
+  reached 64 is kept, once a genome a generation. A channel of its own (as wide as the target),
+  and a predictor population into it, reading what the parent reads and still learning against
+  the target (`teacher`), tagged explored and marked. The channel's tag is chosen so that no
+  existing tag resolves to it, so nothing else is rewired.
+
+This is an internalized prediction: the network gets "what X will be next step" in a channel,
+which other populations can read, gate on (with port gates, on the target itself too) or
+compare. A predictor's own kernels learn only by the check, not on firing.
+
+Tested:
+- a shadow from the eye learns to predict the touch sense when touch follows the eye, notes it,
+  and writes nothing;
+- the kept predictor arrives with a channel of its own, without moving the first population's
+  wiring, and survives the text form;
+- the kept predictor writes its prediction into its channel.
+
+In a 16-generation smoke run, predictors were kept on seven of nine islands: of the self channel,
+the hand and voice, other channels, the ear and touch. The generalist kept the most (189 in its
+elite). Run 17 is run 16 with it (`runs/run17.cmd`, started by `runs/after16.cmd`). Results to
+follow.
+

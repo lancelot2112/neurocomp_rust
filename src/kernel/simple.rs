@@ -333,6 +333,40 @@ impl SimpleKernel {
         then.mask_move_random_connected_and_set(self.input_idx, &mut self.input_mask, rng);
     }
 
+    /// Its prediction came true (a shadow or predicting population): one synapse moves from a
+    /// line that was off then onto a line that was on (Hebbian, on the input it fired on).
+    pub fn reinforce<R: rand::Rng + ?Sized>(&mut self, then: &BitVector, rng: &mut R) {
+        if self.words.is_some() {
+            return self.sparse_move(then, |a, m| !a & m, |a, m| a & !m, rng);
+        }
+        then.mask_move_random_connected_and_not_set(self.input_idx, &mut self.input_mask, rng);
+    }
+
+    /// Output learning toward a target (a predictor's): each line it wrote that the target did
+    /// not have moves, with chance 2^-chance_shift, to a line the target had that it does not
+    /// write. Its output keeps its number of lines. `target` is word-aligned with its output.
+    pub fn learn_toward<R: rand::Rng + ?Sized>(&mut self, target: &[u64], chance_shift: u8, rng: &mut R) {
+        let o = self.output_mask.as_words().to_vec();
+        let mut failed: Vec<usize> = Vec::new();
+        let mut left: Vec<usize> = Vec::new();
+        for (w, &m) in o.iter().enumerate() {
+            let t = target.get(self.output_idx + w).copied().unwrap_or(0);
+            failed.extend(ones_of(m & !t).into_iter().map(|b| w * 64 + b));
+            left.extend(ones_of(t & !m).into_iter().map(|b| w * 64 + b));
+        }
+        for b in failed {
+            if left.is_empty() {
+                break;
+            }
+            if rng.gen_range(0..1u32 << chance_shift.min(31)) == 0 {
+                let i = rng.gen_range(0..left.len());
+                let to = left.swap_remove(i);
+                self.output_mask.bit_clear(b);
+                self.output_mask.bit_set(to);
+            }
+        }
+    }
+
     /// A small code and its extra lines for a nested match code: `small` random lines in one
     /// random word of a `bits`-wide match vector, and `extra` more lines in the same word.
     pub fn nested_code<R: rand::Rng + ?Sized>(bits: usize, small: usize, extra: usize, rng: &mut R) -> (BitVector, BitVector) {

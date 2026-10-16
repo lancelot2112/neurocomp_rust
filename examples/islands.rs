@@ -72,6 +72,17 @@
 //! with the world's input a step later; the world never reads it). So one population can learn
 //! only after a stroke, with no channel copying the affect first.
 //!
+//! `ISL_SHADOW=1` (with `ISL_EXPLORE`): shadow explorers. A stuck (or, with accidents, an
+//! unlucky) population grows a shadow instead of a trial XOR loop: it reads what the population
+//! reads and predicts, a step ahead, one vector after another (a sense, the self channel, the
+//! voice or hand, a channel), writing nothing into the network. Each step it checks: a kernel
+//! whose lines all came on is reinforced (Hebbian on what it fired on), one that missed is
+//! weakened (anti-Hebbian) and moves its output toward what came on, and unpredicted lines recruit
+//! kernels. A target it cannot predict within 128 steps is dropped for the next. Over a
+//! generation, the best-predicted target (net 64 true) is kept: a channel of its own and a
+//! predictor into it, still learning against the target, tagged explored: an internal copy of
+//! what that vector will be, for other populations to read or gate on.
+//!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
 //! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
@@ -264,7 +275,18 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
         let wi = all.iter().filter(|p| p.to_port && p.to_input).count();
         format!("; port-gated {}%, port-paused {}%, writing a sense {}%", gp * 100 / all.len().max(1), pp * 100 / all.len().max(1), wi * 100 / all.len().max(1))
     } else { String::new() };
-    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}{expect}{accident}{ported}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
+    // (with ISL_SHADOW: predictors kept from shadow explorers, and what they predict)
+    let predictors = if neurocomp::program::neurocomp::shadow() {
+        let mut what: Vec<(String, usize)> = Vec::new();
+        for p in all.iter().filter(|p| p.teacher.is_some()) {
+            let (t, at) = p.teacher.unwrap();
+            let name = match at { 1 => ["S", "eye", "ear", "touch", "affect", "M"][[0x00u8, 0x07, 0x38, 0xC1, 0xE0, 0x80].iter().enumerate().min_by_key(|p| (*p.1 ^ t).count_ones()).unwrap().0].to_string(), 2 => ["A", "voice", "hand"][[0xFFu8, 0x1F, 0xF8].iter().enumerate().min_by_key(|p| (*p.1 ^ t).count_ones()).unwrap().0].to_string(), _ => "channel".to_string() };
+            match what.iter_mut().find(|w| w.0 == name) { Some(w) => w.1 += 1, None => what.push((name, 1)) }
+        }
+        what.sort_by(|a, b| b.1.cmp(&a.1));
+        format!("; predictors {}{}", what.iter().map(|w| w.1).sum::<usize>(), if what.is_empty() { String::new() } else { format!(" ({})", what.iter().map(|w| format!("{} {}", w.0, w.1)).collect::<Vec<_>>().join(", ")) })
+    } else { String::new() };
+    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}{expect}{accident}{ported}{predictors}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
 }
 
 /// The probes where `a` scores at least `NOTICE` above `b`, named.
@@ -447,6 +469,7 @@ fn main() {
     neurocomp::evolve::tags::set_zeros(env("ISL_ZEROS", 0u8) == 1);
     neurocomp::evolve::tags::set_accident(env("ISL_ACCIDENT", 0u8) == 1);
     neurocomp::evolve::tags::set_port_gates(env("ISL_PORTGATE", 0u8) == 1);
+    neurocomp::program::neurocomp::set_shadow(env("ISL_SHADOW", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
     let ration: u64 = env("ISL_RATION", 0);
@@ -561,7 +584,7 @@ fn main() {
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }));
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

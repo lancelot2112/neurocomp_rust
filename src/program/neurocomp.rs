@@ -40,6 +40,26 @@ pub fn explore() -> bool {
     EXPLORE.load(Ordering::Relaxed)
 }
 
+/// The explorer's kind (`set_shadow`, with exploration): a stuck (or accident-prone) population
+/// grows a shadow predictor instead of a trial XOR loop. The shadow reads what the population
+/// reads and predicts, a step ahead, one vector after another (a sense, the self channel, an
+/// output port, a channel), writing nothing into the network; what it predicts well is noted
+/// for the genome (`notes`).
+static SHADOW: AtomicBool = AtomicBool::new(false);
+
+pub fn set_shadow(on: bool) {
+    SHADOW.store(on, Ordering::Relaxed);
+}
+
+pub fn shadow() -> bool {
+    SHADOW.load(Ordering::Relaxed)
+}
+
+/// Steps a shadow predicts one target before it moves to the next, unless its predictions came
+/// true at least `KEEP_SHADOW` more often than they failed.
+pub const RETARGET: u32 = 128;
+pub const KEEP_SHADOW: i32 = 16;
+
 /// Steps a population's kernels must all go without firing before it is stuck and grows a trial
 /// connection (the starting value; kernels count their own age, saturating at 255).
 pub const STUCK: u8 = 64;
@@ -82,6 +102,8 @@ pub struct RuntimeNetwork {
     /// source is a port. The trial's kernels are born and replicate by the usual rules, and each
     /// of their predictions that comes true is counted (`confirms`), for the genome to keep it
     pub explore: bool,
+    /// (with `explore`) explorers are shadow predictors (`set_shadow`)
+    pub shadow: bool,
     /// work done since it was built: kernels matched plus words a wire or noise edge wrote (a
     /// paused or idle population adds nothing)
     pub work: u64,
@@ -223,6 +245,19 @@ pub struct RuntimeEdgeGroup {
     pub explorer: u8,
     /// it has grown its trial connection this lifetime
     pub spawned: bool,
+    /// a shadow: it fires into `scratch`, not its destination (it writes nothing into the network)
+    pub silent: bool,
+    pub scratch: BitVector,
+    /// a predictor's kernels that fired last step, and what they read then
+    pub teach_fired: Vec<usize>,
+    pub teach_src: Option<BitVector>,
+    /// a shadow's targets in turn (node, words, kind), the one it is on, steps on it, its score
+    /// there (predictions that came true less those that failed), and each target's best score
+    pub targets: Vec<(usize, Option<(usize, usize)>, u8)>,
+    pub target_at: usize,
+    pub on_target: u32,
+    pub score: i32,
+    pub scores: Vec<(u8, u32)>,
 }
 
 impl RuntimeEdgeGroup {
@@ -293,6 +328,15 @@ impl RuntimeNetwork {
                 confirms: 0,
                 explorer: 0,
                 spawned: false,
+                silent: false,
+                scratch: BitVector::new(64, Some(0)),
+                teach_fired: Vec::new(),
+                teach_src: None,
+                targets: Vec::new(),
+                target_at: 0,
+                on_target: 0,
+                score: 0,
+                scores: Vec::new(),
             });
         }
 
@@ -302,7 +346,7 @@ impl RuntimeNetwork {
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, explore: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, explore: false, shadow: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -361,12 +405,21 @@ impl RuntimeNetwork {
                 confirms: 0,
                 explorer: 0,
                 spawned: false,
+                silent: false,
+                scratch: BitVector::new(64, Some(0)),
+                teach_fired: Vec::new(),
+                teach_src: None,
+                targets: Vec::new(),
+                target_at: 0,
+                on_target: 0,
+                score: 0,
+                scores: Vec::new(),
             });
         }
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, explore: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, explore: false, shadow: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Advance histories and process all edges once.
@@ -488,7 +541,15 @@ impl RuntimeNetwork {
                             continue;
                         }
                         work += eg.group.kernel_count() as u64;
-                        fired[i] = eg.group.process(src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
+                        if eg.silent {
+                            // a shadow fires into its own scratch vector: nothing reaches the network
+                            let mut scratch = std::mem::replace(&mut eg.scratch, BitVector::new(64, Some(0)));
+                            scratch.as_words_mut().fill(0);
+                            fired[i] = eg.group.process(src_view, &mut scratch, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
+                            eg.scratch = scratch;
+                        } else {
+                            fired[i] = eg.group.process(src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
+                        }
                         seen[i] = Some(Seen::of(owned, eg.src.idx, frame));
                     }
                 }
@@ -553,8 +614,94 @@ impl RuntimeNetwork {
                     continue;
                 }
             }
+            // a predictor learns against its target a frame later, not against its destination
+            let mut predictor = false;
+            if let Some((tn, tw, _)) = eg.spec.teacher {
+                predictor = true;
+                let f = nodes[tn].get_frame(at(live[tn], 1)).as_words();
+                let t: Vec<u64> = match tw { Some((o, n)) => f[o.min(f.len())..(o + n).min(f.len())].to_vec(), None => f.to_vec() };
+                let then = eg.teach_src.take();
+                let fired_then = std::mem::take(&mut eg.teach_fired);
+                let mut predicted = vec![0u64; t.len()];
+                let (mut hits, mut misses) = (0i32, 0i32);
+                if let Some(class) = eg.group.classes_mut().first_mut() {
+                    for &k in &fired_then {
+                        if k >= class.len() {
+                            continue;
+                        }
+                        let kk = &mut class.kernels_mut()[k];
+                        let o = kk.output_idx;
+                        let m: Vec<u64> = kk.output_mask.as_words().to_vec();
+                        let hit = m.iter().enumerate().all(|(j, &w)| t.get(o + j).is_some_and(|&x| w & !x == 0));
+                        for (j, &w) in m.iter().enumerate() {
+                            if let Some(p) = predicted.get_mut(o + j) { *p |= w; }
+                        }
+                        if hit {
+                            hits += 1;
+                            if let Some(th) = &then { kk.reinforce(th, rng); }
+                        } else {
+                            misses += 1;
+                            if let Some(th) = &then { kk.fade(th, rng); }
+                            kk.learn_toward(&t, sp.out_learn, rng);
+                        }
+                        if sp.replicate > 0 {
+                            kk.confirm(hit, None);
+                        }
+                    }
+                    // lines of the target that nobody predicted recruit a kernel on what was read
+                    // then, writing those lines (one birth a step, under the cap)
+                    if eg.grow && class.len() < sp.cap as usize {
+                        if let Some(th) = &then {
+                            // (only where it can write: its scratch, or its destination, which may be
+                            // narrower than the target)
+                            let room = if eg.silent { eg.scratch.word_len() } else { nodes[eg.dst].current().word_len() };
+                            let un: Vec<u64> = t.iter().zip(&predicted).take(room).map(|(a, b)| a & !b).collect();
+                            let (dw, dn) = busiest_word(&un);
+                            let (sw, sn) = busiest_word(th.as_words());
+                            if dn as usize >= sp.out_min.max(1) as usize && sn > 0 {
+                                let lines = ones_of(un[dw]);
+                                let out: Vec<usize> = lines.choose_multiple(rng, (sp.out_max as usize).min(lines.len())).copied().collect();
+                                let active = ones_of(th.as_words()[sw]);
+                                let syn: Vec<usize> = active.choose_multiple(rng, (sp.birth_syn as usize).min(active.len())).copied().collect();
+                                let threshold = (sp.birth_quarters as usize * syn.len()).div_ceil(4).max(1);
+                                let mut k = SimpleKernel::new(BitVector::from_bits(&syn, 64), sw, BitVector::from_bits(&out, 64), dw, threshold, KernelOp::Or);
+                                k.learn_fire = false;
+                                class.add(k);
+                            }
+                        }
+                    }
+                }
+                eg.confirms = eg.confirms.saturating_add(hits.max(0) as u32);
+                eg.score += hits - misses;
+                eg.teach_fired = fired[i].clone();
+                eg.teach_src = seen[i].as_ref().map(|v| v.get(nodes).clone());
+                // a shadow moves to its next target after `RETARGET` steps, unless it predicts this one
+                if eg.silent {
+                    eg.on_target += 1;
+                    if eg.on_target >= RETARGET {
+                        let kind = eg.targets.get(eg.target_at).map_or(0, |t| t.2);
+                        let sc = eg.score.max(0) as u32;
+                        match eg.scores.iter_mut().find(|x| x.0 == kind) {
+                            Some(x) => x.1 = x.1.max(sc),
+                            None => eg.scores.push((kind, sc)),
+                        }
+                        if eg.score < KEEP_SHADOW && eg.targets.len() > 1 {
+                            eg.target_at = (eg.target_at + 1) % eg.targets.len();
+                            let nt = eg.targets[eg.target_at];
+                            eg.spec.teacher = Some(nt);
+                            let len = nt.1.map_or(nodes[nt.0].current().word_len(), |w| w.1);
+                            eg.scratch = BitVector::new(len.max(1) * 64, Some(0));
+                            if let Some(class) = eg.group.classes_mut().first_mut() { class.clear(); }
+                            eg.teach_fired.clear();
+                            eg.teach_src = None;
+                        }
+                        eg.on_target = 0;
+                        eg.score = 0;
+                    }
+                }
+            }
             let Some(class) = eg.group.classes_mut().first_mut() else { continue };
-            if matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
+            if !predictor && matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
                 let dest = nodes[eg.dst].current();
                 let mut came_true = 0u32;
                 for &k in &fired[i] {
@@ -598,7 +745,7 @@ impl RuntimeNetwork {
                     class.add(child);
                 }
             }
-            if !(eg.grow && eg.can_grow) || class.len() >= sp.cap as usize {
+            if predictor || !(eg.grow && eg.can_grow) || class.len() >= sp.cap as usize {
                 continue;
             }
             // a repeat birth reads its source as it was when the repeated act was made
@@ -810,7 +957,7 @@ impl RuntimeNetwork {
         let mut grown = Vec::new();
         for i in 0..n {
             let eg = &self.edges[i];
-            if eg.explorer > 0 || eg.spawned || eg.kind != EdgeKind::Kernels || !internal(eg.dst, self) {
+            if eg.explorer > 0 || eg.spawned || eg.kind != EdgeKind::Kernels || (!self.shadow && !internal(eg.dst, self)) {
                 continue;
             }
             let Some(class) = eg.group.classes().first() else { continue };
@@ -822,6 +969,57 @@ impl RuntimeNetwork {
                 (h ^ (h >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9) >> (64 - k) == 0
             };
             if !accident && (class.kernels().is_empty() || class.kernels().iter().any(|k| k.age < STUCK)) {
+                continue;
+            }
+            if self.shadow {
+                // a shadow predictor: what this population reads, predicting each candidate in turn
+                let targets = self.targets(eg.src.idx, eg.window, eg.spec.salt);
+                let Some(&first) = targets.first() else { continue };
+                let mut spec = eg.spec.clone();
+                spec.op = KernelOp::Or;
+                spec.teacher = Some(first);
+                spec.replicate = spec.replicate.max(3);
+                spec.cap = spec.cap.max(16);
+                spec.gate = None;
+                spec.pause = None;
+                spec.repeat = false;
+                spec.dst_len = 0;
+                spec.dst_word = 0;
+                let len = first.1.map_or(self.nodes[first.0].current().word_len(), |w| w.1);
+                let rng = StdRng::seed_from_u64((spec.salt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.steps ^ 0x5AD0);
+                grown.push((i, RuntimeEdgeGroup {
+                    src: RuntimeEdgeTarget { idx: eg.src.idx, read_back: 1, span: 1 },
+                    dst: eg.dst,
+                    group: KernelGroup::from_classes(vec![KernelClass::with_kernels(vec![])]),
+                    kind: EdgeKind::Kernels,
+                    op: KernelOp::Or,
+                    rotate: 0,
+                    grow: true,
+                    inhibit: eg.inhibit,
+                    gate: None,
+                    new_code: false,
+                    wide: false,
+                    window: eg.window,
+                    dst_word: 0,
+                    repeat: false,
+                    repeat_lag: 1,
+                    spec,
+                    rng,
+                    can_grow: true,
+                    into_act: false,
+                    confirms: 0,
+                    explorer: 3,
+                    spawned: true,
+                    silent: true,
+                    scratch: BitVector::new(len.max(1) * 64, Some(0)),
+                    teach_fired: Vec::new(),
+                    teach_src: None,
+                    targets,
+                    target_at: 0,
+                    on_target: 0,
+                    score: 0,
+                    scores: Vec::new(),
+                }));
                 continue;
             }
             let back = internal(eg.src.idx, self) && eg.src.idx != eg.dst;
@@ -858,6 +1056,15 @@ impl RuntimeNetwork {
                 confirms: 0,
                 explorer: if back { 1 } else { 2 },
                 spawned: true,
+                silent: false,
+                scratch: BitVector::new(64, Some(0)),
+                teach_fired: Vec::new(),
+                teach_src: None,
+                targets: Vec::new(),
+                target_at: 0,
+                on_target: 0,
+                score: 0,
+                scores: Vec::new(),
             }));
         }
         for (i, trial) in grown {
@@ -870,7 +1077,50 @@ impl RuntimeNetwork {
     /// predictions that came true, and each trial connection grown from it (kind 1: back into
     /// its source, 2: on its destination) with its own.
     pub fn notes(&self) -> Vec<(u32, u32, u8)> {
-        self.edges.iter().filter(|e| e.confirms > 0 || e.explorer > 0).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect()
+        let mut out: Vec<(u32, u32, u8)> = self.edges.iter().filter(|e| e.explorer < 3 && (e.confirms > 0 || e.explorer > 0)).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect();
+        // a shadow's targets, each with its best score (the one it is on included)
+        for e in self.edges.iter().filter(|e| e.explorer == 3) {
+            let mut sc = e.scores.clone();
+            if let Some(t) = e.targets.get(e.target_at) {
+                let now = e.score.max(0) as u32;
+                match sc.iter_mut().find(|x| x.0 == t.2) {
+                    Some(x) => x.1 = x.1.max(now),
+                    None => sc.push((t.2, now)),
+                }
+            }
+            out.extend(sc.into_iter().filter(|x| x.1 > 0).map(|(kind, c)| (e.spec.salt, c, kind)));
+        }
+        out
+    }
+
+    /// What a shadow reading node `src` (words `window`) may predict, in turn from a place
+    /// drawn from its population's id: the eye, ear, touch and affect (kinds 17-20), the self
+    /// channel (21), the voice and hand (23, 24), and every declared channel (32 + its index - 1),
+    /// less what it reads.
+    pub fn targets(&self, src: usize, window: Option<(usize, usize)>, salt: u32) -> Vec<(usize, Option<(usize, usize)>, u8)> {
+        let cw = crate::world::CH_BITS / 64;
+        let mut t: Vec<(usize, Option<(usize, usize)>, u8)> = Vec::new();
+        for (j, s) in [crate::world::EYE, crate::world::EAR, crate::world::TOUCH, crate::world::AFFECT].into_iter().enumerate() {
+            t.push((0, Some((s * cw, cw)), 17 + j as u8));
+        }
+        if let Some(sn) = self.self_node {
+            t.push((sn, None, 21));
+        }
+        for (j, s) in [crate::world::VOICE, crate::world::HAND].into_iter().enumerate() {
+            t.push((self.output, Some((s * cw, cw)), 23 + j as u8));
+        }
+        for node in 1..self.nodes.len() {
+            if node != self.output && Some(node) != self.self_node && node - 1 < 200 {
+                t.push((node, None, 32 + (node - 1) as u8));
+            }
+        }
+        // not what it reads (the same words, or a sense inside all of the senses it reads)
+        t.retain(|x| !(x.0 == src && (window.is_none() || x.1 == window)));
+        if !t.is_empty() {
+            let k = (salt as usize).wrapping_mul(0x9E37_79B9) % t.len();
+            t.rotate_left(k);
+        }
+        t
     }
 
     /// The self node's frame this step, written by the runtime before any edge runs (bits only,

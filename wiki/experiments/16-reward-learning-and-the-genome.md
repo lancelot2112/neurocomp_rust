@@ -626,3 +626,24 @@ over each island's own evolution has not been measured. Run 22 is run 21 with th
 (`ISL_EVERY=0`): the same settings, the islands evolving apart. Compared with run 21 island by
 island, it measures the exchange: rungs, goal means, and whether loops and network sizes differ.
 
+## Thrift off (run 23)
+
+Three costs act on work (kernels matched plus words wired a step):
+- **Thrift** (`ISL_THRIFT`, on since it was added): one lexicase case per world for less work.
+  A rung scored on one goal probe has as many thrift cases as probe cases, so half of all cases
+  reward the cheapest genome; the generalist, on all 15 probes, has one in sixteen. The islands
+  with one goal probe kept best networks of 1 to 26 populations through run 20, the generalist
+  37 to 192 (nearly all on loops); selection reached 510 of its 600 and fell to 273 as its best
+  network shrank to one population.
+- **Energy** (`ISL_RATION` 256 a step, food for scoring): a hard price on compute; past its
+  ration a network must earn by scoring, or rest.
+- **The carrying cost** (`ISL_CARRY` 4 a token): added to a genome's work per step (4 x 89 tokens
+  = 356 a step for run 20's generalist at 350, against its 2,310 of work). It entered only the
+  thrift case and the ranking, never the energy store, so with thrift off it would do nothing.
+
+Since energy already prices compute, thrift is a second penalty, strongest on the islands still
+on early rungs, and large networks may be what the higher rungs need (lesson 49). Run 23 is run 21
+(exchange on) with thrift off, and the carrying cost made energy (`ISL_CARRY_ENERGY=1`): each step
+a network pays 4 a token of its genome from the store its work comes out of, so carrying and
+computing compete for the same energy, earned by scoring. It is compared with run 21.
+

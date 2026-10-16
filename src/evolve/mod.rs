@@ -436,6 +436,8 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     // energy (`Lesson::ration`): the store, below 0 the network rests
     let (ration, food) = (lesson.ration as i64, lesson.food as i64);
     let mut store = ration.saturating_mul(64);
+    // (`set_carry_energy`) what carrying the genome costs each step, from the same store
+    let upkeep = if carry_energy() { (carry() as i64).saturating_mul(g.size() as i64) } else { 0 };
     let mut block = 0usize;
     loop {
         // (a mixed lifetime: the next block once one ends)
@@ -485,7 +487,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         net.tick(AdvanceMode::Clear, 0);
         net.write_input(&senses, 0);
         act = net.read_output().clone();
-        store -= (net.work - before).min(i64::MAX as u64 / 4) as i64;
+        store -= (net.work - before).min(i64::MAX as u64 / 4) as i64 + upkeep;
     }
     NOTES.with(|n| if let Some(v) = n.borrow_mut().as_mut() { v.extend(net.notes()) });
     (w.events, net.work)
@@ -687,6 +689,21 @@ pub fn carry() -> u64 {
     CARRY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The carrying cost paid as energy (`set_carry_energy`, with energy on): each step a network
+/// pays `carry` a token of its genome from the same store its work comes out of, so carrying and
+/// computing compete for what it earns; it is then no longer added to the work that thrift and
+/// the ranking compare. Off by default (the cost is added to the work per step, and spends no
+/// energy).
+static CARRY_ENERGY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_carry_energy(on: bool) {
+    CARRY_ENERGY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn carry_energy() -> bool {
+    CARRY_ENERGY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// `probe_all` in a world set by a lesson.
 pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Physics, seeds: &[u64], gap: usize, wanted: &[usize], lesson: Lesson) -> Vec<Probed<G>> {
     // one job a (genome, world) lifetime set, taken from a shared counter by whichever thread is
@@ -733,7 +750,7 @@ pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Ph
         .enumerate()
         .map(|(i, g)| {
             let r = &results[i * seeds.len()..(i + 1) * seeds.len()];
-            let cost = carry * g.size() as u64;
+            let cost = if carry_energy() { 0 } else { carry * g.size() as u64 };
             let works: Vec<u64> = r.iter().map(|x| x.1.saturating_add(cost)).collect();
             let work = works.iter().sum::<u64>() / seeds.len().max(1) as u64;
             let found = merge_notes(notes[i * seeds.len()..(i + 1) * seeds.len()].iter().flatten().copied());

@@ -508,6 +508,12 @@ while their scores fell. With `ISL_SHADOW_HINT=1` a shadow's find is only noted:
 
 Tested: a population's best target becomes its hint and no token is added, and the hint
 survives the text form. In a 12-generation smoke run: no predictors, 124 hints (up to 28% of an
-island's elite), one gate already on its hint. Run 19 is run 18 with it (`runs/run19.cmd`,
-started by `runs/after18.cmd`).
+island's elite), one gate already on its hint. Run 19 is run 18 with it (`runs/run19.cmd`).
+
+**So far** (generation 342; `wiki/island-runs.md` compares runs 16 to 19): no predictors and no
+bloat; the maze's feel averaged 69 over 243-342 and shapes' 53, both their best of any run;
+recall reached lag4 at 83, the earliest of any run; selection's cued 355. Hints sit on 11-49% of
+populations, but only a few gates or pauses (2-7 an island) have taken one, since a hint acts
+only when its population's gate or pause mutates. Switching's feel (49) and prediction (2) are
+behind run 16.
 

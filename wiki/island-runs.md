@@ -23,7 +23,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 16 | ports for gates, pauses and writes: one population can learn only after a stroke | 600 | 3 h 22 min |
 | 17 | shadow explorers, and recall's long ladder | 250 (stopped: predictor bloat, feel at 0) | 1 h 11 min |
 | 18 | pauses drawn as gates are: a port pause one step away | 548 (stopped for run 19) | 3 h 32 min |
-| 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | running | |
+| 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | running (342 at writing) | |
 
 ## How far each island climbed
 
@@ -85,6 +85,47 @@ Two cautions for reading it:
 - **Plasmids** help on arrival 6-12% of the time in every run, but none has made a lasting
   difference to an island. The first to fix whole in an island was run 13's #175 (all 32 of shapes'
   networks), and shapes' score did not change.
+
+## Runs 16 to 19 compared (port gates, shadows, pauses, hints)
+
+Each run adds one change to the one before; run 19 was compared at generation 342 (still
+running). Means are of each island's goal score per generation, over generations 243-342 (runs
+16, 18, 19) or 151-250 (run 17, stopped there).
+
+| | run 16: port gates | run 17: + shadow predictors kept | run 18: + pauses drawn | run 19: + shadows as hints |
+|---|---|---|---|---|
+| switching on feel | **69** (feel at 26) | 0 (feel at 135) | 44 (feel at 158) | 49 (feel at 44) |
+| maze on feel | 39 | 8 | 36 | **69** |
+| shapes on feel | 20 (feel at 157) | 0 (feel at 96) | first rung, never left | **53** (feel at 140) |
+| screen's glow | 48 | 58 | **121** | 44 |
+| selection's cued | 248 | 262 | 172 | **355** |
+| prediction's cycle1 | **100** (passed at 332) | 23 | 85 | 2 |
+| recall | lag4 at 353 | lag3 at 209 | lag3 at 93, stuck | **lag4 at 83** (the earliest of any run) |
+| reading's echo2 | -11 | -11 | -4 | -10 |
+| kept predictors | none (no shadows) | hundreds (the generalist 605) | hundreds (the generalist 410) | none |
+
+What each change did:
+- **Port gates (run 16)** made learning only after a stroke one population, and the stroke
+  reached the hand on all three feel islands for the first time. Switching led (69), and
+  prediction passed cycle1.
+- **Kept shadow predictors (run 17)** bloated the islands in turn: each island did worse while it
+  carried them and recovered as it shed them. The feel rung fell to 0.
+- **Pauses drawn as gates are (run 18)** spread port pauses at once and gave screen its best glow
+  (mean 121 here, 105 over the run), from circuits of 1 to 4 populations mostly paused on a port.
+  The kept predictors still held the other islands back.
+- **Shadows as hints (run 19)** removed the bloat: no predictors, networks of 4 to 45
+  populations. The maze (69) and shapes (53) have their best feel stretches of any run, and recall
+  reached lag4 at 83. Hints sit on 11-49% of the populations, but only 2-7 gates or pauses on an
+  island have taken one: a hint is used only when that population's gate or pause mutates.
+  Switching's feel (49) and prediction (2) are behind run 16.
+
+Across the four runs:
+- the stroke reaches the hand on two or three islands in every run without bloat (16, 19), 45-70
+  at best against a goal of 300; no feel rung has passed;
+- the circuits that score are small and use ports: gated (run 16), paused (run 18), or both
+  (run 19's maze and selection, 47-100% on each);
+- a feel circuit moved between islands by plasmid twice: switching to shapes (run 16, #248),
+  maze to shapes (run 19, #231, its senses classed as feel).
 
 ## Patterns in the evolved networks (runs 9-14)
 

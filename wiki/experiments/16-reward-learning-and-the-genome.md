@@ -517,14 +517,21 @@ populations, but only a few gates or pauses (2-7 an island) have taken one, sinc
 only when its population's gate or pause mutates. Switching's feel (49) and prediction (2) are
 behind run 16.
 
-## Hints tried more often (run 20)
+## Edges built on hints (run 20)
 
-In run 19 hints sat on 11-49% of the populations, but only 2-19 gates or pauses an island had
-taken one by 350: a hint was used only when that population's gate or pause mutated, one
-property mutation in about forty. With `ISL_HINT_USE=1`, trying a hint is a mutation of its own:
-one mutation in sixteen, while any population in the genome carries a hint, picks a hinted
-population and sets its gate or its pause (half the time each) on the hint, with the polarity
-(lines on, or none) drawn. Selection then keeps it or not. Off, the mutation draws as before.
-Tested. In a 12-generation smoke run, hints were taken on three islands by 12 (run 19: about
-100). Run 20 is run 19 with it (`runs/run20.cmd`, started by `runs/after19.cmd`).
+In run 19 a hint steered only gates and pauses. That uses the hinted vector as a switch, not the
+relationship the shadow measured (the population's input carries information about it). With
+`ISL_HINT_USE=1` a hint makes an edge likelier on that path, of any kind:
+- **The mutation:** one in sixteen, while any population in the genome carries a hint, adds a new
+  population after a hinted one. Its kind (wire or kernels), op, gate, pause and the rest are
+  drawn as any new population's; only its endpoints come from the hint.
+- **The path,** half the time each: from the hinted population's input to the hinted vector (to an
+  output port: a reflex; to a sense: written, sensed next step beside what arrives; to a channel),
+  or from the hinted vector to the hinted population's destination (the vector used as an input).
+  An output port cannot be read and the self channel cannot be written, so those go one way.
+- It is a plain population: no teacher, no starting mark. It pays its carrying cost and selection
+  keeps it or not. Gates and pauses still take hints when they mutate, as in run 19.
 
+Tested: edges built on a hint at the affect sense run eye to affect (written) or affect to the
+population's destination, about half each, keeping their own kind; a hint at the hand always runs
+eye to hand. Run 20 is run 19 with it (`runs/run20.cmd`, started by `runs/after19.cmd`).

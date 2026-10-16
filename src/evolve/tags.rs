@@ -278,10 +278,12 @@ pub fn shadow_hints() -> bool {
     SHADOW_HINTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// Hints tried more often (`set_hint_use`, with hints): a mutation of its own, one in sixteen
-/// while any population carries a hint, sets a hinted population's gate or pause on its hint.
-/// Without it a hint is taken only when that population's gate or pause mutates (one property
-/// mutation in about forty). Off by default.
+/// Edges built on hints (`set_hint_use`, with hints): a mutation of its own, one in sixteen while
+/// any population carries a hint, adds a new population of any kind (its op, kind, gate, pause and
+/// the rest drawn as any new population's) on a hinted path: from the hinted population's input
+/// to the hinted vector, or from the hinted vector to the hinted population's destination. A hint
+/// makes an edge likelier there; what the edge is, and whether it stays, is evolution's. Off by
+/// default.
 static HINT_USE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn set_hint_use(on: bool) {
@@ -292,16 +294,28 @@ pub fn hint_use() -> bool {
     HINT_USE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// A hint tried: the population's gate (learn only while the hinted vector had lines on, or
-/// none) or its pause (run only while ...), half the time each, on the hint.
-fn use_hint(p: &mut Pop, rng: &mut StdRng) {
-    let Some((t, at)) = p.hint else { return };
-    if rng.gen_bool(0.5) {
-        p.gate = Some((t, rng.gen_bool(0.5)));
-        p.gate_at = at;
+/// A new population `q` placed on `h`'s hint: half the time from `h`'s input to the hinted vector
+/// (an output port, a sense, which it then writes, or a channel), else from the hinted vector to
+/// `h`'s destination (a sense, the self channel or a channel; an output port cannot be read, so
+/// there it always goes forward, and the self channel cannot be written, so there it always goes
+/// back). Only the endpoints are set; everything else is `q`'s own.
+fn on_hint(q: &mut Pop, h: &Pop, rng: &mut StdRng) {
+    let Some((t, at)) = h.hint else { return };
+    let readable = at != 2;
+    let writable = !(at == 1 && t == SELF);
+    let forward = if !readable { true } else if !writable { false } else { rng.gen_bool(0.5) };
+    if forward {
+        q.from = h.from;
+        q.from_port = h.from_port;
+        q.to = t;
+        q.to_port = at != 0;
+        q.to_input = at == 1;
     } else {
-        p.pause = Some((t, rng.gen_bool(0.5)));
-        p.pause_at = at;
+        q.from = t;
+        q.from_port = at == 1;
+        q.to = h.to;
+        q.to_port = h.to_port;
+        q.to_input = h.to_input;
     }
 }
 
@@ -1409,14 +1423,16 @@ impl Evolvable for TagGenome {
                 let rewire = if rng.gen_bool(0.5) { Some((rng.r#gen(), rng.gen_bool(0.5))) } else { None };
                 g.copy_circuit(c, rewire, rng);
             }
-            // (with `set_hint_use`) a hint tried: one mutation in sixteen, while any population
-            // carries one, sets a hinted population's gate or pause on its hint
+            // (with `set_hint_use`) an edge built on a hint: one mutation in sixteen, while any
+            // population carries one, adds a new population of any kind on a hinted path, after
+            // the hinted population
             10 if hint_use() && g.pops().any(|p| p.hint.is_some()) => {
                 let hinted: Vec<usize> = (0..n).filter(|&i| matches!(&g.tokens[i], Token::Pop(p) if p.hint.is_some())).collect();
                 let at = *hinted.choose(rng).unwrap();
-                if let Token::Pop(p) = &mut g.tokens[at] {
-                    use_hint(p, rng);
-                }
+                let Token::Pop(h) = g.tokens[at].clone() else { unreachable!() };
+                let mut q = g.random_pop(rng);
+                on_hint(&mut q, &h, rng);
+                g.tokens.insert(at + 1, Token::Pop(q));
             }
             // (with the op choice) one population's op drawn again: one mutation in sixteen, where as
             // one of a population's 38 properties it is about one in a hundred
@@ -2094,26 +2110,31 @@ mod tests {
     }
 
     #[test]
-    fn a_tried_hint_sets_the_gate_or_the_pause_on_it() {
+    fn an_edge_built_on_a_hint_runs_along_the_hinted_path() {
         let mut rng = StdRng::seed_from_u64(4);
-        let (mut gates, mut pauses) = (0, 0);
-        for _ in 0..200 {
-            let mut p = Pop { hint: Some((AFFECT, 1)), ..Pop::new(1, EYE, HAND) };
-            use_hint(&mut p, &mut rng);
-            if p.gate.is_some() {
-                assert_eq!((p.gate.unwrap().0, p.gate_at), (AFFECT, 1));
-                gates += 1;
-            }
-            if p.pause.is_some() {
-                assert_eq!((p.pause.unwrap().0, p.pause_at), (AFFECT, 1));
-                pauses += 1;
+        let c = 0x3C;
+        // a population from the eye into C whose input predicts the affect sense: new edges go eye
+        // -> affect (written) or affect -> C, half and half; their kind is their own
+        let h = Pop { from_port: true, hint: Some((AFFECT, 1)), ..Pop::new(1, EYE, c) };
+        let (mut fwd, mut back) = (0, 0);
+        for i in 0..200 {
+            let mut q = Pop { op: KernelOp::Xor, wire: i % 2 == 0, ..Pop::new(2, 0, 0) };
+            on_hint(&mut q, &h, &mut rng);
+            assert_eq!(q.op, KernelOp::Xor);
+            if (q.from, q.from_port, q.to, q.to_port, q.to_input) == (EYE, true, AFFECT, true, true) {
+                fwd += 1;
+            } else if (q.from, q.from_port, q.to, q.to_port) == (AFFECT, true, c, false) {
+                back += 1;
+            } else {
+                panic!("{q:?}");
             }
         }
-        assert!(gates > 60 && pauses > 60 && gates + pauses == 200, "{gates} {pauses}");
-        // no hint, nothing changes
-        let mut q = Pop::new(1, EYE, HAND);
-        use_hint(&mut q, &mut rng);
-        assert!(q.gate.is_none() && q.pause.is_none());
+        assert!(fwd > 60 && back > 60, "{fwd} {back}");
+        // a hint at the hand (an output) always goes forward: eye -> hand
+        let h = Pop { from_port: true, hint: Some((HAND, 2)), ..Pop::new(1, EYE, c) };
+        let mut q = Pop::new(2, 0, 0);
+        on_hint(&mut q, &h, &mut rng);
+        assert_eq!((q.from, q.from_port, q.to, q.to_port, q.to_input), (EYE, true, HAND, true, false));
     }
 
     #[test]

@@ -410,3 +410,19 @@ the hand and voice, other channels, the ear and touch. The generalist kept the m
 elite). Run 17 is run 16 with it (`runs/run17.cmd`, started by `runs/after16.cmd`). Results to
 follow.
 
+## Pauses drawn as gates are (run 18)
+
+In run 16, a port gate on learning spread at once (100% of screen's elite by generation 50), but
+port pauses did not: at generation 55, 237 of 4,180 populations had a pause and 4 named a port.
+- **A new population never drew a pause.** It drew a learning gate one time in three.
+- **A port pause took two mutations:** one setting a pause and another moving `pause_at` to a
+  port, which did nothing without the first. 503 populations carried a port `pause_at` with no
+  pause.
+- **A wrong pause silences a whole population**, where a wrong gate only stops its learning.
+
+With `ISL_PAUSES=1`, a new population is paused one time in four (on a channel, or with port
+gates a channel, input port or output port, a third each), and a pause made by mutation draws
+what it names in the same step. Tested; off, nothing is drawn. In a 6-generation smoke run, 118
+of 752 populations were paused, 103 of them on a port. Run 18 is run 17 with it
+(`runs/run18.cmd`, started by `runs/after17.cmd`).
+

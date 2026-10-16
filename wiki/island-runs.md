@@ -22,6 +22,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 15 | a feel rung before every repeat rung | 250 (stopped: feel rising slowly, moved to port gates) | 1 h 10 min |
 | 16 | ports for gates, pauses and writes: one population can learn only after a stroke | running | |
 | 17 | shadow explorers: predictions made without touching the network, the best kept as an internal channel | after 16 | |
+| 18 | pauses drawn as gates are: a port pause one step away | after 17 | |
 
 ## How far each island climbed
 

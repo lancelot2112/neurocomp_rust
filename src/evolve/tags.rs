@@ -259,6 +259,32 @@ pub fn port_gates() -> bool {
     PORT_GATES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Pauses drawn as gates are (`set_pause_draws`): a new population runs only while some channel
+/// (or, with port gates, a port) had lines on, or none, one time in four; and a pause made by
+/// mutation draws what it names (with port gates: a channel, an input or an output port, a third
+/// each) in the same step. Without it a pause comes only from one mutation and a port pause needs
+/// a second. Off by default, so earlier runs draw as before.
+static PAUSE_DRAWS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_pause_draws(on: bool) {
+    PAUSE_DRAWS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn pause_draws() -> bool {
+    PAUSE_DRAWS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A new population's pause (`set_pause_draws`): one time in four, on a random tag, and with
+/// port gates naming a channel, an input or an output port, a third each. Nothing is drawn off.
+fn draw_pause(p: &mut Pop, rng: &mut StdRng, draws: bool, ports: bool) {
+    if draws && rng.gen_range(0..4) == 0 {
+        p.pause = Some((rng.r#gen(), rng.gen_bool(0.5)));
+        if ports {
+            p.pause_at = rng.gen_range(0..3);
+        }
+    }
+}
+
 /// What the string's channels resolve to.
 struct Channels {
     /// (tag, words) per node: the senses first, then the declared channels, the self channel, the
@@ -938,6 +964,8 @@ impl TagGenome {
             p.gate_at = rng.gen_range(0..3);
             p.to_input = p.to_port && rng.gen_range(0..8) == 0;
         }
+        // (with `set_pause_draws`) sometimes paused on a channel or port from the start
+        draw_pause(&mut p, rng, pause_draws(), port_gates());
         p
     }
 
@@ -1375,7 +1403,14 @@ impl Evolvable for TagGenome {
                         41 if port_gates() => p.gate_at = (p.gate_at + if up { 1 } else { 2 }) % 3,
                         42 if port_gates() => p.pause_at = (p.pause_at + if up { 1 } else { 2 }) % 3,
                         43 if p.teacher.is_some() => p.hit_quarters = step(p.hit_quarters, 1, 4),
-                        _ => p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
+                        _ => {
+                            let fresh = p.pause.is_none();
+                            p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) };
+                            // (with `set_pause_draws` and port gates) a new pause draws what it names
+                            if fresh && pause_draws() && port_gates() {
+                                p.pause_at = rng.gen_range(0..3);
+                            }
+                        }
                     },
                 }
             }
@@ -1943,6 +1978,21 @@ mod tests {
             net.write_input(&s, 0);
         }
         assert!(wrote > 100, "{wrote}");
+    }
+
+    #[test]
+    fn with_pause_draws_new_populations_are_sometimes_paused_on_a_port() {
+        let mut rng = StdRng::seed_from_u64(9);
+        let pops: Vec<Pop> = (0..400u32).map(|i| { let mut p = Pop::new(i, 0, 0); draw_pause(&mut p, &mut rng, true, true); p }).collect();
+        // off, nothing is drawn (and nothing is taken from the stream)
+        let mut a = StdRng::seed_from_u64(3);
+        let mut q = Pop::new(1, 0, 0);
+        draw_pause(&mut q, &mut a, false, true);
+        assert!(q.pause.is_none() && a.r#gen::<u64>() == StdRng::seed_from_u64(3).r#gen::<u64>());
+        let paused = pops.iter().filter(|p| p.pause.is_some()).count();
+        let on_port = pops.iter().filter(|p| p.pause.is_some() && p.pause_at > 0).count();
+        assert!((60..140).contains(&paused), "{paused}");
+        assert!(on_port * 3 > paused, "{on_port} of {paused}");
     }
 
     #[test]

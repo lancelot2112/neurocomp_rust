@@ -688,3 +688,21 @@ Three kinds of stall:
   is checked against the mean of the whole population, mutated children included
   (`src/evolve/mod.rs:1047`), before the elite's held-out check; that mean stays near 117 and 305.
 
+## Goals judged on the elite, and partial credit (run 24)
+
+From the signal measurement above, two changes, each behind a switch:
+- **The elite's pass** (`ISL_ELITE_PASS=1`): a rung's goal is checked on the mean of the island's
+  elite (its best 8 by summed goal probes, on the training worlds), not of its whole population,
+  before the elite's held-out check as before. The goals line still shows the population's mean.
+- **Partial credit** (`ISL_PARTIAL=1`): in selection, echo, surprise and feel are replaced by
+  graded versions; a rung's goal is still checked on the probe itself, so a rung is passed only
+  for the ability.
+  - `feel~`: clicks 1-3 steps after a stroke in full, 4-6 at half, 7-9 at a quarter, each against
+    the click rate with no stroke in the 9 steps before (a clicker 5 steps late scores 150, where
+    feel gives it about 0);
+  - `echo~`: echo's matches with lags 5-8 at half (against 13-16), per taught token shown rather
+    than per token said, so a network saying a few tokens is not scored on a handful;
+  - `surprise~`: clicks 4-6 steps after a token at half as well.
+
+Run 24 is run 21 with both (`runs/run24.cmd`), after run 23.
+

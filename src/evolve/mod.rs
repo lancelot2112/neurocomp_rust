@@ -637,19 +637,20 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
     let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_lesson(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap, lesson) } else { (vec![], 0) };
     let (del, w2) = if want(&[4]) { live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap, lesson) } else { (vec![], 0) };
-    let (seq, w3) = if want(&[6, 7, 8]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
-    let (pat, w4) = if want(&[9]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
+    let (seq, w3) = if want(&[6, 7, 8, 15]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
+    let (pat, w4) = if want(&[9, 16]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
     let (maz, w5) = if want(&[10, 12]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
     let (scr, w6) = if want(&[11]) { live_lesson(g, Task::Screen(trials), physics, seed ^ 0x5C2E, gap, lesson) } else { (vec![], 0) };
     let blocks = (trials / lesson.mixed_block.max(1)).max(2);
     let (mix, w7) = if want(&[13]) { live_lesson(g, Task::Mixed(blocks), physics, seed ^ 0x313C, gap, lesson) } else { (vec![], 0) };
-    let (fel, w8) = if want(&[14]) { live_lesson(g, Task::Feel(trials * 5), physics, seed ^ 0xFEE1, gap, lesson) } else { (vec![], 0) };
+    let (fel, w8) = if want(&[14, 17]) { live_lesson(g, Task::Feel(trials * 5), physics, seed ^ 0xFEE1, gap, lesson) } else { (vec![], 0) };
     let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
     row[13] = observe::select(&mix);
     row[14] = observe::feel(&fel);
+    row[17] = observe::feel_graded(&fel);
     for (p, x) in row.iter_mut().enumerate() {
-        if !wanted.contains(&p) {
+        if !wanted.contains(&p) && !wanted.iter().any(|&w| graded(w) == p && w != p) {
             *x = 0;
         }
     }
@@ -657,7 +658,40 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
 }
 
 /// All the probes.
-pub const ALL_PROBES: [usize; observe::NPROBES] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+/// All the probes (the graded ones, 15 to 17, stand in for echo, surprise and feel only in
+/// selection, with `set_partial`).
+pub const ALL_PROBES: [usize; 15] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
+
+/// Partial credit (`set_partial`): in selection, echo, surprise and feel are replaced by graded
+/// versions (`observe::echo_graded`, `surprise_graded`, `feel_graded`) that give a near miss part
+/// of the score; a rung's goal is still checked on the probe itself. Off by default.
+static PARTIAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_partial(on: bool) {
+    PARTIAL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial() -> bool {
+    PARTIAL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
+pub fn graded(p: usize) -> usize {
+    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, _ => p } } else { p }
+}
+
+/// The elite's pass (`set_elite_pass`): a rung's goal is checked against the mean of the island's
+/// elite (its best `elite` genomes) on the training worlds, not of its whole population (whose
+/// fresh mutants pull the mean down), before the elite's held-out check. Off by default.
+static ELITE_PASS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_elite_pass(on: bool) {
+    ELITE_PASS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn elite_pass() -> bool {
+    ELITE_PASS.load(std::sync::atomic::Ordering::Relaxed)
+}
 
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.
@@ -824,7 +858,7 @@ fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: 
     let np = wanted.len();
     let ncases = nseeds * np + if thrift { nseeds } else { 0 };
     let value = |g: usize, c: usize| -> i64 {
-        if c < nseeds * np { scored[g].probes[c / np][wanted[c % np]] as i64 } else { -(scored[g].works[c - nseeds * np].min(i64::MAX as u64 / 2) as i64) }
+        if c < nseeds * np { scored[g].probes[c / np][graded(wanted[c % np])] as i64 } else { -(scored[g].works[c - nseeds * np].min(i64::MAX as u64 / 2) as i64) }
     };
     // epsilon per case: the median absolute deviation over the population
     let eps: Vec<i64> = (0..ncases).map(|c| {
@@ -1040,11 +1074,13 @@ pub fn evolve_islands<G: Evolvable>(
             let (order, children) = lexicase_breed(&scored, &wanted, thrift, pop, elite, &mut rng);
             let m: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
             let mean = probe_means(&m);
+            // (`set_elite_pass`) the goal on the elite's mean, else the whole population's
+            let judged = if elite_pass() { probe_means(&order.iter().take(elite.max(1)).map(|&g| m[g]).collect::<Vec<_>>()) } else { mean };
             on[i] += 1;
             held.push(on[i]);
             // the curriculum: the goal met for `hold` generations in a row moves the island on
             if !st.goal.is_empty() && stage[i] + 1 < isl.stages.len() {
-                met[i] = if st.goal.iter().all(|&(p, x)| mean[p] >= x) { met[i] + 1 } else { 0 };
+                met[i] = if st.goal.iter().all(|&(p, x)| judged[p] >= x) { met[i] + 1 } else { 0 };
                 met_now.push(met[i]);
                 if met[i] >= st.hold.max(1) {
                     let pass = held_out.is_empty() || {

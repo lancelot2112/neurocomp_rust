@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~"];
 /// How many probes there are.
-pub const NPROBES: usize = 15;
+pub const NPROBES: usize = 18;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -208,7 +208,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = if won_n == 0 || lost_n == 0 { 0 } else { (won * 1024 / won_n - lost * 1024 / lost_n) as i32 };
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -318,6 +318,76 @@ pub fn feel(events: &[Event]) -> i32 {
         return 0;
     }
     (after_c * 1024 / after - other_c * 1024 / other) as i32
+}
+
+/// Echo with partial credit (`evolve::set_partial`): echo's matches, with lags 5 to 8 counted at
+/// half (against 13 to 16), per taught token shown rather than per token said, so a network that
+/// says few tokens is not scored on a handful. Echoing every taught token two steps later scores
+/// about 1024; saying nothing or at random about 0.
+pub fn echo_graded(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    let far = 16;
+    let taught = ev.iter().skip(far).filter(|e| e.taught && e.shown.is_some()).count() as i64;
+    if taught == 0 {
+        return 0;
+    }
+    let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
+        lags.map(|l| (far..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
+    };
+    ((2 * (hits(1..=4) - hits(9..=12)) + hits(5..=8) - hits(13..=16)) * 512 / taught) as i32
+}
+
+/// Surprise with partial credit (`evolve::set_partial`): as `surprise`, and clicks 4 to 6 steps
+/// after a token count at half (kept tokens: none broken in the 6 steps before).
+pub fn surprise_graded(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    let clicked = |t: usize, a: usize, b: usize| (t + a..=(t + b).min(ev.len().saturating_sub(1))).any(|u| ev[u].moved == Some(CLICK));
+    let (mut odd, mut kept) = (0i64, 0i64);
+    let (mut odd_near, mut odd_late, mut kept_near, mut kept_late) = (0i64, 0i64, 0i64, 0i64);
+    for t in 0..ev.len().saturating_sub(6) {
+        if ev[t].shown.is_none() {
+            continue;
+        }
+        if ev[t].odd {
+            odd += 1;
+            odd_near += clicked(t, 1, 3) as i64;
+            odd_late += clicked(t, 4, 6) as i64;
+        } else if !(t.saturating_sub(6)..t).any(|u| ev[u].odd) {
+            kept += 1;
+            kept_near += clicked(t, 1, 3) as i64;
+            kept_late += clicked(t, 4, 6) as i64;
+        }
+    }
+    if odd == 0 || kept == 0 {
+        return 0;
+    }
+    ((odd_near * 1024 / odd - kept_near * 1024 / kept) + (odd_late * 512 / odd - kept_late * 512 / kept)) as i32
+}
+
+/// Feel with partial credit (`evolve::set_partial`): clicks 1 to 3 steps after a stroke count in
+/// full, 4 to 6 at half and 7 to 9 at a quarter, each against the click rate at steps with no
+/// stroke in the 9 before. A late answer to the stroke scores something; ignoring it scores 0.
+pub fn feel_graded(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Feel).collect();
+    let mut n = [0i64; 4];
+    let mut c = [0i64; 4];
+    let mut since = usize::MAX;
+    for t in 0..ev.len() {
+        if t > 0 && ev[t - 1].stroked {
+            since = 1;
+        } else if since != usize::MAX {
+            since += 1;
+        }
+        let b = match since { 1..=3 => 0, 4..=6 => 1, 7..=9 => 2, _ => 3 };
+        n[b] += 1;
+        c[b] += (ev[t].moved == Some(CLICK)) as i64;
+    }
+    if n[3] == 0 {
+        return 0;
+    }
+    let other = c[3] * 1024 / n[3];
+    let rate = |b: usize| if n[b] == 0 { other } else { c[b] * 1024 / n[b] };
+    ((rate(0) - other) + (rate(1) - other) / 2 + (rate(2) - other) / 4) as i32
 }
 
 /// Task selection, in a lifetime of blocks that alternate between two tasks (`evolve::Task::Mixed`):
@@ -460,6 +530,28 @@ mod tests {
         assert!(random.abs() < 150, "{random}");
         assert_eq!(always, 0);
         assert_eq!(never, 0);
+    }
+
+    #[test]
+    fn partial_feel_credits_a_late_answer_that_feel_does_not() {
+        // a clicker that answers each stroke 5 steps later: outside feel's 3 steps, inside the
+        // graded probe's half-credit window
+        let run = |delay: usize| -> (i32, i32) {
+            let mut w = World::new(6, 8);
+            w.feel(3000);
+            let mut since = usize::MAX;
+            while !w.done() {
+                let a = w.act(None, (since == delay).then_some(CLICK));
+                w.step(&a);
+                since = if w.events.last().is_some_and(|e| e.stroked) { 0 } else { since.saturating_add(1) };
+            }
+            (feel(&w.events), feel_graded(&w.events))
+        };
+        let (f, g) = run(5);
+        assert!(f < 100, "{f}");
+        assert!(g > 100, "{g}");
+        let (f, g) = run(1);
+        assert!(f > 300 && g >= f, "{f} {g}");
     }
 
     #[test]

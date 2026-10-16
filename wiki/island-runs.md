@@ -28,6 +28,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 21 | heat inputs: a channel or port whose fullness moves a population's thresholds, down when warm, up when cool | after 20 | |
 | 22 | no plasmid exchange (ISL_EVERY=0): run 21 with the islands apart, to measure the exchange | after 21 | |
 | 23 | thrift off (ISL_THRIFT=0) and carrying paid as energy (ISL_CARRY_ENERGY=1): run 21 with energy alone pricing compute and carrying | after 22 | |
+| 24 | goals judged on the elite (ISL_ELITE_PASS=1) and partial credit in selection (ISL_PARTIAL=1): run 21 with both | after 23 | |
 
 ## How far each island climbed
 

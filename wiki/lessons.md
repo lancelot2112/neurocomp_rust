@@ -242,3 +242,9 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     alone); with gates on ports it is one population, and in run 16 the stroke reached the hand on
     all three feel islands. Where an addressing rule makes a useful circuit several coordinated
     mutations away, open the address before adding a mechanism.
+49. **A network's size is not a problem by itself (experiment 16).** Brains are large, and climbing
+    may need cycles of growth then trimming. In run 20 the generalist's best network went 37, 72,
+    149, 78 then 192 populations by generation 250, nearly all on loops, the islands around it
+    reaching their best means. What went wrong in runs 17 and 18 was what the extra populations
+    were (kept predictors of steady targets, protected by their marks) and that the islands
+    carrying them scored worse, not their number. Judge growth by the scores, not by the count.

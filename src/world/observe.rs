@@ -122,6 +122,24 @@ fn trials(events: &[Event], win: (usize, usize), off: (usize, usize)) -> Vec<(us
 
 type Trial = (usize, bool, bool, bool, bool);
 
+/// Trials by the world's own window mark (a delayed trial's window moves with its delay): each
+/// trial's index, cue, whether it pays, and whether it was clicked in its window.
+fn trials_in_window(events: &[Event]) -> Vec<Trial> {
+    let mut out: Vec<Trial> = Vec::new();
+    let mut cur: Option<usize> = None;
+    for e in events {
+        let Some((trial, _, cue, pays)) = e.trial else { continue };
+        if cur != Some(trial) {
+            out.push((trial, cue, pays, false, false));
+            cur = Some(trial);
+        }
+        if e.moved == Some(CLICK) && e.window {
+            out.last_mut().unwrap().3 = true;
+        }
+    }
+    out
+}
+
 /// Click rate (parts per 1024) over the trials picked by `pick`.
 fn rate(tr: &[Trial], pick: impl Fn(&Trial) -> bool, click: impl Fn(&Trial) -> bool) -> i32 {
     let n = tr.iter().filter(|x| pick(x)).count();
@@ -165,7 +183,8 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
         })
         .collect();
     let reverse = if late.is_empty() { 0 } else { late.iter().sum::<i32>() / late.len() as i32 };
-    let td = trials(delayed, (5, 7), (5, 7));
+    // (the window marked by the world: steps 5-7 for a delay up to 5, as always)
+    let td = trials_in_window(delayed);
     let remember = rate(&td, |x| x.1, |x| x.3) - rate(&td, |x| !x.1, |x| x.3);
     // win-stay: each click (in the response window) on a light is stroked if the trial paid;
     // the next trial showing the same light is clicked or not
@@ -775,6 +794,77 @@ mod tests {
         assert!(follows[5] > -80, "{follows:?}");
         // the delayed lifetime clicks 3-5 steps after a light is gone: remembered
         assert!(blind[4] > 500, "{blind:?}");
+    }
+
+    #[test]
+    fn remember_on_long_delays_distractors_varied_delays_and_two_lights() {
+        // a policy that sees only the eye: on light A it remembers, and clicks in steps `from` to
+        // `to` after it (an oracle for the window's timing on fixed delays), or (`until`) on every
+        // step after it until the trial's light comes again; "any" remembers any light
+        let run = |set: &dyn Fn(&mut World), seed: u64, policy: &dyn Fn(usize, bool) -> bool, any: bool| -> i32 {
+            let mut d = World::new(seed, 4);
+            set(&mut d);
+            d.conditioning(Conditioning::Delayed, 200);
+            let a = d.lights[0].clone();
+            let mut prev = BitVector::new(SENSE_BITS, Some(0));
+            let mut since = 999usize;
+            let mut was_a = false;
+            let mut trial = usize::MAX;
+            while !d.done() {
+                let eye = channel(&prev, EYE);
+                if eye.count_ones() > 0 && (any || eye.as_words() == a.as_words()) {
+                    since = 1;
+                    was_a = eye.as_words() == a.as_words();
+                } else {
+                    since = since.saturating_add(1);
+                }
+                if let Scene::Conditioning(_, left, _, _, _) = d.scene {
+                    if left != trial {
+                        trial = left;
+                    }
+                }
+                let act = d.act(None, if policy(since, was_a) { Some(CLICK) } else { None });
+                prev = d.step(&act);
+            }
+            probes(&[], 50, &d.events, &[], &[], &[], &[])[4]
+        };
+        let fixed = |delay: usize| move |w: &mut World| w.delay = delay;
+        for delay in [5usize, 8, 16] {
+            // clicks in the window (the window opens `delay` steps after the light) score; a blind
+            // clicker and one that never clicks score about 0
+            let holder = run(&fixed(delay), 3, &|s, _| (delay..=delay + 1).contains(&s), false);
+            let blind = run(&fixed(delay), 3, &|s, _| s % 2 == 0, false);
+            assert!(holder > 600, "delay {delay}: {holder}");
+            assert!(blind.abs() < 120, "delay {delay}: {blind}");
+        }
+        // the delay drawn each trial: holding until the window (clicking every step after the light)
+        // scores; the old fixed-timing holder does not
+        let vary = |w: &mut World| w.vary_delay = 8;
+        let until = run(&vary, 5, &|s, _| s <= 12, false);
+        let at3 = run(&vary, 5, &|s, _| (3..=4).contains(&s), false);
+        assert!(until > 600, "{until}");
+        assert!(at3 < until - 300, "{at3} {until}");
+        // a distractor: remembering light A scores; remembering any light (the distractor too) less
+        let dis = |w: &mut World| { w.delay = 8; w.distract = true; };
+        let a_only = run(&dis, 7, &|s, a| a && (8..=9).contains(&s), false);
+        let any_light = run(&dis, 7, &|s, _| s <= 9, true);
+        assert!(a_only > 600, "{a_only}");
+        assert!(any_light < a_only - 300, "{any_light} {a_only}");
+        // two lights: remembering which one came scores; remembering that one came does not
+        let two = |w: &mut World| { w.delay = 8; w.two_lights = true; };
+        let which = run(&two, 9, &|s, a| a && (8..=9).contains(&s), true);
+        let that = run(&two, 9, &|s, _| (8..=9).contains(&s), true);
+        assert!(which > 600, "{which}");
+        assert!(that.abs() < 120, "{that}");
+        // up to a delay of 5 the window is where it always was (steps 5-7)
+        let mut w = World::new(1, 4);
+        w.delay = 3;
+        w.conditioning(Conditioning::Delayed, 5);
+        while !w.done() {
+            let a = w.act(None, None);
+            w.step(&a);
+        }
+        assert!(w.events.iter().all(|e| e.trial.is_none() || e.window == (5..=7).contains(&e.trial.unwrap().1)));
     }
 
     #[test]

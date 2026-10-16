@@ -88,6 +88,11 @@
 //! channel, or with `ISL_PORTGATE` a port, had lines on or none) one time in four, and a pause made
 //! by mutation draws what it names in the same step, so a port pause is one step away, not two.
 //!
+//! `ISL_RECALL_LONG=1`: recall's long ladder. After lag4: lag5, lag8 and lag16 (a delayed trial
+//! lengthened to fit its window), distract (the other light flashes once during the delay on half
+//! the trials and does not pay), vary (each trial's delay drawn from 1 to 8: the memory held until
+//! the window opens, not timed), two (the other light shows on no-cue trials: which light came).
+//!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
 //! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
@@ -324,6 +329,9 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "teach" => stage.lesson.teach = v.parse().expect("teach"),
                 "swaps" => stage.lesson.swaps = v.parse().expect("swaps"),
                 "delay" => stage.lesson.delay = v.parse().expect("delay"),
+                "vary" => stage.lesson.vary_delay = v.parse().expect("vary"),
+                "distract" => stage.lesson.distract = v == "1",
+                "two" => stage.lesson.two_lights = v == "1",
                 "period" => stage.lesson.period = v.parse().expect("period"),
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
                 "blur" => stage.lesson.blur = v.parse().expect("blur"),
@@ -383,6 +391,21 @@ const RECALL_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
     lag2 probes=respond+remember delay=2 goal=remember@150; \
     lag3 probes=respond+remember delay=3 goal=remember@150; \
     lag4 probes=respond+remember delay=4";
+
+/// Recall's long ladder (`ISL_RECALL_LONG=1`): lag4 and on to longer delays (the trial lengthened
+/// to fit), a distracting flash of the other light during the delay, a delay drawn per trial (the
+/// memory held until the window, not timed), and two lights (which one came, not that one did).
+const RECALL_LONG_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
+    lag1 probes=respond+remember delay=1 goal=remember@150; \
+    lag2 probes=respond+remember delay=2 goal=remember@150; \
+    lag3 probes=respond+remember delay=3 goal=remember@150; \
+    lag4 probes=respond+remember delay=4 goal=remember@150; \
+    lag5 probes=respond+remember delay=5 goal=remember@150; \
+    lag8 probes=respond+remember delay=8 goal=remember@150; \
+    lag16 probes=respond+remember delay=16 goal=remember@150; \
+    distract probes=respond+remember delay=8 distract=1 goal=remember@150; \
+    vary probes=respond+remember vary=8 goal=remember@150; \
+    two probes=respond+remember delay=8 two=1";
 
 /// Prediction's ladder: a stream of tokens in a cycle, one in eight replaced by another; the
 /// program is scored on clicking after a token that broke the cycle (surprise), with no code to
@@ -542,7 +565,7 @@ fn main() {
             match isl.name.as_str() {
                 "reading" => isl.stages = ladder(READING_LADDER),
                 "switching" => isl.stages = ladder(SWITCHING_LADDER),
-                "recall" => isl.stages = ladder(RECALL_LADDER),
+                "recall" => isl.stages = ladder(if env("ISL_RECALL_LONG", 0u8) == 1 { RECALL_LONG_LADDER } else { RECALL_LADDER }),
                 "prediction" => isl.stages = ladder(PREDICTION_LADDER),
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 "maze" => isl.stages = ladder(MAZE_LADDER),

@@ -127,6 +127,8 @@ pub struct Event {
     pub chose: Option<bool>,
     /// screen: the trial's index and how many cells the screen has
     pub screen: Option<(usize, usize)>,
+    /// conditioning: this step is in the trial's response window (the observer's mark)
+    pub window: bool,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -231,6 +233,17 @@ pub struct World {
     /// delayed conditioning: how many steps before the response window (steps 5 to 7) the light
     /// flashes, 1 to 5 (3: at step 2, three to five steps before a click pays)
     pub delay: usize,
+    /// delayed conditioning: each trial's delay drawn from 1 to `vary_delay` (0: always `delay`);
+    /// with `distract`, on half the trials the other light flashes once during the delay (it does
+    /// not pay, and on a trial with no cue it is all that shows); with `two_lights`, a trial with no
+    /// cue shows the other light where a cue trial shows the first. A delay over 5 starts the
+    /// window at the delay's step and lengthens the trial to fit (up to 5: the window at 5-7, as
+    /// always).
+    pub vary_delay: usize,
+    pub distract: bool,
+    pub two_lights: bool,
+    trial_delay: usize,
+    distract_at: Option<usize>,
     scene: Scene,
     stroke_next: bool,
     /// serial reversal: shapes, not fixed lights. Each trial shows a fresh exemplar of its light:
@@ -388,6 +401,11 @@ impl World {
             teacher: false,
             teacher_rate: 4,
             delay: 3,
+            vary_delay: 0,
+            distract: false,
+            two_lights: false,
+            trial_delay: 3,
+            distract_at: None,
             scene: Scene::Idle,
             stroke_next: false,
             blur: 0,
@@ -436,6 +454,21 @@ impl World {
     /// The scene is over (a new one may begin).
     pub fn done(&self) -> bool {
         matches!(self.scene, Scene::Idle)
+    }
+
+    /// Where a delayed trial's response window starts for a delay of `d`: step 5 for a delay up to
+    /// 5 (the light at 5 - d), else step d (the light at 0).
+    fn window_start(d: usize) -> usize {
+        d.max(5)
+    }
+
+    /// A trial's length: `TRIAL` steps, or for a delayed trial with a long delay, long enough for
+    /// its window and the stretch after it.
+    fn trial_len(&self, kind: Conditioning) -> usize {
+        match kind {
+            Conditioning::Delayed => TRIAL.max(Self::window_start(self.trial_delay) + 5),
+            _ => TRIAL,
+        }
     }
 
     /// Conditioning: `trials` trials of `TRIAL` steps, a caregiver there throughout.
@@ -597,7 +630,7 @@ impl World {
     pub fn step(&mut self, act: &BitVector) -> BitVector {
         let said = self.voice.articulate(&channel(act, VOICE));
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if let Some(w) = said {
@@ -639,10 +672,30 @@ impl World {
                         }
                     }
                     Conditioning::Delayed => {
-                        if cue && t + self.delay.clamp(1, 5) == 5 {
-                            put(&mut senses, EYE, &self.lights[0].clone());
+                        // a trial's delay and distractor, drawn as it starts (draws only when
+                        // asked for, so a plain lifetime runs as it always did)
+                        if t == 0 {
+                            self.trial_delay = if self.vary_delay > 0 { self.rng.gen_range(1..=self.vary_delay.min(32)) } else { self.delay.clamp(1, 32) };
+                            let d = self.trial_delay;
+                            self.distract_at = (self.distract && d >= 2 && self.rng.gen_bool(0.5)).then(|| {
+                                let from = Self::window_start(d) - d + 1;
+                                self.rng.gen_range(from..Self::window_start(d))
+                            });
                         }
-                        if cue && click && (5..=7).contains(&t) && !stroked {
+                        let d = self.trial_delay;
+                        let ws = Self::window_start(d);
+                        if t + d == ws {
+                            if cue {
+                                put(&mut senses, EYE, &self.lights[0].clone());
+                            } else if self.two_lights {
+                                put(&mut senses, EYE, &self.lights[1].clone());
+                            }
+                        }
+                        if self.distract_at == Some(t) {
+                            put(&mut senses, EYE, &self.lights[1].clone());
+                        }
+                        ev.window = (ws..=ws + 2).contains(&t);
+                        if cue && click && ev.window && !stroked {
                             self.stroke_next = true;
                             stroked = true;
                         }
@@ -661,7 +714,7 @@ impl World {
                         }
                     }
                 }
-                if t + 1 < TRIAL {
+                if t + 1 < self.trial_len(kind) {
                     Scene::Conditioning(kind, left, t + 1, cue, stroked)
                 } else if left > 1 && self.gap_max > 0 {
                     let g = self.rng.gen_range(0..=self.gap_max);

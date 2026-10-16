@@ -260,6 +260,11 @@ pub struct Lesson {
     pub delay: usize,
     pub period: usize,
     pub noise: u32,
+    /// delayed conditioning (recall's long rungs): a delay drawn per trial up to `vary_delay` (0:
+    /// fixed), a distracting flash of the other light, the other light on no-cue trials
+    pub vary_delay: usize,
+    pub distract: bool,
+    pub two_lights: bool,
     pub blur: u32,
     pub shift: usize,
     pub maze_len: usize,
@@ -320,7 +325,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -373,6 +378,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.gap_max = gap;
     w.teacher_rate = lesson.teach;
     w.delay = lesson.delay;
+    w.vary_delay = lesson.vary_delay;
+    w.distract = lesson.distract;
+    w.two_lights = lesson.two_lights;
     w.blur = lesson.blur;
     w.shift = lesson.shift;
     w.maze_len = lesson.maze_len;

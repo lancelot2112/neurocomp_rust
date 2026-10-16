@@ -426,8 +426,17 @@ Tested:
 
 In a 16-generation smoke run, predictors were kept on seven of nine islands: of the self channel,
 the hand and voice, other channels, the ear and touch. The generalist kept the most (189 in its
-elite). Run 17 is run 16 with it (`runs/run17.cmd`, started by `runs/after16.cmd`). Results to
-follow.
+elite). Run 17 is run 16 with it (`runs/run17.cmd`, with recall's long ladder).
+
+**Result** (`runs/islands17`, stopped after generation 250, behind run 16): **kept predictors
+bloated one island after another, and each did worse while it carried them.** Recall carried 264 at
+100 (147 of them predicting its own hand) and stayed on its first rung; it shed them (0 by 200) and
+climbed lag1 to lag3 between 169 and 209. Selection went from 0 to 228 between 150 and 200 and
+its score fell from 350 to 182; the generalist reached 605 by 250. The feel rung fell to about 0
+on all three islands (run 16: 67, 46, 36). A genome keeps one predictor a generation, predictors of
+steady targets score well, and their marks protect them, while each one's cost is small, so
+selection removes them slowly. Shadow explorers need a limit (on how many a genome keeps, or on
+self-targets such as the hand and the self channel) before they can be judged.
 
 ## Pauses drawn as gates are (run 18)
 

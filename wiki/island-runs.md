@@ -23,8 +23,8 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 16 | ports for gates, pauses and writes: one population can learn only after a stroke | 600 | 3 h 22 min |
 | 17 | shadow explorers, and recall's long ladder | 250 (stopped: predictor bloat, feel at 0) | 1 h 11 min |
 | 18 | pauses drawn as gates are: a port pause one step away | 548 (stopped for run 19) | 3 h 32 min |
-| 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | running (342 at writing) | |
-| 20 | edges built on hints: a mutation of its own adds a population of any kind on a hinted path, the way that feeds back (closes a loop, or runs from a higher level to a lower) three times in four; output ports readable by any population (ISL_READ_OUT); hint bands (ISL_HINT_BAND); self channel writable (ISL_SELF_WRITE); loops closed (ISL_LOOPS) | after 19 | |
+| 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | 600 | 3 h 2 min |
+| 20 | edges built on hints: a mutation of its own adds a population of any kind on a hinted path, the way that feeds back (closes a loop, or runs from a higher level to a lower) three times in four; output ports readable by any population (ISL_READ_OUT); hint bands (ISL_HINT_BAND); self channel writable (ISL_SELF_WRITE); loops closed (ISL_LOOPS) | running | |
 
 ## How far each island climbed
 
@@ -49,6 +49,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 16 | feel (26; mean 67) | lag4 (353) | echo2 (23) | **cycle2 (332)** | first (feel: mean 36) | first (glow: mean 62) | feel (157; mean 46) | 4% of 523 |
 | 17 (to 250) | feel (135; mean 0) | lag3 (209) | echo2 (12) | first | first (feel: mean 3) | first (glow: mean 43) | feel (96; mean 0) | 8% of 215 |
 | 18 (to 548) | feel (158; mean 36) | lag3 (93) | echo2 (18) | first | first (feel: mean 26) | first (**glow: mean 105**) | first | 5% of 485 |
+| 19 | feel (44; mean 40) | **lag4 (83)** | echo2 (27) | first | first (**feel: mean 55**) | first (glow: mean 58) | feel (140; mean 52) | 8% of 522 |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.

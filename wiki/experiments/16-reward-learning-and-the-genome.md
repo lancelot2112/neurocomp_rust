@@ -517,6 +517,15 @@ populations, but only a few gates or pauses (2-7 an island) have taken one, sinc
 only when its population's gate or pause mutates. Switching's feel (49) and prediction (2) are
 behind run 16.
 
+**Over all 600 generations** (`runs/islands19/README.md`): recall's lag4 at 83 stayed the earliest
+of any run, and it never passed lag4 (mean 40, best 101 of 150). The maze's feel averaged 55 (66
+over the last 100, best 118), the best of any run; shapes' 52, switching's 40 (65 over the last
+100). Screen's glow 58 (101 over the last 100), selection's cued 292, prediction's cycle1 22 (run
+16 passed it). Plasmids: 41 of 522 helped (8%, run 16 4%). No rung was passed after 140. The hints
+did not close loops: hinted populations sat on loops less than the rest, and every loop in the
+best networks at 550 was a self-loop; run 20 builds edges on hints, toward feedback, and closes
+loops directly.
+
 ## Edges built on hints (run 20)
 
 In run 19 a hint steered only gates and pauses. That uses the hinted vector as a switch, not the

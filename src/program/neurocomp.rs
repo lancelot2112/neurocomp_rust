@@ -486,6 +486,14 @@ impl RuntimeNetwork {
                         continue;
                     }
                 }
+                // a heat input: how full its vector was a frame ago moves every threshold
+                if let Some((hn, hw, warm)) = eg.spec.heat {
+                    let f = nodes[hn].get_frame(at(live[hn], 1)).as_words();
+                    let f = hw.map_or(f, |(o, n)| &f[o.min(f.len())..(o + n).min(f.len())]);
+                    let on: u64 = f.iter().map(|w| w.count_ones() as u64).sum();
+                    let h = (on * 256 / (f.len() as u64 * 64).max(1)) as i16;
+                    eg.group.set_heat(if warm { h } else { -h });
+                }
                 // what it reads: a whole vector one frame is borrowed where it lies (no copy); a
                 // window, a span of frames, a rotation or its own destination is copied
                 let frame = at(live[eg.src.idx], eg.src.read_back);

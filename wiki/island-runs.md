@@ -25,6 +25,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 18 | pauses drawn as gates are: a port pause one step away | 548 (stopped for run 19) | 3 h 32 min |
 | 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | 600 | 3 h 2 min |
 | 20 | edges built on hints: a mutation of its own adds a population of any kind on a hinted path, the way that feeds back (closes a loop, or runs from a higher level to a lower) three times in four; output ports readable by any population (ISL_READ_OUT); hint bands (ISL_HINT_BAND); self channel writable (ISL_SELF_WRITE); loops closed (ISL_LOOPS) | running | |
+| 21 | heat inputs: a channel or port whose fullness moves a population's thresholds, down when warm, up when cool | after 20 | |
 
 ## How far each island climbed
 

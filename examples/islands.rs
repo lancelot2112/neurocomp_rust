@@ -122,6 +122,10 @@
 //! walked forward 1 to 4 populations, ports included, and a new population of any kind is added
 //! from where it ends back to where it starts.
 //!
+//! `ISL_HEAT=1`: heat inputs. A population may carry one (a channel or a port): each step every
+//! one of its kernels' thresholds moves by its own threshold times how full that vector was a
+//! frame ago, down when warm, up when cool. A new population has one one time in four.
+//!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
 //! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
@@ -313,7 +317,13 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
         let pp = all.iter().filter(|p| p.pause.is_some() && p.pause_at > 0).count();
         let wi = all.iter().filter(|p| p.to_port && p.to_input).count();
         let ro = all.iter().filter(|p| p.from_port && p.from_output).count();
-        let reading = if neurocomp::evolve::tags::hint_use() || neurocomp::evolve::tags::read_outputs() { format!(", reading an output {}%", ro * 100 / all.len().max(1)) } else { String::new() };
+        let mut reading = if neurocomp::evolve::tags::hint_use() || neurocomp::evolve::tags::read_outputs() { format!(", reading an output {}%", ro * 100 / all.len().max(1)) } else { String::new() };
+        // (with ISL_HEAT: populations with a heat input, warm and cool)
+        if neurocomp::evolve::tags::heat_inputs() {
+            let warm = all.iter().filter(|p| !p.wire && p.heat.is_some_and(|h| h.1)).count();
+            let cool = all.iter().filter(|p| !p.wire && p.heat.is_some_and(|h| !h.1)).count();
+            reading += &format!(", heated {}% (warm {}, cool {})", (warm + cool) * 100 / all.len().max(1), warm, cool);
+        }
         format!("; port-gated {}%, port-paused {}%, writing a sense {}%{reading}", gp * 100 / all.len().max(1), pp * 100 / all.len().max(1), wi * 100 / all.len().max(1))
     } else { String::new() };
     // (with ISL_SHADOW: predictors kept from shadow explorers, and what they predict)
@@ -542,6 +552,7 @@ fn main() {
     neurocomp::evolve::tags::set_hint_band(env("ISL_HINT_BAND", 0u8) == 1);
     neurocomp::evolve::tags::set_self_writes(env("ISL_SELF_WRITE", 0u8) == 1);
     neurocomp::evolve::tags::set_close_loops(env("ISL_LOOPS", 0u8) == 1);
+    neurocomp::evolve::tags::set_heat_inputs(env("ISL_HEAT", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
     let ration: u64 = env("ISL_RATION", 0);
@@ -656,7 +667,7 @@ fn main() {
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" });
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));

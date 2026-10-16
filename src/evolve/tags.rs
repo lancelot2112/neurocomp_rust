@@ -184,6 +184,12 @@ pub struct Pop {
     /// (`set_hint_band`) a shadow grown from it scores a target by its kernels that are partly
     /// right: more than `hint_low` quarters of their lines came on, fewer than `hit_quarters`
     pub hint_low: u8,
+    /// (`set_heat_inputs`) a heat input: a tag (with `heat_at`, what it names: 0 a declared
+    /// channel, 1 an input port, 2 an output port) and warm. Each step every kernel's threshold
+    /// moves by its own threshold times how full that vector was a frame ago: down when warm (to
+    /// one line when full), up when cool (to twice). A wire has no threshold, so none for it.
+    pub heat: Option<(u8, bool)>,
+    pub heat_at: u8,
     /// (`set_shadow_hints`) what a shadow grown from this population found its input predicts
     /// (a tag, and what it names: 0 a channel, 1 an input port, 2 an output port): an indicator
     /// of shared information, built into nothing; its gate or pause, when they mutate, take it
@@ -200,7 +206,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, hint: None,
         }
     }
 
@@ -357,6 +363,22 @@ pub fn set_close_loops(on: bool) {
 
 pub fn close_loops() -> bool {
     CLOSE_LOOPS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Heat inputs (`set_heat_inputs`): a population may carry a heat input, a channel or port whose
+/// fullness a frame ago moves every one of its kernels' thresholds each step (down when warm, up
+/// when cool, by the threshold times popcount over bits): a population's excitability set by
+/// another vector (arousal, attention, a loop damping itself). A new population has one one time
+/// in four; two properties of its own change it and what it names, and with hints it takes the
+/// hint half the time. Off by default.
+static HEAT_INPUTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_heat_inputs(on: bool) {
+    HEAT_INPUTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn heat_inputs() -> bool {
+    HEAT_INPUTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A new population `q` placed on `h`'s hint: from `h`'s input to the hinted vector (an output
@@ -610,7 +632,8 @@ impl TagGenome {
                         if p.share { " share" } else { "" },
                         if p.grow { format!(" grow(syn {}, out {}-{}{}{})", p.birth_syn, p.out_min, p.out_max, if p.new_code { ", new" } else { "" }, if p.repeat { format!(", repeat {}", p.repeat_lag) } else { String::new() }) } else { String::new() },
                         p.gate.map_or(String::new(), |(g, on)| format!(" gate {}{}", if on { "" } else { "!" }, gname(g, p.gate_at)))
-                            + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, gname(g, p.pause_at))),
+                            + &p.pause.map_or(String::new(), |(g, on)| format!(" runs while {}{}", if on { "" } else { "!" }, gname(g, p.pause_at)))
+                            + &p.heat.map_or(String::new(), |(g, w)| format!(" {} by {}", if w { "warmed" } else { "cooled" }, gname(g, p.heat_at))),
                         if p.sparse { " sparse".to_string() } else { String::new() }
                             + &if p.replicate > 0 { format!(" replicate at {} ({})", 1u32 << p.replicate.min(7), if p.replicate_shift { "to a neighbour tile" } else { "in place" }) } else { String::new() },
                         if p.rotate > 0 { format!(" rot {}", p.rotate) } else { String::new() }
@@ -650,6 +673,10 @@ impl TagGenome {
             }
             let pause_at = p.pause.and_then(|(t, _)| ch.gate_place(t, p.pause_at));
             let pause = p.pause.zip(pause_at).map(|((_, on), g)| (g.node, on));
+            let heat_at = p.heat.filter(|_| !p.wire).and_then(|(t, _)| ch.gate_place(t, p.heat_at));
+            if let Some(h) = heat_at {
+                depth[h.node] = depth[h.node].max(1);
+            }
             let window_of = |g: Option<Place>| g.filter(|g| !g.whole).map(|g| (g.off, g.len));
             let field = 1usize << p.field.min(MAX_WIDTH);
             // what it reads: all of its port or channel (cover), or a field placed inside it
@@ -705,6 +732,7 @@ impl TagGenome {
                 pause_window: window_of(pause_at),
                 teacher: p.teacher.and_then(|(t, at)| ch.gate_place(t, at)).filter(|_| !p.wire).map(|g| (g.node, window_of(Some(g)), 0)),
                 hit_quarters: p.hit_quarters,
+                heat: p.heat.zip(heat_at).map(|((_, warm), h)| (h.node, window_of(Some(h)), warm)),
                 hint_low: if hint_band() { p.hint_low.min(p.hit_quarters.saturating_sub(1)).max(1) } else { 0 },
                 ..EdgeSpec::plain()
             }));
@@ -767,7 +795,8 @@ impl TagGenome {
                 let touches = (!p.from_port && here(p.from))
                     || (!p.to_port && here(p.to))
                     || p.gate.is_some_and(|(g, _)| here(g))
-                    || p.pause.is_some_and(|(g, _)| here(g));
+                    || p.pause.is_some_and(|(g, _)| here(g))
+                    || (p.heat_at == 0 && p.heat.is_some_and(|(g, _)| here(g)));
                 if touches {
                     out.push(i);
                 }
@@ -797,6 +826,7 @@ impl TagGenome {
                     if !p.to_port && here(p.to) { q.to = fresh }
                     if let Some((g, on)) = p.gate { if here(g) { q.gate = Some((fresh, on)) } }
                     if let Some((g, on)) = p.pause { if here(g) { q.pause = Some((fresh, on)) } }
+                    if let (Some((g, w)), 0) = (p.heat, p.heat_at) { if here(g) { q.heat = Some((fresh, w)) } }
                     q.id = *next_id;
                     *next_id += 1;
                     Token::Pop(q)
@@ -976,7 +1006,7 @@ impl TagGenome {
         let chosen = pops[k % pops.len()];
         let Token::Pop(p) = &donor.tokens[chosen] else { unreachable!() };
         let ch = Channels::of(&donor.tokens);
-        let touched = [(!p.from_port).then_some(p.from), (!p.to_port).then_some(p.to), p.gate.map(|g| g.0), p.pause.map(|g| g.0)]
+        let touched = [(!p.from_port).then_some(p.from), (!p.to_port).then_some(p.to), p.gate.map(|g| g.0), p.pause.map(|g| g.0), p.heat.filter(|_| p.heat_at == 0).map(|g| g.0)]
             .into_iter()
             .flatten()
             .find_map(|t| ch.internal(t));
@@ -1037,6 +1067,9 @@ impl TagGenome {
                     }
                     if p.hint_low != 1 {
                         out.insert_str(out.len() - 1, &format!(" hint_low={}", p.hint_low));
+                    }
+                    if let Some((t, w)) = p.heat {
+                        out.insert_str(out.len() - 1, &format!(" heat={t}:{} heat_at={}", w as u8, p.heat_at));
                     }
                     if p.gate_at > 0 {
                         out.insert_str(out.len() - 1, &format!(" gate_at={}", p.gate_at));
@@ -1101,6 +1134,8 @@ impl TagGenome {
                         to_input: kv.get("to_input") == Some(&"1"),
                         from_output: kv.get("from_output") == Some(&"1"),
                         hint_low: kv.get("hint_low").and_then(|x| x.parse().ok()).unwrap_or(1),
+                        heat: kv.get("heat").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b == "1"))),
+                        heat_at: kv.get("heat_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         teacher: kv.get("teacher").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
@@ -1220,6 +1255,14 @@ impl TagGenome {
         // (with `set_read_outputs`) reading from outside, it reads an output port one time in four
         if read_outputs() {
             p.from_output = p.from_port && rng.gen_range(0..4) == 0;
+        }
+        // (with `set_heat_inputs`) a heat input one time in four, on a channel or (with port
+        // gates) a port, a third each
+        if heat_inputs() && rng.gen_range(0..4) == 0 {
+            p.heat = Some((rng.r#gen(), rng.gen_bool(0.5)));
+            if port_gates() {
+                p.heat_at = rng.gen_range(0..3);
+            }
         }
         // (with `set_pause_draws`) sometimes paused on a channel or port from the start
         draw_pause(&mut p, rng, pause_draws(), port_gates());
@@ -1413,6 +1456,7 @@ fn safe_tag(g: &TagGenome) -> Option<u8> {
         if !p.to_port { tags.push(p.to) }
         if let (Some((t, _)), 0) = (p.gate, p.gate_at) { tags.push(t) }
         if let (Some((t, _)), 0) = (p.pause, p.pause_at) { tags.push(t) }
+        if let (Some((t, _)), 0) = (p.heat, p.heat_at) { tags.push(t) }
         if let Some((t, 0)) = p.teacher { tags.push(t) }
     }
     let near = |t: u8| ch.internal(t).map(|i| (ch.list[i].0 ^ t).count_ones());
@@ -1664,7 +1708,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1716,6 +1760,19 @@ impl Evolvable for TagGenome {
                         43 if p.teacher.is_some() => p.hit_quarters = step(p.hit_quarters, 1, 4),
                         44 if read_outputs() => p.from_output = !p.from_output,
                         45 if hint_band() => p.hint_low = step(p.hint_low, 1, 3),
+                        // (with heat inputs) a heat input on the hint half the time, if there is one
+                        46 if heat_inputs() && shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
+                            let (t, at) = p.hint.unwrap();
+                            p.heat = Some((t, rng.gen_bool(0.5)));
+                            p.heat_at = at;
+                        }
+                        46 if heat_inputs() => {
+                            p.heat = match p.heat { Some((t, w)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, w)) } else { Some((t, !w)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) };
+                            if port_gates() && p.heat.is_some() && rng.gen_bool(0.5) {
+                                p.heat_at = rng.gen_range(0..3);
+                            }
+                        }
+                        47 if heat_inputs() => p.heat_at = (p.heat_at + if up { 1 } else { 2 }) % 3,
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
                             let (t, at) = p.hint.unwrap();
@@ -2393,6 +2450,24 @@ mod tests {
         // (eye -> hand) does not
         let h = Pop { to_port: true, hint: Some((EYE, 1)), ..Pop::new(3, b, HAND) };
         assert_eq!(g.hint_feedback(&h), [Some(true), Some(false)]);
+    }
+
+    #[test]
+    fn a_heat_input_names_a_vector_and_survives_the_text_form() {
+        let c = 0x3C;
+        // a population of eye -> C warmed by the affect sense, another cooled by C itself
+        let warm = Pop { from_port: true, heat: Some((AFFECT, true)), heat_at: 1, ..Pop::new(1, EYE, c) };
+        let cool = Pop { heat: Some((c, false)), ..Pop::new(2, c, c) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Pop(warm), Token::Pop(cool)], next_id: 3 };
+        assert_eq!(TagGenome::from_text(&g.to_text()).unwrap().remove(0), g);
+        let graph = g.graph();
+        let specs: Vec<_> = graph.edge_indices().map(|e| graph[e].clone()).collect();
+        let cw = world::CH_BITS / 64;
+        assert_eq!(specs[0].heat, Some((0, Some((world::AFFECT * cw, cw)), true)));
+        assert_eq!(specs[1].heat, Some((1, None, false)));
+        // a population without one has none
+        let plain = TagGenome { tokens: vec![Token::Pop(Pop::new(3, c, c))], next_id: 4 };
+        assert!(!plain.to_text().contains("heat"));
     }
 
     #[test]

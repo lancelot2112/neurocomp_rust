@@ -593,3 +593,25 @@ pauses, did not do it.
 Tested: edges built on a hint at the affect sense run eye to affect (written) or affect to the
 population's destination, about half each, keeping their own kind; a hint at the hand always runs
 eye to hand. Run 20 is run 19 with it (`runs/run20.cmd`, started by `runs/after19.cmd`).
+
+## Heat inputs (run 21)
+
+Every kernel fires when the popcount of its input under its mask meets its threshold (a fraction
+of its own mask, the `quarters` gene); wires have none. Nothing moved a threshold during a
+lifetime: learning moves mask bits and keeps their count, and a gate or pause only switches a
+population on or off. A kernel's firing check already lowered its threshold by a network-wide
+"temperature", which the harness always passed as 0 (a global, against the rules).
+
+With `ISL_HEAT=1` a population may carry a **heat input**, as it carries a pause: a tag naming a
+channel, an input port or an output port, and whether it warms or cools. Each step, from how full
+that vector was a frame ago (popcount `on` of its `bits`), every one of the population's kernels
+moves its threshold by `threshold * on / bits`: down when warm (to one line when the vector is
+full), up when cool (to twice). Bits and integers only, read like any edge reads, and a fraction
+of the kernel's own threshold.
+
+What it could make: a surprise or residue channel that makes a population eager just when its
+prediction failed (arousal, attention), and a loop that cools itself as its channel fills (the
+homeostasis that would stop an OR loop saturating). A new population has one one time in four;
+two properties change it (warm or cool, its tag, or none) and what it names; with hints it takes
+the hint half the time. Run 21 is run 20 with it (`runs/run21.cmd`).
+

@@ -62,6 +62,13 @@ impl KernelGroup {
         &self.available_classes
     }
 
+    /// This step's heat on every class (`KernelContext::heat`).
+    pub fn set_heat(&mut self, heat: i16) {
+        for c in self.classes_mut() {
+            c.set_heat(heat);
+        }
+    }
+
     pub fn classes_mut(&mut self) -> &mut [KernelClass<SimpleKernel>] {
         &mut self.available_classes
     }

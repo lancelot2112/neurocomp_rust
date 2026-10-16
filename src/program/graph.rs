@@ -230,6 +230,10 @@ pub struct EdgeSpec {
     /// correlated with what it reads, not determined by it; at or under `hint_low` it counts
     /// against. 0: no band (every hit counts, every miss against)
     pub hint_low: u8,
+    /// a heat input: (node, its words if part of it, warm). Each step every kernel's threshold
+    /// moves by its own threshold times the node's popcount a frame ago over its bits: down when
+    /// warm, up when cool. None: no heat
+    pub heat: Option<(usize, Option<(usize, usize)>, bool)>,
 }
 
 impl EdgeSpec {
@@ -282,6 +286,7 @@ impl EdgeSpec {
             teacher: None,
             hit_quarters: 3,
             hint_low: 0,
+            heat: None,
         }
     }
 }

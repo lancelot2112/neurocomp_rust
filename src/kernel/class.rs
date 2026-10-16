@@ -238,6 +238,9 @@ pub struct KernelContext<'a> {
     pub inhibit: &'a BitVector,
     pub temperature: i16,
     pub phase: u16,
+    /// a heat input's pull on every threshold this step, in 256ths of the kernel's own threshold:
+    /// positive lowers it (to at least one line), negative raises it; 0 leaves it
+    pub heat: i16,
 }
 
 pub trait KernelTrait {
@@ -270,15 +273,18 @@ pub struct KernelClass<K: KernelTrait> {
     /// order kernels go in
     inhibit: BitVector,
     order: Vec<(usize, usize, Option<usize>)>,
+    /// this step's heat (`KernelContext::heat`), set by the runtime from the population's heat
+    /// input before it runs
+    heat: i16,
 }
 
 impl<K: KernelTrait> KernelClass<K> {
     pub fn default() -> Self {
-        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new() }
+        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0 }
     }
 
     pub fn with_kernels(kernels: Vec<K>) -> Self {
-        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new() }
+        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0 }
     }
 
     pub fn add(&mut self, k: K) {
@@ -311,6 +317,7 @@ impl<K: KernelTrait> KernelClass<K> {
                 inhibit: &self.inhibit,
                 temperature: self.temperature.current + adj_temperature,
                 phase,
+                heat: self.heat,
             };
             if k.try_fire_counted(&ctx, count, output, rng) {
                 if inhibit_on {
@@ -332,6 +339,11 @@ impl<K: KernelTrait> KernelClass<K> {
     pub fn kernels_mut(&mut self) -> &mut [K] { &mut self.active_kernels }
 
     pub fn len(&self) -> usize { self.active_kernels.len() }
+    /// This step's heat (`KernelContext::heat`).
+    pub fn set_heat(&mut self, heat: i16) {
+        self.heat = heat;
+    }
+
     pub fn clear(&mut self) { self.active_kernels.clear() }
     pub fn is_empty(&self) -> bool { self.active_kernels.is_empty() }
 }

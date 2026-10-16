@@ -279,6 +279,16 @@ impl SimpleKernel {
         } else {
             self.threshold + (ctx.phase & 0x10) as usize
         };
+        // a heat input moves it by a share of itself: down (to one line at least) when warm, up
+        // (to twice) when cool
+        let h = ctx.heat.clamp(-256, 256);
+        let firing_thresh = if h > 0 && firing_thresh > 0 {
+            (firing_thresh - firing_thresh * h as usize / 256).max(1)
+        } else if h < 0 {
+            firing_thresh + firing_thresh * (-h) as usize / 256
+        } else {
+            firing_thresh
+        };
         InputStats { threshold:firing_thresh, count }
     }
 
@@ -597,7 +607,15 @@ mod tests {
         let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
         let inhibit = BitVector::new(1024 * 64, Some(0));
         let mut out = BitVector::new(64, Some(0));
-        assert!(sparse.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, phase: 0 }, &mut out, &mut rng));
+        // a cool heat input (threshold 4 raised by half, to 6) holds it down; a warm one (to 3) lets
+        // it fire on less
+        let mut held = sparse.clone();
+        assert!(!held.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: -128, phase: 0 }, &mut out, &mut rng));
+        let mut weak = SimpleKernel::new(BitVector::from_bits(&[1, 2, 3, 9], 64 * 1024), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        assert!(!weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, &mut rng));
+        assert!(weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 64, phase: 0 }, &mut out, &mut rng));
+        out.as_words_mut().fill(0);
+        assert!(sparse.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, &mut rng));
         assert_eq!(sparse.care(), 8);
         assert_eq!(sparse.agreement(&input), 6);
         let m = sparse.input_mask.as_words();
@@ -619,7 +637,7 @@ mod tests {
         let inhibit = BitVector::new(256, Some(0));
         let mut out = BitVector::new(64, Some(0));
         for _ in 0..8 {
-            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, phase: 0 }, &mut out, &mut rng);
+            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, &mut rng);
         }
         // Hebbian moves went to on lines inside the tile (72, 73), never to 10 or 200
         assert_eq!(k.agreement(&input), 4);
@@ -643,7 +661,7 @@ mod tests {
         let fire = |k: &mut SimpleKernel, input: &BitVector, rng: &mut rand::rngs::StdRng| {
             let mut out = BitVector::new(256, Some(0));
             k.learn_fire = false;
-            k.try_fire(&KernelContext { input, inhibit: &inhibit, temperature: 0, phase: 0 }, &mut out, rng)
+            k.try_fire(&KernelContext { input, inhibit: &inhibit, temperature: 0, heat: 0, phase: 0 }, &mut out, rng)
         };
         // four lines in a tile, all four to match, expecting every line off
         let mut k = SimpleKernel::tile(64, 64, &[64, 70, 100, 127], BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
@@ -684,7 +702,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0,
+            temperature: 0, heat: 0,
             phase: 0,
         };
 
@@ -707,7 +725,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0,
+            temperature: 0, heat: 0,
             phase: 0,
         };
 
@@ -729,7 +747,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0,
+            temperature: 0, heat: 0,
             phase: 0,
         };
 
@@ -754,7 +772,7 @@ mod tests {
         k.try_fire(&KernelContext {
             input: &input,
             inhibit: &inhibit,
-            temperature: 0,
+            temperature: 0, heat: 0,
             phase: 0,
         }, &mut output, &mut rng);
 
@@ -767,7 +785,7 @@ mod tests {
             &KernelContext {
                 input: &input,
                 inhibit: &inhibit,
-                temperature: 0,
+                temperature: 0, heat: 0,
                 phase: 0,
             }, 
             &mut output,
@@ -782,7 +800,7 @@ mod tests {
             &KernelContext {
                 input: &input,
                 inhibit: &inhibit,
-                temperature: 0,
+                temperature: 0, heat: 0,
                 phase: 0,
             }, 
             &mut output,

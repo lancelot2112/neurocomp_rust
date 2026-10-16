@@ -345,6 +345,20 @@ pub fn self_writes() -> bool {
     SELF_WRITES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Loops closed (`set_close_loops`): a mutation of its own, one in sixteen, walks a population's
+/// path forward 1 to 4 populations (ports included) and adds a new population of any kind from
+/// where the walk ends back to where it starts: a loop of any size in one step, where two
+/// mutations whose tags line up were needed (only self-loops came in one). Off by default.
+static CLOSE_LOOPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_close_loops(on: bool) {
+    CLOSE_LOOPS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn close_loops() -> bool {
+    CLOSE_LOOPS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A new population `q` placed on `h`'s hint: from `h`'s input to the hinted vector (an output
 /// port, a sense, which it then writes, or a channel), or from the hinted vector to `h`'s
 /// destination (a sense, the self channel, an output port, read as the act a step ago, or a
@@ -500,6 +514,22 @@ impl Channels {
             2 => Some(self.output(tag)),
             _ => self.internal(tag).map(|i| self.whole(i)),
         }
+    }
+
+    /// What names a place: its tag and what the tag names (0 a declared channel, 1 an input port,
+    /// 2 an output port).
+    fn tag_of(&self, at: Place) -> (u8, u8) {
+        let ch = world::CH_BITS / 64;
+        if at.node == 0 {
+            if at.whole { return (SENSES, 1) }
+            return ([EYE, EAR, TOUCH, AFFECT][(at.off / ch).min(3)], 1);
+        }
+        if at.node == self.self_index() { return (SELF, 1) }
+        if at.node == self.act_index() {
+            if at.whole { return (ACT, 2) }
+            return (if at.off == world::VOICE * ch { VOICE } else { HAND }, 2);
+        }
+        (self.list[at.node].0, 0)
     }
 
     /// A short name for a place.
@@ -1110,6 +1140,36 @@ impl TagGenome {
         }
     }
 
+    /// Closing a loop (`set_close_loops`): from the population at token `at`, walk forward 0 to 3
+    /// more populations (each reading where the last wrote, ports included: a population reading
+    /// the act, or one reading a sense another writes), then add a new population of any kind
+    /// (`q`, its endpoints set here) from where the walk ended back to where it started, after the
+    /// first. A loop of 1 to 4 populations, through channels, the senses or the act; nothing if
+    /// the start cannot be written (the self channel, without self writes).
+    pub fn close_loop(&mut self, at: usize, steps: usize, mut q: Pop, rng: &mut StdRng) -> bool {
+        let ch = Channels::of(&self.tokens);
+        let Some(Token::Pop(p)) = self.tokens.get(at) else { return false };
+        let (Some(start), Some(mut end)) = (ch.from(p), ch.to(p)) else { return false };
+        for _ in 0..steps {
+            let next: Vec<Place> = self.pops().filter(|r| ch.from(r).is_some_and(|f| f.node == end.node)).filter_map(|r| ch.to(r)).collect();
+            let Some(&e) = next.choose(rng) else { break };
+            end = e;
+        }
+        let (st, sat) = ch.tag_of(start);
+        if sat == 1 && st == SELF && !self_writes() {
+            return false;
+        }
+        let (et, eat) = ch.tag_of(end);
+        q.from = et;
+        q.from_port = eat != 0;
+        q.from_output = eat == 2;
+        q.to = st;
+        q.to_port = sat != 0;
+        q.to_input = sat == 1;
+        self.tokens.insert(at + 1, Token::Pop(q));
+        true
+    }
+
     fn random_pop(&mut self, rng: &mut StdRng) -> Pop {
         let id = self.next_id;
         self.next_id += 1;
@@ -1575,6 +1635,16 @@ impl Evolvable for TagGenome {
                 if let Token::Pop(p) = &mut g.tokens[at] {
                     p.op = KernelOp::random(rng);
                 }
+            }
+            // (with `set_close_loops`) a loop closed: one mutation in sixteen, a population's path
+            // walked forward 1 to 4 populations and a new population of any kind added from where
+            // it ends back to where it starts
+            9 if close_loops() && g.pops().count() > 0 => {
+                let pops: Vec<usize> = (0..n).filter(|&i| matches!(g.tokens[i], Token::Pop(_))).collect();
+                let at = *pops.choose(rng).unwrap();
+                let steps = rng.gen_range(0..4);
+                let q = g.random_pop(rng);
+                g.close_loop(at, steps, q, rng);
             }
             // a stage split into a population's path, or a population turned back on its source
             12 | 13 if g.pops().count() > 0 => {
@@ -2323,6 +2393,43 @@ mod tests {
         // (eye -> hand) does not
         let h = Pop { to_port: true, hint: Some((EYE, 1)), ..Pop::new(3, b, HAND) };
         assert_eq!(g.hint_feedback(&h), [Some(true), Some(false)]);
+    }
+
+    #[test]
+    fn closing_a_loop_adds_an_edge_from_the_end_of_a_path_back_to_its_start() {
+        let (a, b) = (0x3C, 0xC3);
+        // eye -> A -> B -> hand: no loop
+        let g = TagGenome {
+            tokens: vec![
+                Token::Channel { tag: a, width: 3, hold: false },
+                Token::Channel { tag: b, width: 3, hold: false },
+                Token::Pop(Pop { from_port: true, ..Pop::new(1, EYE, a) }),
+                Token::Pop(Pop::new(2, a, b)),
+                Token::Pop(Pop { to_port: true, ..Pop::new(3, b, HAND) }),
+            ],
+            next_id: 4,
+        };
+        assert_eq!(g.loops().0, 0);
+        let mut rng = StdRng::seed_from_u64(6);
+        // from A -> B, one step on: B -> hand, so the new edge reads the hand and writes A
+        let mut h = g.clone();
+        assert!(h.close_loop(3, 1, Pop { wire: true, ..Pop::new(9, 0, 0) }, &mut rng));
+        let Token::Pop(q) = &h.tokens[4] else { panic!() };
+        assert_eq!((q.from, q.from_port, q.from_output, q.to, q.to_port, q.to_input, q.wire), (HAND, true, true, a, false, false, true));
+        assert_eq!(h.loops().0, 3);
+        // from eye -> A, the whole way: hand -> eye (the network senses its own move)
+        let mut h = g.clone();
+        assert!(h.close_loop(2, 3, Pop::new(9, 0, 0), &mut rng));
+        let Token::Pop(q) = &h.tokens[3] else { panic!() };
+        assert_eq!((q.from, q.from_output, q.to, q.to_port, q.to_input), (HAND, true, EYE, true, true));
+        assert_eq!(h.loops().0, 4);
+        // no steps: B back to A
+        let mut h = g.clone();
+        assert!(h.close_loop(3, 0, Pop::new(9, 0, 0), &mut rng));
+        let Token::Pop(q) = &h.tokens[4] else { panic!() };
+        assert_eq!((q.from, q.from_port, q.to, q.to_port), (b, false, a, false));
+        assert_eq!(h.loops().0, 2);
+        assert_eq!(TagGenome::from_text(&h.to_text()).unwrap().remove(0), h);
     }
 
     #[test]

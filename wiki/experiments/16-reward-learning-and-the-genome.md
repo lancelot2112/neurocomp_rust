@@ -545,17 +545,25 @@ relationship the shadow measured (the population's input carries information abo
 - **The self channel written like a sense** (`ISL_SELF_WRITE=1`): a population writing an input
   port may write the self channel, on top of what the runtime writes there each step.
 
-Run 20 so carries five changes on run 19 (edges on hints, the feedback bias, output reads, hint
-bands, self writes), at the user's choice; its results are for the set, not any one of them.
+- **Loops closed** (`ISL_LOOPS=1`): a mutation of its own, one in sixteen, picks a population,
+  walks its path forward 0 to 3 more populations (each reading where the last wrote, ports
+  included), and adds a new population of any kind from where the walk ends back to where it
+  starts: a loop of 1 to 4 populations in one step, through channels, the senses (written) or the
+  act (read). Until now only self-loops came in one mutation (`self_loop`, one in thirty-two), and
+  a loop across channels needed two whose tags lined up.
+
+Run 20 so carries six changes on run 19 (edges on hints, the feedback bias, output reads, hint
+bands, self writes, loops closed), at the user's choice; its results are for the set, not any one
+of them.
 
 Why so few loops (run 19's checkpoint at 445): 107 of 323 genomes declare no channel (no internal
 loop is possible) and 32 one (only self-loops), and at 550 every loop in the nine best networks is a
 self-loop. The tasks reward reflexes (nearly every plasmid that helped is "senses to act"); a
 cross-channel loop needs two mutations whose tags line up, the first of no use alone; a loop runs
 every step and costs work; OR loops saturate and XOR loops oscillate; and a reflex pays from the
-first step where a learning loop needs time. Proposed next: a mutation that closes a loop (walk 1
-to 4 steps forward from a population, ports included, and add a population of any kind back to the
-start).
+first step where a learning loop needs time. And the grammar made self-loops in one mutation
+(`self_loop`) but no other loop, which is why every loop seen is a self-loop; run 20's loop
+mutation answers that.
 - **Biased toward feedback:** where one way feeds back and the other does not, it goes the way that
   feeds back three times in four (else half and half). An edge feeds back when it closes a loop on
   the channel graph (its destination already reaches its source; every channel reaches the self

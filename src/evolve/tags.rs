@@ -167,7 +167,7 @@ pub struct Pop {
     /// touch or affect, nearest `to`) instead of an output port: the network adds to what it senses
     /// next step (the world never reads it). The self channel stays read-only.
     pub to_input: bool,
-    /// (`set_hint_use`) with `from_port`, it reads an output port (the act, voice or hand, nearest
+    /// (`set_hint_use`, `set_read_outputs`) with `from_port`, it reads an output port (the act, voice or hand, nearest
     /// `from`) instead of an input port: what the network did a step ago (an efference copy)
     pub from_output: bool,
     /// (`set_port_gates`) what its gate and its pause name: 0 a declared channel, 1 an input port
@@ -296,6 +296,21 @@ pub fn set_hint_use(on: bool) {
 
 pub fn hint_use() -> bool {
     HINT_USE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Output ports read by any population (`set_read_outputs`): a new population reading from
+/// outside reads an output port (the act, voice or hand, as it was a step ago) one time in four,
+/// and a mutation of its own (one of a population's properties) switches a population between
+/// reading an input and an output port. Off by default; without it only edges built on hints read
+/// an output port.
+static READ_OUTPUTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_read_outputs(on: bool) {
+    READ_OUTPUTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn read_outputs() -> bool {
+    READ_OUTPUTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A new population `q` placed on `h`'s hint: from `h`'s input to the hinted vector (an output
@@ -1104,6 +1119,10 @@ impl TagGenome {
             p.gate_at = rng.gen_range(0..3);
             p.to_input = p.to_port && rng.gen_range(0..8) == 0;
         }
+        // (with `set_read_outputs`) reading from outside, it reads an output port one time in four
+        if read_outputs() {
+            p.from_output = p.from_port && rng.gen_range(0..4) == 0;
+        }
         // (with `set_pause_draws`) sometimes paused on a channel or port from the start
         draw_pause(&mut p, rng, pause_draws(), port_gates());
         p
@@ -1537,7 +1556,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1587,6 +1606,7 @@ impl Evolvable for TagGenome {
                         41 if port_gates() => p.gate_at = (p.gate_at + if up { 1 } else { 2 }) % 3,
                         42 if port_gates() => p.pause_at = (p.pause_at + if up { 1 } else { 2 }) % 3,
                         43 if p.teacher.is_some() => p.hit_quarters = step(p.hit_quarters, 1, 4),
+                        44 if read_outputs() => p.from_output = !p.from_output,
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
                             let (t, at) = p.hint.unwrap();

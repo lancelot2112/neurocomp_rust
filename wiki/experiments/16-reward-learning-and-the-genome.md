@@ -529,10 +529,12 @@ relationship the shadow measured (the population's input carries information abo
   reflex; to a sense: written, sensed next step beside what arrives; to a channel), or from the
   hinted vector to the hinted population's destination (the vector used as an input). The self
   channel cannot be written, so a hint there goes back only.
-- **Output ports are read too** (`from_output`, made only by this mutation in run 20): a population
-  may read the act, voice or hand as it was a step ago, so a hint at the hand can also go from the
-  hand to the hinted population's destination, the network sensing its own last move. The runtime
-  already kept the act's history; only the genome had no way to name it as a source.
+- **Output ports are read too** (`from_output`): a population may read the act, voice or hand as it
+  was a step ago, so a hint at the hand can also go from the hand to the hinted population's
+  destination, the network sensing its own last move. The runtime already kept the act's history;
+  only the genome had no way to name it as a source. In run 20 it is also a general mutation
+  (`ISL_READ_OUT=1`): a new population reading from outside reads an output port one time in four,
+  and a property of its own switches a population between an input and an output port.
 - **Biased toward feedback:** where one way feeds back and the other does not, it goes the way that
   feeds back three times in four (else half and half). An edge feeds back when it closes a loop on
   the channel graph (its destination already reaches its source; every channel reaches the self

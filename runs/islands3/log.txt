@@ -380,6 +380,8 @@ prediction climbs: cycle1 > cycle2 > cycle3 > cycle4 > order2 > cycle8
 maze climbs: turn > walk > gone > long > symbol > symbolgone
 screen climbs: two > row > square > full > grid > walls > maze > bigmaze > pick > crowd
 shapes climbs: clean > blur1 > blur2 > shift8 > shift64 > paying
+=======
+>>>>>>> 6adfbe15f110332697b0a48096ef0fdd43ca158a
  141  goals: switching winstay win-stay 72/80 (met 0/3); recall lag1 remember 55/150 (met 0/3); reading echo2 echo -2/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 20/200 (met 0/3); screen two screen 8/300 (met 0/3); shapes clean tell -1/150 (met 0/3)
  142  goals: switching winstay win-stay 46/80 (met 0/3); recall lag1 remember 48/150 (met 0/3); reading echo2 echo -9/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 19/200 (met 0/3); screen two screen 4/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
  143  goals: switching winstay win-stay 21/80 (met 0/3); recall lag1 remember 52/150 (met 0/3); reading echo2 echo -6/150 (met 0/3); prediction cycle1 surprise 0/200 (met 0/3); maze turn maze 21/200 (met 0/3); screen two screen 10/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
@@ -408,6 +410,7 @@ shapes climbs: clean > blur1 > blur2 > shift8 > shift64 > paying
       shapes           0      0      .      .      .      .      .      .      .      .      .      .      0     28  reads  writes voice  (population, training)  [stage 0 clean, 10 generations]
                        0      0      .      .      .      .      .      .      .      .      .      .  (its best, held out)
  151  goals: switching winstay win-stay 75/80 (met 0/3); recall lag1 remember 84/150 (met 0/3); reading echo2 echo 38/150 (met 0/3); prediction cycle1 surprise 1/200 (met 0/3); maze turn maze 8/200 (met 0/3); screen two screen 30/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
+<<<<<<< HEAD
  152  goals: switching winstay win-stay 73/80 (met 0/3); recall lag1 remember 42/150 (met 0/3); reading echo2 echo 38/150 (met 0/3); prediction cycle1 surprise 4/200 (met 0/3); maze turn maze 6/200 (met 0/3); screen two screen 25/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
  153  goals: switching winstay win-stay 73/80 (met 0/3); recall lag1 remember 70/150 (met 0/3); reading echo2 echo 36/150 (met 0/3); prediction cycle1 surprise 6/200 (met 0/3); maze turn maze 4/200 (met 0/3); screen two screen 30/300 (met 0/3); shapes clean tell 0/150 (met 0/3)
  154  goals: switching winstay win-stay 113/80 (met 1/3); recall lag1 remember 72/150 (met 0/3); reading echo2 echo 38/150 (met 0/3); prediction cycle1 surprise 11/200 (met 0/3); maze turn maze 16/200 (met 0/3); screen two screen 23/300 (met 0/3); shapes clean tell 0/150 (met 0/3)

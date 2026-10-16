@@ -34,11 +34,17 @@ Where it ended (generation 399, population means on training worlds):
 | maze | turn | maze 27 / 200 |
 | screen | torch (new first rung) | screen 14 / 300 |
 | shapes | winstay (stage 5 of 8) | win-stay 13 / 80 (from -112) |
+=======
+- `checkpoint-150.txt`: every island's population at generation 150, with its ladder stage.
+- `log.txt`: the run's output up to the move: rows, goal progress, stage moves, exchanges, and
+  each restart, marked with `----` and what changed.
+- `plasmids.txt`: every plasmid moved, with the circuit it carried.
 
 Resume (from the repository root, after `cargo build --release`):
 
     ISL_SCREEN=1 ISL_MAZE=1 ISL_PREDICTION=1 ISL_SHAPES=1 ISL_LADDERS=1 ISL_CKPT=5 ISL_HELD=48 \
     ISL_GENS=500 ISL_RESUME=runs/islands3/checkpoint.txt \
+    ISL_RESUME=runs/islands3/checkpoint-150.txt \
     ISL_CHECKPOINT=runs/islands3/checkpoint.txt ISL_LOG=runs/islands3/plasmids.txt \
     cargo run --release --example islands >> runs/islands3/log.txt 2>&1
 

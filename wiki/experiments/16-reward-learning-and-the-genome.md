@@ -625,6 +625,16 @@ homeostasis that would stop an OR loop saturating). A new population has one one
 two properties change it (warm or cool, its tag, or none) and what it names; with hints it takes
 the hint half the time. Run 21 is run 20 with it (`runs/run21.cmd`).
 
+**Results** (`runs/islands21/README.md`, 600 generations): recall passed every delay rung, lag1
+to lag16, by generation 88, and distract at 104; no earlier run had passed lag4 (runs 19 and 20
+stuck on it for about 500 generations). Prediction's cycle1 averaged 58, the best of any run
+(run 20: 20), and shapes climbed blur2 to feel in 13 generations late in the run. Heat inputs
+spread on every island at once, warm on recall, prediction, selection and the generalist, cool on
+the maze and reading. The feel rung went backward (switching 7, the maze 24, against run 20's 51
+and 48), and selection's cued fell from 388 to 274. That a delay line gets long by heat (a
+recent-activity vector making a population easier, or harder, to fire) is a guess the run cannot
+test alone; runs 22 to 25 keep heat inputs and change other things.
+
 ## No plasmid exchange (run 22)
 
 Every run since 3 moved plasmids between islands every 20 generations (two into each island), and

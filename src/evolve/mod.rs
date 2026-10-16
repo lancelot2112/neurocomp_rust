@@ -693,6 +693,22 @@ pub fn elite_pass() -> bool {
     ELITE_PASS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Passed rungs kept (`set_keep_rungs`): each generation an island above its first rung is also
+/// scored on one of the rungs it passed, drawn at random, in that rung's own world (its delay, its
+/// blur, its lesson), and those rows join its lexicase cases, so a network that loses an earlier
+/// ability is selected against and each rung builds on the ones below. A rung's goal is still
+/// judged on the current rung's world alone. One more probing an island a generation. Off by
+/// default.
+static KEEP_RUNGS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_keep_rungs(on: bool) {
+    KEEP_RUNGS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn keep_rungs() -> bool {
+    KEEP_RUNGS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.
 pub struct Probed<G> {
@@ -1071,7 +1087,30 @@ pub fn evolve_islands<G: Evolvable>(
                 s.genome.inherit(&notes);
                 s.notes = notes;
             }
-            let (order, children) = lexicase_breed(&scored, &wanted, thrift, pop, elite, &mut rng);
+            // (`set_keep_rungs`) one passed rung, drawn at random, scored again in its own world:
+            // its rows join the lexicase cases, so a climb keeps what the rungs below it asked;
+            // the goal below is still judged on the current rung's rows alone
+            let (order, children) = if keep_rungs() && !isl.frontier && stage[i] > 0 {
+                let j = rng.gen_range(0..stage[i]);
+                let earlier = &isl.stages[j];
+                let again = probe_all_in(scored.iter().map(|s| s.genome.clone()).collect(), trials, physics, seeds, gap, &earlier.probes, earlier.lesson);
+                let both: Vec<Probed<G>> = scored.iter().zip(again).map(|(s, a)| {
+                    let mut probes = s.probes.clone();
+                    probes.extend(a.probes);
+                    let mut works = s.works.clone();
+                    works.extend(a.works);
+                    Probed { probes, works, work: s.work, genome: s.genome.clone(), notes: Vec::new() }
+                }).collect();
+                let mut cases = wanted.clone();
+                for &p in &earlier.probes {
+                    if !cases.contains(&p) {
+                        cases.push(p);
+                    }
+                }
+                lexicase_breed(&both, &cases, thrift, pop, elite, &mut rng)
+            } else {
+                lexicase_breed(&scored, &wanted, thrift, pop, elite, &mut rng)
+            };
             let m: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
             let mean = probe_means(&m);
             // (`set_elite_pass`) the goal on the elite's mean, else the whole population's

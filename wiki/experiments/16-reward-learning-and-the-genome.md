@@ -714,7 +714,15 @@ From the signal measurement above, two changes, each behind a switch:
     than per token said, so a network saying a few tokens is not scored on a handful;
   - `surprise~`: clicks 4-6 steps after a token at half as well.
 
-Run 24 is run 21 with both (`runs/run24.cmd`), after run 23.
+With them, **passed rungs kept** (`ISL_KEEP_RUNGS=1`): a rung lists its own probes (most keep
+the earlier probes, as respond and tell), but in its own world only, so lag5 never tests a delay of
+2 again, and shift64 never a clean light. Each generation an island above its first rung is now
+scored on one of the rungs it passed as well, drawn at random, in that rung's world, and those
+rows join its lexicase cases, so a climb keeps what the rungs below asked and each rung builds on
+the ones before. The rung's goal is still judged on the current rung's world alone. One more
+probing an island a generation.
+
+Run 24 is run 23 with the three (`runs/run24.cmd`), after run 23.
 
 ## Inhibit inputs (run 25)
 

@@ -482,3 +482,24 @@ Recall climbed its whole ladder (lag1 to lag4) in runs 9, 14 and 15, the fastest
 It goes into the next runs (17 and 18), since it extends one island's rungs only and leaves the
 other islands' comparisons as they were.
 
+## Shadows as indicators (run 19)
+
+Run 17 showed what keeping a shadow's find as a predictor costs: a genome gains one a generation,
+predictors of steady targets keep their marks, and islands carried hundreds (the generalist 605)
+while their scores fell. With `ISL_SHADOW_HINT=1` a shadow's find is only noted:
+- **No predictor is built.** The best target a population's shadow predicted over a generation
+  (net 64 true) is written on that population as a **hint**: a tag and what it names (a channel,
+  an input port, an output port). It is an indicator of shared information between the
+  population's input and that target, and costs nothing at run time.
+- **The hint steers mutation:** when the population's gate or pause mutates, half the time it
+  takes the hint ("learn only while X", "run only while X"), so the find is one step away for
+  evolution to try, and selection decides.
+- **Shadows start at random:** only by accident, at each population's own rate (one chance in
+  2^k a step, k its gene, drawn 12 to 18), not when the population is stuck, so every population
+  is sampled now and then.
+
+Tested: a population's best target becomes its hint and no token is added, and the hint
+survives the text form. In a 12-generation smoke run: no predictors, 124 hints (up to 28% of an
+island's elite), one gate already on its hint. Run 19 is run 18 with it (`runs/run19.cmd`,
+started by `runs/after18.cmd`).
+

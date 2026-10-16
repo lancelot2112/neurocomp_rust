@@ -104,6 +104,9 @@ pub struct RuntimeNetwork {
     pub explore: bool,
     /// (with `explore`) explorers are shadow predictors (`set_shadow`)
     pub shadow: bool,
+    /// (with `shadow`) shadows start only by accident, at each population's own rate, not when
+    /// it is stuck (`tags::set_shadow_hints`)
+    pub shadow_random: bool,
     /// work done since it was built: kernels matched plus words a wire or noise edge wrote (a
     /// paused or idle population adds nothing)
     pub work: u64,
@@ -346,7 +349,7 @@ impl RuntimeNetwork {
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, explore: false, shadow: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -419,7 +422,7 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, explore: false, shadow: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Advance histories and process all edges once.
@@ -972,7 +975,8 @@ impl RuntimeNetwork {
                 let h = (eg.spec.salt as u64 ^ 0xA5A5_5A5A).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.steps.wrapping_mul(0xD6E8_FEB8_6659_FD93);
                 (h ^ (h >> 29)).wrapping_mul(0xBF58_476D_1CE4_E5B9) >> (64 - k) == 0
             };
-            if !accident && (class.kernels().is_empty() || class.kernels().iter().any(|k| k.age < STUCK)) {
+            let stuck = !class.kernels().is_empty() && class.kernels().iter().all(|k| k.age >= STUCK);
+            if !accident && (!stuck || (self.shadow && self.shadow_random)) {
                 continue;
             }
             if self.shadow {

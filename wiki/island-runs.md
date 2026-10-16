@@ -23,6 +23,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 16 | ports for gates, pauses and writes: one population can learn only after a stroke | 600 | 3 h 22 min |
 | 17 | shadow explorers, and recall's long ladder | 250 (stopped: predictor bloat, feel at 0) | 1 h 11 min |
 | 18 | pauses drawn as gates are: a port pause one step away | running | |
+| 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | after 18 | |
 
 ## How far each island climbed
 

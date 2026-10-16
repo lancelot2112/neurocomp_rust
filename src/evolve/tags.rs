@@ -178,6 +178,11 @@ pub struct Pop {
     /// a predictor's kernel was right when at least this many quarters of the lines it wrote came
     /// on (the residue, prediction XOR actual on its lines, under a quarter of them by default)
     pub hit_quarters: u8,
+    /// (`set_shadow_hints`) what a shadow grown from this population found its input predicts
+    /// (a tag, and what it names: 0 a channel, 1 an input port, 2 an output port): an indicator
+    /// of shared information, built into nothing; its gate or pause, when they mutate, take it
+    /// half the time
+    pub hint: Option<(u8, u8)>,
 }
 
 impl Pop {
@@ -189,7 +194,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint: None,
         }
     }
 
@@ -257,6 +262,20 @@ pub fn set_port_gates(on: bool) {
 
 pub fn port_gates() -> bool {
     PORT_GATES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Shadows as indicators (`set_shadow_hints`, with shadow explorers): a shadow starts only by
+/// accident, at its population's own rate, not when the population is stuck; and what it predicts
+/// well is not built into the genome but noted on its population as a hint, which that
+/// population's gate and pause take, half the time, when they mutate. Off by default.
+static SHADOW_HINTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_shadow_hints(on: bool) {
+    SHADOW_HINTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn shadow_hints() -> bool {
+    SHADOW_HINTS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Pauses drawn as gates are (`set_pause_draws`): a new population runs only while some channel
@@ -449,7 +468,8 @@ impl TagGenome {
                             + if p.explored { " explored" } else { "" }
                             + if p.expect { " expect" } else { "" }
                             + &if p.accident > 0 { format!(" accident 1/2^{}", p.accident) } else { String::new() }
-                            + &p.teacher.map_or(String::new(), |(t, at)| format!(" predicts {}", ch.gate_place(t, at).map_or("-".to_string(), |g| ch.name(g)))),
+                            + &p.teacher.map_or(String::new(), |(t, at)| format!(" predicts {}", ch.gate_place(t, at).map_or("-".to_string(), |g| ch.name(g))))
+                            + &p.hint.map_or(String::new(), |(t, at)| format!(" hint {}", ch.gate_place(t, at).map_or("-".to_string(), |g| ch.name(g)))),
                     );
                 }
             }
@@ -830,6 +850,9 @@ impl TagGenome {
                     if let Some((t, at)) = p.teacher {
                         out.insert_str(out.len() - 1, &format!(" teacher={t}:{at} hit_quarters={}", p.hit_quarters));
                     }
+                    if let Some((t, at)) = p.hint {
+                        out.insert_str(out.len() - 1, &format!(" hint={t}:{at}"));
+                    }
                 }
             }
         }
@@ -883,6 +906,7 @@ impl TagGenome {
                         pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         teacher: kv.get("teacher").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
                         hit_quarters: kv.get("hit_quarters").and_then(|x| x.parse().ok()).unwrap_or(3),
+                        hint: kv.get("hint").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
                     };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Pop(p));
                 }
@@ -1190,6 +1214,11 @@ fn keep_predictor(g: &mut TagGenome, id: u32, kind: u8, _c: u32) {
 
 /// `Evolvable::inherit` for the tag grammar (with `set_epigenetics`; here without, for tests).
 pub fn take_notes(g: &mut TagGenome, notes: &[super::Note]) {
+    take_notes_with(g, notes, shadow_hints())
+}
+
+/// `take_notes`, with shadows' finds noted as hints (`hints`) or built as predictors.
+fn take_notes_with(g: &mut TagGenome, notes: &[super::Note], hints: bool) {
     for t in &mut g.tokens {
         if let Token::Pop(p) = t {
             let ev: u32 = notes.iter().filter(|n| n.0 == p.id && n.2 == 0).map(|n| n.1).sum();
@@ -1198,7 +1227,27 @@ pub fn take_notes(g: &mut TagGenome, notes: &[super::Note]) {
     }
     // a shadow's best target over the generation: kept as a predictor into a channel of its
     // own (one a genome a generation)
-    if let Some(&(id, c, kind)) = notes.iter().filter(|n| n.2 >= 16 && n.1 >= KEEP * 4).max_by_key(|n| n.1) {
+    if hints {
+        // (hints) each population's best-predicted target becomes its hint; nothing is built
+        let mut best: Vec<(u32, u32, u8)> = Vec::new();
+        for &(id, c, kind) in notes.iter().filter(|n| n.2 >= 16 && n.1 >= KEEP * 4) {
+            match best.iter_mut().find(|b| b.0 == id) {
+                Some(b) if c > b.1 => *b = (id, c, kind),
+                Some(_) => {}
+                None => best.push((id, c, kind)),
+            }
+        }
+        for (id, _, kind) in best {
+            let Some((tag, at, _)) = target_of(g, kind) else { continue };
+            for t in &mut g.tokens {
+                if let Token::Pop(p) = t {
+                    if p.id == id {
+                        p.hint = Some((tag, at));
+                    }
+                }
+            }
+        }
+    } else if let Some(&(id, c, kind)) = notes.iter().filter(|n| n.2 >= 16 && n.1 >= KEEP * 4).max_by_key(|n| n.1) {
         keep_predictor(g, id, kind, c);
     }
     for &(id, c, kind) in notes {
@@ -1236,6 +1285,7 @@ impl Evolvable for TagGenome {
         net.count_reads = w.count_reads;
         net.explore = w.explore;
         net.shadow = w.shadow;
+        net.shadow_random = shadow_hints();
         net
     }
 
@@ -1380,6 +1430,12 @@ impl Evolvable for TagGenome {
                         17 => p.new_code = !p.new_code,
                         18 => p.repeat = !p.repeat,
                         19 => p.repeat_lag = step(p.repeat_lag, 1, 8),
+                        // (with hints) half the time a gate takes what this population's shadow found
+                        20 if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
+                            let (t, at) = p.hint.unwrap();
+                            p.gate = Some((t, rng.gen_bool(0.5)));
+                            p.gate_at = at;
+                        }
                         20 => p.gate = match p.gate { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) },
                         21 => p.gate_lag = step(p.gate_lag, 1, 8),
                         22 => p.birth_syn = step(p.birth_syn, 1, 64),
@@ -1403,6 +1459,12 @@ impl Evolvable for TagGenome {
                         41 if port_gates() => p.gate_at = (p.gate_at + if up { 1 } else { 2 }) % 3,
                         42 if port_gates() => p.pause_at = (p.pause_at + if up { 1 } else { 2 }) % 3,
                         43 if p.teacher.is_some() => p.hit_quarters = step(p.hit_quarters, 1, 4),
+                        // (with hints) and so, half the time, does a pause
+                        _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
+                            let (t, at) = p.hint.unwrap();
+                            p.pause = Some((t, rng.gen_bool(0.5)));
+                            p.pause_at = at;
+                        }
                         _ => {
                             let fresh = p.pause.is_none();
                             p.pause = match p.pause { Some((t, on)) => if rng.gen_bool(0.3) { None } else if rng.gen_bool(0.5) { Some((t ^ bit, on)) } else { Some((t, !on)) }, None => Some((rng.r#gen(), rng.gen_bool(0.5))) };
@@ -1993,6 +2055,21 @@ mod tests {
         let on_port = pops.iter().filter(|p| p.pause.is_some() && p.pause_at > 0).count();
         assert!((60..140).contains(&paused), "{paused}");
         assert!(on_port * 3 > paused, "{on_port} of {paused}");
+    }
+
+    #[test]
+    fn a_hint_is_noted_not_built_and_a_mutated_gate_takes_it() {
+        // the hint step on its own (the switch is process-wide, so the parts are tested directly)
+        let c = 0x3C;
+        let p = Pop { from_port: true, ..Pop::new(1, EYE, c) };
+        let mut g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, Token::Pop(p)], next_id: 2 };
+        let before = g.tokens.len();
+        take_notes_with(&mut g, &[(1, KEEP * 4, 19), (1, KEEP * 8, 20)], true);
+        // the best of the population's targets (the affect, kind 20) is its hint; no token is added
+        assert_eq!(g.tokens.len(), before);
+        let Token::Pop(p) = &g.tokens[1] else { unreachable!() };
+        assert_eq!(p.hint, Some((AFFECT, 1)));
+        assert_eq!(TagGenome::from_text(&g.to_text()).unwrap().remove(0), g);
     }
 
     #[test]

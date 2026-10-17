@@ -1250,3 +1250,10 @@ token, and a kernel's output is fixed at birth. Swept over l 2-6, b 0-3, g 1-4 (
 worlds, 8-line one-word codes, glyph wire, listener 1 3 2): copy at best 16 (2,0,3), median -6;
 echo unharmed (echo2 up to 287). No timing fixes a pairing made once, at birth, by chance: a wrong
 pairing has to be able to die.
+
+**Inhibition does not help here** (`LQ=1`: listener kernels covering more than a quarter of each
+other's masks hold each other down, not more than half): echo2 301, fade6 copy -13, echo 136, the
+same as at the default (300, -13, 136), and a recorded lifetime grows the same kernels. Inhibition
+acts among kernels that match at once, and these never do: each is a sound-and-glyph pair at
+threshold 12 of 16, so only the kernel whose glyph is on the eye can fire. They are already
+separated, too well: what is missing is a kernel the glyph alone can fire, with the right output.

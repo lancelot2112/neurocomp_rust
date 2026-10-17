@@ -92,6 +92,9 @@ fn main() {
     let glyph_wire = std::env::var("GLYPH_WIRE").is_ok_and(|v| v == "1");
     let glyphs = if glyph_wire { pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into()), ("cover", "0".into()), ("at", "0".into()), ("field", "3".into()), ("place", "1".into())]) } else { glyphs };
     let listener = if std::env::var("LGATE").is_ok_and(|v| v == "0") { set(&listener, "gate", "-") } else { listener };
+    // (`LQ=q`: the listener's overlap rule, kernels covering more than q quarters of each other's
+    // masks hold each other down; 2, more than half, by default)
+    let listener = match std::env::var("LQ").ok() { Some(q) => { neurocomp::evolve::tags::set_overlap_genes(true); set(&listener, "inhibit_quarters", &q) } None => listener };
     // (`READER=l,b,g`: a reader, kernels from the eye (the glyph `l` frames ago) into the voice,
     // each born copying the move made `b` frames ago (the network's echo of the teacher naming
     // the glyph), learning and giving birth only while the ear had lines on `g` frames ago, and

@@ -709,6 +709,29 @@ pub fn keep_rungs() -> bool {
     KEEP_RUNGS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Size classes (`set_size_classes`): a population's genomes are sorted by size into classes a
+/// factor of four apart (1-3 tokens, 4-15, 16-63, 64-255, 256 and more), and lexicase keeps a
+/// mixture of them: each occupied class first keeps its own lexicase choice among the elite (as
+/// far as the elite goes), and half of all children have a parent chosen by lexicase within a
+/// class drawn at random from the occupied ones (the other parent of a recombined child is
+/// chosen from the whole population, so circuits still move between sizes). A small network that
+/// does a simple thing well is then not crowded out by bigger ones that score more, nor the other
+/// way round. Off by default.
+static SIZE_CLASSES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_size_classes(on: bool) {
+    SIZE_CLASSES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn size_classes() -> bool {
+    SIZE_CLASSES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A genome's size class: floor(log4(size)), 4 and more together.
+pub fn size_class(size: usize) -> usize {
+    ((usize::BITS - size.max(1).leading_zeros() - 1) / 2).min(4) as usize
+}
+
 /// What probing a genome found: its probes and work per step in each seed, and its mean work
 /// per step.
 pub struct Probed<G> {
@@ -885,10 +908,19 @@ fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: 
         d.sort_unstable();
         d[n / 2]
     }).collect();
-    let select = |rng: &mut StdRng| -> usize {
+    // (`set_size_classes`) the genomes of each occupied size class
+    let classes: Vec<Vec<usize>> = if size_classes() {
+        let mut by = vec![Vec::new(); 5];
+        for g in 0..n {
+            by[size_class(scored[g].genome.size())].push(g);
+        }
+        by.into_iter().filter(|c| !c.is_empty()).collect()
+    } else {
+        Vec::new()
+    };
+    let select_in = |rng: &mut StdRng, mut cand: Vec<usize>| -> usize {
         let mut order: Vec<usize> = (0..ncases).collect();
         order.shuffle(rng);
-        let mut cand: Vec<usize> = (0..n).collect();
         for c in order {
             if cand.len() == 1 {
                 break;
@@ -898,11 +930,30 @@ fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: 
         }
         cand[rng.gen_range(0..cand.len())]
     };
+    let select = |rng: &mut StdRng| -> usize { select_in(rng, (0..n).collect()) };
+    // a parent: half the time from a random occupied size class, with size classes on
+    let parent = |rng: &mut StdRng| -> usize {
+        if classes.len() > 1 && rng.gen_bool(0.5) {
+            let c = rng.gen_range(0..classes.len());
+            select_in(rng, classes[c].clone())
+        } else {
+            select(rng)
+        }
+    };
     let means: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
     let total = |m: &observe::ProbeRow| wanted.iter().map(|&p| m[p] as i64).sum::<i64>();
     let mut ranked: Vec<usize> = (0..n).collect();
     ranked.sort_by(|&a, &b| total(&means[b]).cmp(&total(&means[a])).then(scored[a].work.cmp(&scored[b].work)).then(b.cmp(&a)));
     let mut kept: Vec<usize> = Vec::new();
+    // each occupied size class's own choice first, as far as the elite goes
+    if classes.len() > 1 {
+        for c in &classes {
+            if kept.len() >= elite.min(n) {
+                break;
+            }
+            kept.push(select_in(rng, c.clone()));
+        }
+    }
     for _ in 0..elite * 4 {
         if kept.len() >= elite.min(n) {
             break;
@@ -914,7 +965,7 @@ fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: 
     }
     let mut next: Vec<G> = kept.iter().map(|&g| scored[g].genome.clone()).collect();
     while next.len() < pop {
-        let mut child = scored[select(rng)].genome.clone();
+        let mut child = scored[parent(rng)].genome.clone();
         if rng.gen_range(0..4) == 0 {
             let other = select(rng);
             child = child.crossover(&scored[other].genome, rng);
@@ -1167,6 +1218,12 @@ pub fn evolve_islands<G: Evolvable>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn size_classes_are_a_factor_of_four_apart() {
+        let c: Vec<usize> = [0, 1, 3, 4, 15, 16, 63, 64, 255, 256, 5000].iter().map(|&s| size_class(s)).collect();
+        assert_eq!(c, vec![0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4]);
+    }
 
     #[test]
     fn a_lifetime_is_deterministic() {

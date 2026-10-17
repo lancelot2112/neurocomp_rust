@@ -760,3 +760,21 @@ fast delay rungs the exchange helped), and reached shapes' feel rung 183 generat
 is so run 22 with thrift off and carrying paid as energy, compared with run 22; runs 24 and 25
 build on it as before.
 
+
+## Size classes (run 26)
+
+Thrift is one pressure on size for a whole island: on (run 22) the networks stay small, 2 to 31
+populations at generation 50; off (run 23) they all grow, 28 to 277, and the first rungs (simple
+reflexes) come late. Either way the population has one size. With `ISL_SIZE_CLASSES=1` lexicase
+keeps a **mixture**: each island's genomes are sorted by size (tokens) into classes a factor of
+four apart (1-3, 4-15, 16-63, 64-255, 256+); each occupied class first keeps its own lexicase
+choice among the elite (as far as the elite goes), and half of all children have a parent chosen
+by lexicase within a class drawn at random from the occupied ones (the other parent of a
+recombined child comes from the whole population, so circuits still move between sizes). A small
+network that does one simple thing well is then not crowded out by bigger ones that score more on
+other cases, and a large one in the middle of a bloat (loops, memory) is not cut down by small
+ones that pass the rung sooner. It is selection only: nothing in the network changes, and no
+deletion is aimed at parts that look unused (they may be needed over more than one step). Classes
+fill as mutation grows and shrinks genomes; the op lines show how many genomes are in each. Run 26
+is run 25 with it (`runs/run26.cmd`; `runs/run26-base21.cmd` if runs 24 and 25 fall back), after
+run 25.

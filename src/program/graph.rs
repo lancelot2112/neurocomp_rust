@@ -241,6 +241,10 @@ pub struct EdgeSpec {
     /// how much of a kernel's mask taken lines must cover to hold it down, in quarters (more
     /// than this many; 2: more than half, the default; 4: never)
     pub inhibit_quarters: u8,
+    /// (`program::neurocomp::set_write_compete`, with pruning) its hold on its destination at the
+    /// start of a lifetime: up one each step it wins there, down one each step it only loses; at
+    /// 0 it lets go for the rest of the lifetime. 0: it never lets go
+    pub grip: u8,
 }
 
 impl EdgeSpec {
@@ -296,6 +300,7 @@ impl EdgeSpec {
             heat: None,
             inhibitor: None,
             inhibit_quarters: 2,
+            grip: 0,
         }
     }
 }

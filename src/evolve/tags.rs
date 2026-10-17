@@ -201,6 +201,9 @@ pub struct Pop {
     /// or an inhibit input's) must cover to hold it down, in quarters: more than this many (1 to
     /// 4; 2, more than half, as without the gene; 4: never held down by overlap)
     pub inhibit_quarters: u8,
+    /// (pruning, `program::neurocomp::set_prune`) its hold on its destination at the start of each
+    /// lifetime (`EdgeSpec::grip`); 16 to start, halved or doubled by mutation (1 to 128)
+    pub grip: u8,
     /// (`set_shadow_hints`) what a shadow grown from this population found its input predicts
     /// (a tag, and what it names: 0 a channel, 1 an input port, 2 an output port): an indicator
     /// of shared information, built into nothing; its gate or pause, when they mutate, take it
@@ -217,7 +220,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, inhibit_quarters: 2, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, inhibit_quarters: 2, grip: 16, hint: None,
         }
     }
 
@@ -821,6 +824,7 @@ impl TagGenome {
                 heat: p.heat.zip(heat_at).map(|((_, warm), h)| (h.node, window_of(Some(h)), warm)),
                 inhibitor: inhibitor_at.map(|h| (h.node, window_of(Some(h)))),
                 inhibit_quarters: if overlap_genes() { p.inhibit_quarters.clamp(1, 4) } else { 2 },
+                grip: if crate::program::neurocomp::prune() { p.grip.max(1) } else { 0 },
                 hint_low: if hint_band() { p.hint_low.min(p.hit_quarters.saturating_sub(1)).max(1) } else { 0 },
                 ..EdgeSpec::plain()
             }));
@@ -1164,6 +1168,9 @@ impl TagGenome {
                     if let Some(t) = p.inhibitor {
                         out.insert_str(out.len() - 1, &format!(" inhibitor={t} inhibitor_at={}", p.inhibitor_at));
                     }
+                    if p.grip != 16 {
+                        out.insert_str(out.len() - 1, &format!(" grip={}", p.grip));
+                    }
                     if p.inhibit_quarters != 2 {
                         out.insert_str(out.len() - 1, &format!(" inhibit_quarters={}", p.inhibit_quarters));
                     }
@@ -1235,6 +1242,7 @@ impl TagGenome {
                         inhibitor: kv.get("inhibitor").and_then(|x| x.parse().ok()),
                         inhibitor_at: kv.get("inhibitor_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         inhibit_quarters: kv.get("inhibit_quarters").and_then(|x| x.parse().ok()).unwrap_or(2),
+                        grip: kv.get("grip").and_then(|x| x.parse().ok()).unwrap_or(16),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         pause_at: kv.get("pause_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         teacher: kv.get("teacher").and_then(|x| x.split_once(':')).and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?))),
@@ -1836,7 +1844,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1915,6 +1923,7 @@ impl Evolvable for TagGenome {
                         }
                         49 if inhibit_inputs() => p.inhibitor_at = (p.inhibitor_at + if up { 1 } else { 2 }) % 3,
                         50 if overlap_genes() => p.inhibit_quarters = step(p.inhibit_quarters, 1, 4),
+                        51 if crate::program::neurocomp::prune() => p.grip = if up { p.grip.saturating_mul(2).min(128) } else { (p.grip / 2).max(1) },
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
                             let (t, at) = p.hint.unwrap();

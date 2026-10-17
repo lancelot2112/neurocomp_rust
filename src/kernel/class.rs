@@ -280,6 +280,11 @@ pub struct KernelContext<'a> {
     /// how much of a kernel's mask taken lines must cover to hold it down, in quarters: held down
     /// when they cover more than this many quarters (2: more than half; 4: never). 0 reads as 2
     pub inhibit_quarters: u8,
+    /// (`program::neurocomp::set_write_compete`) the lines of the destination that kernels of
+    /// earlier (better-matched) populations wrote this step: a kernel whose output lies more than
+    /// `inhibit_quarters` quarters on them is held down, as one whose input lies on taken lines
+    /// is. Empty: no competition
+    pub taken_out: &'a [u64],
 }
 
 pub trait KernelTrait {
@@ -303,6 +308,13 @@ pub trait KernelTrait {
     fn try_fire_counted<R: rand::Rng + ?Sized>(&mut self, ctx: &KernelContext, _count: Option<usize>, out: &mut BitVector, rng: &mut R) -> bool {
         self.try_fire(ctx, out, rng)
     }
+    /// It matched this step but was held down because its output lay on lines another
+    /// population had taken (`KernelContext::taken_out`); reading it clears it. Default: never.
+    fn take_lost(&mut self) -> bool {
+        false
+    }
+    /// Mark the destination lines it writes (for the competition between populations).
+    fn mark_output(&self, _taken: &mut [u64]) {}
 }
 
 pub struct KernelClass<K: KernelTrait> {
@@ -320,15 +332,21 @@ pub struct KernelClass<K: KernelTrait> {
     veto: Vec<u64>,
     /// (`KernelContext::inhibit_quarters`) this population's overlap rule
     inhibit_quarters: u8,
+    /// this step's taken destination lines (`KernelContext::taken_out`); empty: none
+    taken: Vec<u64>,
+    /// this step: kernels that matched and lost to another population's output, and the best
+    /// share (in 1/4096 of its own lines) of the kernels that fired
+    lost: u32,
+    best: usize,
 }
 
 impl<K: KernelTrait> KernelClass<K> {
     pub fn default() -> Self {
-        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0, veto: Vec::new(), inhibit_quarters: 2 }
+        Self { active_kernels: Vec::new(), temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0, veto: Vec::new(), inhibit_quarters: 2, taken: Vec::new(), lost: 0, best: 0 }
     }
 
     pub fn with_kernels(kernels: Vec<K>) -> Self {
-        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0, veto: Vec::new(), inhibit_quarters: 2 }
+        Self { active_kernels: kernels, temperature: KernelClassTemperature::new(0, 0, 0), inhibit: BitVector::from_words(Vec::new()), order: Vec::new(), heat: 0, veto: Vec::new(), inhibit_quarters: 2, taken: Vec::new(), lost: 0, best: 0 }
     }
 
     pub fn add(&mut self, k: K) {
@@ -374,14 +392,18 @@ impl<K: KernelTrait> KernelClass<K> {
                 phase,
                 heat: self.heat,
                 inhibit_quarters: self.inhibit_quarters,
+                taken_out: &self.taken,
             };
             if k.try_fire_counted(&ctx, count, output, rng) {
                 if inhibit_on {
                     k.mark_inhibit(&mut self.inhibit);
                 }
                 fired.push(i);
+            } else if k.take_lost() {
+                self.lost += 1;
             }
         }
+        self.best = order.iter().filter(|o| fired.contains(&o.1)).map(|o| o.0 >> 24).max().unwrap_or(0);
         self.order = order;
         if inhibit_on {
             for &i in &fired {
@@ -413,6 +435,29 @@ impl<K: KernelTrait> KernelClass<K> {
     pub fn set_veto(&mut self, words: &[u64]) {
         self.veto.clear();
         self.veto.extend_from_slice(words);
+    }
+
+    /// This step's taken destination lines (`KernelContext::taken_out`); empty: none.
+    pub fn set_taken(&mut self, words: &[u64]) {
+        self.taken.clear();
+        self.taken.extend_from_slice(words);
+    }
+
+    /// Kernels held down last step by another population's output (cleared on reading), and the
+    /// best share of its fired kernels then.
+    pub fn take_lost(&mut self) -> u32 {
+        std::mem::take(&mut self.lost)
+    }
+
+    pub fn best_share(&self) -> usize {
+        self.best
+    }
+
+    /// Mark the destination lines the given kernels write.
+    pub fn mark_outputs(&self, fired: &[usize], taken: &mut [u64]) {
+        for &i in fired {
+            self.active_kernels[i].mark_output(taken);
+        }
     }
 
     pub fn clear(&mut self) { self.active_kernels.clear() }

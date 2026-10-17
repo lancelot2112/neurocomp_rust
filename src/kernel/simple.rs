@@ -47,6 +47,9 @@ pub struct SimpleKernel {
     pub words: Option<Vec<u32>>,
     /// how many lines its mask has (learning moves lines, so this stays fixed); counted once
     lines: usize,
+    /// (`KernelContext::taken_out`) it matched last time but its output lay on lines another
+    /// population had taken, so it was held down
+    pub lost: bool,
     /// a tile kernel: per mask word, the lines it may use (its tile); its lines move only there
     pub room: Option<Vec<u64>>,
     /// a tile kernel's tile: (first bit, bits)
@@ -55,7 +58,7 @@ pub struct SimpleKernel {
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, room: None, tile_at: None }.counted()
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, lost: false, room: None, tile_at: None }.counted()
     }
 
     /// A tile kernel: it reads bits `start .. start + bits` of its input (a tile, which may
@@ -255,6 +258,7 @@ impl SimpleKernel {
             pattern: None,
             learn_held: true,
             learn_fire: true,
+            lost: false,
             match_code: None,
             confirm_mask: None,
             confirmed: 0,
@@ -325,6 +329,16 @@ impl SimpleKernel {
             return self.sparse_move(ctx.input, |a, m| !a & m, |a, m| a & !m, rng);
         }
         ctx.input.mask_move_random_connected_and_not_set(self.input_idx, &mut self.input_mask, rng);
+    }
+
+    /// Its output lies more than `inhibit_quarters` quarters on lines other populations took this
+    /// step (`KernelContext::taken_out`).
+    fn output_taken(&self, ctx: &KernelContext) -> bool {
+        let o = self.output_mask.as_words();
+        let taken: usize = o.iter().enumerate().map(|(w, &m)| (m & ctx.taken_out.get(self.output_idx + w).copied().unwrap_or(0)).count_ones() as usize).sum();
+        let lines: usize = o.iter().map(|m| m.count_ones() as usize).sum();
+        let q = if ctx.inhibit_quarters == 0 { 2 } else { ctx.inhibit_quarters.min(4) } as usize;
+        lines > 0 && 4 * taken > q * lines
     }
 
     #[inline]
@@ -500,7 +514,11 @@ impl KernelTrait for SimpleKernel {
             }
             return false;
         }
-        if self.is_inhibited(ctx, &stats) {
+        // held down by its own population's better matches, or (competing populations) because
+        // another population took most of the lines it would write
+        let lost = !ctx.taken_out.is_empty() && self.output_taken(ctx);
+        if lost || self.is_inhibited(ctx, &stats) {
+            self.lost = lost;
             if self.learn_held {
                 if self.pattern.is_some() {
                     self.move_pattern_line(ctx.input, true, rng);
@@ -527,6 +545,18 @@ impl KernelTrait for SimpleKernel {
     /// context), then the more often right.
     fn strength(&self, input: &BitVector) -> usize {
         self.strength_of(self.agreement(input))
+    }
+
+    fn take_lost(&mut self) -> bool {
+        std::mem::take(&mut self.lost)
+    }
+
+    fn mark_output(&self, taken: &mut [u64]) {
+        for (w, &m) in self.output_mask.as_words().iter().enumerate() {
+            if let Some(t) = taken.get_mut(self.output_idx + w) {
+                *t |= m;
+            }
+        }
     }
 
     fn mark_inhibit(&self, inhibit: &mut BitVector) {
@@ -612,12 +642,12 @@ mod tests {
         // a cool heat input (threshold 4 raised by half, to 6) holds it down; a warm one (to 3) lets
         // it fire on less
         let mut held = sparse.clone();
-        assert!(!held.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: -128, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
+        assert!(!held.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: -128, inhibit_quarters: 2, taken_out: &[], phase: 0 }, &mut out, &mut rng));
         let mut weak = SimpleKernel::new(BitVector::from_bits(&[1, 2, 3, 9], 64 * 1024), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
-        assert!(!weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
-        assert!(weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 64, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
+        assert!(!weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[], phase: 0 }, &mut out, &mut rng));
+        assert!(weak.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 64, inhibit_quarters: 2, taken_out: &[], phase: 0 }, &mut out, &mut rng));
         out.as_words_mut().fill(0);
-        assert!(sparse.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng));
+        assert!(sparse.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[], phase: 0 }, &mut out, &mut rng));
         assert_eq!(sparse.care(), 8);
         assert_eq!(sparse.agreement(&input), 6);
         let m = sparse.input_mask.as_words();
@@ -639,7 +669,7 @@ mod tests {
         let inhibit = BitVector::new(256, Some(0));
         let mut out = BitVector::new(64, Some(0));
         for _ in 0..8 {
-            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, &mut rng);
+            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[], phase: 0 }, &mut out, &mut rng);
         }
         // Hebbian moves went to on lines inside the tile (72, 73), never to 10 or 200
         assert_eq!(k.agreement(&input), 4);
@@ -663,7 +693,7 @@ mod tests {
         let fire = |k: &mut SimpleKernel, input: &BitVector, rng: &mut rand::rngs::StdRng| {
             let mut out = BitVector::new(256, Some(0));
             k.learn_fire = false;
-            k.try_fire(&KernelContext { input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, phase: 0 }, &mut out, rng)
+            k.try_fire(&KernelContext { input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[], phase: 0 }, &mut out, rng)
         };
         // four lines in a tile, all four to match, expecting every line off
         let mut k = SimpleKernel::tile(64, 64, &[64, 70, 100, 127], BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
@@ -689,6 +719,29 @@ mod tests {
     }
 
     #[test]
+    fn a_kernel_whose_output_another_population_took_is_held_down() {
+        let input = BitVector::from_words(vec![0xFF]);
+        let inhibit = BitVector::new(64, Some(0));
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(1);
+        let mut out = BitVector::new(64, Some(0));
+        let mut k = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![0xF0]), 0, 8, KernelOp::Or);
+        let mut fresh = k.clone();
+        // three of its four output lines taken: held down, and it says so once
+        let taken = [0x70u64];
+        assert!(!k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &taken, phase: 0 }, &mut out, &mut rng));
+        assert_eq!(out.as_words()[0], 0);
+        assert!(k.take_lost() && !k.take_lost());
+        // (held down, it learned anti-Hebbian: a line moved off the input)
+        // two of four (not more than half): a fresh one fires and marks its lines
+        let half = [0x30u64];
+        let k = &mut fresh;
+        assert!(k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &half, phase: 0 }, &mut out, &mut rng));
+        let mut t = [0u64];
+        k.mark_output(&mut t);
+        assert_eq!(t[0], 0xF0);
+    }
+
+    #[test]
     fn fires_when_threshold_met() {
         // input has ones at bits 0..=7 (first byte)
         let input = BitVector::from_words(vec![0xFF]);
@@ -704,7 +757,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0, heat: 0, inhibit_quarters: 2,
+            temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[],
             phase: 0,
         };
 
@@ -727,7 +780,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0, heat: 0, inhibit_quarters: 2,
+            temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[],
             phase: 0,
         };
 
@@ -749,7 +802,7 @@ mod tests {
         let ctx = KernelContext {
             input: &input,
             inhibit: &BitVector::new(64, Some(0)),
-            temperature: 0, heat: 0, inhibit_quarters: 2,
+            temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[],
             phase: 0,
         };
 
@@ -774,7 +827,7 @@ mod tests {
         k.try_fire(&KernelContext {
             input: &input,
             inhibit: &inhibit,
-            temperature: 0, heat: 0, inhibit_quarters: 2,
+            temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[],
             phase: 0,
         }, &mut output, &mut rng);
 
@@ -787,7 +840,7 @@ mod tests {
             &KernelContext {
                 input: &input,
                 inhibit: &inhibit,
-                temperature: 0, heat: 0, inhibit_quarters: 2,
+                temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[],
                 phase: 0,
             }, 
             &mut output,
@@ -802,7 +855,7 @@ mod tests {
             &KernelContext {
                 input: &input,
                 inhibit: &inhibit,
-                temperature: 0, heat: 0, inhibit_quarters: 2,
+                temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[],
                 phase: 0,
             }, 
             &mut output,

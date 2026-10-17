@@ -83,6 +83,30 @@ impl KernelGroup {
         }
     }
 
+    /// This step's taken destination lines on every class (`KernelContext::taken_out`).
+    pub fn set_taken(&mut self, words: &[u64]) {
+        for c in self.classes_mut() {
+            c.set_taken(words);
+        }
+    }
+
+    /// Kernels held down this step by other populations' outputs (cleared on reading).
+    pub fn take_lost(&mut self) -> u32 {
+        self.classes_mut().iter_mut().map(|c| c.take_lost()).sum()
+    }
+
+    /// The best share (in 1/4096 of its own lines) among the kernels that fired this step.
+    pub fn best_share(&self) -> usize {
+        self.available_classes.iter().map(|c| c.best_share()).max().unwrap_or(0)
+    }
+
+    /// Mark the destination lines that the kernels that fired (per class) write.
+    pub fn mark_outputs(&self, fired: &[Vec<usize>], taken: &mut [u64]) {
+        for (c, f) in self.available_classes.iter().zip(fired) {
+            c.mark_outputs(f, taken);
+        }
+    }
+
     pub fn classes_mut(&mut self) -> &mut [KernelClass<SimpleKernel>] {
         &mut self.available_classes
     }

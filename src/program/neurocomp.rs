@@ -45,6 +45,38 @@ pub fn explore() -> bool {
 /// reads and predicts, a step ahead, one vector after another (a sense, the self channel, an
 /// output port, a channel), writing nothing into the network; what it predicts well is noted
 /// for the genome (`notes`).
+/// Competition between populations for their destination (`set_write_compete`): at each
+/// destination, the kernels of the populations writing it compete for its lines as kernels of one
+/// population compete for their input. Each step the populations into a destination run in the
+/// order of how well their best kernel matched the step before (the better first; ties, and wires
+/// and noise, keep the genome's order), and a kernel whose output lies more than its overlap rule
+/// allows (half, by default) on lines an earlier population's kernels wrote this step is held down
+/// and learns anti-Hebbian. So the act is written by the winners, not the OR of every reflex.
+static COMPETE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_write_compete(on: bool) {
+    COMPETE.store(on, Ordering::Relaxed);
+}
+
+pub fn write_compete() -> bool {
+    COMPETE.load(Ordering::Relaxed)
+}
+
+/// Pruning (`set_prune`, with competition): each population has a hold on its destination (its
+/// gene `grip`) at the start of a lifetime, up one each step one of its kernels writes there, down
+/// one each step its kernels only lose to other populations'; at 0 it lets go of its destination
+/// for the rest of the lifetime (it runs no more, as a paused population). Every lifetime starts
+/// wired broadly and keeps the populations that keep winning; the genome is not changed.
+static PRUNE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_prune(on: bool) {
+    PRUNE.store(on, Ordering::Relaxed);
+}
+
+pub fn prune() -> bool {
+    PRUNE.load(Ordering::Relaxed)
+}
+
 static SHADOW: AtomicBool = AtomicBool::new(false);
 
 pub fn set_shadow(on: bool) {
@@ -278,6 +310,12 @@ pub struct RuntimeEdgeGroup {
     pub on_target: u32,
     pub score: i32,
     pub scores: Vec<(u8, u32)>,
+    /// (competition) its best kernel's share last step, which orders it among the populations
+    /// into its destination; (pruning) its hold on the destination (None: not started, taken
+    /// from `spec.grip`) and whether it has let go
+    pub share: usize,
+    pub grip: Option<u8>,
+    pub detached: bool,
 }
 
 impl RuntimeEdgeGroup {
@@ -350,6 +388,7 @@ impl RuntimeNetwork {
                 spawned: false,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
+                share: 0, grip: None, detached: false,
                 teach_fired: Vec::new(),
                 teach_src: None,
                 targets: Vec::new(),
@@ -427,6 +466,7 @@ impl RuntimeNetwork {
                 spawned: false,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
+                share: 0, grip: None, detached: false,
                 teach_fired: Vec::new(),
                 teach_src: None,
                 targets: Vec::new(),
@@ -475,8 +515,36 @@ impl RuntimeNetwork {
         let mut seen: Vec<Option<Seen>> = (0..edges.len()).map(|_| None).collect();
         let mut paused: Vec<bool> = vec![false; edges.len()];
         let mut work = 0u64;
+        // (competition) the order edges run in: the genome's, but the kernel populations into one
+        // destination take that destination's kernel slots best match (last step) first; and each
+        // destination's lines taken this step by kernels so far
+        let compete = write_compete();
+        let mut run: Vec<usize> = (0..edges.len()).collect();
+        let mut taken: Vec<Vec<u64>> = Vec::new();
+        if compete {
+            let mut by_dst: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+            for (i, eg) in edges.iter().enumerate() {
+                if eg.kind == EdgeKind::Kernels && !eg.silent {
+                    by_dst.entry(eg.dst).or_default().push(i);
+                }
+            }
+            for slots in by_dst.values() {
+                let mut who = slots.clone();
+                who.sort_by(|&a, &b| edges[b].share.cmp(&edges[a].share).then(a.cmp(&b)));
+                for (k, &slot) in slots.iter().enumerate() {
+                    run[slot] = who[k];
+                }
+            }
+            taken = nodes.iter().map(|n| vec![0u64; n.current().word_len()]).collect();
+        }
         {
-            for (i, eg) in edges.iter_mut().enumerate() {
+            for &i in &run {
+                let eg = &mut edges[i];
+                // (pruning) a population that let go of its destination runs no more this lifetime
+                if eg.detached {
+                    paused[i] = true;
+                    continue;
+                }
                 // an execution gate shut: the edge does nothing this step
                 if let Some((g, on)) = eg.spec.pause {
                     let f = nodes[g].get_frame(at(live[g], 1)).as_words();
@@ -582,6 +650,26 @@ impl RuntimeNetwork {
                             scratch.as_words_mut().fill(0);
                             fired[i] = eg.group.process(src_view, &mut scratch, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
                             eg.scratch = scratch;
+                        } else if compete {
+                            // it competes with the populations before it for its destination's lines
+                            eg.group.set_taken(&taken[eg.dst]);
+                            let by_class = eg.group.process(src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng);
+                            eg.group.mark_outputs(&by_class, &mut taken[eg.dst]);
+                            eg.share = eg.group.best_share();
+                            let lost = eg.group.take_lost();
+                            fired[i] = by_class.into_iter().flatten().collect();
+                            // (pruning) its hold: up when it wrote, down when it only lost
+                            if eg.spec.grip > 0 {
+                                let g = eg.grip.get_or_insert(eg.spec.grip);
+                                if !fired[i].is_empty() {
+                                    *g = g.saturating_add(1).min(eg.spec.grip.saturating_mul(2));
+                                } else if lost > 0 {
+                                    *g -= 1;
+                                    if *g == 0 {
+                                        eg.detached = true;
+                                    }
+                                }
+                            }
                         } else {
                             fired[i] = eg.group.process(src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
                         }
@@ -1062,6 +1150,7 @@ impl RuntimeNetwork {
                     spawned: true,
                     silent: true,
                     scratch: BitVector::new(len.max(1) * 64, Some(0)),
+                    share: 0, grip: None, detached: false,
                     teach_fired: Vec::new(),
                     teach_src: None,
                     targets,
@@ -1108,6 +1197,7 @@ impl RuntimeNetwork {
                 spawned: true,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
+                share: 0, grip: None, detached: false,
                 teach_fired: Vec::new(),
                 teach_src: None,
                 targets: Vec::new(),

@@ -937,3 +937,21 @@ makes evolved networks modular (Clune, Mouret and Lipson 2013). At k = 1 a popul
 a step against a carrying cost of 4 a token; the generalist's 29 populations would pay about 232,
 against its 2,850 of work. Run 28 is run 26 (size classes, thrift on, not relaxed) with
 `ISL_WIRE_COST=1` (`runs/run28.cmd`), after run 27; the op lines report each best's wiring in bits.
+
+**Competition between populations, and pruning** (also run 28). Kernels of one population
+compete for their input (overlap inhibition); populations did not compete for their destination:
+every one that fired ORed its write in, in genome order, so the act was the OR of every reflex,
+which is what the lesion map showed (removing one raised another task's score), and against the
+rule to decode from the winner only. At birth a muscle fibre is reached by several motor neurons
+that compete by their activity until one keeps it. Two switches build that:
+- `ISL_COMPETE=1`: at each destination the kernel populations writing it run best match first
+  (each by its best fired kernel's share of its own lines, the step before; wires and noise keep
+  their place), and a kernel whose output lies more than its overlap rule allows (half) on lines
+  an earlier population's kernels wrote this step is held down and learns anti-Hebbian, as a
+  kernel whose input lies on taken lines is (`KernelContext::taken_out`).
+- `ISL_PRUNE=1` (with it): each population's hold on its destination starts each lifetime at its
+  gene `grip` (16, halved or doubled by mutation, 1 to 128), goes up one each step it writes there
+  (to twice its start) and down one each step its kernels only lose; at 0 it lets go and runs no
+  more that lifetime. Every lifetime starts wired broadly and keeps the winners; the genome is not
+  changed, so a population that loses in one lifetime may win in the next.
+Run 28 is run 26 with the wiring cost, competition and pruning together (`runs/run28.cmd`).

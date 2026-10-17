@@ -904,6 +904,15 @@ elsewhere); the overlap gene stayed at its default nearly everywhere. Three chan
 which one cost recall, shapes and selection is open; a run with the new rungs and without inhibit
 inputs would tell.
 
+**Result of run 27** (stopped at 536; `runs/islands27/README.md`): 17 rungs passed against run
+26's 20 by 536. Relaxing thrift while stuck helped the islands whose rungs stall for long:
+selection's cued averaged 385 against 162, screen's glow 148 against 71, prediction 53 against 9
+(cycle2 at 121, the best of any run), and switching and prediction passed early rungs run 26 sat
+on for 400 generations. It hurt the islands that climb by small fast steps (shapes passed clean at
+152 against 55; screen never passed glow) and it let networks grow without a trim where no rung
+passes: the generalist, with no ladder, is never reset and reached 897 populations at 200;
+generations ran two to three times slower. Size classes with thrift on (run 26) stay the base.
+
 ## A lesion map (after run 26), and a wiring cost (run 28)
 
 How brain-like is a network's inside: does it have parts, each for one task? `ISL_LESION=n` (with

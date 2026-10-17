@@ -100,6 +100,11 @@ impl KernelGroup {
         self.available_classes.iter().map(|c| c.best_share()).max().unwrap_or(0)
     }
 
+    /// The kernels that fired (per class) write their outputs into a branch.
+    pub fn write_branch(&self, fired: &[Vec<usize>], words: &mut [u64], base: usize, len: usize, mut claim: Option<&mut [u64]>) -> usize {
+        self.available_classes.iter().zip(fired).map(|(c, f)| c.write_branch(f, words, base, len, claim.as_deref_mut())).sum()
+    }
+
     /// Mark the destination lines that the kernels that fired (per class) write.
     pub fn mark_outputs(&self, fired: &[Vec<usize>], taken: &mut [u64]) {
         for (c, f) in self.available_classes.iter().zip(fired) {

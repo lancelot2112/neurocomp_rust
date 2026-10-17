@@ -245,6 +245,10 @@ pub struct EdgeSpec {
     /// start of a lifetime: up one each step it wins there, down one each step it only loses; at
     /// 0 it lets go for the rest of the lifetime. 0: it never lets go
     pub grip: u8,
+    /// (`evolve::tags::set_branches`) a branch: a second vector (node, its words if part of it)
+    /// the kernels that fire also write their outputs into, at the same place (wrapping), by OR.
+    /// None: none
+    pub branch: Option<(usize, Option<(usize, usize)>)>,
 }
 
 impl EdgeSpec {
@@ -301,6 +305,7 @@ impl EdgeSpec {
             inhibitor: None,
             inhibit_quarters: 2,
             grip: 0,
+            branch: None,
         }
     }
 }

@@ -315,6 +315,12 @@ pub trait KernelTrait {
     }
     /// Mark the destination lines it writes (for the competition between populations).
     fn mark_output(&self, _taken: &mut [u64]) {}
+    /// Write its output, by OR, into a branch's words `base .. base + len` (its own place taken
+    /// modulo `len`); with `claim`, only words no one claimed, which it then claims. The words
+    /// written. Default: nothing.
+    fn write_branch(&self, _words: &mut [u64], _base: usize, _len: usize, _claim: Option<&mut [u64]>) -> usize {
+        0
+    }
 }
 
 pub struct KernelClass<K: KernelTrait> {
@@ -451,6 +457,11 @@ impl<K: KernelTrait> KernelClass<K> {
 
     pub fn best_share(&self) -> usize {
         self.best
+    }
+
+    /// The given kernels write their outputs into a branch (`KernelTrait::write_branch`).
+    pub fn write_branch(&self, fired: &[usize], words: &mut [u64], base: usize, len: usize, mut claim: Option<&mut [u64]>) -> usize {
+        fired.iter().map(|&i| self.active_kernels[i].write_branch(words, base, len, claim.as_deref_mut())).sum()
     }
 
     /// Mark the destination lines the given kernels write.

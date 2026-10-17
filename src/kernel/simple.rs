@@ -552,6 +552,31 @@ impl KernelTrait for SimpleKernel {
         std::mem::take(&mut self.lost)
     }
 
+    fn write_branch(&self, words: &mut [u64], base: usize, len: usize, mut claim: Option<&mut [u64]>) -> usize {
+        let len = len.max(1);
+        let mut n = 0;
+        for (w, &m) in self.output_mask.as_words().iter().enumerate() {
+            if m == 0 {
+                continue;
+            }
+            let k = base + (self.output_idx + w) % len;
+            if k >= words.len() {
+                continue;
+            }
+            if let Some(c) = claim.as_deref_mut() {
+                if c.get(k).copied().unwrap_or(0) != 0 {
+                    continue;
+                }
+                if let Some(x) = c.get_mut(k) {
+                    *x = u64::MAX;
+                }
+            }
+            words[k] |= m;
+            n += 1;
+        }
+        n
+    }
+
     fn mark_output(&self, taken: &mut [u64]) {
         // it claims every word it writes
         for (w, &m) in self.output_mask.as_words().iter().enumerate() {
@@ -744,6 +769,22 @@ mod tests {
         let mut t = [0u64];
         k.mark_output(&mut t);
         assert_eq!(t[0], u64::MAX);
+    }
+
+    #[test]
+    fn a_branch_writes_the_output_where_it_lands_unless_the_word_is_claimed() {
+        let k = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![0, 0xF0]), 3, 8, KernelOp::Or);
+        // its output's second word is word 4 of its destination: in a 2-word branch from word 6,
+        // word 6 + 4 % 2 = 6
+        let mut words = vec![0u64; 8];
+        assert_eq!(k.write_branch(&mut words, 6, 2, None), 1);
+        assert_eq!(words[6], 0xF0);
+        // claimed by another population: nothing written
+        let mut claim = vec![0u64; 8];
+        claim[6] = u64::MAX;
+        let mut fresh = vec![0u64; 8];
+        assert_eq!(k.write_branch(&mut fresh, 6, 2, Some(&mut claim)), 0);
+        assert_eq!(fresh[6], 0);
     }
 
     #[test]

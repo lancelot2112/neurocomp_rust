@@ -1077,6 +1077,10 @@ pub struct IslandGeneration<G> {
     pub means: Vec<observe::ProbeRow>,
     pub work: Vec<u64>,
     pub moved: Vec<(usize, usize, String)>,
+    /// (populations competing, `program::neurocomp::set_write_compete`) each island's contest this
+    /// generation, over all its probing: steps run, kernels held down by another population's
+    /// claim, populations that let go of their destination
+    pub contest: Vec<(u64, u64, u64)>,
 }
 
 /// Islands: each population evolves by lexicase on its own probes (`evolve_lexicase`'s breeding),
@@ -1144,7 +1148,9 @@ pub fn evolve_islands<G: Evolvable>(
         let mut means = Vec::with_capacity(k);
         let mut work = Vec::with_capacity(k);
         let mut next: Vec<Vec<G>> = Vec::with_capacity(k);
+        let mut contest = Vec::with_capacity(k);
         for (i, isl) in islands.iter().enumerate() {
+            let _ = crate::program::neurocomp::take_contest();
             let st = &isl.stages[stage[i]];
             let (scored, wanted) = if isl.frontier {
                 // at the frontier: each other island's current stage, in its own world, for the
@@ -1245,6 +1251,7 @@ pub fn evolve_islands<G: Evolvable>(
             work.push(scored.iter().map(|s| s.work.min(u64::MAX / 4)).sum::<u64>() / scored.len().max(1) as u64);
             ranked.push(order.iter().map(|&g| scored[g].genome.clone()).collect());
             next.push(children);
+            contest.push(crate::program::neurocomp::take_contest());
         }
         // the exchange: plasmids from the best of other islands into new children
         let mut moved = Vec::new();
@@ -1260,7 +1267,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest });
         last = ranked;
         pops = next;
     }

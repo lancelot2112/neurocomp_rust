@@ -67,6 +67,18 @@ pub fn write_compete() -> bool {
 /// wired broadly and keeps the populations that keep winning; the genome is not changed.
 static PRUNE: AtomicBool = AtomicBool::new(false);
 
+/// The contest's counts since last read (`take_contest`), over every network on every thread:
+/// steps run with competition, kernels held down by another population's claim, and populations
+/// that let go of their destination. Only a record: nothing reads it inside a network.
+static CONTEST_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CONTEST_LOST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static CONTEST_LET_GO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// (steps, kernels held down by another population, populations that let go) since last read.
+pub fn take_contest() -> (u64, u64, u64) {
+    (CONTEST_STEPS.swap(0, Ordering::Relaxed), CONTEST_LOST.swap(0, Ordering::Relaxed), CONTEST_LET_GO.swap(0, Ordering::Relaxed))
+}
+
 pub fn set_prune(on: bool) {
     PRUNE.store(on, Ordering::Relaxed);
 }
@@ -541,6 +553,7 @@ impl RuntimeNetwork {
                 }
             }
             taken = nodes.iter().map(|n| vec![0u64; n.current().word_len()]).collect();
+            CONTEST_STEPS.fetch_add(1, Ordering::Relaxed);
         }
         {
             for &i in &run {
@@ -655,28 +668,43 @@ impl RuntimeNetwork {
                             scratch.as_words_mut().fill(0);
                             fired[i] = eg.group.process(src_view, &mut scratch, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
                             eg.scratch = scratch;
-                        } else if compete {
-                            // it competes with the populations before it for its destination's lines
-                            eg.group.set_taken(&taken[eg.dst]);
+                        } else {
+                            // (competition) it competes with the populations before it for its
+                            // destination's words
+                            if compete {
+                                eg.group.set_taken(&taken[eg.dst]);
+                            }
                             let by_class = eg.group.process(src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng);
-                            eg.group.mark_outputs(&by_class, &mut taken[eg.dst]);
-                            eg.share = eg.group.best_share();
-                            let lost = eg.group.take_lost();
-                            fired[i] = by_class.into_iter().flatten().collect();
-                            // (pruning) its hold: up when it wrote, down when it only lost
-                            if eg.spec.grip > 0 {
-                                let g = eg.grip.get_or_insert(eg.spec.grip);
-                                if !fired[i].is_empty() {
-                                    *g = g.saturating_add(1).min(eg.spec.grip.saturating_mul(2));
-                                } else if lost > 0 {
-                                    *g -= 1;
-                                    if *g == 0 {
-                                        eg.detached = true;
+                            if compete {
+                                eg.group.mark_outputs(&by_class, &mut taken[eg.dst]);
+                                eg.share = eg.group.best_share();
+                                let lost = eg.group.take_lost();
+                                CONTEST_LOST.fetch_add(lost as u64, Ordering::Relaxed);
+                                let wrote = by_class.iter().any(|c| !c.is_empty());
+                                // (pruning) its hold: up when it wrote, down when it only lost
+                                if eg.spec.grip > 0 {
+                                    let g = eg.grip.get_or_insert(eg.spec.grip);
+                                    if wrote {
+                                        *g = g.saturating_add(1).min(eg.spec.grip.saturating_mul(2));
+                                    } else if lost > 0 {
+                                        *g -= 1;
+                                        if *g == 0 {
+                                            eg.detached = true;
+                                            CONTEST_LET_GO.fetch_add(1, Ordering::Relaxed);
+                                        }
                                     }
                                 }
                             }
-                        } else {
-                            fired[i] = eg.group.process(src_view, dst_curr, 0, adj_temperature, eg.inhibit, &mut eg.rng).into_iter().flatten().collect();
+                            // (a branch) the kernels that fired write their outputs into a second
+                            // vector too, at the same place (wrapping), by OR; with competition only
+                            // into words no other population claimed this step, and they claim them
+                            if let Some((bn, bw)) = eg.spec.branch {
+                                let words = nodes[bn].current_mut().as_words_mut();
+                                let (base, len) = bw.unwrap_or((0, words.len()));
+                                let claim = if compete { taken.get_mut(bn).map(|t| t.as_mut_slice()) } else { None };
+                                work += eg.group.write_branch(&by_class, words, base, len, claim) as u64;
+                            }
+                            fired[i] = by_class.into_iter().flatten().collect();
                         }
                         seen[i] = Some(Seen::of(owned, eg.src.idx, frame));
                     }

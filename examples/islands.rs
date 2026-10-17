@@ -206,6 +206,16 @@
 //! Every lifetime starts wired broadly and keeps the winners, as a newborn's muscles end with one
 //! input each; the genome is not changed.
 //!
+//! `ISL_BRANCH=1`: branches. A population's fired kernels may also write their outputs into a
+//! second vector (a channel or an output port), at the same place, by OR, as an axon's
+//! collaterals: a copy of what it did for others to read, a line to another population's inhibit
+//! input, two targets driven by one decision. A new population has one one time in four; with
+//! competition a branch writes only words no other population claimed, and claims them. The op
+//! lines say how many of the best's populations branch.
+//!
+//! The op lines (with `ISL_COMPETE`) also give the contest: kernels held down by another
+//! population's claim, and populations that let go, per 1000 steps of the island's probing.
+//!
 //! `ISL_LESION=n` (with `ISL_RESUME`): measure only. Each island's best genome is scored on n fresh
 //! worlds on each of its subtasks (the generalist: every other island's rung), then with each of
 //! its populations taken out in turn: the loss on each subtask as a share of its rung's goal, and
@@ -665,6 +675,7 @@ fn main() {
     neurocomp::evolve::set_thrift_relax(env("ISL_THRIFT_RELAX", 0usize));
     neurocomp::evolve::set_wire_cost(env("ISL_WIRE_COST", 0u64));
     neurocomp::program::neurocomp::set_write_compete(env("ISL_COMPETE", 0u8) == 1);
+    neurocomp::evolve::tags::set_branches(env("ISL_BRANCH", 0u8) == 1);
     neurocomp::program::neurocomp::set_prune(env("ISL_COMPETE", 0u8) == 1 && env("ISL_PRUNE", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
@@ -816,7 +827,7 @@ fn main() {
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" } + if neurocomp::evolve::carry_energy() { ", carrying paid as energy true" } else { "" } + if neurocomp::evolve::elite_pass() { ", goals judged on the elite true" } else { "" } + if neurocomp::evolve::partial() { ", partial credit true" } else { "" } + if neurocomp::evolve::keep_rungs() { ", passed rungs kept true" } else { "" } + if neurocomp::evolve::tags::inhibit_inputs() { ", inhibit inputs true" } else { "" } + if neurocomp::evolve::tags::overlap_genes() { ", overlap genes true" } else { "" } + if neurocomp::evolve::size_classes() { ", size classes true" } else { "" } + &if neurocomp::evolve::thrift_relax() > 0 { format!(", thrift relaxed while stuck {}", neurocomp::evolve::thrift_relax()) } else { String::new() } + &if neurocomp::evolve::wire_cost() > 0 { format!(", wiring cost {} a bit of tag distance", neurocomp::evolve::wire_cost()) } else { String::new() } + if neurocomp::program::neurocomp::write_compete() { ", populations compete for their destination true" } else { "" } + if neurocomp::program::neurocomp::prune() { ", pruning true" } else { "" });
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" } + if neurocomp::evolve::carry_energy() { ", carrying paid as energy true" } else { "" } + if neurocomp::evolve::elite_pass() { ", goals judged on the elite true" } else { "" } + if neurocomp::evolve::partial() { ", partial credit true" } else { "" } + if neurocomp::evolve::keep_rungs() { ", passed rungs kept true" } else { "" } + if neurocomp::evolve::tags::inhibit_inputs() { ", inhibit inputs true" } else { "" } + if neurocomp::evolve::tags::overlap_genes() { ", overlap genes true" } else { "" } + if neurocomp::evolve::size_classes() { ", size classes true" } else { "" } + &if neurocomp::evolve::thrift_relax() > 0 { format!(", thrift relaxed while stuck {}", neurocomp::evolve::thrift_relax()) } else { String::new() } + &if neurocomp::evolve::wire_cost() > 0 { format!(", wiring cost {} a bit of tag distance", neurocomp::evolve::wire_cost()) } else { String::new() } + if neurocomp::program::neurocomp::write_compete() { ", populations compete for their destination true" } else { "" } + if neurocomp::program::neurocomp::prune() { ", pruning true" } else { "" } + if neurocomp::evolve::tags::branches() { ", branches true" } else { "" });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
@@ -1165,7 +1176,10 @@ fn main() {
                     format!("; sizes 1-3:{} 4-15:{} 16-63:{} 64-255:{} 256+:{}", c[0], c[1], c[2], c[3], c[4])
                 } else {
                     String::new()
-                } + &if neurocomp::evolve::wire_cost() > 0 { format!("; wiring {} bits", best.wire_length()) } else { String::new() };
+                } + &if neurocomp::evolve::wire_cost() > 0 { format!("; wiring {} bits", best.wire_length()) } else { String::new() } + &match r.contest.get(i) {
+                    Some(&(steps, lost, let_go)) if neurocomp::program::neurocomp::write_compete() && steps > 0 => format!("; contest: {} kernels held down by another population and {:.2} populations let go per 1000 steps", lost * 1000 / steps, let_go as f64 * 1000.0 / steps as f64),
+                    _ => String::new(),
+                } + &if neurocomp::evolve::tags::branches() { format!("; branches {} of {}", best.pops_branched(), best.populations()) } else { String::new() };
                 println!("      {:<11}{}{sizes}  (the elite's ops; its best's loops)", "", ops_and_loops(&r.ranked[i][..elite.min(r.ranked[i].len())]));
             }
         }

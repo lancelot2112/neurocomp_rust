@@ -33,6 +33,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 26 | size classes (ISL_SIZE_CLASSES=1): lexicase keeps each size class's own choice among the elite and draws half the parents within a random class, so small and large networks both stay; run 25 with it; no plasmid exchange | after 25 || 600 generations, 21 rungs, the most of any run: shapes clean to shift64 at 55-61 (run 25: clean at 482), recall to lag2 by 55 and lag3 at 337, screen passed glow at 274 (no run had), maze feel-100 at 142; switching held on tell 34-486, prediction on cycle1-100 to 480; echo2 still about 0 |
 | 27 | thrift relaxed while stuck (ISL_THRIFT=1, ISL_THRIFT_RELAX=64): the thrift cases taken with chance 64/(64+g), g the generations on the current rung, full again after a pass; run 26 with it; no plasmid exchange | started 11:53Z by the after26 waiter | |
 | 28 | a wiring cost by tag distance (ISL_WIRE_COST=1: each population pays 1 a step for each bit of Hamming distance between the tags of its two ends, ports at fixed tags in the same space), populations competing for their destination (ISL_COMPETE=1: best match first, a kernel whose output lies mostly on lines taken this step is held down) and pruning (ISL_PRUNE=1: a population that keeps losing lets go for the lifetime): run 26 with the three (size classes, thrift on, not relaxed) | after 27 | |
+| 29 | branches (ISL_BRANCH=1: a population's fired kernels also write a second vector, a channel or an output port, as an axon's collaterals): run 28 with them | after 28 | |
 
 ## How far each island climbed
 

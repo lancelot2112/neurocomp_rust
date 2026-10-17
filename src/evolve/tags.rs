@@ -197,6 +197,12 @@ pub struct Pop {
     /// only on the patterns it is active on. A wire has no kernels, so none for it.
     pub inhibitor: Option<u8>,
     pub inhibitor_at: u8,
+    /// (`set_branches`) a branch: a tag (with `branch_at`, what it names: 0 a declared channel, 2 an
+    /// output port; 1 reads as 0) of a second vector its fired kernels also write their outputs
+    /// into, at the same place, by OR, as an axon's collateral: an efference copy, a line to an
+    /// inhibitory partner, a second target driven by the same decision. A wire has none.
+    pub branch: Option<u8>,
+    pub branch_at: u8,
     /// (`set_overlap_genes`) how much of a kernel's mask taken lines (a better-matched kernel's,
     /// or an inhibit input's) must cover to hold it down, in quarters: more than this many (1 to
     /// 4; 2, more than half, as without the gene; 4: never held down by overlap)
@@ -220,7 +226,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, inhibit_quarters: 2, grip: 16, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, branch: None, branch_at: 0, inhibit_quarters: 2, grip: 16, hint: None,
         }
     }
 
@@ -410,6 +416,22 @@ pub fn set_inhibit_inputs(on: bool) {
 
 pub fn inhibit_inputs() -> bool {
     INHIBIT_INPUTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Branches (`Pop::branch`): a population's fired kernels may write their outputs into a second
+/// vector too (a declared channel or an output port), as an axon's collaterals reach several
+/// targets: a copy of what it did (an efference copy) for others to read, a line to an inhibitory
+/// partner (another population's inhibit input), two targets driven by one decision. A new
+/// population has one one time in four, on a channel or an output port, half each; a property
+/// adds, removes or retags it, another turns it between the two. Off by default.
+static BRANCHES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_branches(on: bool) {
+    BRANCHES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn branches() -> bool {
+    BRANCHES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The overlap rule as a gene (`set_overlap_genes`): each population's `inhibit_quarters` sets
@@ -681,6 +703,12 @@ impl TagGenome {
             if !p.wire {
                 if let Some((t, w)) = p.heat { m(if w { "warm" } else { "cool" }, t, p.heat_at, true, &mut nodes) }
                 if let Some(t) = p.inhibitor { m("inhibit", t, p.inhibitor_at, true, &mut nodes) }
+                if let Some(t) = p.branch.filter(|_| branches()) {
+                    if let Some(g) = ch.gate_place(t, if p.branch_at == 2 { 2 } else { 0 }) {
+                        seen(ch.name(g), g.len * 64, false, &mut nodes);
+                        edges.push((p.id, ch.name(a), ch.name(g), format!("{} branch", p.op.text()), false));
+                    }
+                }
             }
         }
         (nodes, edges, mods)
@@ -763,6 +791,7 @@ impl TagGenome {
                 depth[h.node] = depth[h.node].max(1);
             }
             let inhibitor_at = p.inhibitor.filter(|_| !p.wire).and_then(|t| ch.gate_place(t, p.inhibitor_at));
+            let branch_at = p.branch.filter(|_| !p.wire && branches()).and_then(|t| ch.gate_place(t, if p.branch_at == 2 { 2 } else { 0 }));
             if let Some(h) = inhibitor_at {
                 depth[h.node] = depth[h.node].max(1);
             }
@@ -823,6 +852,7 @@ impl TagGenome {
                 hit_quarters: p.hit_quarters,
                 heat: p.heat.zip(heat_at).map(|((_, warm), h)| (h.node, window_of(Some(h)), warm)),
                 inhibitor: inhibitor_at.map(|h| (h.node, window_of(Some(h)))),
+                branch: branch_at.map(|h| (h.node, window_of(Some(h)))),
                 inhibit_quarters: if overlap_genes() { p.inhibit_quarters.clamp(1, 4) } else { 2 },
                 grip: if crate::program::neurocomp::prune() { p.grip.max(1) } else { 0 },
                 hint_low: if hint_band() { p.hint_low.min(p.hit_quarters.saturating_sub(1)).max(1) } else { 0 },
@@ -889,7 +919,8 @@ impl TagGenome {
                     || p.gate.is_some_and(|(g, _)| here(g))
                     || p.pause.is_some_and(|(g, _)| here(g))
                     || (p.heat_at == 0 && p.heat.is_some_and(|(g, _)| here(g)))
-                    || (p.inhibitor_at == 0 && p.inhibitor.is_some_and(here));
+                    || (p.inhibitor_at == 0 && p.inhibitor.is_some_and(here))
+                    || (p.branch_at != 2 && p.branch.is_some_and(here));
                 if touches {
                     out.push(i);
                 }
@@ -921,6 +952,7 @@ impl TagGenome {
                     if let Some((g, on)) = p.pause { if here(g) { q.pause = Some((fresh, on)) } }
                     if let (Some((g, w)), 0) = (p.heat, p.heat_at) { if here(g) { q.heat = Some((fresh, w)) } }
                     if let (Some(g), 0) = (p.inhibitor, p.inhibitor_at) { if here(g) { q.inhibitor = Some(fresh) } }
+                    if let Some(g) = p.branch.filter(|_| p.branch_at != 2) { if here(g) { q.branch = Some(fresh) } }
                     q.id = *next_id;
                     *next_id += 1;
                     Token::Pop(q)
@@ -1100,7 +1132,7 @@ impl TagGenome {
         let chosen = pops[k % pops.len()];
         let Token::Pop(p) = &donor.tokens[chosen] else { unreachable!() };
         let ch = Channels::of(&donor.tokens);
-        let touched = [(!p.from_port).then_some(p.from), (!p.to_port).then_some(p.to), p.gate.map(|g| g.0), p.pause.map(|g| g.0), p.heat.filter(|_| p.heat_at == 0).map(|g| g.0), p.inhibitor.filter(|_| p.inhibitor_at == 0)]
+        let touched = [(!p.from_port).then_some(p.from), (!p.to_port).then_some(p.to), p.gate.map(|g| g.0), p.pause.map(|g| g.0), p.heat.filter(|_| p.heat_at == 0).map(|g| g.0), p.inhibitor.filter(|_| p.inhibitor_at == 0), p.branch.filter(|_| p.branch_at != 2)]
             .into_iter()
             .flatten()
             .find_map(|t| ch.internal(t));
@@ -1164,6 +1196,9 @@ impl TagGenome {
                     }
                     if let Some((t, w)) = p.heat {
                         out.insert_str(out.len() - 1, &format!(" heat={t}:{} heat_at={}", w as u8, p.heat_at));
+                    }
+                    if let Some(t) = p.branch {
+                        out.insert_str(out.len() - 1, &format!(" branch={t} branch_at={}", p.branch_at));
                     }
                     if let Some(t) = p.inhibitor {
                         out.insert_str(out.len() - 1, &format!(" inhibitor={t} inhibitor_at={}", p.inhibitor_at));
@@ -1241,6 +1276,8 @@ impl TagGenome {
                         heat_at: kv.get("heat_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         inhibitor: kv.get("inhibitor").and_then(|x| x.parse().ok()),
                         inhibitor_at: kv.get("inhibitor_at").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        branch: kv.get("branch").and_then(|x| x.parse().ok()),
+                        branch_at: kv.get("branch_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         inhibit_quarters: kv.get("inhibit_quarters").and_then(|x| x.parse().ok()).unwrap_or(2),
                         grip: kv.get("grip").and_then(|x| x.parse().ok()).unwrap_or(16),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
@@ -1262,6 +1299,11 @@ impl TagGenome {
         self.pops().count()
     }
 
+    /// How many populations carry a branch (`Pop::branch`, with `set_branches`; wires have none).
+    pub fn pops_branched(&self) -> usize {
+        self.pops().filter(|p| p.branch.is_some() && !p.wire).count()
+    }
+
     /// The wiring length (`evolve::set_wire_cost`): for each population, the Hamming distance
     /// between the tags of what its two ends resolve to: the nearest declared channel, or for an end
     /// on a port the nearest port's own tag (the senses at 0x00 and the act at 0xFF, the eye, ear,
@@ -1277,7 +1319,9 @@ impl TagGenome {
             .map(|p| {
                 let a = if p.from_port { if p.from_output { near(&outputs, p.from) } else { near(&inputs, p.from) } } else { near(&tags, p.from) };
                 let b = if p.to_port { if p.to_input { near(&inputs, p.to) } else { near(&outputs, p.to) } } else { near(&tags, p.to) };
-                (a ^ b).count_ones() as usize
+                // (a branch) its collateral from the same source end
+                let c = p.branch.filter(|_| branches() && !p.wire).map_or(0, |t| (a ^ if p.branch_at == 2 { near(&outputs, t) } else { near(&tags, t) }).count_ones() as usize);
+                (a ^ b).count_ones() as usize + c
             })
             .sum()
     }
@@ -1385,6 +1429,11 @@ impl TagGenome {
         }
         // (with `set_inhibit_inputs`) an inhibit input one time in four, on a channel or (with
         // port gates) a port, a third each
+        // (with `set_branches`) a branch one time in four, on a channel or an output port, half each
+        if branches() && rng.gen_range(0..4) == 0 {
+            p.branch = Some(rng.r#gen());
+            p.branch_at = if rng.gen_bool(0.5) { 2 } else { 0 };
+        }
         if inhibit_inputs() && rng.gen_range(0..4) == 0 {
             p.inhibitor = Some(rng.r#gen());
             if port_gates() {
@@ -1593,6 +1642,7 @@ fn safe_tag(g: &TagGenome) -> Option<u8> {
         if let (Some((t, _)), 0) = (p.pause, p.pause_at) { tags.push(t) }
         if let (Some((t, _)), 0) = (p.heat, p.heat_at) { tags.push(t) }
         if let (Some(t), 0) = (p.inhibitor, p.inhibitor_at) { tags.push(t) }
+        if let Some(t) = p.branch.filter(|_| p.branch_at != 2) { tags.push(t) }
         if let Some((t, 0)) = p.teacher { tags.push(t) }
     }
     let near = |t: u8| ch.internal(t).map(|i| (ch.list[i].0 ^ t).count_ones());
@@ -1844,7 +1894,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if branches() { 54 } else if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1924,6 +1974,8 @@ impl Evolvable for TagGenome {
                         49 if inhibit_inputs() => p.inhibitor_at = (p.inhibitor_at + if up { 1 } else { 2 }) % 3,
                         50 if overlap_genes() => p.inhibit_quarters = step(p.inhibit_quarters, 1, 4),
                         51 if crate::program::neurocomp::prune() => p.grip = if up { p.grip.saturating_mul(2).min(128) } else { (p.grip / 2).max(1) },
+                        52 if branches() => p.branch = match p.branch { Some(t) => if rng.gen_bool(0.3) { None } else { Some(t ^ bit) }, None => Some(rng.r#gen()) },
+                        53 if branches() => p.branch_at = if p.branch_at == 2 { 0 } else { 2 },
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
                             let (t, at) = p.hint.unwrap();

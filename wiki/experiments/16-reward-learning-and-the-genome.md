@@ -974,3 +974,22 @@ holding more of the junction drives it more and gains more. So with pruning the 
 a destination take its words in the order of their grip (ties in the genome's order), not their
 best kernel's share: winning raises the grip, firing into a claimed word lowers it, and an input
 that keeps driving the word (bursts) gains fastest. Without pruning the order stays best match.
+
+## Branches (run 29), and the contest counted
+
+A population had one destination; a brain's axons branch, so one cell's firing reaches several
+targets at once: an efference copy of every command, a collateral to an inhibitory interneuron,
+two areas driven by one decision. Without it no population could know what it had just done (the
+hand-made echo circuit rebuilds that from the OR of the whole act), and inhibition between
+populations needed a channel the inhibitor wrote, while the inhibitor's one output went to the
+act. With `ISL_BRANCH=1` a population may carry a branch (`Pop::branch`, a tag naming a channel or
+an output port): its fired kernels also write their outputs there, at the same place (wrapping),
+by OR. Output learning stays on the main destination. A new population has one one time in four;
+mutation adds, removes, retags or moves it between channel and port, and circuit copies keep it.
+The wiring cost charges the collateral from the source end. Under competition a branch writes
+only words no other population claimed this step, and claims them, so it cannot get round one
+writer a word. Run 29 is run 28 with branches (`runs/run29.cmd`), after run 28.
+
+From run 28 the op lines also count the contest, per 1000 steps of each island's probing: kernels
+held down by another population's claim, and populations that let go of their destination; and,
+with branches, how many of the best's populations branch.

@@ -1093,3 +1093,29 @@ writing the move being made, which is the token it hears (births into a port of 
 move made), so a babbling half grows a listener that says what it hears. Neither copy learning nor
 the muscle's response adds anything measurable on top. Echo2's goal is 150; the best here is 83,
 and it fades in longer lifetimes, while the babbler goes on talking over the teacher.
+
+## Three things to learn, three parts (a check)
+
+Speech needs three associations, each learned from a different signal at a different time: what
+my voice sounds like (a move and the sound it makes, from an efference copy and hearing myself,
+while babbling alone); what the teacher wants (the teacher's sound as a target, using the first);
+and what a glyph sounds like (a glyph and the teacher's word for it, into the same sound code the
+first reads, never touching the motor codes). One listener learning from everything it heard mixed
+the first two. One thing was also missing: a kernel born into the act copied the move being made,
+pairing input with the move that follows it (a reflex), where hearing oneself pairs a sound with
+the move before it. `Pop::birth_lag` (`ISL_BIRTH_LAG=1`, 0 to 4) makes such births copy the move
+made that many frames ago.
+
+`examples/partscheck.rs` builds the three parts by hand: a babbler (self channel to voice,
+spontaneous, quiet while the ear is busy, with a branch into an efference-copy channel E); a wire
+from the ear into an auditory channel H; a listener (H to voice) born on what it hears, copying the
+move `birth_lag` frames back, learning only while E was on; and glyph kernels from the eye into H.
+Two tokens, codes drawn each lifetime, the teacher silent the first half (24 worlds;
+`runs/checks/partscheck.txt`):
+- echo2's echo by the listener's lag, birth lag and gate lag ranged from 8 to **126** (lag 1, birth
+  lag 2, gate lag 1), against 81 for one listener learning from everything; the goal is 150;
+- the third part did not work: copy on fade6 (eight tokens, the teacher saying six in eight) stayed
+  at -18 to 0 in every setting, with the glyph births writing at their own place or copying H's
+  busiest word, and with 4 or 16 babbling kernels; echo with eight tokens stayed at 0 to 16.
+So separating "my voice" from "the teacher" helps, and birth lags matter (birth lag 0 or 3 gave
+8 to 99); learning what a glyph sounds like is not yet understood here.

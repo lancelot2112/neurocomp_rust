@@ -255,6 +255,10 @@ pub struct EdgeSpec {
     /// write what was being written when its input pattern arrived. Its starting output spans the
     /// whole of its port, so it can move to any code there.
     pub out_copy: u8,
+    /// (into a port of the act) a birth copies the move made this many frames ago, not the one
+    /// being made: what was done before what is sensed now (imitation: one's own voice is heard
+    /// after it is made). 0: the move being made (a reflex)
+    pub birth_lag: u8,
 }
 
 impl EdgeSpec {
@@ -313,6 +317,7 @@ impl EdgeSpec {
             grip: 0,
             branch: None,
             out_copy: 0,
+            birth_lag: 0,
         }
     }
 }

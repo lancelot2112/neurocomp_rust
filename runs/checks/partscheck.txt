@@ -1,0 +1,23 @@
+listener lag, birth lag, gate lag: echo2 echo | fade6 copy, echo   (goals: echo 150, copy 100)
+C1 channel 01001010  512 bits
+C2 channel 10010110  512 bits
+   M -> voice kernels Or lag 1 cover, tiles of 128 bits n4 in16 out16 q2/4 tonic 1/4 runs while !ear sparse replicate at 32 (to a neighbour tile) accident 1/2^18
+   ear -> C2 wire Or lag 1 whole sparse replicate at 32 (to a neighbour tile) accident 1/2^18
+   eye -> C2 kernels Or lag 1 cover, tiles of 128 bits n0 in16 out16 q2/4 grow(syn 16, out 8-64) sparse replicate at 32 (to a neighbour tile) accident 1/2^18
+   C2 -> voice kernels Or lag 1 cover, tiles of 128 bits n0 in16 out16 q2/4 grow(syn 16, out 8-64) gate C1 sparse replicate at 32 (to a neighbour tile) accident 1/2^18
+  1 0 1: 99 | -3, 5
+  1 0 2: 8 | -6, -10
+  1 1 1: 50 | -2, 16
+  1 1 2: 76 | -6, 9
+  1 2 1: 126 | -16, 5
+  1 2 2: 75 | -6, 0
+  1 3 1: 8 | -6, -10
+  1 3 2: 91 | -8, 9
+  2 0 1: 75 | -10, 2
+  2 0 2: 8 | -6, -10
+  2 1 1: 93 | -16, -1
+  2 1 2: 66 | -18, 4
+  2 2 1: 91 | -4, 12
+  2 2 2: 42 | -2, 11
+  2 3 1: 8 | -6, -10
+  2 3 2: 90 | -17, 2

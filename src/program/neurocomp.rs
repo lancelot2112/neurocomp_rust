@@ -999,14 +999,18 @@ impl RuntimeNetwork {
                     (ones(prev.as_words()[dw]), dw)
                 } else if eg.into_act {
                     // into a port of the act: the move being made now (the busiest word of the
-                    // port), copied onto what is seen: a reflex from this input to that move
-                    let dwords = dest.word_len().max(1);
+                    // port), copied onto what is seen: a reflex from this input to that move; or
+                    // (`EdgeSpec::birth_lag`) the move made that many frames ago, onto what is seen
+                    // now: what came of that move (the sound one's own voice made), so the kernel
+                    // makes the move that brings what it sees
+                    let then = if sp.birth_lag > 0 { nodes[eg.dst].get_frame(at(live[eg.dst], sp.birth_lag as usize)) } else { dest };
+                    let dwords = then.word_len().max(1);
                     let (base, len) = if sp.dst_len > 0 { (sp.dst_word % dwords, sp.dst_len.min(dwords - sp.dst_word % dwords)) } else { (0, dwords) };
-                    let (w, n) = busiest_word(&dest.as_words()[base..base + len]);
+                    let (w, n) = busiest_word(&then.as_words()[base..base + len]);
                     if (n as usize) < sp.out_min as usize {
                         continue;
                     }
-                    (ones(dest.as_words()[base + w]), base + w)
+                    (ones(then.as_words()[base + w]), base + w)
                 } else {
                     let dwords = dest.word_len().max(1);
                     let (base, len) = if sp.dst_len > 0 { (sp.dst_word % dwords, sp.dst_len.min(dwords - sp.dst_word % dwords)) } else { (0, dwords) };

@@ -958,3 +958,10 @@ that compete by their activity until one keeps it. Two switches build that:
   more that lifetime. Every lifetime starts wired broadly and keeps the winners; the genome is not
   changed, so a population that loses in one lifetime may win in the next.
 Run 28 is run 26 with the wiring cost, competition and pruning together (`runs/run28.cmd`).
+On run 26's final genomes, scored with word competition and pruning on (24 worlds, the same as the
+lesion map; `runs/islands26/lesion-compete-words.txt`), the generalist's prediction rose from 9 to
+45, screen from 53 to 71 and selection from 315 to 331 with nothing evolved for it, and lesions that
+raise a subtask fell from 53 to 40 while lesions that cost one rose from 16 to 25: less
+interference, more populations carrying something. On the islands, which evolved without it,
+prediction fell from 170 to 132 and selection from 469 to 420 (21 of selection's 103 populations now
+matter, against 2).

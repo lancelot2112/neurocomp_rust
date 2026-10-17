@@ -1021,3 +1021,29 @@ populations that matter put 55% of their loss on one subtask (run 26: 45%; 11% i
 On recall 28 of 34 populations matter, 24 of them for its respond and 4 for its memory: a part for
 each. The wiring cost, word competition and pruning together are the first change that has built
 internal structure.
+
+## Codes a wire can use (a check, after run 29 started)
+
+Every code in the world is 16 random lines in one random word of a 512-bit channel, drawn afresh
+each lifetime: each token's glyph and sound, the lights, the stroke, and each of the voice's
+tokens and the hand's moves; a move is the code holding at least half its lines. A wire copies
+lines where they lie, so what it writes into the hand almost never holds half a move's code.
+(Kernels into the act start with the body's codes as their outputs, chosen at random each
+lifetime, so they can make moves, but not a move the genome picks.) Two lesson options try other
+codes: `Lesson::motor_place` makes the body's moves and tokens place codes, the same every
+lifetime, as a muscle is a labelled line (move i owns word i of the hand, and a command is read
+as the move whose word has the most lines on: `Effector::fix_place`); `Lesson::sense_place` also
+puts the two lights at words 0 and 1 of the eye and every stroke in the first word of the skin.
+`examples/motorcheck.rs` scores one wire reading a whole sense port and landing at each word of
+the hand or voice in turn (24 worlds; best landing word):
+
+| codes | respond (eye to hand; goal 100) | tell (goal 100) | feel (affect to hand; goal 160) | echo, heard as said (ear to voice) |
+|---|---|---|---|---|
+| drawn each lifetime, as now | 23 | 42 | 2 | 461 |
+| moves and tokens as place codes | 197 | 384 | 97 | 461 |
+| and the lights and stroke placed | 515 | 1024 | 389 | 461 |
+
+With the motor side as labelled lines a single wire passes respond and tell (the light lands on the
+click's word in the lifetimes where the light's random word happens to be the right one, often
+enough), and scores 97 on feel; with the stimuli placed too, those rungs become innate reflexes
+(tell 1024, feel 389). What a light, glyph or sound means is still drawn each lifetime either way.

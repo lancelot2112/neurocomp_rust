@@ -500,6 +500,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "nocue" => stage.lesson.maze_nocue = v == "1",
                 "mirror" => stage.lesson.mirror = v.parse().expect("mirror"),
                 "quiet" => stage.lesson.quiet = v == "1",
+                "motor" => stage.lesson.motor_place = v == "1",
+                "senses" => stage.lesson.sense_place = v == "1",
                 "cue" => stage.lesson.mixed_cue = v == "1",
                 "block" => stage.lesson.mixed_block = v.parse().expect("block"),
                 "sw" => stage.lesson.screen_w = v.parse().expect("sw"),

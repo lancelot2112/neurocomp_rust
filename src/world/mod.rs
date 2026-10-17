@@ -134,11 +134,31 @@ pub struct Event {
 /// An effector's motor primitives: random sparse codes, one per move or token.
 pub struct Effector {
     codes: Vec<BitVector>,
+    /// a place code (`fix_place`): primitive i owns word i of the channel, and a command is the
+    /// primitive whose word has the most lines on
+    place: bool,
 }
+
+/// The lines of a place code inside its word (16, one in four).
+pub const PLACE_LINES: u64 = 0x1111_1111_1111_1111u64;
 
 impl Effector {
     fn new(n: usize, rng: &mut StdRng) -> Self {
-        Self { codes: codes(n, rng) }
+        Self { codes: codes(n, rng), place: false }
+    }
+
+    /// Make it a place code, the same in every lifetime, as a muscle is a labelled line:
+    /// primitive i is `PLACE_LINES` in word i of the channel, and any command is read as the
+    /// primitive whose word has the most lines on (at least half a code's), so whatever lands in
+    /// a word drives that primitive.
+    pub fn fix_place(&mut self) {
+        let words = CH_BITS / 64;
+        for (i, c) in self.codes.iter_mut().enumerate() {
+            let mut v = vec![0u64; words];
+            v[i % words] = PLACE_LINES;
+            *c = BitVector::from_words(v);
+        }
+        self.place = true;
     }
 
     /// The command for primitive `i` (what a body's pattern generators can produce).
@@ -156,6 +176,15 @@ impl Effector {
 
     /// The primitive the command holds at least half of, best first; None if none.
     pub fn articulate(&self, m: &BitVector) -> Option<usize> {
+        if self.place {
+            let w = m.as_words();
+            let half = PLACE_LINES.count_ones() / 2;
+            return (0..self.codes.len())
+                .map(|i| (w.get(i).map_or(0, |x| x.count_ones()), i))
+                .filter(|&(c, _)| c >= half)
+                .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+                .map(|x| x.1);
+        }
         (0..self.codes.len())
             .map(|i| (overlap(&self.codes[i], m), i))
             .filter(|&(o, i)| 2 * o >= self.codes[i].count_ones())
@@ -264,6 +293,8 @@ pub struct World {
     pub maze_nocue: bool,
     /// one's own voice not heard (a reading lesson's `quiet`): the ear has only the teacher
     pub quiet: bool,
+    /// (`place_senses`) the stroke always on the first word of the skin's map
+    pub stroke_place: bool,
     maze_first: Option<bool>,
     junction: BitVector,
     maze_total: usize,
@@ -389,6 +420,26 @@ impl World {
     /// same word (from the physics, so held-out worlds hear the same). 8: a token is heard
     /// exactly as it is said, so a wire from the ear to the voice echoes it; 4: half the lines,
     /// the least a said token needs (`Effector::articulate`); fewer, a copy says nothing.
+    /// The body's moves and tokens as place codes (`Effector::fix_place`), the same every lifetime:
+    /// what is learned in a lifetime is what the senses mean, not which line moves which muscle.
+    pub fn fix_motor(&mut self) {
+        self.hand.fix_place();
+        self.voice.fix_place();
+    }
+
+    /// The simple stimuli at fixed places, as touch and sight are mapped: light k always in word k
+    /// of the eye (`PLACE_LINES`), and a stroke always in the first word of the skin's map.
+    /// Tokens' glyphs and sounds stay drawn afresh (what a word means is learned).
+    pub fn place_senses(&mut self) {
+        let words = CH_BITS / 64;
+        for (k, l) in self.lights.iter_mut().enumerate() {
+            let mut v = vec![0u64; words];
+            v[k % words] = PLACE_LINES;
+            *l = BitVector::from_words(v);
+        }
+        self.stroke_place = true;
+    }
+
     pub fn mirror_sounds(&mut self, eighths: usize, physics: u64) {
         let mut rng = StdRng::seed_from_u64(physics ^ 0x3122);
         for k in 0..self.sounds.len() {
@@ -438,6 +489,7 @@ impl World {
             maze_fixed: false,
             maze_nocue: false,
             quiet: false,
+            stroke_place: false,
             maze_first: None,
             junction: codes(1, &mut r(0x7A2E)).remove(0),
             maze_total: 0,
@@ -918,7 +970,7 @@ impl World {
         if stroke {
             // a slow stroke: a run of neighbouring receptors on the skin's map
             // (inside one word of the skin's map)
-            let start = self.rng.gen_range(0..CH_BITS / 64) * 64 + self.rng.gen_range(0..=64 - ACTIVE);
+            let start = if self.stroke_place { 0 } else { self.rng.gen_range(0..CH_BITS / 64) * 64 } + self.rng.gen_range(0..=64 - ACTIVE);
             let run: Vec<usize> = (start..start + ACTIVE).collect();
             put(&mut senses, AFFECT, &BitVector::from_bits(&run, CH_BITS));
             ev.stroked = true;

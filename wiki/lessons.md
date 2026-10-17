@@ -257,3 +257,10 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     (run 20's echo2, cycle1), a difference in the mean that one world's case hides (feel), or none
     of that, where the rung's own pass rule held it back (lag4 and cued: their best genomes pass,
     but the goal was checked against the whole population's mean). Each needs a different fix.
+51. **The codes must fit the kernels (experiment 16).** A kernel reads and writes at its own place
+    (topographic) and its output is fixed at birth, so two codes to be paired must sit inside one
+    kernel's tile, and pairing must happen in its input (Hebbian), not in what it writes. And a
+    word read by threshold must stay sparse: three 16-line codes ORed in one 64-bit word show half
+    the lines of 84% of other codes; 6 to 8 lines keep that near 20%. With the glyph wired beside
+    its sound, 8-line codes and the listener not answering its own voice, a hand-made genome
+    echoes at twice echo2's goal (300) and at 136 with eight tokens; before, never above 126.

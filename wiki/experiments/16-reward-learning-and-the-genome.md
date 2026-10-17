@@ -880,3 +880,16 @@ So from run 25 feel's goal is 160 (`ISL_FEEL_GOAL=160`), passed by moving at ran
 stroke (mean 204, worst world 152), with feel-100 before it (`ISL_STEPS=feel=100,...`; feel-200 is
 dropped). Learning which move is the click is left to the repeat rung after it, where a stroke
 follows one's own move.
+
+**Result of run 25** (600 generations; `runs/islands25/README.md`): 14 rungs passed. The new rungs
+were climbed: the maze's feel-100 at 214 and screen's glow-150 at 11, both islands' first rungs in
+any run; prediction's cycle1-100 at 141 and cycle1 at 335; reading's echo2q, echo2m8 and echo2m4 at
+91, 104 and 107, so evolution found an echo that works while the network hears its own voice. But
+nothing carried over to the rungs after them: reading scored about 0 on echo2 for its last 490
+generations, the maze about 30 of 160 on feel, switching about 0 on feel-100 after reaching 45.
+The islands whose ladders did not change did worse than in run 24 (recall passed respond at 193
+against 17, shapes clean at 482 against 64, selection averaged 194 against 277). Inhibit inputs
+were kept unevenly (82% of reading's populations at the end, 49% of the generalist's, 8 to 31%
+elsewhere); the overlap gene stayed at its default nearly everywhere. Three changes in one run, so
+which one cost recall, shapes and selection is open; a run with the new rungs and without inhibit
+inputs would tell.

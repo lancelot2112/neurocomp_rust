@@ -1072,3 +1072,24 @@ shows: what the voice held includes the listener's own writes, so it mostly copi
 kernels are born only when a move is being made, so on the babbler's random token; and the ear
 hears the teacher and one's own voice at once, so a heard sound does not say which voice code made
 it. The rule stays off by default.
+
+**The muscle's response, and babbling first** (the same check, `examples/copycheck.rs`). With
+`ISL_MUSCLE=1` (`evolve::set_muscle`) the act vector shows, after each step of the world, what
+the body did: the clean code of the move made and the token said, or nothing; so a population
+writing the act sees on its own lines whether they drove the body, copy learning learns toward
+what was done, and what reads the act port reads what was done. A reading lesson's `babble` keeps
+the teacher silent for the first that many tokens (`World::teacher_after`). Echo on echo2 (24
+worlds, the teacher saying every token once it speaks):
+
+| | 200 tokens | 800 tokens |
+|---|---|---|
+| teacher from the start, no copy learning | 9 | -3 |
+| teacher from the start, copy learning, muscle | 18 | 3 |
+| teacher silent the first half, no copy learning | 81 | 14 |
+| teacher silent the first half, copy learning (best), muscle | 83 | 19 |
+
+Babbling first is what matters: a kernel born while the network hears its own voice is born
+writing the move being made, which is the token it hears (births into a port of the act copy the
+move made), so a babbling half grows a listener that says what it hears. Neither copy learning nor
+the muscle's response adds anything measurable on top. Echo2's goal is 150; the best here is 83,
+and it fades in longer lifetimes, while the babbler goes on talking over the teacher.

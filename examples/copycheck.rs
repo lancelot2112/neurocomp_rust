@@ -7,7 +7,8 @@
 //! it heard came in). Scored on 24 worlds, by offset and rate, against the listener without copy
 //! learning; and the listener alone (no babbling). It takes the template population line from a
 //! genome file: `cargo run --release --example copycheck -- runs/echo-wires/wire.txt` (`TEACH=n`:
-//! the teacher says n tokens in 8, 8 by default).
+//! the teacher says n tokens in 8, 8 by default; `MUSCLE=1`: the act shows what the body did;
+//! `BABBLE=n`: the teacher silent for the first n eighths of each lifetime).
 use neurocomp::evolve::tags::TagGenome;
 use neurocomp::evolve::{probe_all_in, Lesson, Physics};
 use neurocomp::world::observe::PROBES;
@@ -27,8 +28,12 @@ fn main() {
         l
     };
     let teach: u32 = std::env::var("TEACH").ok().and_then(|x| x.parse().ok()).unwrap_or(8);
+    // (`MUSCLE=1`) the act shows what the body did (`evolve::set_muscle`)
+    neurocomp::evolve::set_muscle(std::env::var("MUSCLE").is_ok_and(|v| v == "1"));
+    // (`BABBLE=n`) the teacher silent for the first n eighths of each lifetime
+    let babble_first: usize = std::env::var("BABBLE").ok().and_then(|x| x.parse().ok()).unwrap_or(0);
     for trials in [200usize, 800] {
-        println!("lifetimes of {trials} tokens, the teacher saying {teach} in 8:");
+        println!("lifetimes of {trials} tokens, the teacher saying {teach} in 8 after the first {babble_first} eighths, the muscle's response {}:", neurocomp::evolve::muscle());
         for (copy, rate) in [(0u8, 0u8), (1, 0), (2, 0), (3, 0), (1, 2), (2, 2), (1, 4), (2, 4)] {
             let mut row = Vec::new();
             for babble in [true, false] {
@@ -40,7 +45,7 @@ fn main() {
                 text += &kernels(2, 0x38, 0, copy, rate);
                 text.push('\n');
                 let g = TagGenome::from_text(&text).unwrap().remove(0);
-                let lesson = Lesson { tokens: 2, teach, ..Lesson::default() };
+                let lesson = Lesson { tokens: 2, teach, babble: babble_first * trials / 8, ..Lesson::default() };
                 let s = probe_all_in(vec![g], trials, Physics::Varied, &worlds, 6, &[echo], lesson);
                 row.push(s[0].probes.iter().map(|r| r[echo] as i64).sum::<i64>() / worlds.len() as i64);
             }

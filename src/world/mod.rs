@@ -259,6 +259,10 @@ pub struct World {
     pub teacher: bool,
     /// how often the teacher says a shown token, in eighths (4: half of them)
     pub teacher_rate: u32,
+    /// (a reading lesson's `babble`) the teacher is silent for the first this many tokens shown,
+    /// so one hears only one's own voice: babbling before imitation; and the tokens shown so far
+    pub teacher_after: usize,
+    shown_so_far: usize,
     /// delayed conditioning: how many steps before the response window (steps 5 to 7) the light
     /// flashes, 1 to 5 (3: at step 2, three to five steps before a click pays)
     pub delay: usize,
@@ -472,6 +476,8 @@ impl World {
             gap_max: 0,
             teacher: false,
             teacher_rate: 4,
+            teacher_after: 0,
+            shown_so_far: 0,
             delay: 3,
             vary_delay: 0,
             distract: false,
@@ -821,7 +827,8 @@ impl World {
                     put(&mut senses, EYE, &self.glyphs[tok].clone());
                     ev.shown = Some(tok);
                     ev.odd = odd;
-                    if self.teacher && self.rng.gen_ratio(self.teacher_rate.min(8), 8) {
+                    self.shown_so_far += 1;
+                    if self.teacher && self.shown_so_far > self.teacher_after && self.rng.gen_ratio(self.teacher_rate.min(8), 8) {
                         put(&mut senses, EAR, &self.sounds[tok].clone());
                         ev.taught = true;
                     }

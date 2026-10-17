@@ -1354,6 +1354,16 @@ impl RuntimeNetwork {
         self.node_current(self.output)
     }
 
+    /// Replace the act node's current frame (`evolve::set_muscle`: what the body did, after the
+    /// world's step), so the frames after it hold what was done, not what was written.
+    pub fn set_output(&mut self, done: &BitVector) {
+        let out = self.output;
+        let d = self.node_current_mut(out).as_words_mut();
+        for (k, w) in d.iter_mut().enumerate() {
+            *w = done.as_words().get(k).copied().unwrap_or(0);
+        }
+    }
+
     pub fn read_node(&self, node_idx: usize) -> &BitVector {
         self.node_current(node_idx)
     }

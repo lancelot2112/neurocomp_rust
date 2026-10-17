@@ -984,6 +984,16 @@ a destination take its words in the order of their grip (ties in the genome's or
 best kernel's share: winning raises the grip, firing into a claimed word lowers it, and an input
 that keeps driving the word (bursts) gains fastest. Without pruning the order stays best match.
 
+**Result of run 28** (stopped at 255; `runs/islands28/README.md`): 11 rungs against run 26's 15
+by 255. One writer a word helped where a single circuit should own the output: screen passed glow
+at 150 (run 26: 274) and selection averaged 203 against 149. It slowed the islands whose first rungs
+need several populations writing together or a wire into a port: reading's echo2q (one wire from
+the ear to the voice) took 224 generations against at most 92 before, shapes passed clean at 193
+against 55, and the maze and switching started slowly. The contest grew with the networks, from
+tens to thousands of kernels held down per 1000 steps (the generalist 17,309 at 200), and pruning
+let go of up to 41 populations per 1000 steps on prediction. The wiring cost pulled the best
+networks' wiring from up to 332 bits at 50 to 12 to 174 at 250.
+
 ## Branches (run 29), and the contest counted
 
 A population had one destination; a brain's axons branch, so one cell's firing reaches several

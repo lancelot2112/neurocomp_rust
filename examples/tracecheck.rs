@@ -5,7 +5,7 @@
 //! its output writes) and each listener kernel (the sound it hears, the voice code it writes).
 //! `cargo run --release --example tracecheck -- runs/echo-wires/wire.txt > trace.txt`
 //! (`SEED=n`: the world, 90000 by default; `TOKENS`, `TEACH`, `BABBLE`, `TRIALS`: the lesson,
-//! fade6 by default; `ONE_WORD=1`: every code in word 0; `LAG`, `BIRTH`, `GATE`: the listener's, 1 2 1 by default; `EVERY`: 500).
+//! fade6 by default; `ONE_WORD=1`: every code in word 0, `LINES=k` lines each; `GLYPH_WIRE=1`, `LGATE=0`: see below; `LAG`, `BIRTH`, `GATE`: the listener's, 1 2 1 by default; `EVERY`: 500).
 use neurocomp::evolve::tags::TagGenome;
 use neurocomp::evolve::{live_lesson, set_trace, Lesson, Physics, Task};
 use neurocomp::world::{World, ACTIVE};
@@ -102,6 +102,12 @@ fn main() {
         set(&l, "pause_at", "0")
     };
     let glyphs = pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("gate", "-".into()), ("repeat", "0".into())]);
+    // (`GLYPH_WIRE=1`: no glyph kernels; a wire copies the eye into H one word along, so a glyph
+    // in the eye's word 0 lands in H's word 1, beside its sound in word 0, inside one 128-bit tile
+    // of the listener; `LGATE=0`: the listener learns whenever it fires, not only while babbling)
+    let glyph_wire = std::env::var("GLYPH_WIRE").is_ok_and(|v| v == "1");
+    let glyphs = if glyph_wire { pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into()), ("cover", "0".into()), ("at", "0".into()), ("field", "3".into()), ("place", "1".into())]) } else { glyphs };
+    let listener = if std::env::var("LGATE").is_ok_and(|v| v == "0") { set(&listener, "gate", "-") } else { listener };
     let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{chain}{babbler}\n{ear}\n{glyphs}\n{listener}\n");
     let g = TagGenome::from_text(&g).unwrap_or_else(|x| panic!("{x}")).remove(0);
     println!("{}", g.describe());
@@ -169,7 +175,7 @@ fn main() {
             }
         }
     })));
-    let lesson = Lesson { tokens: var("TOKENS", 8) as usize, teach: var("TEACH", 6) as u32, babble: var("BABBLE", 200) as usize, one_word: var("ONE_WORD", 0) == 1, ..Lesson::default() };
+    let lesson = Lesson { tokens: var("TOKENS", 8) as usize, teach: var("TEACH", 6) as u32, babble: var("BABBLE", 200) as usize, one_word: var("ONE_WORD", 0) == 1, code_lines: std::env::var("LINES").ok().and_then(|x| x.parse().ok()).unwrap_or(0), ..Lesson::default() };
     let trials = var("TRIALS", 400) as usize;
     let (ev, _) = live_lesson(&g, Task::Reading(trials), Physics::Varied, var("SEED", 90_000), 6, lesson);
     let copy = neurocomp::world::observe::copy(&ev);

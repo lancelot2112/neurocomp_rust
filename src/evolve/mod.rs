@@ -291,6 +291,8 @@ pub struct Lesson {
     /// reading: every token's glyph, sound and voice code in the first word of its channel
     /// (`World::one_word`)
     pub one_word: bool,
+    /// (with `one_word`) the lines of each code, 0 for the usual 16
+    pub code_lines: usize,
     /// the lights and the stroke at fixed places (`World::place_senses`)
     pub sense_place: bool,
     /// task selection (`Task::Mixed`): trials a block, and a cue for the block's task
@@ -346,7 +348,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, sense_place: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -421,7 +423,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.teacher_after = lesson.babble;
     w.sentence = lesson.sentence || sentences();
     if lesson.one_word {
-        w.one_word(p);
+        w.one_word(p, lesson.code_lines);
     }
     if lesson.motor_place {
         w.fix_motor();

@@ -11,7 +11,7 @@
 //! Scored on 24 worlds on echo (two tokens, all taught after the babbling half) and on copy and
 //! echo with eight tokens, the teacher saying six in eight (fade6), by the listener's lag, birth
 //! lag and gate lag (`ONLY=l,b,g`: one; `GLYPH_REPEAT=k`: glyph births copy H's sound k frames
-//! back; `ONE_WORD=1`: all codes in word 0). `cargo run --release --example partscheck -- runs/echo-wires/wire.txt`.
+//! back; `ONE_WORD=1`: all codes in word 0, `LINES=k` lines each; `GLYPH_WIRE=1`, `LGATE=0`: see below). `cargo run --release --example partscheck -- runs/echo-wires/wire.txt`.
 use neurocomp::evolve::tags::TagGenome;
 use neurocomp::evolve::{probe_all_in, Lesson, Physics};
 use neurocomp::world::observe::PROBES;
@@ -86,14 +86,20 @@ fn main() {
         set(&l, "pause_at", "0")
     };
                 let glyphs = pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("gate", "-".into()), ("repeat", if rep > 0 { "1".into() } else { "0".into() }), ("repeat_lag", rep.max(1).to_string())]);
+    // (`GLYPH_WIRE=1`: no glyph kernels; a wire copies the eye into H one word along, so a glyph
+    // in the eye's word 0 lands in H's word 1, beside its sound in word 0, inside one 128-bit tile
+    // of the listener; `LGATE=0`: the listener learns whenever it fires, not only while babbling)
+    let glyph_wire = std::env::var("GLYPH_WIRE").is_ok_and(|v| v == "1");
+    let glyphs = if glyph_wire { pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into()), ("cover", "0".into()), ("at", "0".into()), ("field", "3".into()), ("place", "1".into())]) } else { glyphs };
+    let listener = if std::env::var("LGATE").is_ok_and(|v| v == "0") { set(&listener, "gate", "-") } else { listener };
                 let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{chain}{babbler}\n{ear}\n{glyphs}\n{listener}\n");
                 let g = TagGenome::from_text(&g).unwrap_or_else(|x| panic!("{x}")).remove(0);
                 let score = |lesson: Lesson, p: usize, trials: usize| {
                     let s = probe_all_in(vec![g.clone()], trials, Physics::Varied, &worlds, 6, &[p], lesson);
                     s[0].probes.iter().map(|r| r[p] as i64).sum::<i64>() / worlds.len() as i64
                 };
-                let e2 = score(Lesson { tokens: 2, teach: 8, babble: 100, one_word, ..Lesson::default() }, echo, 200);
-                let f6 = Lesson { tokens: 8, teach: 6, babble: 200, one_word, ..Lesson::default() };
+                let e2 = score(Lesson { tokens: 2, teach: 8, babble: 100, one_word, code_lines: std::env::var("LINES").ok().and_then(|x| x.parse().ok()).unwrap_or(0), ..Lesson::default() }, echo, 200);
+                let f6 = Lesson { tokens: 8, teach: 6, babble: 200, one_word, code_lines: std::env::var("LINES").ok().and_then(|x| x.parse().ok()).unwrap_or(0), ..Lesson::default() };
                 let (c6, e6) = (score(f6.clone(), copy, 400), score(f6, echo, 400));
                 println!("  {lag} {birth} {gate}: {e2} | {c6}, {e6}");
             }

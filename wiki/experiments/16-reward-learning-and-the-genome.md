@@ -1189,3 +1189,42 @@ babbler's four kernels). Partscheck on 24 worlds, best row (listener lag, birth 
 (Rows whose echo2 is 2 to 8 never learn and are left out of the ranges.) The loop fix with every code
 in one word passes echo2's goal in one setting, the first hand-made genome to; on its own the fix
 does not, and glyph to sound (copy) stays near zero in every setting.
+
+### Sparse one-word codes and a glyph wire (partscheck `LINES=k`, `GLYPH_WIRE=1`, `LGATE=0`)
+
+Recording a lifetime with the loop fix and one-word codes: the eight glyph kernels are all born in
+the first ten steps, before the teacher speaks, and their outputs never change: seven write a
+random code, one the sound being babbled. A kernel's output is fixed at birth, so glyph to sound
+cannot be learned there. Two changes, both to the encoding:
+
+- **Codes sparser** (`Lesson::code_lines`, `LINES=k`): how crowded one word gets. The chance that
+  a random code of k lines of 64 shows at least half its lines inside the OR of m others:
+
+  | k | m = 1 | m = 2 | m = 3 | m = 4 |
+  |---|---|---|---|---|
+  | 4 | 2% | 7% | 14% | 22% |
+  | 6 | 1% | 7% | 17% | 30% |
+  | 8 | 1% | 8% | 24% | 43% |
+  | 12 | 1% | 17% | 52% | 79% |
+  | 16 | 1% | 38% | 84% | 98% |
+
+  With 16 lines (the world's usual), H holding the teacher's sound, the network's own and a third
+  is unreadable.
+- **A glyph wire, not glyph kernels** (`GLYPH_WIRE=1`): the eye copied into H one word along, so a
+  glyph (word 0 of the eye) lands in H's word 1, beside its sound in word 0, inside one 128-bit tile
+  of the listener; the pairing is left to the listener's own Hebbian input learning, the network's
+  native rule. `LGATE=0`: the listener learns whenever it fires, not only while babbling.
+
+Partscheck, 24 worlds, every code in word 0, best row (all at listener lag 1, birth lag 3, gate lag 2):
+
+| setting | echo2 echo (goal 150) | fade6 copy (goal 100) | fade6 echo |
+|---|---|---|---|
+| glyph wire, no loop fix | 110 | -10 | 9 |
+| glyph wire, LOOP=3, 16 lines | 180 | -1 | 85 |
+| glyph wire, LOOP=3, 8 lines | **300** | -13 | **136** |
+| glyph wire, LOOP=3, 6 lines | 208 | 5 | 63 |
+| glyph wire, LOOP=3, 16 lines, LGATE=0 | 207 | 6 | 50 |
+
+Echo is learned: echo2 at twice its goal, and echo with eight tokens near its goal 150 for the first
+time. Copy (say the glyph's token, the teacher silent) stays near zero in every setting (one
+recorded world reached 87): hearing and saying work, reading does not yet.

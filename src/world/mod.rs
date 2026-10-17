@@ -150,10 +150,10 @@ impl Effector {
         Self { codes: codes(n, rng), place: false }
     }
 
-    /// Redraw its codes in the first word of the channel (`World::one_word`).
-    fn one_word(&mut self, rng: &mut StdRng) {
+    /// Redraw its codes in the first word of the channel, `k` lines each (`World::one_word`).
+    fn one_word(&mut self, k: usize, rng: &mut StdRng) {
         let n = self.codes.len();
-        self.codes = one_word_codes(n, rng);
+        self.codes = one_word_codes(n, k, rng);
     }
 
     /// Make it a place code, the same in every lifetime, as a muscle is a labelled line:
@@ -361,9 +361,9 @@ fn codes(n: usize, rng: &mut StdRng) -> Vec<BitVector> {
     (0..n).map(|_| clustered_code(CH_BITS, ACTIVE, rng)).collect()
 }
 
-/// `n` codes of `ACTIVE` random lines, all in the first word of a channel.
-fn one_word_codes(n: usize, rng: &mut StdRng) -> Vec<BitVector> {
-    (0..n).map(|_| clustered_code(64, ACTIVE, rng)).map(|c| { let mut v = vec![0u64; CH_BITS / 64]; v[0] = c.as_words()[0]; BitVector::from_words(v) }).collect()
+/// `n` codes of `k` random lines, all in the first word of a channel.
+fn one_word_codes(n: usize, k: usize, rng: &mut StdRng) -> Vec<BitVector> {
+    (0..n).map(|_| clustered_code(64, k, rng)).map(|c| { let mut v = vec![0u64; CH_BITS / 64]; v[0] = c.as_words()[0]; BitVector::from_words(v) }).collect()
 }
 
 /// A topographic code: `k` random lines inside one random 64-bit word of a `bits`-wide vector.
@@ -489,15 +489,17 @@ impl World {
     }
 
     /// Tokens' glyphs, sounds and voice codes all in the first word of their channels (still drawn
-    /// afresh each lifetime, 16 random lines of 64, so two share about 4): a glyph, its sound and
-    /// its voice code then sit at the same place, and a topographic kernel can write one from the
-    /// other.
-    pub fn one_word(&mut self, physics: u64) {
+    /// afresh each lifetime), `k` random lines of 64 each (0: `ACTIVE`, 16, so two share about 4):
+    /// a glyph, its sound and its voice code then sit at the same place, and a topographic kernel
+    /// can write one from the other. Sparser codes crowd a word less: with 16 lines, a word holding
+    /// three codes shows half the lines of 84% of other random codes; with 4 to 6, 14 to 17%.
+    pub fn one_word(&mut self, physics: u64, k: usize) {
+        let k = if k == 0 { ACTIVE } else { k.min(64) };
         let mut rng = StdRng::seed_from_u64(physics ^ 0x0E0D);
         let n = self.glyphs.len();
-        self.glyphs = one_word_codes(n, &mut rng);
-        self.sounds = one_word_codes(n, &mut rng);
-        self.voice.one_word(&mut rng);
+        self.glyphs = one_word_codes(n, k, &mut rng);
+        self.sounds = one_word_codes(n, k, &mut rng);
+        self.voice.one_word(k, &mut rng);
     }
 
     pub fn mirror_sounds(&mut self, eighths: usize, physics: u64) {

@@ -42,9 +42,10 @@ pub fn explore() -> bool {
 
 /// Competition between populations for their destination (`set_write_compete`): at each
 /// destination, the kernels of the populations writing it compete for its words as kernels of
-/// one population compete for their input. Each step the populations into a destination run in
-/// the order of how well their best kernel matched the step before (the better first; ties, and
-/// wires and noise, keep the genome's order), and each word an earlier population's kernels wrote
+/// one population compete for their input. Each step the populations into a destination run
+/// strongest hold first: with pruning their grip (the input that already drives a muscle fibre
+/// most keeps taking it), without it how well their best kernel matched the step before; ties,
+/// and wires and noise, keep the genome's order. Each word an earlier population's kernels wrote
 /// this step is claimed: a kernel more than its overlap rule allows (half, by default) of whose
 /// output words are claimed is held down and learns anti-Hebbian. A word is a slot (a move or a
 /// token is a code inside one word), so one population writes each: the act is written by the
@@ -518,8 +519,9 @@ impl RuntimeNetwork {
         let mut paused: Vec<bool> = vec![false; edges.len()];
         let mut work = 0u64;
         // (competition) the order edges run in: the genome's, but the kernel populations into one
-        // destination take that destination's kernel slots best match (last step) first; and each
-        // destination's lines taken this step by kernels so far
+        // destination take that destination's kernel slots strongest hold first (with pruning: its
+        // grip, as the input that already drives a muscle fibre most takes it; else its best match
+        // last step), ties in the genome's order; and each destination's words claimed so far
         let compete = write_compete();
         let mut run: Vec<usize> = (0..edges.len()).collect();
         let mut taken: Vec<Vec<u64>> = Vec::new();
@@ -532,7 +534,8 @@ impl RuntimeNetwork {
             }
             for slots in by_dst.values() {
                 let mut who = slots.clone();
-                who.sort_by(|&a, &b| edges[b].share.cmp(&edges[a].share).then(a.cmp(&b)));
+                let hold = |e: &RuntimeEdgeGroup| if e.spec.grip > 0 { e.grip.unwrap_or(e.spec.grip) as usize } else { e.share };
+                who.sort_by(|&a, &b| hold(&edges[b]).cmp(&hold(&edges[a])).then(a.cmp(&b)));
                 for (k, &slot) in slots.iter().enumerate() {
                     run[slot] = who[k];
                 }

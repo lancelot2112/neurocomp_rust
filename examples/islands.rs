@@ -192,7 +192,8 @@
 //! tag space, near the ports they use: parts. A loop on one channel is free.
 //!
 //! `ISL_COMPETE=1`: populations compete for their destination. At each destination the
-//! populations writing it run best match first (their best kernel's share the step before), and
+//! populations writing it run strongest hold first (with `ISL_PRUNE` their grip, without it their
+//! best kernel's share the step before; ties in the genome's order), and
 //! each word an earlier population's kernels wrote this step is claimed: a kernel more than half
 //! (its overlap rule) of whose output words are claimed is held down and learns anti-Hebbian, as
 //! kernels of one population are where their inputs overlap. A move or a token is a code in one

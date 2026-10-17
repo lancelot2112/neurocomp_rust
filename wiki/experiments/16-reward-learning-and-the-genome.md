@@ -965,3 +965,12 @@ raise a subtask fell from 53 to 40 while lesions that cost one rose from 16 to 2
 interference, more populations carrying something. On the islands, which evolved without it,
 prediction fell from 170 to 132 and selection from 469 to 420 (21 of selection's 103 populations now
 matter, against 2).
+
+**Ordered by grip, not by match** (run 28). At a muscle fibre the inputs are not judged by how
+well they match anything: the one whose firing drives the fibre is protected and its active
+neighbours take ground from the silent (Balice-Gordon and Lichtman 1994: blocking part of a
+junction removes it only while the rest is active), inputs firing in step both stay, and the one
+holding more of the junction drives it more and gains more. So with pruning the populations into
+a destination take its words in the order of their grip (ties in the genome's order), not their
+best kernel's share: winning raises the grip, firing into a claimed word lowers it, and an input
+that keeps driving the word (bursts) gains fastest. Without pruning the order stays best match.

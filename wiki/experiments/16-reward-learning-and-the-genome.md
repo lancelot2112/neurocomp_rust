@@ -1009,6 +1009,13 @@ The wiring cost charges the collateral from the source end. Under competition a 
 only words no other population claimed this step, and claims them, so it cannot get round one
 writer a word. Run 29 is run 28 with branches (`runs/run29.cmd`), after run 28.
 
+**Run 29** (stopped at 535, `runs/islands29/README.md`): a fast start, every one of its 15 rung
+moves by generation 74 (run 28: 11 by 255), then none in 460 generations, every island on a rung no
+run has passed. Branches are kept where they pay and lost where they do not: 71% of selection's
+best populations branch (a new population has one a quarter of the time), 2-3% of the maze's and
+screen's; selection's cued mean is 315 (run 27: 385), short of 600. Branches give the network
+efference copies and side outputs, and evolution uses them, but they do not open the stuck rungs.
+
 From run 28 the op lines also count the contest, per 1000 steps of each island's probing: kernels
 held down by another population's claim, and populations that let go of their destination; and,
 with branches, how many of the best's populations branch.

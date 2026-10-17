@@ -171,6 +171,10 @@
 //! one of its kernels' thresholds moves by its own threshold times how full that vector was a
 //! frame ago, down when warm, up when cool. A new population has one one time in four.
 //!
+//! `ISL_STEPS=<rung>=<goal>+<goal>,...`: steps up to a rung. Before each rung of that name (on
+//! every ladder that has one) copies of it are put in, the same world and probes, with these
+//! goals in turn: `feel=100+200` makes feel100 > feel200 > feel. For rungs no run passes.
+//!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
 //! 3 steps after one. One circuit, from the affect port to the hand. The repeat rung needs two
@@ -703,6 +707,25 @@ fn main() {
                 st.probes = st.probes.iter().copied().filter(|&p| p != repeat && p != maze).chain([feel]).collect();
                 st.goal = vec![(feel, 300)];
                 isl.stages.insert(k, st);
+            }
+        }
+    }
+    // (`ISL_STEPS=rung=goal+goal,...`: steps up to a rung: copies of it put before it, the same
+    // world and probes, with lower goals, so a rung no run passes is climbed in parts)
+    if let Ok(spec) = std::env::var("ISL_STEPS") {
+        for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            let (name, goals) = part.split_once('=').expect("ISL_STEPS: rung=goal+goal");
+            let goals: Vec<i32> = goals.split('+').map(|g| g.parse().expect("ISL_STEPS: a goal")).collect();
+            for isl in islands.iter_mut() {
+                if let Some(k) = isl.stages.iter().position(|s| s.name == name) {
+                    let base = isl.stages[k].clone();
+                    for (j, &g) in goals.iter().enumerate() {
+                        let mut st = base.clone();
+                        st.name = format!("{name}{g}");
+                        st.goal = st.goal.iter().map(|&(p, _)| (p, g)).collect();
+                        isl.stages.insert(k + j, st);
+                    }
+                }
             }
         }
     }

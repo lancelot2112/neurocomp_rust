@@ -806,3 +806,21 @@ change its genome in a lifetime, so the only size it could choose is how it is j
 and gates already let it choose how much of itself runs. Run 27 is run 26 with thrift back on and
 relaxed while stuck (`runs/run27.cmd`; `runs/run27-base21.cmd` if the chain falls back), after
 run 26.
+
+## Steps up to feel (run 25)
+
+The feel rung (click in the 3 steps after a touch stroke, scored as the click rate there less
+the click rate elsewhere, per 1024; goal 300) sits before every repeat rung: switching's third,
+shapes' sixth and the maze's first. In runs 16 to 24 no island passed it: the best 10-generation
+means were 54 to 89 for switching, 75 to 93 for the maze and up to 87 for shapes, a third of the
+goal, where the rung before it (tell) was passed in every run. So the maze has never climbed, and
+switching and shapes stop there. `ISL_STEPS=<rung>=<goal>+<goal>` puts copies of a rung before it,
+the same world and probes with lower goals; `feel=100+200` makes feel100 > feel200 > feel on all
+three ladders. Only the harness's ladder changes. With passed rungs kept (run 24's
+`ISL_KEEP_RUNGS`), a network on feel200 is still selected on feel100. Run 25 is run 24 with inhibit
+inputs, the overlap gene and these steps; runs 26 and 27 keep them.
+
+Other rungs no run has passed, by the same count (best 10-generation mean against the goal):
+reading's echo2 (25 of 150: far off, and the signal measurement found no gradient there, so a
+lower goal would not help; it needs an easier task first), screen's glow (170 of 300), selection's
+cued (531 of 600) and prediction's cycle1 (172 of 200, passed once).

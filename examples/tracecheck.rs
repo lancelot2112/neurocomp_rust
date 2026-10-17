@@ -82,8 +82,27 @@ fn main() {
     let babbler = pop(1, &[("from", "128".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "4".into()), ("tonic", "2".into()), ("branch", e.to_string()), ("branch_at", "0".into()), ("pause", "56:0".into()), ("pause_at", "1".into()), ("gate", "-".into())]);
     let ear = pop(2, &[("from", "56".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into())]);
     let listener = pop(3, &[("from", h.to_string()), ("from_port", "0".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", lag.to_string()), ("birth_lag", birth.to_string()), ("gate", format!("{e}:1")), ("gate_lag", gate.to_string()), ("gate_at", "0".into())]);
+    // (`LOOP=d`: the listener does not answer its own voice: its fired kernels branch into an
+    // efference channel F (tag 200), wires carry it down a chain of d channels (200, 201, ...),
+    // and it is paused while the last had lines on a frame ago; its voice comes back about three
+    // steps after it is made)
+    let looped: u8 = std::env::var("LOOP").ok().and_then(|x| x.parse().ok()).unwrap_or(0);
+    let mut chain = String::new();
+    let listener = if looped == 0 { listener } else {
+        for k in 0..looped {
+            chain += &format!("channel {} 3 0\n", 200 + k);
+        }
+        for k in 1..looped {
+            chain += &pop(10 + k as u32, &[("from", (199 + k).to_string()), ("from_port", "0".into()), ("to", (200 + k).to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into())]);
+            chain.push('\n');
+        }
+        let l = set(&listener, "branch", "200");
+        let l = set(&l, "branch_at", "0");
+        let l = set(&l, "pause", &format!("{}:0", 199 + looped));
+        set(&l, "pause_at", "0")
+    };
     let glyphs = pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("gate", "-".into()), ("repeat", "0".into())]);
-    let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{babbler}\n{ear}\n{glyphs}\n{listener}\n");
+    let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{chain}{babbler}\n{ear}\n{glyphs}\n{listener}\n");
     let g = TagGenome::from_text(&g).unwrap_or_else(|x| panic!("{x}")).remove(0);
     println!("{}", g.describe());
     let every = var("EVERY", 500) as usize;

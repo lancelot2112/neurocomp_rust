@@ -1166,3 +1166,26 @@ and `examples/copycheck` are gone: the output's teacher is the muscle's response
 (`birth_lag`), and copy learning added nothing measurable on any check (echo2 at best 19, glyph
 kernels never reaching their sound). Birth lags' mutation case moves from 55 to 54. Partscheck's
 best setting is unchanged (126 | -16, 5).
+
+### The listener not answering its own voice (partscheck and tracecheck `LOOP=d`)
+
+The voice loop (listener hears the network's own voice, answers, hears that, ...) built from
+existing parts: the listener's fired kernels branch into an efference channel F, wires carry F down
+a chain of d channels, and the listener is paused while the last had lines on a frame ago (a pause
+looks one frame back; the voice comes back about three steps after it is made). In one recorded
+lifetime the voice is silent on about 200 of 400 steps (not 40) and the babbler's efference copy is
+on two to three times as often; still only 3 or 4 of the 8 voice codes are ever said (the
+babbler's four kernels). Partscheck on 24 worlds, best row (listener lag, birth lag, gate lag):
+
+| setting | echo2 echo (goal 150) | fade6 copy (goal 100) | fade6 echo |
+|---|---|---|---|
+| no fix | 126 (1 2 1) | -18 to 0 | 0 to 16 |
+| LOOP=2 | 107 (1 3 2) | -17 to 3 | -19 to 26 |
+| LOOP=3 | 103 (1 2 1) | -21 to 20 | -16 to 74 |
+| LOOP=3, 16 babblers | 96 | -18 to 11 | -13 to 43 |
+| ONE_WORD=1, no fix | 100 (2 2 1) | -16 to 0 | -10 to 10 |
+| LOOP=3, ONE_WORD=1 | **156** (1 3 2) | -18 to 20 | -16 to 44 |
+
+(Rows whose echo2 is 2 to 8 never learn and are left out of the ranges.) The loop fix with every code
+in one word passes echo2's goal in one setting, the first hand-made genome to; on its own the fix
+does not, and glyph to sound (copy) stays near zero in every setting.

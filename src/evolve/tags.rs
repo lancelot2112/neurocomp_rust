@@ -1254,6 +1254,26 @@ impl TagGenome {
         self.pops().count()
     }
 
+    /// The wiring length (`evolve::set_wire_cost`): for each population, the Hamming distance
+    /// between the tags of what its two ends resolve to: the nearest declared channel, or for an end
+    /// on a port the nearest port's own tag (the senses at 0x00 and the act at 0xFF, the eye, ear,
+    /// voice, hand ... between them), summed. Ports and channels share one tag space for this, so
+    /// the ports sit at fixed places in it and a channel's tag says where it lies among them; a
+    /// population from a channel into itself adds nothing.
+    pub fn wire_length(&self) -> usize {
+        let tags: Vec<u8> = self.tokens.iter().filter_map(|t| if let Token::Channel { tag, .. } = t { Some(*tag) } else { None }).collect();
+        let near = |set: &[u8], x: u8| set.iter().copied().min_by_key(|&t| (t ^ x).count_ones()).unwrap_or(x);
+        let inputs: Vec<u8> = INPUTS.iter().map(|x| x.0).collect();
+        let outputs: Vec<u8> = OUTPUTS.iter().map(|x| x.0).collect();
+        self.pops()
+            .map(|p| {
+                let a = if p.from_port { if p.from_output { near(&outputs, p.from) } else { near(&inputs, p.from) } } else { near(&tags, p.from) };
+                let b = if p.to_port { if p.to_input { near(&inputs, p.to) } else { near(&outputs, p.to) } } else { near(&tags, p.to) };
+                (a ^ b).count_ones() as usize
+            })
+            .sum()
+    }
+
     /// How many channels are declared.
     pub fn channels(&self) -> usize {
         self.tokens.iter().filter(|t| matches!(t, Token::Channel { .. })).count()
@@ -1919,6 +1939,10 @@ impl Evolvable for TagGenome {
 
     fn size(&self) -> usize {
         self.tokens.len()
+    }
+
+    fn wire_length(&self) -> usize {
+        TagGenome::wire_length(self)
     }
 
     /// Half the time a plasmid: one whole circuit of the other genome, made private and appended

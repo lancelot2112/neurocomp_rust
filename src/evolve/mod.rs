@@ -79,6 +79,10 @@ pub trait Evolvable: Clone + Send + Sync {
     fn mutate(&self, rng: &mut StdRng) -> Self;
     /// A size (reported).
     fn size(&self) -> usize;
+    /// The length of its wiring, for the wiring cost (`set_wire_cost`): by default none.
+    fn wire_length(&self) -> usize {
+        0
+    }
     /// What its lifetimes found (`Note`s, summed over worlds), written into the genome: by default
     /// nothing (the tag grammar's epigenetic marks and explored connections).
     fn inherit(&mut self, _notes: &[Note]) {}
@@ -447,7 +451,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     let (ration, food) = (lesson.ration as i64, lesson.food as i64);
     let mut store = ration.saturating_mul(64);
     // (`set_carry_energy`) what carrying the genome costs each step, from the same store
-    let upkeep = if carry_energy() { (carry() as i64).saturating_mul(g.size() as i64) } else { 0 };
+    let upkeep = if carry_energy() { (carry() as i64).saturating_mul(g.size() as i64).saturating_add((wire_cost() as i64).saturating_mul(g.wire_length() as i64)) } else { 0 };
     let mut block = 0usize;
     loop {
         // (a mixed lifetime: the next block once one ends)
@@ -799,6 +803,22 @@ pub fn set_carry_energy(on: bool) {
     CARRY_ENERGY.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// The wiring cost (`set_wire_cost`): work per step charged for each unit of the genome's wiring
+/// length (`Evolvable::wire_length`: for the tag grammar, how far apart in tag space the two ends
+/// of each population are, ports included), charged as the carrying cost is (added to the work, or paid from
+/// the energy store with `set_carry_energy`). A link between channels with near tags is cheap and
+/// one between distant tags dear, so circuits that work together are pulled close in tag space
+/// and joined to the rest by few long links: parts. 0: none.
+static WIRE_COST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn set_wire_cost(per_bit: u64) {
+    WIRE_COST.store(per_bit, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn wire_cost() -> u64 {
+    WIRE_COST.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn carry_energy() -> bool {
     CARRY_ENERGY.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -849,7 +869,7 @@ pub fn probe_all_in<G: Evolvable>(population: Vec<G>, trials: usize, physics: Ph
         .enumerate()
         .map(|(i, g)| {
             let r = &results[i * seeds.len()..(i + 1) * seeds.len()];
-            let cost = if carry_energy() { 0 } else { carry * g.size() as u64 };
+            let cost = if carry_energy() { 0 } else { carry * g.size() as u64 + wire_cost() * g.wire_length() as u64 };
             let works: Vec<u64> = r.iter().map(|x| x.1.saturating_add(cost)).collect();
             let work = works.iter().sum::<u64>() / seeds.len().max(1) as u64;
             let found = merge_notes(notes[i * seeds.len()..(i + 1) * seeds.len()].iter().flatten().copied());

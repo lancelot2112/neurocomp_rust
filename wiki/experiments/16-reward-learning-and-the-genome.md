@@ -903,3 +903,37 @@ were kept unevenly (82% of reading's populations at the end, 49% of the generali
 elsewhere); the overlap gene stayed at its default nearly everywhere. Three changes in one run, so
 which one cost recall, shapes and selection is open; a run with the new rungs and without inhibit
 inputs would tell.
+
+## A lesion map (after run 26), and a wiring cost (run 28)
+
+How brain-like is a network's inside: does it have parts, each for one task? `ISL_LESION=n` (with
+`ISL_RESUME`) scores each island's best genome on n fresh worlds on each of its subtasks, then
+again with each population taken out in turn (on the same worlds, so the comparison is paired),
+and reports each subtask's loss as a share of its rung's goal. On run 26's final genomes, 24 worlds
+(`runs/islands26/lesion.txt`):
+
+- **The generalist has no inside.** 26 of its 29 populations read the whole senses (S) and write
+  the whole act (A) directly; the other three are wires through a private channel that matter to
+  nothing. There is no internal channel for a part to live in.
+- 21 of the 29 matter (a loss of 5% of a goal or more over the nine subtasks). Their loss falls 45%
+  on one subtask on average, against 11% if spread evenly: some concentration, all of it on
+  switching's respond and tell (14 populations) and prediction (7). None is a part for selection,
+  reading or recall, whose scores no single population carries.
+- Many losses are gains: taking one of the S-to-A populations out raises switching's respond by up
+  to 121 (#1398, eye to hand) while costing prediction and screen. The populations are not parts
+  but competitors for the same act: interference.
+- On the islands, few populations carry a task: selection's best has 103 populations and 2 matter;
+  prediction's 19 and 3 matter.
+
+So specialization first needs somewhere to happen. **The wiring cost** (`ISL_WIRE_COST=k`) charges
+each population, each step, k for each bit of Hamming distance between the tags of its two ends,
+as the carrying cost is charged. A channel's end is its tag; a port's end is the port's own tag, so
+ports sit at fixed places in the one 8-bit tag space (the senses at 0x00, the act at 0xFF, the eye
+0x07, ear 0x38, touch 0xC1, affect 0xE0, the self channel 0x80, voice 0x1F, hand 0xF8). A loop on one
+channel is free, a link between neighbouring tags cheap, and a direct whole-senses-to-whole-act
+population pays the most (8 bits). Circuits that work together are pulled into one part of tag
+space, near the ports they use, and joined to the rest by few long links: the connection cost that
+makes evolved networks modular (Clune, Mouret and Lipson 2013). At k = 1 a population costs up to 8
+a step against a carrying cost of 4 a token; the generalist's 29 populations would pay about 232,
+against its 2,850 of work. Run 28 is run 26 (size classes, thrift on, not relaxed) with
+`ISL_WIRE_COST=1` (`runs/run28.cmd`), after run 27; the op lines report each best's wiring in bits.

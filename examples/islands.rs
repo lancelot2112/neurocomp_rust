@@ -185,6 +185,18 @@
 //! feel nothing says which hand code is the click, and moving at random after a stroke scores
 //! about 204 (`examples/feelcheck.rs`); 160 is passed by that.
 //!
+//! `ISL_WIRE_COST=<k>`: the wiring cost. Each step a genome is charged k for each bit of Hamming
+//! distance between the tags of the two ends of each of its populations (a channel's tag, or a
+//! port's own: ports and channels share one tag space for this), as the carrying cost is charged.
+//! Near ends are cheap and far ones dear, so circuits that work together gather in one part of
+//! tag space, near the ports they use: parts. A loop on one channel is free.
+//!
+//! `ISL_LESION=n` (with `ISL_RESUME`): measure only. Each island's best genome is scored on n fresh
+//! worlds on each of its subtasks (the generalist: every other island's rung), then with each of
+//! its populations taken out in turn: the loss on each subtask as a share of its rung's goal, and
+//! how much of each population's loss falls on one subtask (near 1: a part for that subtask; near
+//! 1/subtasks: tangled).
+//!
 //! `ISL_STEPS=<rung>=<goal>+<goal>,...`: steps up to a rung. Before each rung of that name (on
 //! every ladder that has one) copies of it are put in, the same world and probes, with these
 //! goals in turn: `feel=100+200` makes feel-100 > feel-200 > feel. For rungs no run passes.
@@ -636,6 +648,7 @@ fn main() {
     neurocomp::evolve::set_keep_rungs(env("ISL_KEEP_RUNGS", 0u8) == 1);
     neurocomp::evolve::set_size_classes(env("ISL_SIZE_CLASSES", 0u8) == 1);
     neurocomp::evolve::set_thrift_relax(env("ISL_THRIFT_RELAX", 0usize));
+    neurocomp::evolve::set_wire_cost(env("ISL_WIRE_COST", 0u64));
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
     // lesson is made)
     let ration: u64 = env("ISL_RATION", 0);
@@ -786,7 +799,7 @@ fn main() {
         }
     }
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
-        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" } + if neurocomp::evolve::carry_energy() { ", carrying paid as energy true" } else { "" } + if neurocomp::evolve::elite_pass() { ", goals judged on the elite true" } else { "" } + if neurocomp::evolve::partial() { ", partial credit true" } else { "" } + if neurocomp::evolve::keep_rungs() { ", passed rungs kept true" } else { "" } + if neurocomp::evolve::tags::inhibit_inputs() { ", inhibit inputs true" } else { "" } + if neurocomp::evolve::tags::overlap_genes() { ", overlap genes true" } else { "" } + if neurocomp::evolve::size_classes() { ", size classes true" } else { "" } + &if neurocomp::evolve::thrift_relax() > 0 { format!(", thrift relaxed while stuck {}", neurocomp::evolve::thrift_relax()) } else { String::new() });
+        islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" } + if neurocomp::evolve::carry_energy() { ", carrying paid as energy true" } else { "" } + if neurocomp::evolve::elite_pass() { ", goals judged on the elite true" } else { "" } + if neurocomp::evolve::partial() { ", partial credit true" } else { "" } + if neurocomp::evolve::keep_rungs() { ", passed rungs kept true" } else { "" } + if neurocomp::evolve::tags::inhibit_inputs() { ", inhibit inputs true" } else { "" } + if neurocomp::evolve::tags::overlap_genes() { ", overlap genes true" } else { "" } + if neurocomp::evolve::size_classes() { ", size classes true" } else { "" } + &if neurocomp::evolve::thrift_relax() > 0 { format!(", thrift relaxed while stuck {}", neurocomp::evolve::thrift_relax()) } else { String::new() } + &if neurocomp::evolve::wire_cost() > 0 { format!(", wiring cost {} a bit of tag distance", neurocomp::evolve::wire_cost()) } else { String::new() });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
     for isl in islands.iter().filter(|i| i.stages.len() > 1) {
         println!("{} climbs: {}", isl.name, isl.stages.iter().map(|s| s.name.as_str()).collect::<Vec<_>>().join(" > "));
@@ -825,6 +838,72 @@ fn main() {
                 println!("  {:<10} {:<8} {} (goal {goal}), {} genomes: mean {grand:.0}, best {best:.0}; between {:.1}; within {:.1}; noise {:.1}; icc {icc:.2}; split-half r {r:.2}; epsilon {eps:.1}{}",
                     isl.name, st.name, PROBES[p], v.len(), sd(&means), within.sqrt(), (within / signal as f64).sqrt(), if k == stages[i] { "" } else { "  (the rung below)" });
             }
+        }
+        return;
+    }
+    // (`ISL_LESION=n`, with `ISL_RESUME`: measure only, nothing evolves. Each island's best genome
+    // as resumed is scored on n fresh worlds on each of its subtasks, then again with each of its
+    // populations taken out in turn, on the same worlds: what each subtask loses without it.)
+    let lesion: u64 = env("ISL_LESION", 0);
+    if lesion > 0 {
+        let worlds: Vec<u64> = (60_000..60_000 + lesion).collect();
+        println!("lesion map on {lesion} fresh worlds: each island's best genome scored on its subtasks, then with each population taken out; a loss is the subtask's mean less the lesioned mean, as a share of that rung's goal");
+        for (i, isl) in islands.iter().enumerate() {
+            let Some(best) = start[i].first() else { continue };
+            // the subtasks: an island's rung's probes in its world; at the frontier, each other
+            // island's rung's probes in its world (each probe once), with that rung's goal
+            let mut groups: Vec<(String, Vec<usize>, Lesson, i32)> = Vec::new();
+            let mut seen: Vec<usize> = Vec::new();
+            for (j, other) in islands.iter().enumerate() {
+                if other.frontier || (!isl.frontier && j != i) || (isl.frontier && j == i) {
+                    continue;
+                }
+                let st = &other.stages[stages[j]];
+                let new: Vec<usize> = st.probes.iter().copied().filter(|p| !seen.contains(p)).collect();
+                if new.is_empty() {
+                    continue;
+                }
+                seen.extend(&new);
+                let goal = st.goal.first().map_or(300, |g| g.1).max(50);
+                groups.push((format!("{} {}", other.name, st.name), new, st.lesson.clone(), goal));
+            }
+            let score = |g: &TagGenome| -> Vec<f64> {
+                let mut out = Vec::new();
+                for (_, probes, lesson, _) in &groups {
+                    let s = probe_all_in(vec![g.clone()], trials, Physics::Varied, &worlds, gap, probes, lesson.clone());
+                    for &p in probes {
+                        out.push(s[0].probes.iter().map(|r| r[p] as f64).sum::<f64>() / worlds.len() as f64);
+                    }
+                }
+                out
+            };
+            let names: Vec<String> = groups.iter().flat_map(|(n, probes, _, _)| probes.iter().map(move |&p| format!("{n}:{}", &PROBES[p][..PROBES[p].len().min(6)]))).collect();
+            let goals: Vec<f64> = groups.iter().flat_map(|(_, probes, _, goal)| probes.iter().map(move |_| *goal as f64)).collect();
+            let base = score(best);
+            let (_, edges, _) = best.wiring();
+            let label = |id: u32| edges.iter().find(|e| e.0 == id).map_or(String::new(), |e| format!("{}->{} {}{}", e.1, e.2, e.3, if e.4 { " wire" } else { "" }));
+            println!("  {} (best genome, {} populations); subtasks and their means: {}", isl.name, best.populations(), names.iter().zip(&base).map(|(n, b)| format!("{n} {b:.0}")).collect::<Vec<_>>().join(", "));
+            let mut shares = Vec::new();
+            let mut tops = vec![0usize; names.len()];
+            let mut mattering = 0usize;
+            for (k, t) in best.tokens.iter().enumerate() {
+                let Token::Pop(p) = t else { continue };
+                let mut g = best.clone();
+                g.tokens.remove(k);
+                let les = score(&g);
+                let loss: Vec<f64> = base.iter().zip(&les).zip(&goals).map(|((b, l), goal)| (b - l) / goal).collect();
+                let total: f64 = loss.iter().map(|x| x.abs()).sum();
+                let (top, &most) = loss.iter().enumerate().max_by(|a, b| a.1.abs().partial_cmp(&b.1.abs()).unwrap()).unwrap_or((0, &0.0));
+                let matters = total >= 0.05;
+                if matters {
+                    mattering += 1;
+                    shares.push(most.abs() / total);
+                    tops[top] += 1;
+                }
+                println!("    #{:<6} {:<34} {}{}", p.id, label(p.id), loss.iter().map(|x| format!("{:>6.2}", x)).collect::<Vec<_>>().join(""), if matters { format!("   top {} ({:.0}% of its loss)", names[top], 100.0 * most.abs() / total) } else { "   (matters little)".into() });
+            }
+            let mean_share = if shares.is_empty() { 0.0 } else { shares.iter().sum::<f64>() / shares.len() as f64 };
+            println!("  {}: {mattering} of {} populations matter (a loss of 5% of a goal or more in all); their mean share on their top subtask {:.2} (spread evenly over {} subtasks it would be {:.2}); populations by top subtask: {}", isl.name, best.populations(), mean_share, names.len(), 1.0 / names.len().max(1) as f64, names.iter().zip(&tops).filter(|(_, c)| **c > 0).map(|(n, c)| format!("{n} {c}")).collect::<Vec<_>>().join(", "));
         }
         return;
     }
@@ -1069,7 +1148,7 @@ fn main() {
                     format!("; sizes 1-3:{} 4-15:{} 16-63:{} 64-255:{} 256+:{}", c[0], c[1], c[2], c[3], c[4])
                 } else {
                     String::new()
-                };
+                } + &if neurocomp::evolve::wire_cost() > 0 { format!("; wiring {} bits", best.wire_length()) } else { String::new() };
                 println!("      {:<11}{}{sizes}  (the elite's ops; its best's loops)", "", ops_and_loops(&r.ranked[i][..elite.min(r.ranked[i].len())]));
             }
         }

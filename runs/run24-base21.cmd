@@ -52,5 +52,6 @@ set ISL_KEEP_RUNGS=1
 set ISL_LIVES=24
 set ISL_HOLD=1
 set ISL_CHECKPOINT=runs/islands24/checkpoint.txt
+set ISL_RUNG_LOG=runs/islands24/rungs.txt
 set ISL_LOG=runs/islands24/plasmids.txt
 target\release\examples\islands.exe >> runs\islands24\log.txt 2>&1

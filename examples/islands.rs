@@ -151,6 +151,10 @@
 //! scored on one rung it passed (drawn at random, in that rung's world), and those scores join its
 //! selection cases; the rung's goal is still judged on the current rung alone.
 //!
+//! `ISL_RUNG_LOG=<file>`: each time an island passes a rung, its best genome is appended to the
+//! file (headed `island <name> generation <g> stage <s> passed <rung>`), so the network that passed
+//! each rung is kept. Only a record: it changes nothing in the run.
+//!
 //! `ISL_HEAT=1`: heat inputs. A population may carry one (a channel or a port): each step every
 //! one of its kernels' thresholds moves by its own threshold times how full that vector was a
 //! frame ago, down when warm, up when cool. A new population has one one time in four.
@@ -918,6 +922,13 @@ fn main() {
         for (i, isl) in islands.iter().enumerate() {
             if r.stage[i] != was[i] {
                 println!("{g:>4}  {} moves to stage {} ({}): goal met", isl.name, r.stage[i], isl.stages[r.stage[i]].name);
+                // (`ISL_RUNG_LOG`) the best genome that passed, kept as it was when it passed
+                if let Ok(path) = std::env::var("ISL_RUNG_LOG") {
+                    if let (Ok(mut f), Some(best)) = (std::fs::OpenOptions::new().create(true).append(true).open(&path), r.ranked[i].first()) {
+                        use std::io::Write;
+                        let _ = write!(f, "island {} generation {g} stage {} passed {}\n{}", isl.name, r.stage[i], isl.stages[was[i]].name, best.to_text());
+                    }
+                }
                 was[i] = r.stage[i];
             }
         }

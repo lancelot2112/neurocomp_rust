@@ -51,5 +51,6 @@ set ISL_OVERLAP=1
 set ISL_LIVES=24
 set ISL_HOLD=1
 set ISL_CHECKPOINT=runs/islands25/checkpoint.txt
+set ISL_RUNG_LOG=runs/islands25/rungs.txt
 set ISL_LOG=runs/islands25/plasmids.txt
 target\release\examples\islands.exe >> runs\islands25\log.txt 2>&1

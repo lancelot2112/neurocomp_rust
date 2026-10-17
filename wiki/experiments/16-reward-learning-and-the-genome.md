@@ -1047,3 +1047,28 @@ With the motor side as labelled lines a single wire passes respond and tell (the
 click's word in the lifetimes where the light's random word happens to be the right one, often
 enough), and scores 97 on feel; with the stimuli placed too, those rungs become innate reflexes
 (tell 1024, feel 389). What a light, glyph or sound means is still drawn each lifetime either way.
+
+## Learning what to write: copy learning of outputs (a check, negative so far)
+
+No kernel learns what it writes, only when it fires (output learning moved only cancelling
+kernels' lines), so a network can say only the token codes its kernels were born with, and cannot
+learn which voice code makes the sound it hears: what echo2 needs, and what an infant learns by
+babbling. `ISL_OUT_COPY=1` adds a gene `out_copy` (0 off, k a frame offset): each kernel that fires
+moves one output line (chance 2^-out_learn a line) toward what its destination held `read_back +
+k - 1` frames ago, when what it read came in; such a population's starting and born kernels into a
+port get outputs spanning the whole port, so their lines can move to any code there.
+`examples/copycheck.rs` scores a hand-made pair on echo2 (two tokens, codes drawn each lifetime,
+sound and voice unrelated; 24 worlds): a babbler (self channel to voice, firing one step in four)
+and a listener (ear to voice, growing kernels on what it hears, with copy learning):
+
+| | teacher says 8 in 8 | 4 in 8 | 2 in 8 |
+|---|---|---|---|
+| no copy learning, 200 tokens | 9 | -1 | 5 |
+| best copy offset, 200 tokens | 19 (offset 3) | 3 | 9 |
+| best copy offset, 800 tokens | 1 | 1 | 0 |
+
+Echo2's goal is 150; nothing reaches it, and longer lifetimes wash it out. Why, as far as the check
+shows: what the voice held includes the listener's own writes, so it mostly copies itself; its
+kernels are born only when a move is being made, so on the babbler's random token; and the ear
+hears the teacher and one's own voice at once, so a heard sound does not say which voice code made
+it. The rule stays off by default.

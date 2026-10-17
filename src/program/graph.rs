@@ -249,6 +249,12 @@ pub struct EdgeSpec {
     /// the kernels that fire also write their outputs into, at the same place (wrapping), by OR.
     /// None: none
     pub branch: Option<(usize, Option<(usize, usize)>)>,
+    /// (`evolve::tags::set_out_copy`) copy learning of outputs: 0 none; k > 0, each kernel that
+    /// fires moves one output line (chance 2^-out_learn a line) toward what its destination held
+    /// `read_back + k - 1` frames ago (when what it read came in, give or take): it learns to
+    /// write what was being written when its input pattern arrived. Its starting output spans the
+    /// whole of its port, so it can move to any code there.
+    pub out_copy: u8,
 }
 
 impl EdgeSpec {
@@ -306,6 +312,7 @@ impl EdgeSpec {
             inhibit_quarters: 2,
             grip: 0,
             branch: None,
+            out_copy: 0,
         }
     }
 }

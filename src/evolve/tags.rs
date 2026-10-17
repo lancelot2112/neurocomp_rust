@@ -203,6 +203,9 @@ pub struct Pop {
     /// inhibitory partner, a second target driven by the same decision. A wire has none.
     pub branch: Option<u8>,
     pub branch_at: u8,
+    /// (`set_out_copy`) copy learning of its kernels' outputs (`EdgeSpec::out_copy`): 0 none, k a
+    /// frame offset (1 to 4). A wire has none.
+    pub out_copy: u8,
     /// (`set_overlap_genes`) how much of a kernel's mask taken lines (a better-matched kernel's,
     /// or an inhibit input's) must cover to hold it down, in quarters: more than this many (1 to
     /// 4; 2, more than half, as without the gene; 4: never held down by overlap)
@@ -226,7 +229,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, branch: None, branch_at: 0, inhibit_quarters: 2, grip: 16, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, branch: None, branch_at: 0, out_copy: 0, inhibit_quarters: 2, grip: 16, hint: None,
         }
     }
 
@@ -432,6 +435,22 @@ pub fn set_branches(on: bool) {
 
 pub fn branches() -> bool {
     BRANCHES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Copy learning of outputs (`Pop::out_copy`): a population's kernels may learn what to write,
+/// not only when to fire: each that fires moves one output line toward what its destination held
+/// when its input came in (`EdgeSpec::out_copy`). A network that babbles and hears itself can so
+/// learn which voice code makes which sound, and say the sound it hears: imitation. A new
+/// population has it one time in four; a property turns its frame offset (0 off, 1 to 4). Off by
+/// default.
+static OUT_COPY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_out_copy(on: bool) {
+    OUT_COPY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn out_copy() -> bool {
+    OUT_COPY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The overlap rule as a gene (`set_overlap_genes`): each population's `inhibit_quarters` sets
@@ -775,6 +794,10 @@ impl TagGenome {
             let lag = (p.lag as usize).max(1);
             let span = (p.span as usize).max(1);
             depth[a.node] = depth[a.node].max(lag + span - 1);
+            // (copy learning) its destination keeps the frames it learns toward
+            if out_copy() && p.out_copy > 0 && !p.wire {
+                depth[b.node] = depth[b.node].max(lag + p.out_copy as usize);
+            }
             if p.repeat {
                 depth[a.node] = depth[a.node].max(lag + p.repeat_lag as usize + 1);
                 depth[b.node] = depth[b.node].max(p.repeat_lag as usize);
@@ -853,6 +876,7 @@ impl TagGenome {
                 heat: p.heat.zip(heat_at).map(|((_, warm), h)| (h.node, window_of(Some(h)), warm)),
                 inhibitor: inhibitor_at.map(|h| (h.node, window_of(Some(h)))),
                 branch: branch_at.map(|h| (h.node, window_of(Some(h)))),
+                out_copy: if out_copy() && !p.wire { p.out_copy.min(4) } else { 0 },
                 inhibit_quarters: if overlap_genes() { p.inhibit_quarters.clamp(1, 4) } else { 2 },
                 grip: if crate::program::neurocomp::prune() { p.grip.max(1) } else { 0 },
                 hint_low: if hint_band() { p.hint_low.min(p.hit_quarters.saturating_sub(1)).max(1) } else { 0 },
@@ -1200,6 +1224,9 @@ impl TagGenome {
                     if let Some(t) = p.branch {
                         out.insert_str(out.len() - 1, &format!(" branch={t} branch_at={}", p.branch_at));
                     }
+                    if p.out_copy > 0 {
+                        out.insert_str(out.len() - 1, &format!(" out_copy={}", p.out_copy));
+                    }
                     if let Some(t) = p.inhibitor {
                         out.insert_str(out.len() - 1, &format!(" inhibitor={t} inhibitor_at={}", p.inhibitor_at));
                     }
@@ -1278,6 +1305,7 @@ impl TagGenome {
                         inhibitor_at: kv.get("inhibitor_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         branch: kv.get("branch").and_then(|x| x.parse().ok()),
                         branch_at: kv.get("branch_at").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        out_copy: kv.get("out_copy").and_then(|x| x.parse().ok()).unwrap_or(0),
                         inhibit_quarters: kv.get("inhibit_quarters").and_then(|x| x.parse().ok()).unwrap_or(2),
                         grip: kv.get("grip").and_then(|x| x.parse().ok()).unwrap_or(16),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
@@ -1429,6 +1457,10 @@ impl TagGenome {
         }
         // (with `set_inhibit_inputs`) an inhibit input one time in four, on a channel or (with
         // port gates) a port, a third each
+        // (with `set_out_copy`) copy learning of outputs one time in four, at an offset of 1 to 2
+        if out_copy() && rng.gen_range(0..4) == 0 {
+            p.out_copy = rng.gen_range(1..=2);
+        }
         // (with `set_branches`) a branch one time in four, on a channel or an output port, half each
         if branches() && rng.gen_range(0..4) == 0 {
             p.branch = Some(rng.r#gen());
@@ -1558,6 +1590,12 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
     let motor = |r: &mut StdRng| {
         let p = mine.choose(r).unwrap();
         let w = p.as_words().iter().position(|&x| x != 0).unwrap_or(0);
+        if sp.out_copy > 0 && hi > lo {
+            // (copy learning) its output spans the port, so its lines can move to any code there
+            let mut v = vec![0u64; hi - lo];
+            v[w - lo] = p.as_words()[w];
+            return (BitVector::from_words(v), lo, KernelOp::Or);
+        }
         (BitVector::from_words(vec![p.as_words()[w]]), w, KernelOp::Or)
     };
     let kernels = (0..sp.start_kernels)
@@ -1894,7 +1932,7 @@ impl Evolvable for TagGenome {
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if branches() { 54 } else if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if out_copy() { 55 } else if branches() { 54 } else if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -1976,6 +2014,7 @@ impl Evolvable for TagGenome {
                         51 if crate::program::neurocomp::prune() => p.grip = if up { p.grip.saturating_mul(2).min(128) } else { (p.grip / 2).max(1) },
                         52 if branches() => p.branch = match p.branch { Some(t) => if rng.gen_bool(0.3) { None } else { Some(t ^ bit) }, None => Some(rng.r#gen()) },
                         53 if branches() => p.branch_at = if p.branch_at == 2 { 0 } else { 2 },
+                        54 if out_copy() => p.out_copy = step(p.out_copy, 0, 4),
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {
                             let (t, at) = p.hint.unwrap();

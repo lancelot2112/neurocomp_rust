@@ -422,6 +422,10 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.quiet = lesson.quiet;
     w.teacher_after = lesson.babble;
     w.sentence = lesson.sentence || sentences();
+    // (`set_body`) the body fixed for the whole run
+    if body() != 0 {
+        w.fix_body(body());
+    }
     // (`set_one_word`) every reading lifetime's codes sparse, in one word
     if lesson.one_word || (reading && one_word() > 0) {
         w.one_word(p, if lesson.code_lines > 0 { lesson.code_lines } else { one_word() });
@@ -433,7 +437,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         w.place_senses();
     }
     if lesson.mirror > 0 {
-        w.mirror_sounds(lesson.mirror, p);
+        w.mirror_sounds(lesson.mirror, if body() != 0 { body() } else { p });
     }
     w.screen_w = lesson.screen_w;
     w.screen_h = lesson.screen_h;
@@ -840,6 +844,18 @@ static CARRY_ENERGY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 
 pub fn set_carry_energy(on: bool) {
     CARRY_ENERGY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// A fixed body (`set_body`): the body's codes (`World::fix_body`) drawn from this seed in every
+/// lifetime of a run, the world's still drawn with each world; 0 off (the default).
+static BODY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub fn set_body(seed: u64) {
+    BODY.store(seed, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn body() -> u64 {
+    BODY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Sparse one-word codes in every reading lifetime (`set_one_word`; a lesson's `one_word` sets

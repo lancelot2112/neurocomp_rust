@@ -312,6 +312,9 @@ pub struct World {
     /// step; one's own words are heard at the same places in the ear, and the teacher speaks at
     /// the first
     pub sentence: bool,
+    /// (`fix_body`) the body's own seed: its voice and hand codes, the sounds its voice makes and
+    /// the feel of its moves, the same in every lifetime of a run; None, drawn with the world
+    pub body: Option<u64>,
     /// (`place_senses`) the stroke always on the first word of the skin's map
     pub stroke_place: bool,
     maze_first: Option<bool>,
@@ -498,8 +501,31 @@ impl World {
         let mut rng = StdRng::seed_from_u64(physics ^ 0x0E0D);
         let n = self.glyphs.len();
         self.glyphs = one_word_codes(n, k, &mut rng);
+        if let Some(b) = self.body {
+            // (a fixed body) its sounds and voice codes from its own seed, each from its own
+            // stream, so a lifetime with fewer tokens has the first of the same codes
+            self.sounds = one_word_codes(n, k, &mut StdRng::seed_from_u64(b ^ 0x0E0E));
+            self.voice.one_word(k, &mut StdRng::seed_from_u64(b ^ 0x0E0F));
+            return;
+        }
         self.sounds = one_word_codes(n, k, &mut rng);
         self.voice.one_word(k, &mut rng);
+    }
+
+    /// The body fixed by its own seed, the same in every lifetime of a run (anatomy, not
+    /// learned): the voice's and the hand's codes, the sound the voice makes for each token (the
+    /// teacher speaks the same language) and the feel of each move. What the world shows (glyphs,
+    /// lights, tones, cues) and what pays stay drawn with the world each lifetime, so learning is
+    /// forced by the world, not by a new body. A lifetime with fewer tokens has the first of the
+    /// same codes.
+    pub fn fix_body(&mut self, body: u64) {
+        let r = |salt: u64| StdRng::seed_from_u64(body ^ salt);
+        let n = self.sounds.len();
+        self.sounds = codes(n, &mut r(0x50D5));
+        self.felt = codes(MOVES, &mut r(0xFE17));
+        self.voice = Effector::new(n, &mut r(0x7AC7));
+        self.hand = Effector::new(MOVES, &mut r(0x40B5));
+        self.body = Some(body);
     }
 
     pub fn mirror_sounds(&mut self, eighths: usize, physics: u64) {
@@ -554,6 +580,7 @@ impl World {
             maze_nocue: false,
             quiet: false,
             sentence: false,
+            body: None,
             stroke_place: false,
             maze_first: None,
             junction: codes(1, &mut r(0x7A2E)).remove(0),
@@ -1103,6 +1130,27 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fixed_body_is_the_same_in_every_world_and_the_world_is_not() {
+        let mut a = World::with_physics(11, 1, 8);
+        let mut b = World::with_physics(22, 2, 4);
+        a.fix_body(7);
+        b.fix_body(7);
+        for t in 0..4 {
+            assert_eq!(a.sounds[t].as_words(), b.sounds[t].as_words());
+            assert_eq!(a.voice.command(t).as_words(), b.voice.command(t).as_words());
+        }
+        assert_eq!(a.hand.command(0).as_words(), b.hand.command(0).as_words());
+        assert_ne!(a.glyphs[0].as_words(), b.glyphs[0].as_words());
+        a.one_word(11, 8);
+        b.one_word(22, 8);
+        for t in 0..4 {
+            assert_eq!(a.sounds[t].as_words(), b.sounds[t].as_words());
+            assert_eq!(a.voice.command(t).as_words(), b.voice.command(t).as_words());
+        }
+        assert_ne!(a.glyphs[0].as_words(), b.glyphs[0].as_words());
+    }
 
     #[test]
     fn a_sentence_says_a_token_in_any_word_in_order() {

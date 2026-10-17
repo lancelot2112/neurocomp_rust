@@ -1297,3 +1297,14 @@ compete for its words, so the reader and the listener do not OR their codes toge
 
 Competition changes little: the plain reader's copy stays near its best without it (16), and the
 confirmed reader still drowns echo. The reader's problem is not the two populations' codes mixing.
+
+### A fixed body (`ISL_BODY=seed`, `World::fix_body`)
+
+Until now every lifetime (under `Physics::Varied`) drew all its codes afresh: not only what the
+world shows but the body itself, the voice's and the hand's codes, the sound each voice code makes
+and the feel of each move. Each lifetime was a new body to discover before anything could be done,
+which is the babbling problem above. With `ISL_BODY` the body is drawn from one seed for the whole
+run, as anatomy is, so evolution can build it in (echo, the hand's moves); glyphs, lights, tones,
+cues and what pays are still drawn with each world, so learning is forced by the world. A lifetime
+with fewer tokens has the first of the same codes; with one-word codes the body's sounds and voice
+codes come from the body's seed too. Run 30 has it with `ISL_ONE_WORD=8`.

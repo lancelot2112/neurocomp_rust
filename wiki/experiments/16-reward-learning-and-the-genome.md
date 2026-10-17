@@ -1179,12 +1179,12 @@ babbler's four kernels). Partscheck on 24 worlds, best row (listener lag, birth 
 
 | setting | echo2 echo (goal 150) | fade6 copy (goal 100) | fade6 echo |
 |---|---|---|---|
-| no fix | 126 (1 2 1) | -18 to 0 | 0 to 16 |
+| no fix | 126 (1 2 1) | -18 to -2 | -1 to 16 |
 | LOOP=2 | 107 (1 3 2) | -17 to 3 | -19 to 26 |
-| LOOP=3 | 103 (1 2 1) | -21 to 20 | -16 to 74 |
+| LOOP=3 | 103 (1 2 1) | -21 to 20 | -11 to 74 |
 | LOOP=3, 16 babblers | 96 | -18 to 11 | -13 to 43 |
-| ONE_WORD=1, no fix | 100 (2 2 1) | -16 to 0 | -10 to 10 |
-| LOOP=3, ONE_WORD=1 | **156** (1 3 2) | -18 to 20 | -16 to 44 |
+| ONE_WORD=1, no fix | 100 (2 2 1) | -16 to 0 | 0 to 10 |
+| LOOP=3, ONE_WORD=1 | **156** (1 3 2) | -18 to 20 | -9 to 44 |
 
 (Rows whose echo2 is 2 to 8 never learn and are left out of the ranges.) The loop fix with every code
 in one word passes echo2's goal in one setting, the first hand-made genome to; on its own the fix

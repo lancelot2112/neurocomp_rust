@@ -248,6 +248,10 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     reaching their best means. What went wrong in runs 17 and 18 was what the extra populations
     were (kept predictors of steady targets, protected by their marks) and that the islands
     carrying them scored worse, not their number. Judge growth by the scores, not by the count.
+    But growth needs something trimming it: with thrift off (run 23) every island grew at once
+    (reading's best to 684 populations) and passed 4 rungs by 296 against run 22's 8, the simple
+    reflex rungs 100 to 190 generations late. Small networks pass the first rungs; keep a pressure
+    toward them, and let size grow where a rung needs it (size classes, thrift relaxed while stuck).
 50. **Measure the signal before changing the climb (experiment 16).** Scoring a population on many
     fresh worlds splits a stalled rung into kinds: no difference between genomes above noise
     (run 20's echo2, cycle1), a difference in the mean that one world's case hides (feel), or none

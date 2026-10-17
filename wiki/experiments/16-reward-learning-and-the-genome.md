@@ -676,6 +676,17 @@ on early rungs, and large networks may be what the higher rungs need (lesson 49)
 a network pays 4 a token of its genome from the store its work comes out of, so carrying and
 computing compete for the same energy, earned by scoring. It is compared with run 21.
 
+**Result** (stopped at 296; `runs/islands23/README.md`): worse than run 22 everywhere but
+selection. Without thrift every island's networks grew at once (reading's best 277 populations at
+generation 50, 684 at 200; the generalist's 320 at 250, against 2 to 31 for run 22's at 50), and the
+growth bought nothing: 4 rungs passed by 296 against run 22's 8, the first reflex rungs 100 to 190
+generations late (switching's tell at 123, recall's lag1 at 231), prediction's cycle1 at 0 the
+whole run (run 22: mean 62). Paying for carrying out of energy did not hold size down. Lesson 49
+stands (size is not a problem by itself), but size with nothing pruning it is: small networks pass
+the first rungs, and with no pressure toward them there are none. Thrift stays on from run 24, and
+runs 26 and 27 try gentler ways to keep big networks: size classes, and thrift relaxed while an
+island is stuck.
+
 ## Is there a gradient on the hard rungs? (signal, after run 20)
 
 The harder rungs stall for hundreds of generations (run 20: echo2 at -5 over 587, cycle1 at 20

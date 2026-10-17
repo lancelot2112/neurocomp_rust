@@ -678,7 +678,7 @@ computing compete for the same energy, earned by scoring. It is compared with ru
 
 **Result** (stopped at 296; `runs/islands23/README.md`): worse than run 22 everywhere but
 selection. Without thrift every island's networks grew at once (reading's best 277 populations at
-generation 50, 684 at 200; the generalist's 320 at 250, against 2 to 31 for run 22's at 50), and the
+generation 50, 684 at 200; selection's 320 at 250, against 2 to 31 for run 22's at 50), and the
 growth bought nothing: 4 rungs passed by 296 against run 22's 8, the first reflex rungs 100 to 190
 generations late (switching's tell at 123, recall's lag1 at 231), prediction's cycle1 at 0 the
 whole run (run 22: mean 62). Paying for carrying out of energy did not hold size down. Lesson 49

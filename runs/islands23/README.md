@@ -20,8 +20,8 @@ brackets; on whatever rung each island was on):
 - selection's cued 400 (477; run 22: 318), the only goal better than run 22's; reading -7 (run 22: 17).
 
 **What thrift did:** without it the networks grew at once and kept growing: at generation 50
-reading's best had 277 populations, at 200 684 (560 on loops through 27 channels), prediction's 217
-at 200, the generalist's 320 at 250; at 50 run 22's ranged from 2 to 31. None of it passed rungs:
+reading's best had 277 populations, at 200 684 (560 on loops through 27 channels), the generalist's 217
+at 200, selection's 320 at 250; at 50 run 22's ranged from 2 to 31. None of it passed rungs:
 the first rungs (simple reflexes: respond, tell) came 100 to 190 generations later than in run
 22, and prediction never left 0. Paying for carrying out of the energy store did not hold size
 down. Thrift stays on: from run 24 on the runs are built on run 22, with size classes (run 26) and

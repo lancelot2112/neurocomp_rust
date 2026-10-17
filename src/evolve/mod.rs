@@ -422,8 +422,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.quiet = lesson.quiet;
     w.teacher_after = lesson.babble;
     w.sentence = lesson.sentence || sentences();
-    if lesson.one_word {
-        w.one_word(p, lesson.code_lines);
+    // (`set_one_word`) every reading lifetime's codes sparse, in one word
+    if lesson.one_word || (reading && one_word() > 0) {
+        w.one_word(p, if lesson.code_lines > 0 { lesson.code_lines } else { one_word() });
     }
     if lesson.motor_place {
         w.fix_motor();
@@ -839,6 +840,18 @@ static CARRY_ENERGY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 
 pub fn set_carry_energy(on: bool) {
     CARRY_ENERGY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Sparse one-word codes in every reading lifetime (`set_one_word`; a lesson's `one_word` sets
+/// it for one): `World::one_word` with this many lines a code, 0 off (the default).
+static ONE_WORD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_one_word(lines: usize) {
+    ONE_WORD.store(lines, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn one_word() -> usize {
+    ONE_WORD.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Sentences for every lifetime (`set_sentences`; a lesson's `sentence` sets it for one): see

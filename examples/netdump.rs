@@ -7,7 +7,7 @@ use neurocomp::evolve::tags::TagGenome;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    println!("run,island,generation,snapshot,kind,id,from,to,label,bits");
+    println!("run,island,generation,rung_number,snapshot,kind,id,from,to,label,bits");
     for pair in args.chunks(2) {
         let (path, run) = (&pair[0], pair.get(1).cloned().unwrap_or_default());
         let Ok(text) = std::fs::read_to_string(path) else { continue };
@@ -18,10 +18,14 @@ fn main() {
             let island = w.first().copied().unwrap_or("").to_string();
             let generation = w.get(2).copied().unwrap_or("").to_string();
             let snapshot = if rungs { format!("passed {} at {}", w.get(6).copied().unwrap_or("a rung"), generation) } else { format!("final (generation {generation})") };
+            // the rung (1-based) the network is for: a checkpoint's island is on stage s (rung
+            // s+1); a rung log's block heads the stage it moved to, having passed rung s
+            let stage: usize = w.get(4).and_then(|x| x.parse().ok()).unwrap_or(0);
+            let rung = if rungs { stage } else { stage + 1 };
             let Ok(genomes) = TagGenome::from_text(body) else { continue };
             let Some(best) = genomes.first() else { continue };
             let (nodes, edges, mods) = best.wiring();
-            let pre = format!("{run},{island},{generation},{snapshot}");
+            let pre = format!("{run},{island},{generation},{rung},{snapshot}");
             for (name, bits, hold) in nodes {
                 println!("{pre},vector,,{name},,{},{bits}", if hold { "holds" } else { "" });
             }

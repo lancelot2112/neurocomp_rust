@@ -1257,3 +1257,26 @@ same as at the default (300, -13, 136), and a recorded lifetime grows the same k
 acts among kernels that match at once, and these never do: each is a sound-and-glyph pair at
 threshold 12 of 16, so only the kernel whose glyph is on the eye can fire. They are already
 separated, too well: what is missing is a kernel the glyph alone can fire, with the right output.
+
+### Confirming the reader by coincidence (partscheck and tracecheck `CONFIRM=r`, `HEARD=r`)
+
+A wrong pairing has to be able to die. Built from existing parts: the reader's fired kernels branch
+into R; a mismatch channel D is R with the listener's efference copy F cleared off it (an OR wire,
+run only while F had lines on, then a clear wire), empty when the reader said what the listener
+says to the teacher, about 7 lines when it said another token. The reader repeats (`repeat_lag` r):
+a kernel that acted r steps ago is confirmed if D was empty, else fades a synapse off its glyph
+(chance 2^-fade), until the glyph is uncovered and a new kernel is born on it with the move made
+then. One recorded world: copy 120 (goal 100), the first above its goal. On 24 worlds (8-line
+one-word codes, glyph wire, LOOP=3, listener 1 3 2; reader lag 1-3, r 2-3, fade 1-2): copy -23 to
+-9, and echo falls (echo2 84 to 103 from 300; fade6 echo at most 23 from 136). Recorded: the reader
+speaks on 365 of 400 steps (a glyph is always on the eye), so the listener echoes on 76 and D is
+checked on 20; and D empty while the listener is silent counts as a confirmation, so wrong kernels
+replicate (319 kernels at the end, 76 pairing a glyph with its own token).
+
+`HEARD=r`: the reader writes the sound it expects into H, not the voice (the listener says it),
+checked against the ear a frame back the same way, without replication. Three recorded worlds:
+copy -121 to -37, echo -18 to 53; its kernels pair glyphs with the wrong sounds, many of them, as
+fading uncovers glyphs and new kernels are born beside the old.
+
+So far confirmation by coincidence does not fix reading: the check is too rare and too lenient
+against a reader that speaks every step, and a fading kernel is replaced without the old one going.

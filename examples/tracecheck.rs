@@ -127,7 +127,44 @@ fn main() {
             reader += &pop(id, &[("from", from.to_string()), ("from_port", "0".into()), ("to", to.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into())]);
             reader.push('\n');
         }
-        reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("birth_lag", v[1].to_string()), ("gate", "56:1".into()), ("gate_lag", v[2].to_string()), ("gate_at", "1".into()), ("pause", "212:0".into()), ("pause_at", "0".into())]);
+        // (`CONFIRM=r`: the reader checked against the listener: its fired kernels branch into R
+        // (230); a mismatch channel D (231) is R with the listener's F cleared off it (an OR wire
+        // run only while F had lines on, then a clear wire), so D is empty when the reader said
+        // what the listener says to the teacher's sound, about 7 lines when it said another token.
+        // The reader repeats (`repeat`, `repeat_lag` r): a kernel that acted r steps ago is
+        // confirmed if D was empty a frame ago, else fades (one synapse off its input, chance
+        // 2^-fade), until its glyph is uncovered and a new kernel is born on it, copying the move
+        // made r frames ago onto the glyph seen then; it learns and gives birth only while D was
+        // empty)
+        // (`HEARD=r`: the reader writes not the voice but the sound it expects into H (the
+        // listener then says it), and is checked against the ear: S (232) is the ear a frame back
+        // (a wire), D (231) is R with S cleared off it, run only while S had lines on; empty when
+        // what the reader expected was heard. As `CONFIRM` otherwise, without replication)
+        if let Some(r) = std::env::var("HEARD").ok().and_then(|x| x.parse::<u8>().ok()) {
+            for t in [230, 231, 232] {
+                reader += &format!("channel {t} 3 0\n");
+            }
+            reader += &pop(33, &[("from", "56".into()), ("to", "232".into()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into())]);
+            reader.push('\n');
+            reader += &pop(31, &[("from", "230".into()), ("from_port", "0".into()), ("to", "231".into()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into()), ("pause", "232:1".into()), ("pause_at", "0".into())]);
+            reader.push('\n');
+            reader += &pop(32, &[("from", "232".into()), ("from_port", "0".into()), ("to", "231".into()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "clear".into()), ("gate", "-".into())]);
+            reader.push('\n');
+            let fade = std::env::var("FADE").unwrap_or("2".into());
+            reader += &pop(25, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("repeat", "1".into()), ("repeat_lag", r.to_string()), ("fade", fade), ("replicate", "0".into()), ("gate", "231:0".into()), ("gate_lag", (r - 1).max(1).to_string()), ("gate_at", "0".into()), ("branch", "230".into()), ("branch_at", "0".into())]);
+        } else if let Some(r) = std::env::var("CONFIRM").ok().and_then(|x| x.parse::<u8>().ok()) {
+            for t in [230, 231] {
+                reader += &format!("channel {t} 3 0\n");
+            }
+            reader += &pop(31, &[("from", "230".into()), ("from_port", "0".into()), ("to", "231".into()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into()), ("pause", "200:1".into()), ("pause_at", "0".into())]);
+            reader.push('\n');
+            reader += &pop(32, &[("from", "200".into()), ("from_port", "0".into()), ("to", "231".into()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "clear".into()), ("gate", "-".into())]);
+            reader.push('\n');
+            let fade = std::env::var("FADE").unwrap_or("2".into());
+            reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("repeat", "1".into()), ("repeat_lag", r.to_string()), ("fade", fade), ("gate", "231:0".into()), ("gate_lag", (r - 1).max(1).to_string()), ("gate_at", "0".into()), ("branch", "230".into()), ("branch_at", "0".into())]);
+        } else {
+            reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("birth_lag", v[1].to_string()), ("gate", "56:1".into()), ("gate_lag", v[2].to_string()), ("gate_at", "1".into()), ("pause", "212:0".into()), ("pause_at", "0".into())]);
+        }
         reader.push('\n');
     }
     let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{chain}{babbler}\n{ear}\n{glyphs}\n{listener}\n{reader}");
@@ -167,7 +204,11 @@ fn main() {
             if ev.taught { "T" } else { "." },
             show(ev.said),
             tokens_in(&hh, &so),
-            net.nodes[1].current().count_ones(),
+            {
+                // (`SHOW=i,j,..`: the popcounts of these nodes too)
+                let extra: Vec<String> = std::env::var("SHOW").unwrap_or_default().split(',').filter_map(|x| x.parse::<usize>().ok()).filter(|&i| i < net.nodes.len()).map(|i| net.nodes[i].current().count_ones().to_string()).collect();
+                format!("{} {}", net.nodes[1].current().count_ones(), extra.join(" "))
+            },
             fired.join(" ")
         );
         if step % every == 0 {

@@ -30,6 +30,8 @@ fn set(line: &str, key: &str, val: &str) -> String {
 }
 
 fn main() {
+    // (`SENTENCE=1`) sentences in every lifetime (`evolve::set_sentences`)
+    neurocomp::evolve::set_sentences(std::env::var("SENTENCE").is_ok_and(|v| v == "1"));
     neurocomp::evolve::tags::set_birth_lags(true);
     neurocomp::evolve::tags::set_branches(true);
     neurocomp::evolve::tags::set_port_gates(true);

@@ -1,0 +1,16 @@
+== wire
+mirror 8 quiet true: echo 503 babble 1024
+mirror 6 quiet true: echo 503 babble 1024
+mirror 4 quiet true: echo 481 babble 1002
+mirror 8 quiet false: echo -6 babble 938
+mirror 6 quiet false: echo -2 babble 938
+mirror 4 quiet false: echo -10 babble 917
+mirror 0 quiet false: echo -15 babble 42
+== wire-less-own-voice
+mirror 8 quiet true: echo 431 babble 1024
+mirror 6 quiet true: echo 430 babble 1024
+mirror 4 quiet true: echo 440 babble 1002
+mirror 8 quiet false: echo 431 babble 1024
+mirror 6 quiet false: echo 430 babble 1024
+mirror 4 quiet false: echo 435 babble 1002
+mirror 0 quiet false: echo -6 babble 42

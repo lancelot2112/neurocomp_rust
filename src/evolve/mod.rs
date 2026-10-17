@@ -286,6 +286,8 @@ pub struct Lesson {
     pub motor_place: bool,
     /// reading: the teacher silent for the first this many tokens (`World::teacher_after`)
     pub babble: usize,
+    /// sentences (`World::sentence`): a token written in any word of the voice is said, in order
+    pub sentence: bool,
     /// the lights and the stroke at fixed places (`World::place_senses`)
     pub sense_place: bool,
     /// task selection (`Task::Mixed`): trials a block, and a cue for the block's task
@@ -341,7 +343,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sense_place: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, sense_place: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -406,6 +408,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.maze_nocue = lesson.maze_nocue;
     w.quiet = lesson.quiet;
     w.teacher_after = lesson.babble;
+    w.sentence = lesson.sentence || sentences();
     if lesson.motor_place {
         w.fix_motor();
     }
@@ -819,6 +822,18 @@ static CARRY_ENERGY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 
 pub fn set_carry_energy(on: bool) {
     CARRY_ENERGY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Sentences for every lifetime (`set_sentences`; a lesson's `sentence` sets it for one): see
+/// `World::sentence`. Off by default.
+static SENTENCES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_sentences(on: bool) {
+    SENTENCES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn sentences() -> bool {
+    SENTENCES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The muscle's response (`set_muscle`): after each step of the world, the act vector shows what

@@ -104,8 +104,11 @@ pub struct Event {
     pub trial: Option<(usize, usize, bool, bool)>,
     /// the hand's move this step, if any
     pub moved: Option<usize>,
-    /// the voice's token this step, if any
+    /// the voice's token this step, if any (with sentences: the first)
     pub said: Option<usize>,
+    /// (`World::sentence`) the tokens said this step, in the order of the voice's words; empty
+    /// without sentences
+    pub sentence: Vec<usize>,
     /// sequence: the token shown this step
     pub shown: Option<usize>,
     /// echo: the caregiver answered with the program's last sound
@@ -297,6 +300,12 @@ pub struct World {
     pub maze_nocue: bool,
     /// one's own voice not heard (a reading lesson's `quiet`): the ear has only the teacher
     pub quiet: bool,
+    /// sentences (a lesson's `sentence`): each word of the voice says the token whose pattern (its
+    /// code's lines inside a word, wherever the code was drawn) it holds at least half of, so a
+    /// token written in any word is said, and the voice says its words in order, a sentence a
+    /// step; one's own words are heard at the same places in the ear, and the teacher speaks at
+    /// the first
+    pub sentence: bool,
     /// (`place_senses`) the stroke always on the first word of the skin's map
     pub stroke_place: bool,
     maze_first: Option<bool>,
@@ -424,6 +433,30 @@ impl World {
     /// same word (from the physics, so held-out worlds hear the same). 8: a token is heard
     /// exactly as it is said, so a wire from the ear to the voice echoes it; 4: half the lines,
     /// the least a said token needs (`Effector::articulate`); fewer, a copy says nothing.
+    /// A code's pattern: its lines inside its word, wherever that word is.
+    fn pattern(code: &BitVector) -> u64 {
+        code.as_words().iter().copied().find(|&w| w != 0).unwrap_or(0)
+    }
+
+    /// (sentences) The tokens a voice vector says, word by word: (word, token) for each word that
+    /// holds at least half of some token's pattern (the most-held; ties, the lower token).
+    pub fn sentence_of(&self, voice: &BitVector) -> Vec<(usize, usize)> {
+        let pats: Vec<u64> = (0..self.voice.len()).map(|t| Self::pattern(self.voice.command(t))).collect();
+        voice
+            .as_words()
+            .iter()
+            .enumerate()
+            .filter_map(|(w, &x)| {
+                pats.iter()
+                    .enumerate()
+                    .map(|(t, &p)| ((x & p).count_ones(), t, p.count_ones()))
+                    .filter(|&(o, _, n)| n > 0 && 2 * o >= n)
+                    .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+                    .map(|(_, t, _)| (w, t))
+            })
+            .collect()
+    }
+
     /// The body's moves and tokens as place codes (`Effector::fix_place`), the same every lifetime:
     /// what is learned in a lifetime is what the senses mean, not which line moves which muscle.
     pub fn fix_motor(&mut self) {
@@ -495,6 +528,7 @@ impl World {
             maze_fixed: false,
             maze_nocue: false,
             quiet: false,
+            sentence: false,
             stroke_place: false,
             maze_first: None,
             junction: codes(1, &mut r(0x7A2E)).remove(0),
@@ -708,12 +742,22 @@ impl World {
 
     /// One step: the program's act in, its senses out.
     pub fn step(&mut self, act: &BitVector) -> BitVector {
-        let said = self.voice.articulate(&channel(act, VOICE));
+        // (sentences) each word of the voice says the token it holds, in order
+        let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
+        let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
-        if let Some(w) = said.filter(|_| !self.quiet) {
+        if self.sentence {
+            if !self.quiet {
+                for &(w, t) in &words {
+                    let mut v = vec![0u64; CH_BITS / 64];
+                    v[w] = Self::pattern(&self.sounds[t]);
+                    put(&mut senses, EAR, &BitVector::from_words(v));
+                }
+            }
+        } else if let Some(w) = said.filter(|_| !self.quiet) {
             put(&mut senses, EAR, &self.sounds[w].clone());
         }
         if let Some(m) = moved {
@@ -829,7 +873,14 @@ impl World {
                     ev.odd = odd;
                     self.shown_so_far += 1;
                     if self.teacher && self.shown_so_far > self.teacher_after && self.rng.gen_ratio(self.teacher_rate.min(8), 8) {
-                        put(&mut senses, EAR, &self.sounds[tok].clone());
+                        if self.sentence {
+                            // (sentences) the teacher's word at the ear's first place
+                            let mut v = vec![0u64; CH_BITS / 64];
+                            v[0] = Self::pattern(&self.sounds[tok]);
+                            put(&mut senses, EAR, &BitVector::from_words(v));
+                        } else {
+                            put(&mut senses, EAR, &self.sounds[tok].clone());
+                        }
                         ev.taught = true;
                     }
                 }
@@ -1021,6 +1072,18 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_sentence_says_a_token_in_any_word_in_order() {
+        let mut w = World::with_physics(9, 1, 2);
+        w.sentence = true;
+        let p = |t: usize| World::pattern(w.voice.command(t));
+        // token 1 in word 0, token 0 in word 5: said in that order, wherever the codes were drawn
+        let mut v = vec![0u64; CH_BITS / 64];
+        v[0] = p(1);
+        v[5] = p(0);
+        assert_eq!(w.sentence_of(&BitVector::from_words(v)), vec![(0, 1), (5, 0)]);
+    }
 
     #[test]
     fn a_mirrored_sound_is_said_as_its_token_when_copied() {

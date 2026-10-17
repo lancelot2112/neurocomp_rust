@@ -7,6 +7,8 @@ use neurocomp::evolve::{live_lesson, Lesson, Physics, Task};
 use neurocomp::world::observe;
 
 fn main() {
+    // (`SENTENCE=1`) sentences in every lifetime (`evolve::set_sentences`)
+    neurocomp::evolve::set_sentences(std::env::var("SENTENCE").is_ok_and(|v| v == "1"));
     neurocomp::evolve::tags::set_read_outputs(true);
     // wires from the ear to the voice (and what the voice said a step ago taken away)
     let g = TagGenome::from_text(&std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap()).unwrap().remove(0);

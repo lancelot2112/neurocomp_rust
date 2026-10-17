@@ -223,14 +223,27 @@ const FAR: usize = 12;
 /// count (with a teacher, echoing the ear would be copying the sound, not reading). Saying
 /// nothing, or saying tokens at random, scores 0; reading each untaught token aloud two steps
 /// later scores about 900 (half that with a teacher on half the tokens).
+/// The tokens an event said: its sentence (with sentences), else its one token.
+fn says(e: &Event, tok: Option<usize>) -> bool {
+    match tok {
+        None => false,
+        Some(t) => if e.sentence.is_empty() { e.said == Some(t) } else { e.sentence.contains(&t) },
+    }
+}
+
+/// How many tokens an event said.
+fn n_said(e: &Event) -> i64 {
+    if e.sentence.is_empty() { e.said.is_some() as i64 } else { e.sentence.len() as i64 }
+}
+
 pub fn copy(events: &[Event]) -> i32 {
     let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
-    let said = ev.iter().filter(|e| e.said.is_some()).count() as i64;
+    let said: i64 = ev.iter().map(|e| n_said(e)).sum();
     if said == 0 {
         return 0;
     }
     let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
-        lags.map(|l| (FAR..ev.len()).filter(|&t| ev[t].said.is_some() && !ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
+        lags.map(|l| (FAR..ev.len()).filter(|&t| !ev[t - l].taught && says(ev[t], ev[t - l].shown)).count() as i64).sum()
     };
     ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
 }
@@ -243,12 +256,12 @@ pub fn copy(events: &[Event]) -> i32 {
 /// says the taught ones too); echoing every taught token two steps later scores about 900.
 pub fn echo(events: &[Event]) -> i32 {
     let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
-    let said = ev.iter().filter(|e| e.said.is_some()).count() as i64;
+    let said: i64 = ev.iter().map(|e| n_said(e)).sum();
     if said == 0 {
         return 0;
     }
     let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
-        lags.map(|l| (FAR..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
+        lags.map(|l| (FAR..ev.len()).filter(|&t| ev[t - l].taught && says(ev[t], ev[t - l].shown)).count() as i64).sum()
     };
     ((hits(1..=4) - hits(9..=12)) * 1024 / said) as i32
 }
@@ -265,6 +278,9 @@ pub fn babble(events: &[Event]) -> i32 {
             shown |= 1 << t.min(63);
         }
         if let Some(t) = e.said {
+            said |= 1 << t.min(63);
+        }
+        for &t in &e.sentence {
             said |= 1 << t.min(63);
         }
     }
@@ -332,7 +348,7 @@ pub fn echo_graded(events: &[Event]) -> i32 {
         return 0;
     }
     let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
-        lags.map(|l| (far..ev.len()).filter(|&t| ev[t].said.is_some() && ev[t - l].taught && ev[t].said == ev[t - l].shown).count() as i64).sum()
+        lags.map(|l| (far..ev.len()).filter(|&t| ev[t - l].taught && says(ev[t], ev[t - l].shown)).count() as i64).sum()
     };
     ((2 * (hits(1..=4) - hits(9..=12)) + hits(5..=8) - hits(13..=16)) * 512 / taught) as i32
 }

@@ -1119,3 +1119,16 @@ Two tokens, codes drawn each lifetime, the teacher silent the first half (24 wor
   busiest word, and with 4 or 16 babbling kernels; echo with eight tokens stayed at 0 to 16.
 So separating "my voice" from "the teacher" helps, and birth lags matter (birth lag 0 or 3 gave
 8 to 99); learning what a glyph sounds like is not yet understood here.
+
+**Sentences** (a check). With `ISL_SENTENCE=1` (`World::sentence`) the voice says, word by word in
+order, the token whose pattern (its code's 16 lines inside a word, wherever the code was drawn)
+each word holds at least half of, so a token written in any word is said and a step's voice is a
+sentence; one's own words come back at the same places in the ear and the teacher speaks at the
+first; echo, copy and babble count a token anywhere in the sentence, per token said, so saying
+everything scores nothing. On the same checks (`runs/checks/*-sentences.txt`): the wires score as
+before (one wire 503 heard as said and unheard, the two-wire circuit 431 to 440), the three-part
+genome's best echo2 is 124 (126 without), and fade6 stays at copy -12 to 10, echo -14 to 27. No
+gain: a word is now said from any place, but it is heard at its place, and kernels are local to
+their place, so a listener born on its own word at the place the babbler wrote it does not match
+the teacher's word at the first place. Position-free codes on the way out move the problem to the
+way in. Off by default.

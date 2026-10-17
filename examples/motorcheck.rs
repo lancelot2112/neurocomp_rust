@@ -12,6 +12,8 @@ use neurocomp::evolve::{probe_all_in, Lesson, Physics};
 use neurocomp::world::observe::PROBES;
 
 fn main() {
+    // (`SENTENCE=1`) sentences in every lifetime (`evolve::set_sentences`)
+    neurocomp::evolve::set_sentences(std::env::var("SENTENCE").is_ok_and(|v| v == "1"));
     let text = std::fs::read_to_string(std::env::args().nth(1).expect("a genome file with one wire")).unwrap();
     let line = text.lines().find(|l| l.starts_with("pop ")).expect("a pop line").to_string();
     let probe = |name: &str| PROBES.iter().position(|p| *p == name).unwrap();

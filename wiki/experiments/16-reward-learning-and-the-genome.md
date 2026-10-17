@@ -744,6 +744,15 @@ probing an island a generation.
 
 Run 24 is run 23 with the three (`runs/run24.cmd`), after run 23.
 
+**Result of run 24** (stopped at 409 to start run 25; `runs/islands24/README.md`): 11 rungs passed
+against run 22's 14 by 409. Judging on the elite moved islands up as soon as their best passed
+(recall's lag1 to lag3 at 17 to 19, shapes' blur2 to feel at 229 to 272, the first rungs sooner
+than in any run), but within a rung they then scored far below run 22 (switching's feel mean 5
+against 31, the maze's 15 against 37, recall's lag3 25 against 84) and recall never passed lag4:
+moving on before the population has the rung leaves little of it to build on. The networks stayed
+small (most islands' best 1 to 15 populations at 400). Three islands spent the second half on feel,
+whose goal turned out to be out of reach (below).
+
 ## Inhibit inputs (run 25)
 
 Inhibition among a population's own kernels was already a gene (`share` turns it off): a kernel

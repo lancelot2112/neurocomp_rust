@@ -150,6 +150,12 @@ impl Effector {
         Self { codes: codes(n, rng), place: false }
     }
 
+    /// Redraw its codes in the first word of the channel (`World::one_word`).
+    fn one_word(&mut self, rng: &mut StdRng) {
+        let n = self.codes.len();
+        self.codes = one_word_codes(n, rng);
+    }
+
     /// Make it a place code, the same in every lifetime, as a muscle is a labelled line:
     /// primitive i is `PLACE_LINES` in word i of the channel, and any command is read as the
     /// primitive whose word has the most lines on (at least half a code's), so whatever lands in
@@ -355,6 +361,11 @@ fn codes(n: usize, rng: &mut StdRng) -> Vec<BitVector> {
     (0..n).map(|_| clustered_code(CH_BITS, ACTIVE, rng)).collect()
 }
 
+/// `n` codes of `ACTIVE` random lines, all in the first word of a channel.
+fn one_word_codes(n: usize, rng: &mut StdRng) -> Vec<BitVector> {
+    (0..n).map(|_| clustered_code(64, ACTIVE, rng)).map(|c| { let mut v = vec![0u64; CH_BITS / 64]; v[0] = c.as_words()[0]; BitVector::from_words(v) }).collect()
+}
+
 /// A topographic code: `k` random lines inside one random 64-bit word of a `bits`-wide vector.
 /// A kernel reading that word sees the code at density k/64 (a quarter, for 16), so one-word
 /// kernels can tell codes apart; two random codes in the same word share about k²/64 lines.
@@ -477,6 +488,18 @@ impl World {
         self.stroke_place = true;
     }
 
+    /// Tokens' glyphs, sounds and voice codes all in the first word of their channels (still drawn
+    /// afresh each lifetime, 16 random lines of 64, so two share about 4): a glyph, its sound and
+    /// its voice code then sit at the same place, and a topographic kernel can write one from the
+    /// other.
+    pub fn one_word(&mut self, physics: u64) {
+        let mut rng = StdRng::seed_from_u64(physics ^ 0x0E0D);
+        let n = self.glyphs.len();
+        self.glyphs = one_word_codes(n, &mut rng);
+        self.sounds = one_word_codes(n, &mut rng);
+        self.voice.one_word(&mut rng);
+    }
+
     pub fn mirror_sounds(&mut self, eighths: usize, physics: u64) {
         let mut rng = StdRng::seed_from_u64(physics ^ 0x3122);
         for k in 0..self.sounds.len() {
@@ -563,6 +586,12 @@ impl World {
     /// The body, for the program at birth.
     pub fn body(&self) -> Body<'_> {
         Body { voice: &self.voice, hand: &self.hand }
+    }
+
+    /// The tokens' glyphs and sounds this lifetime, for a harness that inspects a lifetime (never
+    /// given to the network).
+    pub fn codes(&self) -> (&[BitVector], &[BitVector]) {
+        (&self.glyphs, &self.sounds)
     }
 
     /// The scene is over (a new one may begin).

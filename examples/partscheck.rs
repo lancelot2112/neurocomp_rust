@@ -11,7 +11,7 @@
 //! Scored on 24 worlds on echo (two tokens, all taught after the babbling half) and on copy and
 //! echo with eight tokens, the teacher saying six in eight (fade6), by the listener's lag, birth
 //! lag and gate lag (`ONLY=l,b,g`: one; `GLYPH_REPEAT=k`: glyph births copy H's sound k frames
-//! back). `cargo run --release --example partscheck -- runs/echo-wires/wire.txt`.
+//! back; `ONE_WORD=1`: all codes in word 0). `cargo run --release --example partscheck -- runs/echo-wires/wire.txt`.
 use neurocomp::evolve::tags::TagGenome;
 use neurocomp::evolve::{probe_all_in, Lesson, Physics};
 use neurocomp::world::observe::PROBES;
@@ -48,6 +48,8 @@ fn main() {
         l
     };
     let (e, h) = (74u8, 150u8);
+    // (`ONE_WORD=1`: every token's glyph, sound and voice code in word 0, `World::one_word`)
+    let one_word = std::env::var("ONE_WORD").is_ok_and(|v| v == "1");
     println!("listener lag, birth lag, gate lag: echo2 echo | fade6 copy, echo   (goals: echo 150, copy 100)");
     // (`GLYPH_REPEAT=k`: the glyph kernels' births copy what H held k frames ago, its busiest
     // word: the sound; 0, they write at their own place)
@@ -71,8 +73,8 @@ fn main() {
                     let s = probe_all_in(vec![g.clone()], trials, Physics::Varied, &worlds, 6, &[p], lesson);
                     s[0].probes.iter().map(|r| r[p] as i64).sum::<i64>() / worlds.len() as i64
                 };
-                let e2 = score(Lesson { tokens: 2, teach: 8, babble: 100, ..Lesson::default() }, echo, 200);
-                let f6 = Lesson { tokens: 8, teach: 6, babble: 200, ..Lesson::default() };
+                let e2 = score(Lesson { tokens: 2, teach: 8, babble: 100, one_word, ..Lesson::default() }, echo, 200);
+                let f6 = Lesson { tokens: 8, teach: 6, babble: 200, one_word, ..Lesson::default() };
                 let (c6, e6) = (score(f6.clone(), copy, 400), score(f6, echo, 400));
                 println!("  {lag} {birth} {gate}: {e2} | {c6}, {e6}");
             }

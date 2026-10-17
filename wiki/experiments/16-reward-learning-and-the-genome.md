@@ -1132,3 +1132,29 @@ gain: a word is now said from any place, but it is heard at its place, and kerne
 their place, so a listener born on its own word at the place the babbler wrote it does not match
 the teacher's word at the first place. Position-free codes on the way out move the problem to the
 way in. Off by default.
+
+### One lifetime recorded step by step (examples/tracecheck)
+
+Question: where does glyph-to-sound (partscheck's third part) break? `examples/tracecheck` lives one
+fade6 lifetime of partscheck's genome (listener lag 1, birth lag 2, gate lag 1) and prints each step
+(shown, taught, said, which tokens' sounds H holds, kernels fired per population) and what each
+kernel learned (the code its synapses lie on, the code its output writes), through a read-only
+trace hook (`evolve::set_trace`) and `World::codes`.
+
+- **The glyph kernels can never write the sound.** All eight are born in the first ten steps, one
+  per glyph (input overlap 16 of 16), but a kernel writes topographically, at its glyph's word,
+  and the sound was drawn in another random word: no glyph kernel's output overlapped its sound by
+  more than 10 of 16, on three worlds, with or without copy learning of outputs (`out_copy` 1-3).
+- **The babbler stops after about ten steps.** It is paused while the ear is busy, and the
+  listener, hearing the network's own voice, keeps saying something every step (a loop: voice,
+  ear, H, listener, voice), so the ear is never quiet again. It babbled only 3 of the 8 voice codes,
+  and from then on the voice says one or two tokens (seed 90000: token 0 250 times of 400).
+- **All codes in one word** (`Lesson::one_word`, `ONE_WORD=1`: glyphs, sounds and voice codes in
+  word 0 of their channels). The glyph kernels' outputs now reach the sound (several at 16 of 16),
+  but bound to the wrong sound, and with copy learning every glyph collapses onto the one sound the
+  network keeps saying. H, one word now holding the teacher's sound, the network's own and the glyph
+  kernels' writes, holds lines of 6 to 8 tokens at once after the babbling half: too dense to read.
+  Copy -40 to 3, echo 0 to 5.
+
+So the parts fail for two reasons that come before any learning rule: the voice loop drowns out
+everything else, and a topographic kernel cannot pair codes drawn in different words.

@@ -288,6 +288,9 @@ pub struct Lesson {
     pub babble: usize,
     /// sentences (`World::sentence`): a token written in any word of the voice is said, in order
     pub sentence: bool,
+    /// reading: every token's glyph, sound and voice code in the first word of its channel
+    /// (`World::one_word`)
+    pub one_word: bool,
     /// the lights and the stroke at fixed places (`World::place_senses`)
     pub sense_place: bool,
     /// task selection (`Task::Mixed`): trials a block, and a cue for the block's task
@@ -343,7 +346,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, sense_place: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, sense_place: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -357,6 +360,8 @@ thread_local! {
     /// The notes of the lifetimes run on this thread, while a probing job collects them (each
     /// job runs on one thread, so a lifetime adds to its own job's).
     static NOTES: std::cell::RefCell<Option<Vec<Note>>> = const { std::cell::RefCell::new(None) };
+    /// (`set_trace`) a harness's look at each step of a lifetime on this thread
+    static TRACE: std::cell::RefCell<Option<Box<dyn FnMut(&World, &RuntimeNetwork)>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Notes summed by (id, kind).
@@ -381,6 +386,12 @@ pub fn set_epigenetics(on: bool) {
 
 pub fn epigenetics() -> bool {
     EPIGENETICS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A harness's look at every step of the lifetimes lived on this thread (the world and the network
+/// after the step), for recording one lifetime; None stops it. It reads only.
+pub fn set_trace(f: Option<Box<dyn FnMut(&World, &RuntimeNetwork)>>) {
+    TRACE.with(|t| *t.borrow_mut() = f);
 }
 
 /// `live_work` in a world set by a lesson.
@@ -409,6 +420,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.quiet = lesson.quiet;
     w.teacher_after = lesson.babble;
     w.sentence = lesson.sentence || sentences();
+    if lesson.one_word {
+        w.one_word(p);
+    }
     if lesson.motor_place {
         w.fix_motor();
     }
@@ -522,6 +536,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         net.tick(AdvanceMode::Clear, 0);
         net.write_input(&senses, 0);
         act = net.read_output().clone();
+        TRACE.with(|t| if let Some(f) = t.borrow_mut().as_mut() { f(&w, &net) });
         store -= (net.work - before).min(i64::MAX as u64 / 4) as i64 + upkeep;
     }
     NOTES.with(|n| if let Some(v) = n.borrow_mut().as_mut() { v.extend(net.notes()) });

@@ -1012,3 +1012,12 @@ writer a word. Run 29 is run 28 with branches (`runs/run29.cmd`), after run 28.
 From run 28 the op lines also count the contest, per 1000 steps of each island's probing: kernels
 held down by another population's claim, and populations that let go of their destination; and,
 with branches, how many of the best's populations branch.
+
+**The lesion map of run 28** (24 worlds, its settings; `runs/islands28/lesion.txt`) against run 26's:
+the generalist has an inside now. Of its 38 populations 14 join two of its own channels and 15 a
+channel and a port, where run 26's 29 were 25 port to port, 4 channel and port, none channel to
+channel. Lesions that raise a subtask fell from 53 to 25 (those that cost one: 28), and the
+populations that matter put 55% of their loss on one subtask (run 26: 45%; 11% if spread evenly).
+On recall 28 of 34 populations matter, 24 of them for its respond and 4 for its memory: a part for
+each. The wiring cost, word competition and pruning together are the first change that has built
+internal structure.

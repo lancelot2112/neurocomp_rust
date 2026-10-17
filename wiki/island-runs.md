@@ -31,6 +31,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 24 | goals judged on the elite (ISL_ELITE_PASS=1), partial credit in selection (ISL_PARTIAL=1) and passed rungs kept as cases (ISL_KEEP_RUNGS=1): run 23 with the three (run 22 with both if run 23 shows no promise: runs/run24-base21.cmd); no plasmid exchange | after 23 | |
 | 25 | inhibit inputs (ISL_INHIBIT=1) and the overlap rule as a gene (ISL_OVERLAP=1): run 24 with both (fallback runs/run25-base21.cmd); no plasmid exchange | after 24 | |
 | 26 | size classes (ISL_SIZE_CLASSES=1): lexicase keeps each size class's own choice among the elite and draws half the parents within a random class, so small and large networks both stay; run 25 with it (fallback runs/run26-base21.cmd); no plasmid exchange | after 25 | |
+| 27 | thrift relaxed while stuck (ISL_THRIFT=1, ISL_THRIFT_RELAX=64): the thrift cases taken with chance 64/(64+g), g the generations on the current rung, full again after a pass; run 26 with it (fallback runs/run27-base21.cmd); no plasmid exchange | after 26 | |
 
 ## How far each island climbed
 

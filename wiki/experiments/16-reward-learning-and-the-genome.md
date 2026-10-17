@@ -778,3 +778,20 @@ deletion is aimed at parts that look unused (they may be needed over more than o
 fill as mutation grows and shrinks genomes; the op lines show how many genomes are in each. Run 26
 is run 25 with it (`runs/run26.cmd`; `runs/run26-base21.cmd` if runs 24 and 25 fall back), after
 run 25.
+
+## Thrift relaxed while stuck (run 27)
+
+Run 22 (thrift on) passed its first rungs in 20 to 40 generations with small networks; run 23
+(thrift off) grew networks of 30 to 460 populations and passed switching's first rung only at
+123. A hard rung may need more than a small network has, an easy one does not. With
+`ISL_THRIFT_RELAX=64` (and thrift on) each lexicase selection takes the thrift cases with chance
+64 / (64 + g), g the generations the island has been on its current rung, and otherwise leaves
+them out: full thrift on a fresh rung, half after 64 generations without a pass, a fifth after
+256; a pass resets g, so what grew while stuck is trimmed on the next rung. Each island follows
+its own ladder, so the bloat and the trim come where that island is held up, not at a rung number
+fixed for all. It is selection only. (The count starts again at 0 when a run is resumed.) The
+other way to let a network choose its size, an output it writes, was set aside: a network cannot
+change its genome in a lifetime, so the only size it could choose is how it is judged, and pauses
+and gates already let it choose how much of itself runs. Run 27 is run 26 with thrift back on and
+relaxed while stuck (`runs/run27.cmd`; `runs/run27-base21.cmd` if the chain falls back), after
+run 26.

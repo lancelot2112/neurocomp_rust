@@ -727,6 +727,22 @@ pub fn size_classes() -> bool {
     SIZE_CLASSES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Thrift relaxed while stuck (`set_thrift_relax`, with thrift): a selection takes the thrift
+/// cases with chance `scale / (scale + g)`, g the generations the island has been on its current
+/// rung, else leaves them out: full thrift on a fresh rung, so the easy rungs are passed by small
+/// networks; less and less the longer a rung goes unpassed, so networks can grow when a rung needs
+/// more than they have; full again after each pass, so the growth is trimmed. 0: off (thrift
+/// always taken, as before).
+static THRIFT_RELAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_thrift_relax(scale: usize) {
+    THRIFT_RELAX.store(scale, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn thrift_relax() -> usize {
+    THRIFT_RELAX.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A genome's size class: floor(log4(size)), 4 and more together.
 pub fn size_class(size: usize) -> usize {
     ((usize::BITS - size.max(1).leading_zeros() - 1) / 2).min(4) as usize
@@ -874,7 +890,7 @@ pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Phys
     for generation in 0..generations {
         let scored = probe_all(population.drain(..).collect(), trials, physics, seeds, gap, wanted);
         let n = scored.len();
-        let (ranked, next) = lexicase_breed(&scored, wanted, thrift, pop, elite, &mut rng);
+        let (ranked, next) = lexicase_breed(&scored, wanted, thrift, 0, pop, elite, &mut rng);
         let means: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
         let pop_means = probe_means(&means);
         let pop_work = scored.iter().map(|s| s.work.min(u64::MAX / 4)).sum::<u64>() / n.max(1) as u64;
@@ -889,8 +905,9 @@ pub fn evolve_lexicase<G: Evolvable>(start: Vec<G>, trials: usize, physics: Phys
 /// One generation of epsilon-lexicase breeding on the `wanted` probes (and, with `thrift`, one
 /// work case per seed): the population ranked by its summed probe means (highest first, ties to
 /// the cheaper), and the next population: `elite` lexicase choices kept, the rest their mutated
-/// (a quarter recombined) children.
-fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: bool, pop: usize, elite: usize, rng: &mut StdRng) -> (Vec<usize>, Vec<G>) {
+/// (a quarter recombined) children. `stuck`: the generations on the current rung, which relax the
+/// thrift cases with `set_thrift_relax`.
+fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: bool, stuck: usize, pop: usize, elite: usize, rng: &mut StdRng) -> (Vec<usize>, Vec<G>) {
     let n = scored.len();
     let nseeds = scored.first().map_or(0, |s| s.probes.len());
     // the cases: one per (seed, wanted probe), then one thrift case per seed (less work is better)
@@ -920,6 +937,11 @@ fn lexicase_breed<G: Evolvable>(scored: &[Probed<G>], wanted: &[usize], thrift: 
     };
     let select_in = |rng: &mut StdRng, mut cand: Vec<usize>| -> usize {
         let mut order: Vec<usize> = (0..ncases).collect();
+        // (`set_thrift_relax`) the thrift cases taken with chance scale / (scale + stuck)
+        let relax = thrift_relax();
+        if thrift && relax > 0 && rng.gen_range(0..relax + stuck) >= relax {
+            order.truncate(nseeds * np);
+        }
         order.shuffle(rng);
         for c in order {
             if cand.len() == 1 {
@@ -1158,9 +1180,9 @@ pub fn evolve_islands<G: Evolvable>(
                         cases.push(p);
                     }
                 }
-                lexicase_breed(&both, &cases, thrift, pop, elite, &mut rng)
+                lexicase_breed(&both, &cases, thrift, on[i], pop, elite, &mut rng)
             } else {
-                lexicase_breed(&scored, &wanted, thrift, pop, elite, &mut rng)
+                lexicase_breed(&scored, &wanted, thrift, on[i], pop, elite, &mut rng)
             };
             let m: Vec<observe::ProbeRow> = scored.iter().map(|s| probe_means(&s.probes)).collect();
             let mean = probe_means(&m);

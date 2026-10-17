@@ -1,0 +1,40 @@
+   Compiling neurocomp v0.1.0 (C:\Software\source\neurocomp)
+warning: value assigned to `last_edge` is never read
+   --> src\program\graph.rs:589:9
+    |
+589 | /         last_edge = graph.add_edge(
+590 | |             curr,
+591 | |             output_node,
+592 | |             EdgeSpec::from_defaults(&defaults),
+593 | |         );
+    | |_________^
+    |
+    = help: maybe it is overwritten before being read?
+    = note: `#[warn(unused_assignments)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+  --> src\world\observe.rs:52:9
+   |
+52 |     let mut close = |r: &mut Responding, c: Option<(usize, bool, bool)>| {
+   |         ----^^^^^
+   |         |
+   |         help: remove this `mut`
+   |
+   = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: constant `OPS` is never used
+   --> src\evolve\mod.rs:109:7
+    |
+109 | const OPS: [KernelOp; 4] = [KernelOp::Or, KernelOp::And, KernelOp::Xor, KernelOp::Clear];
+    |       ^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sparse` is never used
+   --> src\evolve\mod.rs:187:4
+    |
+187 | fn sparse(bits: usize, k: usize, rng: &mut StdRng) -> BitVector {
+    |    ^^^^^^
+
+warning: `neurocomp` (lib) generated 4 warnings (run `cargo fix --lib -p neurocomp` to apply 1 suggestion)
+    Finished `release` profile [optimized] target(s) in 7.32s

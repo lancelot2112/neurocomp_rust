@@ -1,9 +1,9 @@
 @echo off
-rem Island run 25: run 24 (run 23 with goals judged on the elite and partial credit) with inhibit inputs (ISL_INHIBIT=1) and the overlap rule as a gene (ISL_OVERLAP=1). 600 generations.
+rem (Fallback if run 23 does not show promise: based on run 21.) Island run 25: run 21 with inhibit inputs (ISL_INHIBIT=1) and the overlap rule as a gene (ISL_OVERLAP=1). 600 generations.
 rem Started with Win32_Process.Create so it does not end with the session that launched it.
 cd /d C:\Software\source\neurocomp
 if not exist runs\islands25 mkdir runs\islands25
-echo ---- run 25: run 24's settings (no plasmid exchange, goals judged on the elite, partial credit, thrift off, carrying paid as energy, heat inputs, loops closed, self writes, hint bands, output reads, edges on hints toward feedback, shadows as hints, pauses drawn, recall's long ladder, shadow explorers, port gates, the feel rung, task selection, accidents, two-mask kernels, marks, exploration, the frontier generalist, fresh worlds) with inhibit inputs (ISL_INHIBIT=1: a population may carry an inhibit input, a channel or port whose lines a frame ago are taken before its kernels fire, so a kernel whose mask lies more than half on them is held down; a new population has one one time in four) and the overlap rule as a gene (ISL_OVERLAP=1: a population's inhibit_quarters, 1 to 4 starting at 2, sets how much of a kernel's mask taken lines must cover to hold it down; 4 lets kernels on the same spot all fire); 600 generations> runs\islands25\log.txt
+echo ---- run 25: run 22's settings (no plasmid exchange, heat inputs, loops closed, self writes, hint bands, output reads, edges on hints toward feedback, shadows as hints, pauses drawn, recall's long ladder, shadow explorers, port gates, the feel rung, task selection, accidents, two-mask kernels, marks, exploration, the frontier generalist, fresh worlds) with inhibit inputs (ISL_INHIBIT=1: a population may carry an inhibit input, a channel or port whose lines a frame ago are taken before its kernels fire, so a kernel whose mask lies more than half on them is held down; a new population has one one time in four) and the overlap rule as a gene (ISL_OVERLAP=1: a population's inhibit_quarters, 1 to 4 starting at 2, sets how much of a kernel's mask taken lines must cover to hold it down; 4 lets kernels on the same spot all fire); 600 generations> runs\islands25\log.txt
 set ISL_RATION=256
 set ISL_FOOD=32
 set ISL_POP=32
@@ -46,11 +46,6 @@ set ISL_SELF_WRITE=1
 set ISL_LOOPS=1
 set ISL_HEAT=1
 set ISL_EVERY=0
-set ISL_THRIFT=0
-set ISL_CARRY_ENERGY=1
-set ISL_ELITE_PASS=1
-set ISL_PARTIAL=1
-set ISL_KEEP_RUNGS=1
 set ISL_INHIBIT=1
 set ISL_OVERLAP=1
 set ISL_LIVES=24

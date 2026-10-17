@@ -26,7 +26,7 @@ and how far each island climbed. Details are in experiments 13 to 16.
 | 19 | shadows as indicators: a find noted as a hint that gates and pauses take, nothing built; shadows started at random | 600 | 3 h 2 min |
 | 20 | edges built on hints: a mutation of its own adds a population of any kind on a hinted path, the way that feeds back (closes a loop, or runs from a higher level to a lower) three times in four; output ports readable by any population (ISL_READ_OUT); hint bands (ISL_HINT_BAND); self channel writable (ISL_SELF_WRITE); loops closed (ISL_LOOPS) | 600 | 3 h 8 min |
 | 21 | heat inputs: a channel or port whose fullness moves a population's thresholds, down when warm, up when cool | 600 | 4 h 24 min |
-| 22 | no plasmid exchange (ISL_EVERY=0): run 21 with the islands apart, to measure the exchange | after 21 | |
+| 22 | no plasmid exchange (ISL_EVERY=0): run 21 with the islands apart, to measure the exchange | 600 | 3 h 43 min |
 | 23 | thrift off (ISL_THRIFT=0) and carrying paid as energy (ISL_CARRY_ENERGY=1): run 22 (no plasmid exchange) with energy alone pricing compute and carrying | after 22 | |
 | 24 | goals judged on the elite (ISL_ELITE_PASS=1), partial credit in selection (ISL_PARTIAL=1) and passed rungs kept as cases (ISL_KEEP_RUNGS=1): run 23 with the three (run 22 with both if run 23 shows no promise: runs/run24-base21.cmd); no plasmid exchange | after 23 | |
 | 25 | inhibit inputs (ISL_INHIBIT=1) and the overlap rule as a gene (ISL_OVERLAP=1): run 24 with both (fallback runs/run25-base21.cmd); no plasmid exchange | after 24 | |
@@ -57,6 +57,7 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 19 | feel (44; mean 40) | **lag4 (83)** | echo2 (27) | first | first (**feel: mean 55**) | first (glow: mean 58) | feel (140; mean 52) | 8% of 522 |
 | 20 | feel (157; mean 51) | lag4 (127; **lag3 at 36**) | echo2 (13) | first | first (feel: mean 48) | first (**glow: mean 117**) | shift8 (593) | **10% of 521** |
 | 21 | feel (44; mean 7) | **distract (104): every delay rung, lag16 at 88** | echo2 (21) | first (**cycle1: mean 58**) | first (feel: mean 24) | first (glow: mean 99) | feel (442) | 7% of 521 |
+| 22 (no exchange) | feel (33; **mean 35**) | lag16 (582) | echo2 (17) | first (**cycle1: mean 78**) | first (**feel: mean 45**) | first (glow: mean 105) | feel (259) | none moved |
 
 Two cautions for reading it:
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.

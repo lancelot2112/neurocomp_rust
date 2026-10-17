@@ -646,6 +646,15 @@ over each island's own evolution has not been measured. Run 22 is run 21 with th
 (`ISL_EVERY=0`): the same settings, the islands evolving apart. Compared with run 21 island by
 island, it measures the exchange: rungs, goal means, and whether loops and network sizes differ.
 
+**Results** (`runs/islands22/README.md`): 15 rungs passed against run 21's 16. The exchange had
+carried recall up its delay rungs (lag4 at 73 in run 21, at 400 here; lag16 at 88 against 582)
+and shapes off its first rung (104 against 245), but without it most islands did as well or
+better within a rung: prediction's cycle1 averaged 78 (run 21: 58, the best of any run),
+switching's feel 35 (7) and the maze's 45 (24); screen and selection about level. Loops and heat
+inputs came as in run 21 on every island. So the exchange buys speed on a ladder whose rungs a
+neighbour's circuit can fill (a delay line, a shape's reflex), and costs the islands whose task
+no neighbour solves; from run 23 on it stays off.
+
 ## Thrift off (run 23)
 
 Three costs act on work (kernels matched plus words wired a step):

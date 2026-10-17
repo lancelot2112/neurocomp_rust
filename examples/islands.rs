@@ -192,11 +192,12 @@
 //! tag space, near the ports they use: parts. A loop on one channel is free.
 //!
 //! `ISL_COMPETE=1`: populations compete for their destination. At each destination the
-//! populations writing it run best match first (their best kernel's share the step before), and a
-//! kernel whose output lies more than half (its overlap rule) on lines an earlier population's
-//! kernels wrote this step is held down and learns anti-Hebbian, as kernels of one population are
-//! where their inputs overlap: the winners write the act, not the OR of every reflex. Wires and
-//! noise do not compete.
+//! populations writing it run best match first (their best kernel's share the step before), and
+//! each word an earlier population's kernels wrote this step is claimed: a kernel more than half
+//! (its overlap rule) of whose output words are claimed is held down and learns anti-Hebbian, as
+//! kernels of one population are where their inputs overlap. A move or a token is a code in one
+//! word, so one population writes each: the winners write the act, not the OR of every reflex.
+//! Wires and noise do not compete.
 //!
 //! `ISL_PRUNE=1` (with `ISL_COMPETE`): a population lets go of its destination when it keeps
 //! losing. Its hold (the gene `grip`, 16 to start, halved or doubled by mutation) goes up one each

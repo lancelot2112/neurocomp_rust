@@ -946,9 +946,12 @@ rule to decode from the winner only. At birth a muscle fibre is reached by sever
 that compete by their activity until one keeps it. Two switches build that:
 - `ISL_COMPETE=1`: at each destination the kernel populations writing it run best match first
   (each by its best fired kernel's share of its own lines, the step before; wires and noise keep
-  their place), and a kernel whose output lies more than its overlap rule allows (half) on lines
-  an earlier population's kernels wrote this step is held down and learns anti-Hebbian, as a
-  kernel whose input lies on taken lines is (`KernelContext::taken_out`).
+  their place), and each word an earlier population's kernels wrote this step is claimed: a kernel
+  more than half of whose output words are claimed is held down and learns anti-Hebbian, as a
+  kernel whose input lies on taken lines is (`KernelContext::taken_out`). Words, not lines: a move
+  or a token is a 16-line code inside one word, and on run 26's networks competition by lines
+  changed nothing (the reflexes write different lines of the hand's word: 53 lesions that raise a
+  subtask with it and without), so one population writes each word.
 - `ISL_PRUNE=1` (with it): each population's hold on its destination starts each lifetime at its
   gene `grip` (16, halved or doubled by mutation, 1 to 128), goes up one each step it writes there
   (to twice its start) and down one each step its kernels only lose; at 0 it lets go and runs no

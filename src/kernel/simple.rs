@@ -331,14 +331,15 @@ impl SimpleKernel {
         ctx.input.mask_move_random_connected_and_not_set(self.input_idx, &mut self.input_mask, rng);
     }
 
-    /// Its output lies more than `inhibit_quarters` quarters on lines other populations took this
-    /// step (`KernelContext::taken_out`).
+    /// More than `inhibit_quarters` quarters of the words it writes were claimed this step by
+    /// other populations (`KernelContext::taken_out`): a word is a slot (a move or a token is a
+    /// code inside one word), and one population writes it.
     fn output_taken(&self, ctx: &KernelContext) -> bool {
         let o = self.output_mask.as_words();
-        let taken: usize = o.iter().enumerate().map(|(w, &m)| (m & ctx.taken_out.get(self.output_idx + w).copied().unwrap_or(0)).count_ones() as usize).sum();
-        let lines: usize = o.iter().map(|m| m.count_ones() as usize).sum();
+        let words = o.iter().filter(|&&m| m != 0).count();
+        let taken = o.iter().enumerate().filter(|&(w, &m)| m != 0 && ctx.taken_out.get(self.output_idx + w).copied().unwrap_or(0) != 0).count();
         let q = if ctx.inhibit_quarters == 0 { 2 } else { ctx.inhibit_quarters.min(4) } as usize;
-        lines > 0 && 4 * taken > q * lines
+        words > 0 && 4 * taken > q * words
     }
 
     #[inline]
@@ -552,9 +553,12 @@ impl KernelTrait for SimpleKernel {
     }
 
     fn mark_output(&self, taken: &mut [u64]) {
+        // it claims every word it writes
         for (w, &m) in self.output_mask.as_words().iter().enumerate() {
             if let Some(t) = taken.get_mut(self.output_idx + w) {
-                *t |= m;
+                if m != 0 {
+                    *t = u64::MAX;
+                }
             }
         }
     }
@@ -726,19 +730,20 @@ mod tests {
         let mut out = BitVector::new(64, Some(0));
         let mut k = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![0xF0]), 0, 8, KernelOp::Or);
         let mut fresh = k.clone();
-        // three of its four output lines taken: held down, and it says so once
-        let taken = [0x70u64];
+        // the word it writes claimed by another population (any line of it): held down, and it
+        // says so once
+        let taken = [0x01u64];
         assert!(!k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &taken, phase: 0 }, &mut out, &mut rng));
         assert_eq!(out.as_words()[0], 0);
         assert!(k.take_lost() && !k.take_lost());
         // (held down, it learned anti-Hebbian: a line moved off the input)
-        // two of four (not more than half): a fresh one fires and marks its lines
-        let half = [0x30u64];
+        // nothing claimed: a fresh one fires and claims its word
+        let none = [0u64];
         let k = &mut fresh;
-        assert!(k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &half, phase: 0 }, &mut out, &mut rng));
+        assert!(k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &none, phase: 0 }, &mut out, &mut rng));
         let mut t = [0u64];
         k.mark_output(&mut t);
-        assert_eq!(t[0], 0xF0);
+        assert_eq!(t[0], u64::MAX);
     }
 
     #[test]

@@ -280,10 +280,10 @@ pub struct KernelContext<'a> {
     /// how much of a kernel's mask taken lines must cover to hold it down, in quarters: held down
     /// when they cover more than this many quarters (2: more than half; 4: never). 0 reads as 2
     pub inhibit_quarters: u8,
-    /// (`program::neurocomp::set_write_compete`) the lines of the destination that kernels of
-    /// earlier (better-matched) populations wrote this step: a kernel whose output lies more than
-    /// `inhibit_quarters` quarters on them is held down, as one whose input lies on taken lines
-    /// is. Empty: no competition
+    /// (`program::neurocomp::set_write_compete`) the words of the destination that kernels of
+    /// earlier (better-matched) populations wrote this step (a claimed word is all ones): a kernel
+    /// more than `inhibit_quarters` quarters of whose output words are claimed is held down, as
+    /// one whose input lies on taken lines is. Empty: no competition
     pub taken_out: &'a [u64],
 }
 

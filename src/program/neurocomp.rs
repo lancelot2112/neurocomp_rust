@@ -40,18 +40,15 @@ pub fn explore() -> bool {
     EXPLORE.load(Ordering::Relaxed)
 }
 
-/// The explorer's kind (`set_shadow`, with exploration): a stuck (or accident-prone) population
-/// grows a shadow predictor instead of a trial XOR loop. The shadow reads what the population
-/// reads and predicts, a step ahead, one vector after another (a sense, the self channel, an
-/// output port, a channel), writing nothing into the network; what it predicts well is noted
-/// for the genome (`notes`).
 /// Competition between populations for their destination (`set_write_compete`): at each
-/// destination, the kernels of the populations writing it compete for its lines as kernels of one
-/// population compete for their input. Each step the populations into a destination run in the
-/// order of how well their best kernel matched the step before (the better first; ties, and wires
-/// and noise, keep the genome's order), and a kernel whose output lies more than its overlap rule
-/// allows (half, by default) on lines an earlier population's kernels wrote this step is held down
-/// and learns anti-Hebbian. So the act is written by the winners, not the OR of every reflex.
+/// destination, the kernels of the populations writing it compete for its words as kernels of
+/// one population compete for their input. Each step the populations into a destination run in
+/// the order of how well their best kernel matched the step before (the better first; ties, and
+/// wires and noise, keep the genome's order), and each word an earlier population's kernels wrote
+/// this step is claimed: a kernel more than its overlap rule allows (half, by default) of whose
+/// output words are claimed is held down and learns anti-Hebbian. A word is a slot (a move or a
+/// token is a code inside one word), so one population writes each: the act is written by the
+/// winners, not the OR of every reflex.
 static COMPETE: AtomicBool = AtomicBool::new(false);
 
 pub fn set_write_compete(on: bool) {
@@ -77,6 +74,11 @@ pub fn prune() -> bool {
     PRUNE.load(Ordering::Relaxed)
 }
 
+/// The explorer's kind (`set_shadow`, with exploration): a stuck (or accident-prone) population
+/// grows a shadow predictor instead of a trial XOR loop. The shadow reads what the population
+/// reads and predicts, a step ahead, one vector after another (a sense, the self channel, an
+/// output port, a channel), writing nothing into the network; what it predicts well is noted
+/// for the genome (`notes`).
 static SHADOW: AtomicBool = AtomicBool::new(false);
 
 pub fn set_shadow(on: bool) {

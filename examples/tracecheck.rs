@@ -167,6 +167,15 @@ fn main() {
                     .map(|k| {
                         let i = if inbase == usize::MAX { (None, 0) } else { best(&laid(k.input_mask.as_words(), k.input_idx, inbase), inc) };
                         let o = best(&laid(k.output_mask.as_words(), k.output_idx, outbase), outc);
+                        if x.src.idx == 2 {
+                            // (reading H) its lines on the glyph a wire lands one word along, and
+                            // its threshold: can the glyph alone fire it?
+                            let gh: Vec<Vec<u64>> = gl.iter().map(|c| { let mut v = vec![0u64; 8]; v[1] = c[0]; v }).collect();
+                            let m = laid(k.input_mask.as_words(), k.input_idx, 0);
+                            let g = best(&m, &gh);
+                            let n: u32 = m.iter().map(|w| w.count_ones()).sum();
+                            return format!("{}({})+g{}({})/{}th{}>{}({})", show(i.0), i.1, show(g.0), g.1, n, k.threshold, show(o.0), o.1);
+                        }
                         format!("{}({})>{}({})", show(i.0), i.1, show(o.0), o.1)
                     })
                     .collect();

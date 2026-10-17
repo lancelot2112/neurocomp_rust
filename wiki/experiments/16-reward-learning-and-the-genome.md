@@ -1228,3 +1228,14 @@ Partscheck, 24 worlds, every code in word 0, best row (all at listener lag 1, bi
 Echo is learned: echo2 at twice its goal, and echo with eight tokens near its goal 150 for the first
 time. Copy (say the glyph's token, the teacher silent) stays near zero in every setting (one
 recorded world reached 87): hearing and saying work, reading does not yet.
+
+**Why copy fails there** (tracecheck, the 300 setting, four worlds: copy -169 to 26, echo 61 to
+191). Every listener kernel is born on one sound and one glyph together, all 16 synapses on them
+(8 on each, the whole of both codes), threshold 12 (3/4), writing the sound's voice code. So:
+- the glyph alone (8 lines) can never reach 12: no kernel can fire on a glyph without its sound;
+- most are born while babbling, on the network's own sound and whatever glyph was on the eye then
+  (one kernel per pair seen: sound 3 with glyphs 0, 1, 2, 3, 4, 6, 7), so the pairs are chance;
+- they do not learn afterwards: every synapse is already on a line of the pair it was born on, and
+  since two 8-line glyphs share about one line, a kernel matches only its own pair again.
+Echo works because the sound half is right in every kernel; reading needs kernels that the glyph
+alone can fire, born (or learning) only while the teacher's sound, not one's own, comes with it.

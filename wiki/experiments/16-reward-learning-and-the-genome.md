@@ -799,6 +799,16 @@ fill as mutation grows and shrinks genomes; the op lines show how many genomes a
 is run 25 with it (`runs/run26.cmd`; `runs/run26-base21.cmd` if runs 24 and 25 fall back), after
 run 25.
 
+**Result of run 26** (600 generations; `runs/islands26/README.md`): 21 rungs passed, the most of
+any run (run 25: 14, run 22: 15). The islands slowest in run 25 climbed fastest: shapes passed
+five rungs between 55 and 61 (run 25: clean at 482), recall respond to lag2 by 55 and lag3 at 337
+(run 25: respond at 193). Screen passed glow (300) at 274, a rung no run had passed, and the maze
+feel-100 at 142 (run 25: 214). Every island kept genomes in three or four size classes all run;
+none reached 256 tokens. Two islands did worse: switching sat on tell from 34 to 486 and
+prediction on cycle1-100 until 480, rungs run 25 passed at 52 and 141. Reading cleared the easier
+echo rungs again and then scored about 0 on echo2. So keeping a mixture of sizes helps most
+islands climb; it does not by itself get past the rungs that need a new ability (echo2, feel).
+
 ## Thrift relaxed while stuck (run 27)
 
 Run 22 (thrift on) passed its first rungs in 20 to 40 generations with small networks; run 23

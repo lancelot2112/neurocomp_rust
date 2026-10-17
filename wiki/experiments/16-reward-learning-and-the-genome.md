@@ -1280,3 +1280,20 @@ fading uncovers glyphs and new kernels are born beside the old.
 
 So far confirmation by coincidence does not fix reading: the check is too rare and too lenient
 against a reader that speaks every step, and a fading kernel is replaced without the old one going.
+
+**Competition for the voice** (partscheck `COMPETE=1`, `PRUNE=1`: populations into one destination
+compete for its words, so the reader and the listener do not OR their codes together). 24 worlds,
+8-line one-word codes, glyph wire, LOOP=3, listener 1 3 2:
+
+| setting | echo2 echo | fade6 copy | fade6 echo |
+|---|---|---|---|
+| no reader, no competition | 300 | -13 | 136 |
+| no reader, competition | 287 | 0 | 132 |
+| no reader, competition and pruning | 284 | 9 | 128 |
+| reader 2,0,3, competition | 283 | 13 | 56 |
+| reader 3,1,2, competition | 247 | 12 | 65 |
+| confirmed reader (lag 1-3, r 2), competition | 62 to 78 | -18 to -11 | 4 to 5 |
+| confirmed reader (lag 3, r 2), competition and pruning | 90 | -9 | 7 |
+
+Competition changes little: the plain reader's copy stays near its best without it (16), and the
+confirmed reader still drowns echo. The reader's problem is not the two populations' codes mixing.

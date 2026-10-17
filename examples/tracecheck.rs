@@ -68,6 +68,10 @@ fn main() {
     neurocomp::evolve::tags::set_birth_lags(true);
     neurocomp::evolve::tags::set_branches(true);
     neurocomp::evolve::tags::set_port_gates(true);
+    // (`COMPETE=1`: populations into one destination compete for its words, `set_write_compete`;
+    // `PRUNE=1`: and hold it by grip)
+    neurocomp::program::neurocomp::set_write_compete(std::env::var("COMPETE").is_ok_and(|v| v == "1"));
+    neurocomp::program::neurocomp::set_prune(std::env::var("PRUNE").is_ok_and(|v| v == "1"));
     let text = std::fs::read_to_string(std::env::args().nth(1).expect("a genome file with one population")).unwrap();
     let tpl = text.lines().find(|l| l.starts_with("pop ")).expect("a pop line").to_string();
     let pop = |id: u32, kv: &[(&str, String)]| {

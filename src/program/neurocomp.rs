@@ -871,15 +871,6 @@ impl RuntimeNetwork {
                 }
             }
             let Some(class) = eg.group.classes_mut().first_mut() else { continue };
-            // (copy learning) each kernel that fired moves an output line toward what its
-            // destination held when its input came in
-            if sp.out_copy > 0 && !fired[i].is_empty() {
-                let back = eg.src.read_back + sp.out_copy as usize - 1;
-                let target: Vec<u64> = nodes[eg.dst].get_frame(at(live[eg.dst], back)).as_words().to_vec();
-                for &k in &fired[i] {
-                    class.kernels_mut()[k].learn_toward(&target, sp.out_learn, rng);
-                }
-            }
             if !predictor && matches!(eg.op, KernelOp::Xor | KernelOp::Clear) {
                 let dest = nodes[eg.dst].current();
                 let mut came_true = 0u32;
@@ -1026,18 +1017,6 @@ impl RuntimeNetwork {
                 };
                 let out_mask = BitVector::from_bits(&out, 64);
                 let mut k = SimpleKernel::tile(start, t, &syn, out_mask.clone(), dw, threshold, eg.op);
-                // (copy learning) a kernel born into a port of the act spans the port, so its
-                // output can move to any move or token there
-                if sp.out_copy > 0 && eg.into_act && sp.dst_len > 0 {
-                    let dwords = dest.word_len().max(1);
-                    let (base, len) = (sp.dst_word % dwords, sp.dst_len.min(dwords - sp.dst_word % dwords));
-                    if len > 1 && (base..base + len).contains(&dw) {
-                        let mut v = vec![0u64; len];
-                        v[dw - base] = out_mask.as_words()[0];
-                        k.output_mask = BitVector::from_words(v);
-                        k.output_idx = base;
-                    }
-                }
                 if sp.expect {
                     k.expecting(Some(src));
                 }

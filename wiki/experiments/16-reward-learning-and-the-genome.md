@@ -1145,6 +1145,7 @@ trace hook (`evolve::set_trace`) and `World::codes`.
   per glyph (input overlap 16 of 16), but a kernel writes topographically, at its glyph's word,
   and the sound was drawn in another random word: no glyph kernel's output overlapped its sound by
   more than 10 of 16, on three worlds, with or without copy learning of outputs (`out_copy` 1-3).
+  Copy learning of outputs is since removed (below).
 - **The babbler stops after about ten steps.** It is paused while the ear is busy, and the
   listener, hearing the network's own voice, keeps saying something every step (a loop: voice,
   ear, H, listener, voice), so the ear is never quiet again. It babbled only 3 of the 8 voice codes,
@@ -1158,3 +1159,10 @@ trace hook (`evolve::set_trace`) and `World::codes`.
 
 So the parts fail for two reasons that come before any learning rule: the voice loop drowns out
 everything else, and a topographic kernel cannot pair codes drawn in different words.
+
+**Copy learning of outputs removed.** `ISL_OUT_COPY`, the gene `out_copy`, `EdgeSpec::out_copy`
+and `examples/copycheck` are gone: the output's teacher is the muscle's response
+(`ISL_MUSCLE`, the act showing what the body did) and births copying the move made
+(`birth_lag`), and copy learning added nothing measurable on any check (echo2 at best 19, glyph
+kernels never reaching their sound). Birth lags' mutation case moves from 55 to 54. Partscheck's
+best setting is unchanged (126 | -16, 5).

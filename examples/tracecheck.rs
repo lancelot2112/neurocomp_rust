@@ -5,8 +5,7 @@
 //! its output writes) and each listener kernel (the sound it hears, the voice code it writes).
 //! `cargo run --release --example tracecheck -- runs/echo-wires/wire.txt > trace.txt`
 //! (`SEED=n`: the world, 90000 by default; `TOKENS`, `TEACH`, `BABBLE`, `TRIALS`: the lesson,
-//! fade6 by default; `ONE_WORD=1`: every code in word 0; `GLYPH_COPY=k`: the glyph kernels' outputs learn toward what H held k-1 frames
-//! after their input; `LAG`, `BIRTH`, `GATE`: the listener's, 1 2 1 by default; `EVERY`: 500).
+//! fade6 by default; `ONE_WORD=1`: every code in word 0; `LAG`, `BIRTH`, `GATE`: the listener's, 1 2 1 by default; `EVERY`: 500).
 use neurocomp::evolve::tags::TagGenome;
 use neurocomp::evolve::{live_lesson, set_trace, Lesson, Physics, Task};
 use neurocomp::world::{World, ACTIVE};
@@ -69,7 +68,6 @@ fn main() {
     neurocomp::evolve::tags::set_birth_lags(true);
     neurocomp::evolve::tags::set_branches(true);
     neurocomp::evolve::tags::set_port_gates(true);
-    neurocomp::evolve::tags::set_out_copy(true);
     let text = std::fs::read_to_string(std::env::args().nth(1).expect("a genome file with one population")).unwrap();
     let tpl = text.lines().find(|l| l.starts_with("pop ")).expect("a pop line").to_string();
     let pop = |id: u32, kv: &[(&str, String)]| {
@@ -84,7 +82,7 @@ fn main() {
     let babbler = pop(1, &[("from", "128".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "4".into()), ("tonic", "2".into()), ("branch", e.to_string()), ("branch_at", "0".into()), ("pause", "56:0".into()), ("pause_at", "1".into()), ("gate", "-".into())]);
     let ear = pop(2, &[("from", "56".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into())]);
     let listener = pop(3, &[("from", h.to_string()), ("from_port", "0".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", lag.to_string()), ("birth_lag", birth.to_string()), ("gate", format!("{e}:1")), ("gate_lag", gate.to_string()), ("gate_at", "0".into())]);
-    let glyphs = pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("gate", "-".into()), ("repeat", "0".into()), ("out_copy", var("GLYPH_COPY", 0).to_string())]);
+    let glyphs = pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("gate", "-".into()), ("repeat", "0".into())]);
     let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{babbler}\n{ear}\n{glyphs}\n{listener}\n");
     let g = TagGenome::from_text(&g).unwrap_or_else(|x| panic!("{x}")).remove(0);
     println!("{}", g.describe());

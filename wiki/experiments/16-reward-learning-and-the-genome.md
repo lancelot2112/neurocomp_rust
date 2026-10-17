@@ -866,3 +866,8 @@ can expect is about 204, by moving at random after a stroke. The best networks s
 119, so there is room below that; but the goal itself is out of reach, and a mirrored-touch rung
 (feeling one's own move as the hand's code for it) would not help, as it says nothing about which
 move is the click either.
+
+So from run 25 feel's goal is 160 (`ISL_FEEL_GOAL=160`), passed by moving at random after a
+stroke (mean 204, worst world 152), with feel-100 before it (`ISL_STEPS=feel=100,...`; feel-200 is
+dropped). Learning which move is the click is left to the repeat rung after it, where a stroke
+follows one's own move.

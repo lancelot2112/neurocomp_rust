@@ -181,6 +181,10 @@
 //! wires), then echo2 (nothing shared: the mapping is learned in the lifetime). Goals as echo2's.
 //! `examples/mirrorcheck.rs` scores the wires in `runs/echo-wires/`.
 //!
+//! `ISL_FEEL_GOAL=<score>` (300): the feel rung's goal. No network can reach 300 on average: in
+//! feel nothing says which hand code is the click, and moving at random after a stroke scores
+//! about 204 (`examples/feelcheck.rs`); 160 is passed by that.
+//!
 //! `ISL_STEPS=<rung>=<goal>+<goal>,...`: steps up to a rung. Before each rung of that name (on
 //! every ladder that has one) copies of it are put in, the same world and probes, with these
 //! goals in turn: `feel=100+200` makes feel-100 > feel-200 > feel. For rungs no run passes.
@@ -717,7 +721,7 @@ fn main() {
                 let mut st = isl.stages[k].clone();
                 st.name = "feel".into();
                 st.probes = st.probes.iter().copied().filter(|&p| p != repeat && p != maze).chain([feel]).collect();
-                st.goal = vec![(feel, 300)];
+                st.goal = vec![(feel, env("ISL_FEEL_GOAL", 300))];
                 isl.stages.insert(k, st);
             }
         }

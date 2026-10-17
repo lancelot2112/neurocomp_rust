@@ -272,6 +272,12 @@ pub struct Lesson {
     pub symbol: bool,
     pub maze_fixed: bool,
     pub maze_nocue: bool,
+    /// reading: each token's sound made like the voice's code for it, in eighths of its lines (0:
+    /// unrelated, as always; 8: heard exactly as it is said, so copying the ear into the voice
+    /// echoes), `World::mirror_sounds`
+    pub mirror: usize,
+    /// reading: one's own voice is not heard, only the teacher (`World::quiet`)
+    pub quiet: bool,
     /// task selection (`Task::Mixed`): trials a block, and a cue for the block's task
     pub mixed_block: usize,
     pub mixed_cue: bool,
@@ -325,7 +331,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -388,6 +394,10 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.symbol = lesson.symbol;
     w.maze_fixed = lesson.maze_fixed;
     w.maze_nocue = lesson.maze_nocue;
+    w.quiet = lesson.quiet;
+    if lesson.mirror > 0 {
+        w.mirror_sounds(lesson.mirror, p);
+    }
     w.screen_w = lesson.screen_w;
     w.screen_h = lesson.screen_h;
     w.screen_lit = lesson.screen_lit;

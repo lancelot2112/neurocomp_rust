@@ -815,12 +815,36 @@ shapes' sixth and the maze's first. In runs 16 to 24 no island passed it: the be
 means were 54 to 89 for switching, 75 to 93 for the maze and up to 87 for shapes, a third of the
 goal, where the rung before it (tell) was passed in every run. So the maze has never climbed, and
 switching and shapes stop there. `ISL_STEPS=<rung>=<goal>+<goal>` puts copies of a rung before it,
-the same world and probes with lower goals; `feel=100+200` makes feel100 > feel200 > feel on all
+the same world and probes with lower goals; `feel=100+200` makes feel-100 > feel-200 > feel on all
 three ladders. Only the harness's ladder changes. With passed rungs kept (run 24's
-`ISL_KEEP_RUNGS`), a network on feel200 is still selected on feel100. Run 25 is run 24 with inhibit
+`ISL_KEEP_RUNGS`), a network on feel-200 is still selected on feel-100. Run 25 is run 24 with inhibit
 inputs, the overlap gene and these steps; runs 26 and 27 keep them.
 
 Other rungs no run has passed, by the same count (best 10-generation mean against the goal):
 reading's echo2 (25 of 150: far off, and the signal measurement found no gradient there, so a
 lower goal would not help; it needs an easier task first), screen's glow (170 of 300), selection's
 cued (531 of 600) and prediction's cycle1 (172 of 200, passed once).
+
+**Glow and cycle1 steps, and easier reading rungs** (also run 25): `ISL_STEPS` takes
+`feel=100+200,glow=150,cycle1=100`, so screen climbs glow-150 > glow (most runs' best is 137 to 170
+of 300) and prediction cycle1-100 > cycle1 (typical best 96 of 200).
+
+Reading's echo2 had no gradient, and a hand-made genome shows why. Echo scores saying a token the
+teacher said 1 to 4 steps before, less the same at 9 to 12 steps. The sound of a token and the
+voice's code for it are drawn apart in every lifetime, so it must be learned. But that is not the
+first obstacle: the ear also hears the network's own voice. A wire from the ear to the voice hears
+the teacher and itself, the two codes tie, and the voice locks onto one token. Scored with
+`examples/mirrorcheck.rs` over 24 worlds (two tokens, all taught):
+
+| genome (`runs/echo-wires/`) | quiet, mirror 8 | heard, mirror 8 | heard, mirror 4 | echo2 (mirror 0) |
+|---|---|---|---|---|
+| one wire, ear to voice (`wire.txt`) | 503 | -6 | -10 | 0 |
+| and the voice's last word taken away (ear at lag 2 ORed in, the voice at lag 3 cleared: `wire-less-own-voice.txt`) | 431 | 431 | 427 | 0 |
+
+Other lags of the two wires score 19 to 309 heard, so there is a gradient between them.
+`Lesson::mirror` (eighths) makes each token's sound share that many eighths of the voice code's
+lines (`World::mirror_sounds`); `Lesson::quiet` leaves one's own voice unheard. `ISL_MIRROR=1` puts
+echo2q (quiet, mirror 8: one wire), echo2m8 (heard, mirror 8: the wire and taking one's own voice
+away), echo2m4 (heard, half the lines) before echo2, all with echo2's goal of 150. From echo2m4 to
+echo2 the copy no longer says anything, and the sound's code must be learned in the lifetime;
+whether the circuit built on the easier rungs helps there is what run 25 shows.

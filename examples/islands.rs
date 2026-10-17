@@ -171,9 +171,19 @@
 //! one of its kernels' thresholds moves by its own threshold times how full that vector was a
 //! frame ago, down when warm, up when cool. A new population has one one time in four.
 //!
+//! `ISL_MIRROR=1`: easier rungs before reading's echo2, the same lesson (two tokens, every one
+//! said by the teacher) with each token's sound made like the voice's code for it, in eighths of
+//! its lines (`World::mirror_sounds`): echo2q (heard exactly as said, and one's own voice not
+//! heard: one wire from the ear to the voice scores 503), echo2m8 (heard exactly as said, one's
+//! own voice heard again: a copy now locks onto one token, scoring 0, unless what the voice said
+//! is taken away: the ear at lag 2 ORed into the voice and the voice at lag 3 cleared from it
+//! scores 431), echo2m4 (half the lines shared, the least a copy can say: 427 with the same two
+//! wires), then echo2 (nothing shared: the mapping is learned in the lifetime). Goals as echo2's.
+//! `examples/mirrorcheck.rs` scores the wires in `runs/echo-wires/`.
+//!
 //! `ISL_STEPS=<rung>=<goal>+<goal>,...`: steps up to a rung. Before each rung of that name (on
 //! every ladder that has one) copies of it are put in, the same world and probes, with these
-//! goals in turn: `feel=100+200` makes feel100 > feel200 > feel. For rungs no run passes.
+//! goals in turn: `feel=100+200` makes feel-100 > feel-200 > feel. For rungs no run passes.
 //!
 //! `ISL_FEEL=1`: a feel rung before each repeat rung (switching's, shapes' and the maze's learn):
 //! strokes come at random whatever the program does, and the `feel` probe scores clicking in the
@@ -447,6 +457,8 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "symbol" => stage.lesson.symbol = v == "1",
                 "fixed" => stage.lesson.maze_fixed = v == "1",
                 "nocue" => stage.lesson.maze_nocue = v == "1",
+                "mirror" => stage.lesson.mirror = v.parse().expect("mirror"),
+                "quiet" => stage.lesson.quiet = v == "1",
                 "cue" => stage.lesson.mixed_cue = v == "1",
                 "block" => stage.lesson.mixed_block = v.parse().expect("block"),
                 "sw" => stage.lesson.screen_w = v.parse().expect("sw"),
@@ -710,6 +722,23 @@ fn main() {
             }
         }
     }
+    // (`ISL_MIRROR=1`: reading's easier rungs before echo2: the same lesson with each token heard
+    // as it is said, then less and less like it, so echoing starts as copying the ear into the
+    // voice and moves toward learning the sound of each token)
+    if env("ISL_MIRROR", 0u8) == 1 {
+        for isl in islands.iter_mut() {
+            if let Some(k) = isl.stages.iter().position(|s| s.name == "echo2") {
+                let base = isl.stages[k].clone();
+                for (j, (name, m, quiet)) in [("echo2q", 8usize, true), ("echo2m8", 8, false), ("echo2m4", 4, false)].into_iter().enumerate() {
+                    let mut st = base.clone();
+                    st.name = name.into();
+                    st.lesson.mirror = m;
+                    st.lesson.quiet = quiet;
+                    isl.stages.insert(k + j, st);
+                }
+            }
+        }
+    }
     // (`ISL_STEPS=rung=goal+goal,...`: steps up to a rung: copies of it put before it, the same
     // world and probes, with lower goals, so a rung no run passes is climbed in parts)
     if let Ok(spec) = std::env::var("ISL_STEPS") {
@@ -721,7 +750,7 @@ fn main() {
                     let base = isl.stages[k].clone();
                     for (j, &g) in goals.iter().enumerate() {
                         let mut st = base.clone();
-                        st.name = format!("{name}{g}");
+                        st.name = format!("{name}-{g}");
                         st.goal = st.goal.iter().map(|&(p, _)| (p, g)).collect();
                         isl.stages.insert(k + j, st);
                     }

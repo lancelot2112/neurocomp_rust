@@ -262,6 +262,8 @@ pub struct World {
     /// `maze_nocue` no cue shows where: which turn pays is learned from the stroke alone
     pub maze_fixed: bool,
     pub maze_nocue: bool,
+    /// one's own voice not heard (a reading lesson's `quiet`): the ear has only the teacher
+    pub quiet: bool,
     maze_first: Option<bool>,
     junction: BitVector,
     maze_total: usize,
@@ -382,6 +384,25 @@ impl World {
     /// primitives) comes from `physics` and whose draws (cues, trial order, the caregiver) come
     /// from `seed`. Fixed physics across lifetimes lets evolution wire in what the codes are;
     /// varied physics leaves only what a program learns within a lifetime.
+    /// Each token's sound made like the voice's code for the same token (a reading lesson's
+    /// `mirror`): it keeps `eighths` of the voice code's lines and draws the rest afresh in the
+    /// same word (from the physics, so held-out worlds hear the same). 8: a token is heard
+    /// exactly as it is said, so a wire from the ear to the voice echoes it; 4: half the lines,
+    /// the least a said token needs (`Effector::articulate`); fewer, a copy says nothing.
+    pub fn mirror_sounds(&mut self, eighths: usize, physics: u64) {
+        let mut rng = StdRng::seed_from_u64(physics ^ 0x3122);
+        for k in 0..self.sounds.len() {
+            let v = self.voice.command(k);
+            let w = (0..v.word_len()).find(|&i| v.word(i) != 0).unwrap_or(0);
+            let on: Vec<usize> = (0..64).filter(|b| v.word(w) >> b & 1 == 1).collect();
+            let off: Vec<usize> = (0..64).filter(|b| v.word(w) >> b & 1 == 0).collect();
+            let keep = (on.len() * eighths.min(8) / 8).min(on.len());
+            let mut lines: Vec<usize> = on.choose_multiple(&mut rng, keep).map(|b| w * 64 + b).collect();
+            lines.extend(off.choose_multiple(&mut rng, on.len() - keep).map(|b| w * 64 + b));
+            self.sounds[k] = BitVector::from_bits(&lines, CH_BITS);
+        }
+    }
+
     pub fn with_physics(physics: u64, seed: u64, tokens: usize) -> Self {
         let r = |salt: u64| StdRng::seed_from_u64(physics ^ salt);
         Self {
@@ -416,6 +437,7 @@ impl World {
             symbol: false,
             maze_fixed: false,
             maze_nocue: false,
+            quiet: false,
             maze_first: None,
             junction: codes(1, &mut r(0x7A2E)).remove(0),
             maze_total: 0,
@@ -633,7 +655,7 @@ impl World {
         let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
-        if let Some(w) = said {
+        if let Some(w) = said.filter(|_| !self.quiet) {
             put(&mut senses, EAR, &self.sounds[w].clone());
         }
         if let Some(m) = moved {
@@ -940,6 +962,21 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mirrored_sound_is_said_as_its_token_when_copied() {
+        for m in [8usize, 6, 4] {
+            let mut w = World::with_physics(5, 1, 2);
+            w.mirror_sounds(m, 5);
+            for k in 0..2 {
+                assert_eq!(w.body().voice.articulate(&w.sounds[k]), Some(k), "mirror {m}, token {k}");
+            }
+        }
+        // below half the lines a copied sound says nothing of its own
+        let mut w = World::with_physics(5, 1, 2);
+        w.mirror_sounds(2, 5);
+        assert!((0..2).all(|k| w.body().voice.articulate(&w.sounds[k]) != Some(k)));
+    }
 
     #[test]
     fn a_command_drives_its_primitive_and_noise_does_nothing() {

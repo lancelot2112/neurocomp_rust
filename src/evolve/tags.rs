@@ -645,6 +645,44 @@ impl TagGenome {
     /// The genome as text, one token a line: each channel with its width, and each population
     /// with the channels its tags resolve to (S the senses, A the act, Cn the n-th channel) and
     /// its properties.
+/// The network as a graph (`wiring`): its bit vectors (name, bits, held), its populations (id,
+/// from, to, op, wire or kernels) and their modulatory inputs (population id, kind: gate, pause,
+/// heat warm or cool, inhibit; the vector's name; whether it acts while that vector had lines on).
+    pub fn wiring(&self) -> (Vec<(String, usize, bool)>, Vec<(u32, String, String, String, bool)>, Vec<(u32, String, String, bool)>) {
+        let ch = Channels::of(&self.tokens);
+        let mut nodes: Vec<(String, usize, bool)> = Vec::new();
+        let seen = |name: String, bits: usize, hold: bool, nodes: &mut Vec<(String, usize, bool)>| {
+            if !nodes.iter().any(|n| n.0 == name) {
+                nodes.push((name, bits, hold));
+            }
+        };
+        for i in 1..ch.self_index() {
+            seen(ch.name(ch.whole(i)), ch.list[i].1 * 64, ch.hold[i], &mut nodes);
+        }
+        let mut edges = Vec::new();
+        let mut mods = Vec::new();
+        for p in self.pops() {
+            let (Some(a), Some(b)) = (ch.from(p), ch.to(p)) else { continue };
+            for pl in [a, b] {
+                seen(ch.name(pl), pl.len * 64, pl.node > 0 && pl.node < ch.self_index() && ch.hold[pl.node], &mut nodes);
+            }
+            edges.push((p.id, ch.name(a), ch.name(b), p.op.text(), p.wire));
+            let mut m = |kind: &str, t: u8, at: u8, on: bool, nodes: &mut Vec<(String, usize, bool)>| {
+                if let Some(g) = ch.gate_place(t, at) {
+                    seen(ch.name(g), g.len * 64, false, nodes);
+                    mods.push((p.id, kind.to_string(), ch.name(g), on));
+                }
+            };
+            if let Some((t, on)) = p.gate { m("gate", t, p.gate_at, on, &mut nodes) }
+            if let Some((t, on)) = p.pause { m("pause", t, p.pause_at, on, &mut nodes) }
+            if !p.wire {
+                if let Some((t, w)) = p.heat { m(if w { "warm" } else { "cool" }, t, p.heat_at, true, &mut nodes) }
+                if let Some(t) = p.inhibitor { m("inhibit", t, p.inhibitor_at, true, &mut nodes) }
+            }
+        }
+        (nodes, edges, mods)
+    }
+
     pub fn describe(&self) -> String {
         let ch = Channels::of(&self.tokens);
         let gname = |t: u8, at: u8| ch.gate_place(t, at).map_or("-".to_string(), |p| ch.name(p));

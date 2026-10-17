@@ -848,3 +848,21 @@ echo2q (quiet, mirror 8: one wire), echo2m8 (heard, mirror 8: the wire and takin
 away), echo2m4 (heard, half the lines) before echo2, all with echo2's goal of 150. From echo2m4 to
 echo2 the copy no longer says anything, and the sound's code must be learned in the lifetime;
 whether the circuit built on the easier rungs helps there is what run 25 shows.
+
+**The feel rung's ceiling** (`examples/feelcheck.rs`: the feel world driven by a fixed policy over 48
+worlds, codes drawn afresh in each as the islands' are). In feel the strokes come whatever is done,
+so nothing in the lifetime says which of the hand's 5 codes is the click (they are drawn afresh each
+lifetime). What a policy can score:
+
+| policy, in the 3 steps after a stroke | feel mean (worst, best) |
+|---|---|
+| nothing | 0 |
+| a random move | 204 (152, 273) |
+| one move kept for the lifetime | 170 (0, 1024) |
+| the click (knowing which code it is) | 1024 |
+
+So no network can reach the goal of 300 on average: the most a network that does not know the click
+can expect is about 204, by moving at random after a stroke. The best networks so far reached 54 to
+119, so there is room below that; but the goal itself is out of reach, and a mirrored-touch rung
+(feeling one's own move as the hand's code for it) would not help, as it says nothing about which
+move is the click either.

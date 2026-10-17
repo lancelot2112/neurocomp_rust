@@ -1239,3 +1239,14 @@ recorded world reached 87): hearing and saying work, reading does not yet.
   since two 8-line glyphs share about one line, a kernel matches only its own pair again.
 Echo works because the sound half is right in every kernel; reading needs kernels that the glyph
 alone can fire, born (or learning) only while the teacher's sound, not one's own, comes with it.
+
+**A reader** (partscheck `READER=l,b,g`, with `LOOP=3`): kernels from the eye (the glyph `l` frames
+ago) into the voice, born copying the move made `b` frames ago (the network's echo of the teacher),
+giving birth and learning only while the ear had lines on `g` frames ago, and paused while either
+efference copy (babbler's E, listener's F, wired into one channel and carried down two more) was on:
+it should learn from the teacher's voice only. In a recorded lifetime it grows one kernel per glyph,
+all eight writing token 3: each is born at the first chance, while the network mostly says one
+token, and a kernel's output is fixed at birth. Swept over l 2-6, b 0-3, g 1-4 (80 settings, 24
+worlds, 8-line one-word codes, glyph wire, listener 1 3 2): copy at best 16 (2,0,3), median -6;
+echo unharmed (echo2 up to 287). No timing fixes a pairing made once, at birth, by chance: a wrong
+pairing has to be able to die.

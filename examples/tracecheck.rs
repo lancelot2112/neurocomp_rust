@@ -108,7 +108,26 @@ fn main() {
     let glyph_wire = std::env::var("GLYPH_WIRE").is_ok_and(|v| v == "1");
     let glyphs = if glyph_wire { pop(4, &[("from", "7".into()), ("to", h.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into()), ("cover", "0".into()), ("at", "0".into()), ("field", "3".into()), ("place", "1".into())]) } else { glyphs };
     let listener = if std::env::var("LGATE").is_ok_and(|v| v == "0") { set(&listener, "gate", "-") } else { listener };
-    let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{chain}{babbler}\n{ear}\n{glyphs}\n{listener}\n");
+    // (`READER=l,b,g`: a reader, kernels from the eye (the glyph `l` frames ago) into the voice,
+    // each born copying the move made `b` frames ago (the network's echo of the teacher naming
+    // the glyph), learning and giving birth only while the ear had lines on `g` frames ago, and
+    // paused while either efference copy (the babbler's E and the listener's F, both wired into
+    // channel 210, carried down 211 and 212) had lines on a frame ago: it learns from the
+    // teacher's voice, never its own. Needs `LOOP`)
+    let mut reader = String::new();
+    if let Some(r) = std::env::var("READER").ok().filter(|_| looped > 0) {
+        let v: Vec<u8> = r.split(',').map(|t| t.parse().unwrap()).collect();
+        for t in [210, 211, 212] {
+            reader += &format!("channel {t} 3 0\n");
+        }
+        for (id, from, to) in [(21u32, e, 210u8), (22, 200, 210), (23, 210, 211), (24, 211, 212)] {
+            reader += &pop(id, &[("from", from.to_string()), ("from_port", "0".into()), ("to", to.to_string()), ("to_port", "0".into()), ("wire", "1".into()), ("op", "or".into()), ("gate", "-".into())]);
+            reader.push('\n');
+        }
+        reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("birth_lag", v[1].to_string()), ("gate", "56:1".into()), ("gate_lag", v[2].to_string()), ("gate_at", "1".into()), ("pause", "212:0".into()), ("pause_at", "0".into())]);
+        reader.push('\n');
+    }
+    let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{chain}{babbler}\n{ear}\n{glyphs}\n{listener}\n{reader}");
     let g = TagGenome::from_text(&g).unwrap_or_else(|x| panic!("{x}")).remove(0);
     println!("{}", g.describe());
     let every = var("EVERY", 500) as usize;

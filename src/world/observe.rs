@@ -587,6 +587,32 @@ pub fn select_graded(events: &[Event]) -> i32 {
 /// and the costs, the voice in conditioning and clicks in reading (each per 1024 steps); all 0 if
 /// a lifetime lacks either kind of block.
 pub fn select_parts(events: &[Event]) -> (i32, i32, i32, i32) {
+    // (the same stimuli in every block, `Lesson::mixed_same`: a babble block is a conditioning
+    // scene) the parts by each step's task: responding in respond blocks, the voice's variety in
+    // babble blocks (each of two tokens said at least once, half each), the voice in respond blocks
+    // and clicks in babble blocks as the costs
+    if events.iter().any(|e| e.task == Some(1) && matches!(e.scene, SceneKind::Conditioning(_))) {
+        let resp: Vec<Event> = events.iter().filter(|e| e.task == Some(0)).cloned().collect();
+        let bab: Vec<&Event> = events.iter().filter(|e| e.task == Some(1)).collect();
+        if resp.is_empty() || bab.is_empty() {
+            return (0, 0, 0, 0);
+        }
+        let tr = trials(&resp, (3, 5), (7, 9));
+        let all = |_: &Trial| true;
+        let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
+        let voice = (resp.iter().filter(|e| e.said.is_some() || !e.sentence.is_empty()).count() * 1024 / resp.len()) as i32;
+        let clicks = (bab.iter().filter(|e| e.moved == Some(CLICK)).count() * 1024 / bab.len()) as i32;
+        let mut said = 0u64;
+        for e in &bab {
+            if let Some(t) = e.said {
+                said |= 1 << t.min(63);
+            }
+            for &t in &e.sentence {
+                said |= 1 << t.min(63);
+            }
+        }
+        return (respond, (said.count_ones() as i32 * 512).min(1024), voice, clicks);
+    }
     let cond: Vec<Event> = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_))).cloned().collect();
     // (the still blocks are not reading blocks: `still` scores them)
     let seq: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence && e.task != Some(2)).collect();
@@ -1442,6 +1468,54 @@ mod tests {
         let (bab, refl, sel) = (mean(0), mean(1), mean(2));
         eprintln!("select (graded): babbler {bab:?}, reflex {refl:?}, selector {sel:?}");
         assert!(refl.0 < bab.0 && refl.1 > bab.1 && sel.1 > refl.1 && sel.0 > 600, "{bab:?} {refl:?} {sel:?}");
+    }
+
+    #[test]
+    fn with_the_same_stimuli_only_the_held_cue_tells_the_task() {
+        // every block a conditioning block (lights), its task drawn, the cue felt for 3 steps, clicks
+        // paying only in respond blocks; a holder keeps the last cue felt; a timing reflex clicks at
+        // lights and babbles always (what passed run 33's cued); a reactor acts only while the cue
+        // is felt
+        let run = |kind: u8, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let cues: Vec<Vec<u64>> = (0..3).map(|k| w.cues[k % w.cues.len()].as_words().to_vec()).collect();
+            let mut held: Option<usize> = None;
+            for b in 0..10 {
+                let task = if b < 2 { b } else { rand::Rng::gen_range(&mut rng, 0..2) };
+                w.task = Some(task);
+                w.task_cue = Some(task);
+                w.task_cue_left = Some(3);
+                w.no_pay = task != 0;
+                w.reversal_period = 20;
+                w.conditioning(Conditioning::Reversal, 20);
+                while !w.done() {
+                    let touch = channel(&senses, TOUCH).as_words().to_vec();
+                    let felt = cues.iter().position(|c| *c == touch);
+                    if felt.is_some() {
+                        held = felt;
+                    }
+                    let seen = channel(&senses, EYE).count_ones() > 0;
+                    let token = rand::Rng::gen_range(&mut rng, 0..2);
+                    let now = match kind { 1 => None, 2 => felt, _ => held };
+                    let (say, hand) = match (kind, now) {
+                        (1, _) => (Some(token), seen.then_some(CLICK)),
+                        (_, Some(0)) => (None, seen.then_some(CLICK)),
+                        (_, Some(1)) => (Some(token), None),
+                        _ => (None, None),
+                    };
+                    let a = w.act(say, hand);
+                    senses = w.step(&a);
+                }
+            }
+            select(&w.events)
+        };
+        let mean = |kind: u8| (0..12u64).map(|s| run(kind, 900 + s)).sum::<i32>() / 12;
+        let (holder, timing, reactor) = (mean(0), mean(1), mean(2));
+        eprintln!("same stimuli: holder {holder}, timing reflex {timing}, reactor {reactor}");
+        assert!(holder > 600 && timing < 300 && reactor < holder - 300, "{holder} {timing} {reactor}");
     }
 
     #[test]

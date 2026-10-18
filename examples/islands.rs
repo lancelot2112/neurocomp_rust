@@ -768,6 +768,7 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "cuesteps" => stage.lesson.mixed_cue_steps = v.parse().expect("cuesteps"),
                 "random" => stage.lesson.mixed_random = v == "1",
                 "three" => stage.lesson.mixed_three = v == "1",
+                "same" => stage.lesson.mixed_same = v == "1",
                 "sw" => stage.lesson.screen_w = v.parse().expect("sw"),
                 "sh" => stage.lesson.screen_h = v.parse().expect("sh"),
                 "lit" => stage.lesson.screen_lit = v.parse().expect("lit"),
@@ -927,12 +928,14 @@ const SELECT_STEP: &str = "mixclick probes=mixclick tokens=2 cue=1 goal=mixclick
 
 /// Selection's longer ladder (`ISL_SELECT_MORE=1`): short given a goal, then held (the cue felt
 /// only for a block's first 3 steps and the blocks' tasks drawn at random, so the task must be held
-/// through the block) and three (a third task, still: glyphs shown, neither click nor voice).
+/// through the block, and the same stimuli in every block, a conditioning block's lights paying only
+/// in respond blocks, so only the held cue tells the task) and three (a third task, still: neither
+/// click nor voice).
 const SELECTION_MORE: &str = "cued probes=select tokens=2 cue=1 goal=select@600; \
     uncued probes=select tokens=2 cue=0 goal=select@600; \
     short probes=select tokens=2 cue=0 block=10 goal=select@600; \
-    held probes=select tokens=2 cue=1 cuesteps=3 random=1 block=20 goal=select@600; \
-    three probes=select tokens=2 cue=1 cuesteps=3 random=1 three=1 block=20";
+    held probes=select tokens=2 cue=1 cuesteps=3 random=1 same=1 block=20 goal=select@600; \
+    three probes=select tokens=2 cue=1 cuesteps=3 random=1 three=1 same=1 block=20";
 
 const SELECTION_LADDER: &str = "cued probes=select tokens=2 cue=1 goal=select@600; \
     uncued probes=select tokens=2 cue=0 goal=select@600; \

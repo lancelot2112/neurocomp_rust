@@ -306,6 +306,9 @@ pub struct Lesson {
     pub mixed_cue_steps: usize,
     pub mixed_random: bool,
     pub mixed_three: bool,
+    /// (a mixed lifetime) the same stimuli in every block, whatever its task: a conditioning
+    /// block's lights (paying only in a respond block), so only the cue tells the task
+    pub mixed_same: bool,
     pub screen_w: usize,
     pub screen_h: usize,
     pub screen_lit: usize,
@@ -331,7 +334,8 @@ fn mixed_block(w: &mut World, b: usize, lesson: &Lesson, tokens: usize, seed: u6
     w.task = Some(task);
     w.task_cue = lesson.mixed_cue.then_some(task);
     w.task_cue_left = (lesson.mixed_cue_steps > 0).then_some(lesson.mixed_cue_steps);
-    if task == 0 {
+    w.no_pay = lesson.mixed_same && task != 0;
+    if task == 0 || lesson.mixed_same {
         w.reversal_period = n;
         w.conditioning(Conditioning::Reversal, n);
     } else {
@@ -361,7 +365,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 

@@ -628,3 +628,19 @@ still blocks show the same glyph stream as reading blocks and only the cue tells
 A selection test proper wants every task's blocks to show the same stimuli, the cue alone saying
 what to do.
 
+**The same stimuli in every block** (lesson key `same=1`, on held and three in `ISL_SELECT_MORE`,
+runs 34 and 35). Every block, whatever its task, is a conditioning block (lights in trials); clicks
+pay only in respond blocks (`World::no_pay`); select's parts are taken by each step's task
+(`Event::task`): responding in respond blocks, the voice's variety in babble blocks, the voice in
+respond blocks and clicks in babble blocks as costs, still as before. Test
+`with_the_same_stimuli_only_the_held_cue_tells_the_task` (12 worlds, the cue felt 3 steps, tasks
+drawn): a holder of the last cue 1022, run 33's passing trick (click at lights, babble always) -257,
+a network acting only while the cue is felt 515.
+
+**Why maze and screen swing** (run 33 from 600 to 900): maze's goal score has a spread of 48 and a
+generation-to-generation change of 44, about all of it the noise of 24 new training worlds a
+generation (the gradient audit measured maze's spread between worlds at about 167, so 34 by chance
+on a mean of 24); screen's spread, 54, is twice its step change, 29: a slower real drift, a lineage
+gaining (to 197) and then lost, since nothing locks a gain short of a pass. Not the networks' size:
+these islands' best have 1 to 8 populations.
+

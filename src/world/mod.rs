@@ -262,6 +262,9 @@ pub struct World {
     /// felt (None: all the block)
     pub task: Option<usize>,
     pub task_cue_left: Option<usize>,
+    /// (a mixed lifetime with the same stimuli in every block, `Lesson::mixed_same`) clicks in a
+    /// block whose task is not responding are not stroked
+    pub no_pay: bool,
     voice: Effector,
     hand: Effector,
     cond_total: usize,
@@ -589,6 +592,7 @@ impl World {
             task_cue: None,
             task: None,
             task_cue_left: None,
+            no_pay: false,
             voice: Effector::new(tokens, &mut r(0x7AC7)),
             hand: Effector::new(MOVES, &mut r(0x40B5)),
             cond_total: 0,
@@ -962,7 +966,7 @@ impl World {
                             }
                             put(&mut senses, EYE, &self.exemplar.clone().unwrap());
                         }
-                        if click && (3..=5).contains(&t) && !stroked && pays {
+                        if click && (3..=5).contains(&t) && !stroked && pays && !self.no_pay {
                             self.stroke_next = true;
                             stroked = true;
                         }

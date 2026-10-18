@@ -260,6 +260,11 @@ pub struct EdgeSpec {
     /// the kernels that fire also write their outputs into, at the same place (wrapping), by OR.
     /// None: none
     pub branch: Option<(usize, Option<(usize, usize)>)>,
+    /// (`evolve::tags::set_branches_many`) more branches, each its own: a vector (node, its words),
+    /// a write op, a rotation of what is written, and a trigger, a gate (node, on, its words): it
+    /// writes only while that vector had lines (on) or none a frame ago. What the kernels that fire
+    /// write, rotated, is written into the vector with the op
+    pub more: Vec<(usize, Option<(usize, usize)>, KernelOp, u8, Option<(usize, bool)>, Option<(usize, usize)>)>,
     /// (into a port of the act) a birth copies the move made this many frames ago, not the one
     /// being made: what was done before what is sensed now (imitation: one's own voice is heard
     /// after it is made). 0: the move being made (a reflex)
@@ -361,6 +366,7 @@ impl EdgeSpec {
             inhibit_quarters: 2,
             grip: 0,
             branch: None,
+            more: Vec::new(),
             birth_lag: 0,
             elig: 0,
             rule: 0,

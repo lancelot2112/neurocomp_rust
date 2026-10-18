@@ -203,6 +203,9 @@ pub struct Pop {
     /// inhibitory partner, a second target driven by the same decision. A wire has none.
     pub branch: Option<u8>,
     pub branch_at: u8,
+    /// (`set_branches_many`) up to four more branches, each with its own target, write op,
+    /// rotation and trigger (`Branch`)
+    pub more: Vec<Branch>,
     /// (`set_birth_lags`) births into a port of the act copy the move made this many frames ago
     /// (`EdgeSpec::birth_lag`, 0 to 4); 0 the move being made
     pub birth_lag: u8,
@@ -240,7 +243,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, branch: None, branch_at: 0, birth_lag: 0, elig: 0, rule: 0, trigger: 0, lane: 6, inhibit_quarters: 2, grip: 16, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, branch: None, branch_at: 0, more: Vec::new(), birth_lag: 0, elig: 0, rule: 0, trigger: 0, lane: 6, inhibit_quarters: 2, grip: 16, hint: None,
         }
     }
 
@@ -436,6 +439,98 @@ pub fn set_inhibit_inputs(on: bool) {
 
 pub fn inhibit_inputs() -> bool {
     INHIBIT_INPUTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// More branches (`set_branches_many`, `Pop::more`): beside its one branch, a population may carry
+/// up to four more, each its own: a target (a channel or an output port, by tag), a write op, a
+/// rotation of what is written, and a trigger, a gate on a channel or a port (it writes only while
+/// that vector had lines on, or none, a frame ago), or none (always). One firing then reaches
+/// several places, each written its own way and each in its own context. Off by default.
+static BRANCHES_MANY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_branches_many(on: bool) {
+    BRANCHES_MANY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn branches_many() -> bool {
+    BRANCHES_MANY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// One of a population's more branches (`set_branches_many`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Branch {
+    /// its target's tag, and what it names: 0 a declared channel, 2 an output port
+    pub to: u8,
+    pub at: u8,
+    /// how it writes, and how far what it writes is rotated left first
+    pub op: KernelOp,
+    pub rot: u8,
+    /// its trigger: a gate's tag and whether it opens on lines (true) or none, and what the tag
+    /// names (0 a channel, 1 an input port, 2 an output port); None: it always writes
+    pub gate: Option<(u8, bool)>,
+    pub gate_at: u8,
+}
+
+impl Branch {
+    pub fn random<R: Rng + ?Sized>(rng: &mut R) -> Self {
+        let mut b = Branch {
+            to: rng.r#gen(),
+            at: if rng.gen_bool(0.5) { 2 } else { 0 },
+            op: [KernelOp::Or, KernelOp::Xor, KernelOp::Clear, KernelOp::And, KernelOp::Add(3), KernelOp::Sub(3), KernelOp::Set, KernelOp::Nor][rng.gen_range(0..8)],
+            rot: if rng.gen_bool(0.5) { 0 } else { rng.gen_range(0..64) },
+            gate: if rng.gen_bool(0.5) { Some((rng.r#gen(), rng.gen_bool(0.5))) } else { None },
+            gate_at: rng.gen_range(0..3),
+        };
+        if b.gate.is_none() {
+            b.gate_at = 0;
+        }
+        b
+    }
+
+    /// As text: `to:at:op:rot:gate` (the gate `tag/on/at`, or `-`).
+    pub fn text(&self) -> String {
+        let g = self.gate.map_or("-".to_string(), |(t, on)| format!("{t}/{}/{}", on as u8, self.gate_at));
+        format!("{}:{}:{}:{}:{g}", self.to, self.at, self.op.text().replace(':', "."), self.rot)
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        let f: Vec<&str> = s.split(':').collect();
+        if f.len() != 5 {
+            return None;
+        }
+        let gate = if f[4] == "-" { (None, 0) } else {
+            let g: Vec<&str> = f[4].split('/').collect();
+            (Some((g.first()?.parse().ok()?, g.get(1) == Some(&"1"))), g.get(2).and_then(|x| x.parse().ok()).unwrap_or(0))
+        };
+        Some(Branch { to: f[0].parse().ok()?, at: f[1].parse().ok()?, op: KernelOp::parse(&f[2].replace('.', ":"))?, rot: f[3].parse().ok()?, gate: gate.0, gate_at: gate.1 })
+    }
+}
+
+/// A mutation of a population's more branches: add one (up to four), drop one, or change one's
+/// target (a tag bit), op, rotation or trigger.
+fn mutate_more<R: Rng + ?Sized>(more: &mut Vec<Branch>, rng: &mut R) {
+    if more.is_empty() || (more.len() < 4 && rng.gen_range(0..4) == 0) {
+        more.push(Branch::random(rng));
+        return;
+    }
+    let i = rng.gen_range(0..more.len());
+    let b = &mut more[i];
+    match rng.gen_range(0..7) {
+        0 => {
+            more.remove(i);
+        }
+        1 => b.to ^= 1 << rng.gen_range(0..8),
+        2 => b.op = Branch::random(rng).op,
+        3 => b.rot = rng.gen_range(0..64),
+        4 => {
+            b.gate = match b.gate { Some(_) if rng.gen_bool(0.3) => None, Some((t, on)) => Some((t ^ (1 << rng.gen_range(0..8)), on)), None => Some((rng.r#gen(), rng.gen_bool(0.5))) };
+            if b.gate.is_none() {
+                b.gate_at = 0;
+            }
+        }
+        5 if b.gate.is_some() => b.gate_at = rng.gen_range(0..3),
+        _ => b.at = if b.at == 2 { 0 } else { 2 },
+    }
 }
 
 /// Branches (`Pop::branch`): a population's fired kernels may write their outputs into a second
@@ -930,6 +1025,15 @@ impl TagGenome {
             }
             let inhibitor_at = p.inhibitor.filter(|_| !p.wire).and_then(|t| ch.gate_place(t, p.inhibitor_at));
             let branch_at = p.branch.filter(|_| !p.wire && branches()).and_then(|t| ch.gate_place(t, if p.branch_at == 2 { 2 } else { 0 }));
+            // (`set_branches_many`) the more branches, each to a channel or an output port, its gate
+            // on a channel or a port
+            let more: Vec<(usize, Option<(usize, usize)>, KernelOp, u8, Option<(usize, bool)>, Option<(usize, usize)>)> = if p.wire || !branches_many() { Vec::new() } else {
+                p.more.iter().filter_map(|b| {
+                    let to = ch.gate_place(b.to, if b.at == 2 { 2 } else { 0 })?;
+                    let g = b.gate.and_then(|(t, on)| ch.gate_place(t, b.gate_at).map(|g| (g, on)));
+                    Some((to.node, (!to.whole).then_some((to.off, to.len)), b.op, b.rot, g.map(|(g, on)| (g.node, on)), g.and_then(|(g, _)| (!g.whole).then_some((g.off, g.len)))))
+                }).collect()
+            };
             if let Some(h) = inhibitor_at {
                 depth[h.node] = depth[h.node].max(1);
             }
@@ -991,6 +1095,7 @@ impl TagGenome {
                 heat: p.heat.zip(heat_at).map(|((_, warm), h)| (h.node, window_of(Some(h)), warm)),
                 inhibitor: inhibitor_at.map(|h| (h.node, window_of(Some(h)))),
                 branch: branch_at.map(|h| (h.node, window_of(Some(h)))),
+                more,
                 birth_lag: if birth_lags() && !p.wire { p.birth_lag.min(4) } else { 0 },
                 elig: if eligibility() && !p.wire { p.elig.min(4) } else { 0 },
                 rule: if rule_tables() && !p.wire { p.rule } else { 0 },
@@ -1347,6 +1452,9 @@ impl TagGenome {
                     if let Some(t) = p.branch {
                         out.insert_str(out.len() - 1, &format!(" branch={t} branch_at={}", p.branch_at));
                     }
+                    if !p.more.is_empty() {
+                        out.insert_str(out.len() - 1, &format!(" more={}", p.more.iter().map(|b| b.text()).collect::<Vec<_>>().join("|")));
+                    }
                     if p.elig > 0 {
                         out.insert_str(out.len() - 1, &format!(" elig={}", p.elig));
                     }
@@ -1445,6 +1553,7 @@ impl TagGenome {
                         inhibitor_at: kv.get("inhibitor_at").and_then(|x| x.parse().ok()).unwrap_or(0),
                         branch: kv.get("branch").and_then(|x| x.parse().ok()),
                         branch_at: kv.get("branch_at").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        more: kv.get("more").map_or(Vec::new(), |x| x.split('|').filter_map(Branch::parse).collect()),
                         birth_lag: kv.get("birth_lag").and_then(|x| x.parse().ok()).unwrap_or(0),
                         elig: kv.get("elig").and_then(|x| x.parse().ok()).unwrap_or(0),
                         rule: kv.get("rule").and_then(|x| u16::from_str_radix(x, 16).ok()).unwrap_or(0),
@@ -1614,6 +1723,10 @@ impl TagGenome {
         if branches() && rng.gen_range(0..4) == 0 {
             p.branch = Some(rng.r#gen());
             p.branch_at = if rng.gen_bool(0.5) { 2 } else { 0 };
+        }
+        // (with `set_branches_many`) one more branch one time in four
+        if branches_many() && rng.gen_range(0..4) == 0 {
+            p.more.push(Branch::random(rng));
         }
         if inhibit_inputs() && rng.gen_range(0..4) == 0 {
             p.inhibitor = Some(rng.r#gen());
@@ -2086,7 +2199,7 @@ impl Evolvable for TagGenome {
                         1 => *conveyor = step(*conveyor, 0, 8),
                         _ => *wave = !*wave,
                     },
-                    Token::Pop(p) => match rng.gen_range(0..if triggers() { 58 } else if rule_tables() { 57 } else if eligibility() { 56 } else if birth_lags() { 55 } else if branches() { 54 } else if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
+                    Token::Pop(p) => match rng.gen_range(0..if branches_many() { 59 } else if triggers() { 58 } else if rule_tables() { 57 } else if eligibility() { 56 } else if birth_lags() { 55 } else if branches() { 54 } else if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,
                         1 => p.to ^= bit,
                         2 => p.wire = !p.wire,
@@ -2168,6 +2281,7 @@ impl Evolvable for TagGenome {
                         51 if crate::program::neurocomp::prune() => p.grip = if up { p.grip.saturating_mul(2).min(128) } else { (p.grip / 2).max(1) },
                         52 if branches() => p.branch = match p.branch { Some(t) => if rng.gen_bool(0.3) { None } else { Some(t ^ bit) }, None => Some(rng.r#gen()) },
                         53 if branches() => p.branch_at = if p.branch_at == 2 { 0 } else { 2 },
+                        58 if branches_many() => mutate_more(&mut p.more, rng),
                         54 if birth_lags() => p.birth_lag = step(p.birth_lag, 0, 4),
                         55 if eligibility() => p.elig = step(p.elig, 0, 4),
                         // (a rule table) one bit of it flips (a population without one starts
@@ -2227,6 +2341,20 @@ mod tests {
     use super::*;
     use crate::evolve::{live, Physics, Task};
     use crate::world::Conditioning;
+
+    #[test]
+    fn more_branches_read_back_as_written() {
+        let mut rng = StdRng::seed_from_u64(4);
+        for _ in 0..200 {
+            let b = Branch::random(&mut rng);
+            assert_eq!(Branch::parse(&b.text()), Some(b.clone()), "{}", b.text());
+        }
+        let mut more = vec![];
+        for _ in 0..50 {
+            mutate_more(&mut more, &mut rng);
+            assert!(more.len() <= 4);
+        }
+    }
 
     #[test]
     fn a_crossover_child_never_repeats_an_id() {

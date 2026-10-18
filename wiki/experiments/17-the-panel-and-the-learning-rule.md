@@ -578,3 +578,12 @@ generations (useful on respond 1000, 735, 524, 760 and remember 211), the island
 nothing every behaviour is 0, so the island starts on drift. Expect many species to be reflex
 variants useful on respond; the 512 apart rule limits how many.
 
+**More branches** (`ISL_BRANCHES_MANY=1`, for run 35). A population could carry one branch, a second
+vector its fired kernels OR their outputs into. Now it may carry up to four more (`tags::Branch`),
+each its own: a target (a channel or an output port, by tag), a write op, a rotation of what is
+written, and a trigger, a gate on a channel or a port (it writes only while that vector had lines,
+or none, a frame ago), or none. One firing reaches several places, each written its own way and in
+its own context. A new population has one one time in four; a mutation adds (up to four), drops or
+changes one (target bit, op, rotation, trigger). Checked: an eye-to-hand population with one more
+branch into a private channel fills it with 54 to 80 lines a step, 0 without.
+

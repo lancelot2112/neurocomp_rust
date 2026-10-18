@@ -831,6 +831,28 @@ impl RuntimeNetwork {
                                 let claim = if compete { taken.get_mut(bn).map(|t| t.as_mut_slice()) } else { None };
                                 work += eg.group.write_branch(&by_class, words, base, len, claim) as u64;
                             }
+                            // (more branches) each its own trigger, op and rotation: while its gate
+                            // holds, what the fired kernels write, rotated, goes into its vector
+                            // with its op
+                            for &(bn, bw, op, rot, gate, gw) in &eg.spec.more {
+                                if let Some((g, on)) = gate {
+                                    let f = nodes[g].get_frame(at(live[g], 1)).as_words();
+                                    let f = gw.map_or(f, |(o, n)| &f[o.min(f.len())..(o + n).min(f.len())]);
+                                    if f.iter().any(|&w| w != 0) != on {
+                                        continue;
+                                    }
+                                }
+                                let n = nodes[bn].current().as_words().len();
+                                let (base, len) = bw.unwrap_or((0, n));
+                                let mut buf = vec![0u64; n];
+                                work += eg.group.write_branch(&by_class, &mut buf, base, len, None) as u64;
+                                let words = nodes[bn].current_mut().as_words_mut();
+                                for (k, &m) in buf.iter().enumerate() {
+                                    if m != 0 {
+                                        words[k] = op.word(words[k], m.rotate_left(rot as u32 & 63));
+                                    }
+                                }
+                            }
                             fired[i] = by_class.into_iter().flatten().collect();
                         }
                         seen[i] = Some(Seen::of(owned, eg.src.idx, frame));

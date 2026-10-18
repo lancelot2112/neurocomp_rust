@@ -655,3 +655,24 @@ lines a step, across the word boundary into the next word by the sixth step. A n
 time in seven. (Run 33's genomes already held many motion channels, 48 rule-90 waves on screen and
 74 conveyors on prediction, but removing them from the genomes that passed rungs changed nothing.)
 
+## How run 33's screen passed torch (`runs/checks/screen-dive/`)
+
+Torch: two cells, the target's glyph shown only while the cursor is on its cell, the cursor's mark
+always shown; a click ends the trial. The passer (generation 934; 322 on 48 fresh worlds, goal
+300) is six wires and populations and no channel of its own, and two of them carry it: eye-to-hand
+wires writing `sub:3` (byte-lane subtract; lesion losses 0.49 and 0.53), each running only while the
+eye had lines a frame ago and the voice had none. Traced (`ISL_TRACE` now plays a screen lifetime on
+a screen rung): **it never moves the cursor**. It clicks when glyph and cursor are seen together
+(100 clicks, every one on the target) and otherwise does nothing until the trial runs out. In two
+cells the cursor starts on the target about half the time, so a click-when-seen reflex scores about
+512, above the goal: torch, meant to ask for search, is passed without it.
+
+How two wires make the reflex: subtracting the eye's picture from the hand in byte lanes turns each
+seen line into a byte of high lines (0 - x wraps), and the hand reads a command as the move whose
+word has the most lines, at least half a code's. The cursor's mark alone (8 lines) gives too few
+for any move; glyph and cursor (23 lines) give enough to read as the click. A threshold detector
+from wrapping arithmetic and the body's own decoder, with no kernel at all.
+
+Fix to make: on rungs that ask for search, never start the cursor on the target, so every hit takes
+a move.
+

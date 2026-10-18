@@ -96,3 +96,12 @@ the task. Removing the self-NOR wire costs 2.3 goals.
 
 Files: `runs/checks/selection-dive/` (genomes, lesion maps, a trace excerpt); experiment 17.
 
+### The wrap-around threshold (run 33, screen, generation 934)
+
+Two wires from the eye into the hand writing `sub:3` (subtract in byte lanes) and the hand's own
+decoder (a command is the move whose word holds the most lines, at least half a code's) make a
+popcount threshold with no kernel: 0 - x in a byte lane wraps to a byte of high lines, so each seen
+line becomes many lines in the hand; 8 seen lines (the cursor's mark) give too few to read as a
+move, 23 (a glyph under the cursor) enough to read as the click. It passed screen's torch rung as a
+click-when-seen reflex (experiment 17).
+

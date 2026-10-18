@@ -1271,7 +1271,9 @@ fn main() {
         let stream = st.probes.contains(&9);
         // (a selection rung) a mixed lifetime: blocks of tasks
         let mixed = st.probes.contains(&13) || st.probes.contains(&20);
-        println!("trace: {} rung {}, one {} lifetime, world {seed}", name, st.name, if mixed { "mixed" } else if stream { "token-stream" } else { "delayed-conditioning" });
+        // (a screen rung) a screen lifetime
+        let screen = st.probes.contains(&11);
+        println!("trace: {} rung {}, one {} lifetime, world {seed}", name, st.name, if screen { "screen" } else if mixed { "mixed" } else if stream { "token-stream" } else { "delayed-conditioning" });
         println!("step trial t cue pays tok odd click present | lines on per vector | kernels fired per population (id:fired)");
         let step = std::rc::Rc::new(std::cell::Cell::new(0usize));
         let s2 = step.clone();
@@ -1286,13 +1288,19 @@ fn main() {
                 let ks: Vec<_> = e.group.classes().iter().flat_map(|c| c.kernels().iter()).collect();
                 if ks.is_empty() { None } else { Some(format!("{i}#{}:{}", e.spec.salt, ks.iter().filter(|k| k.age == 0).count())) }
             }).collect();
-            println!("{k:5} {ti:>3} {tt:>2} {cue} {pays} {} {} {} {} | {} | {}", ev.shown.map_or("-".to_string(), |x| x.to_string()), if ev.odd { "!" } else { "." }, ev.moved.map_or("-".to_string(), |m| m.to_string()), if ev.present { "on" } else { ".." }, lines.join(" "), fired.join(" ") + &format!(" say:{} task:{}", ev.said.map_or("-".to_string(), |x| x.to_string()), ev.task.map_or("-".to_string(), |x| x.to_string())));
+            println!("{k:5} {ti:>3} {tt:>2} {cue} {pays} {} {} {} {} | {} | {}", ev.shown.map_or("-".to_string(), |x| x.to_string()), if ev.odd { "!" } else { "." }, ev.moved.map_or("-".to_string(), |m| m.to_string()), if ev.present { "on" } else { ".." }, lines.join(" "), fired.join(" ") + &format!(" say:{} task:{} screen:{} chose:{}", ev.said.map_or("-".to_string(), |x| x.to_string()), ev.task.map_or("-".to_string(), |x| x.to_string()), ev.screen.map_or("-".to_string(), |(a, b)| format!("{a}/{b}")), ev.chose.map_or("-".to_string(), |x| (x as u8).to_string())));
             // (`ISL_TRACE_WORDS=i,j`: those vectors' words too, in hex, the ones not empty)
             for i in std::env::var("ISL_TRACE_WORDS").unwrap_or_default().split(',').filter_map(|x| x.trim().parse::<usize>().ok()).filter(|&i| i < net.nodes.len()) {
                 let w: Vec<String> = net.nodes[i].current().as_words().iter().enumerate().filter(|(_, x)| **x != 0).map(|(j, x)| format!("{j}:{x:016x}")).collect();
                 println!("      words {i}: {}", w.join(" "));
             }
         })));
+        if screen {
+            let (ev, _) = neurocomp::evolve::live_lesson(&g, neurocomp::evolve::Task::Screen(trials), Physics::Varied, seed ^ 0x5C2E, gap, st.lesson.clone());
+            neurocomp::evolve::set_trace(None);
+            println!("screen {}", neurocomp::world::observe::screen(&ev));
+            return;
+        }
         if mixed {
             let blocks = (trials / st.lesson.mixed_block.max(1)).max(2);
             let (ev, _) = neurocomp::evolve::live_lesson(&g, neurocomp::evolve::Task::Mixed(blocks), Physics::Varied, seed ^ 0x313C, gap, st.lesson.clone());

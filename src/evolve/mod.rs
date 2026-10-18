@@ -737,7 +737,20 @@ pub fn partial() -> bool {
 
 /// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
 pub fn graded(p: usize) -> usize {
-    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, _ => p } } else { p }
+    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, 4 if partial_remember() => 18, _ => p } } else { p }
+}
+
+/// Partial credit on remember too (`set_partial_remember`, with `set_partial`): selection uses
+/// `observe::remember_graded`, a click in the two steps after the window counting half. Off by
+/// default.
+static PARTIAL_REMEMBER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_partial_remember(on: bool) {
+    PARTIAL_REMEMBER.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial_remember() -> bool {
+    PARTIAL_REMEMBER.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The elite's pass (`set_elite_pass`): a rung's goal is checked against the mean of the island's

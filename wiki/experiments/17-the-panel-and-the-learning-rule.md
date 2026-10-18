@@ -340,3 +340,8 @@ spending the trial. The world's test (8 worlds, policies that read the senses):
 A delay line can still be right on the trials whose delay it matches, so a goal on fair vary must be
 over about 500; it is the ladder's last rung, with no goal.
 
+**Partial credit on remember** (`ISL_PARTIAL_REMEMBER=1`, with `ISL_PARTIAL`, in run 32): selection
+uses remember~, where a cue trial clicked only in the two steps after its window counts half, against
+the same on no-cue trials; the goal stays on remember. World test (lag8): on time 1024 on both, one
+step late about 0 on remember and about 512 on remember~, clicking every third step about 0. A trial
+spent by an early click (fair vary) scores nothing on either.

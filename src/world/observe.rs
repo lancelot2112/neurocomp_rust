@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~"];
 /// How many probes there are.
-pub const NPROBES: usize = 18;
+pub const NPROBES: usize = 19;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -208,7 +208,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = if won_n == 0 || lost_n == 0 { 0 } else { (won * 1024 / won_n - lost * 1024 / lost_n) as i32 };
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -378,6 +378,45 @@ pub fn surprise_graded(events: &[Event]) -> i32 {
         return 0;
     }
     ((odd_near * 1024 / odd - kept_near * 1024 / kept) + (odd_late * 512 / odd - kept_late * 512 / kept)) as i32
+}
+
+/// Remember with partial credit (`evolve::set_partial_remember`): a cue trial clicked in its window
+/// counts in full, one clicked only in the two steps after its window at half, against the same on
+/// no-cue trials. A late answer to the light scores something; clicking at random or always 0. A
+/// trial whose window is not marked (spent by an early click, `World::go_tone`) scores nothing.
+pub fn remember_graded(events: &[Event]) -> i32 {
+    // each trial: (cue, its credit), and steps since its window closed
+    let mut tr: Vec<(bool, i64)> = Vec::new();
+    let mut cur = None;
+    let mut after = usize::MAX;
+    for e in events {
+        let Some((trial, _, cue, _)) = e.trial else { continue };
+        if cur != Some(trial) {
+            tr.push((cue, 0));
+            cur = Some(trial);
+            after = usize::MAX;
+        }
+        let last = tr.last_mut().unwrap();
+        if e.window {
+            after = 0;
+            if e.moved == Some(CLICK) {
+                last.1 = 1024;
+            }
+        } else if after != usize::MAX {
+            after += 1;
+            if after <= 2 && e.moved == Some(CLICK) && last.1 == 0 {
+                last.1 = 512;
+            }
+        }
+    }
+    let mean = |c: bool| {
+        let v: Vec<i64> = tr.iter().filter(|x| x.0 == c).map(|x| x.1).collect();
+        if v.is_empty() { 0 } else { v.iter().sum::<i64>() / v.len() as i64 }
+    };
+    if tr.iter().all(|x| x.0) || tr.iter().all(|x| !x.0) {
+        return 0;
+    }
+    (mean(true) - mean(false)) as i32
 }
 
 /// Feel with partial credit (`evolve::set_partial`): clicks 1 to 3 steps after a stroke count in
@@ -1019,6 +1058,35 @@ mod tests {
         assert!(lines < 450 && lines < hold - 400, "{lines} {hold}");
         eprintln!("fair rungs: distract held {held}, any light at 8 {any8}, latch {latch}, latest A {latest_a}; vary held to the tone {hold}, delay lines {lines}, on the tone {on_tone}, any light held {any_hold}");
         assert!(on_tone.abs() < 120 && any_hold.abs() < 120, "{on_tone} {any_hold}");
+        // graded: one step late scores about half, in the window in full, random clicks about 0
+        let graded = |set: &dyn Fn(&mut World), seed: u64, policy: &dyn Fn(usize, bool) -> bool| -> (i32, i32) {
+            let mut d = World::new(seed, 4);
+            set(&mut d);
+            d.conditioning(Conditioning::Delayed, 200);
+            let a = d.lights[0].clone();
+            let mut prev = BitVector::new(SENSE_BITS, Some(0));
+            let (mut since, mut was_a) = (999usize, false);
+            while !d.done() {
+                let eye = channel(&prev, EYE);
+                if eye.count_ones() > 0 {
+                    since = 1;
+                    was_a = eye.as_words() == a.as_words();
+                } else {
+                    since = since.saturating_add(1);
+                }
+                let act = d.act(None, if policy(since, was_a) { Some(CLICK) } else { None });
+                prev = d.step(&act);
+            }
+            let r = probes(&[], 50, &d.events, &[], &[], &[], &[]);
+            (r[4], r[18])
+        };
+        let lag8 = |w: &mut World| w.delay = 8;
+        let (on_time, on_time_g) = graded(&lag8, 3, &|s, a| a && s == 8);
+        let (late, late_g) = graded(&lag8, 3, &|s, a| a && s == 11);
+        let (_, noise_g) = graded(&lag8, 3, &|s, _| s % 3 == 0);
+        assert!(on_time > 900 && on_time_g > 900, "{on_time} {on_time_g}");
+        assert!(late.abs() < 60 && (400..=620).contains(&late_g), "{late} {late_g}");
+        assert!(noise_g.abs() < 150, "{noise_g}");
         // up to a delay of 5 the window is where it always was (steps 5-7)
         let mut w = World::new(1, 4);
         w.delay = 3;

@@ -454,6 +454,26 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
     }
     count.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     let ops: Vec<String> = count.iter().take(5).map(|(n, k)| format!("{n} {}%", k * 100 / total.max(1))).collect();
+    // what each population reads its input by: a wire copies it; kernels match by their trigger
+    // (with ISL_ZEROS, "+0" for a two-mask kernel that expects zeros too)
+    let mut inputs: Vec<(String, usize)> = Vec::new();
+    for g in genomes {
+        for t in &g.tokens {
+            if let Token::Pop(p) = t {
+                let name = if p.wire { "wire".to_string() } else {
+                    let t = ["at-least", "at-most", "band", "tile", "int>=", "int<=", "int~", "int-learned", "lanes>", "lanes<"][(p.trigger as usize).min(9)];
+                    let lane = if p.trigger >= 4 { format!("/{}", 1u32 << p.lane.clamp(3, 6)) } else { String::new() };
+                    format!("{t}{lane}{}", if p.expect { "+0" } else { "" })
+                };
+                match inputs.iter_mut().find(|c| c.0 == name) {
+                    Some(c) => c.1 += 1,
+                    None => inputs.push((name, 1)),
+                }
+            }
+        }
+    }
+    inputs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let inputs: Vec<String> = inputs.iter().take(6).map(|(n, k)| format!("{n} {}%", k * 100 / total.max(1))).collect();
     let (on, selfs, largest, pops) = genomes.first().map_or((0, 0, 0, 0), |g| g.loops());
     // (explored: populations kept from exploration; marked: populations with a mark, and the mean)
     let all: Vec<&Pop> = genomes.iter().flat_map(|g| g.tokens.iter().filter_map(|t| if let Token::Pop(p) = t { Some(p) } else { None })).collect();
@@ -509,7 +529,7 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
         let used = all.iter().filter(|p| p.hint.is_some_and(|x| p.gate.is_some_and(|g| g.0 == x.0 && p.gate_at == x.1) || p.pause.is_some_and(|g| g.0 == x.0 && p.pause_at == x.1))).count();
         format!("; hinted {}% (gated or paused on the hint {})", h * 100 / all.len().max(1), used)
     } else { String::new() };
-    format!("ops {}; loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}{expect}{accident}{ported}{predictors}{hints}", if ops.is_empty() { "none".into() } else { ops.join(", ") })
+    format!("ops {} (written); inputs {} (read by); loops: {on} of {pops} wired populations on a loop ({selfs} self-loops), the largest {largest} channels; explored {explored}{marks}{expect}{accident}{ported}{predictors}{hints}", if ops.is_empty() { "none".into() } else { ops.join(", ") }, if inputs.is_empty() { "none".into() } else { inputs.join(", ") })
 }
 
 /// The probes where `a` scores at least `NOTICE` above `b`, named.
@@ -1047,6 +1067,15 @@ fn main() {
     // (`ISL_LESION=n`, with `ISL_RESUME`: measure only, nothing evolves. Each island's best genome
     // as resumed is scored on n fresh worlds on each of its subtasks, then again with each of its
     // populations taken out in turn, on the same worlds: what each subtask loses without it.)
+    // (`ISL_OPS_REPORT=1`, with `ISL_RESUME`: nothing evolves; each island's elite as resumed, its
+    // ops written and inputs read by, and its best's loops, the report's line, then it stops)
+    if env("ISL_OPS_REPORT", 0u8) == 1 {
+        for (i, isl) in islands.iter().enumerate() {
+            let e = elite.max(1).min(start[i].len());
+            println!("{:<11} [stage {} {}] {}", isl.name, stages[i], isl.stages[stages[i]].name, ops_and_loops(&start[i][..e]));
+        }
+        return;
+    }
     let lesion: u64 = env("ISL_LESION", 0);
     if lesion > 0 {
         let worlds: Vec<u64> = (60_000..60_000 + lesion).collect();

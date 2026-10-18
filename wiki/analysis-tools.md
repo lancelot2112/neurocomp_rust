@@ -27,3 +27,13 @@ log; or a check example built for one question.
 Worked examples: the generalist's tangle and recall's held-channel timer
 ([experiment 17](experiments/17-the-panel-and-the-learning-rule.md)); the evolved reader
 ([experiment 18](experiments/18-an-evolved-reader.md)).
+
+## The op report: written and read by (`ISL_OPS_REPORT=1`)
+
+Every 50 generations the log gives each island's elite's ops as `ops ... (written)` (the write op of
+each population) and `inputs ... (read by)`: a wire, or the kernels' trigger (at-least, at-most,
+band, tile; integer int>=, int<=, int~, int-learned, lanes>, lanes< with the lane width, `/64` the
+whole word as a number), `+0` for two-mask kernels that expect zeros too. The same line for a
+checkpoint, nothing evolving: `ISL_OPS_REPORT=1 ISL_RESUME=runs/islandsN/checkpoint.txt` with the
+run's settings. Runs before 32 log only the written ops.
+

@@ -722,3 +722,26 @@ already in runs 34 and 35 are what turn the screen into a search task.
 | the other seven in that block | 0 | |
 | the screen island's best at 1055 (14 populations) | 334 | -242 |
 
+## Run 33's end (stopped at 1118 for run 34)
+
+Run 33 ran open-ended from 6:44 AM ET and was stopped by hand at generation 1118 (4:16 PM ET).
+31 rung moves, 9 of them the generalist's on its own ladders, all by generation 214:
+
+| island | last rung passed (generation) | how, where we looked |
+|---|---|---|
+| switching | respond (11) | |
+| recall | lag16 (469; lag8 at 445), on two | |
+| reading | echo2q (33), on pairs8 | |
+| prediction | cycle2 (519; cycle1 at 498), on cycle3 | fair streams: the first passes past cycle1 since they were made fair |
+| maze | feel-300 (325) | |
+| screen | two (1030), on row | torch and two by the sitter reflex: it never moves, and clicks when glyph and cursor share a cell |
+| shapes | clean (22) | |
+| selection | uncued (568), on short | cued and uncued by the onset-timing reflex (click at dark-lit-lit; babble while seeing) |
+| generalist | its ladders 1,4,2,0,0,0,2,0,0 | |
+
+Every move after 568 was screen's, and both were the sitter. The two hard islands we took apart
+(selection, screen) passed by cheap reflexes the rungs did not rule out, and run 34 carries the
+fixes for both (same-stimulus held and three rungs for selection; the cursor starting off the
+target and screen~ for screen), and the voice one-word everywhere, the novelty island and the
+islands' migrants into the generalist. The rung log's island dumps were a generation late through
+run 33; runs 29 to 33's are being rescored and corrected (`runs/islandsNN/rungs-fixed.txt`).

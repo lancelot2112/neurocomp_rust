@@ -139,6 +139,7 @@
 //! `ISL_SIGNAL=n` (with `ISL_RESUME`): measure only. Each island's resumed genomes are scored on n
 //! fresh worlds on their rung's goal probe and on the rung below, and the spread between genomes
 //! is set against the noise across worlds (icc, split-half r, epsilon). Nothing evolves.
+//! `ISL_SIGNAL_EACH=1`: on the resumed rung only, and each genome's mean printed.
 //!
 //! `ISL_ELITE_PASS=1`: a rung's goal is checked on the elite's mean on the training worlds (its
 //! best `ISL_ELITE` genomes), not the whole population's, before the elite's held-out check. The
@@ -1234,6 +1235,8 @@ fn main() {
     // much of the spread between genomes stands above the noise across worlds, which is what
     // selection on that rung has to go on.)
     let signal: u64 = env("ISL_SIGNAL", 0);
+    // (`ISL_SIGNAL_EACH=1`) each genome's mean too, on the rung resumed only
+    let each = env("ISL_SIGNAL_EACH", 0u8) == 1;
     if signal > 0 {
         let worlds: Vec<u64> = (50_000..50_000 + signal).collect();
         println!("signal on {signal} fresh worlds (island, rung, goal probe, genomes): mean, best genome; sd between genome means; sd across worlds in a genome; noise in one mean; icc (share of one world's spread that is between genomes); split-half r (genome means on odd worlds against even); epsilon (median over worlds of the spread across genomes)");
@@ -1241,7 +1244,7 @@ fn main() {
         let median = |mut v: Vec<f64>| { v.sort_by(|a, b| a.partial_cmp(b).unwrap()); v[v.len() / 2] };
         for (i, isl) in islands.iter().enumerate() {
             let mut ks = vec![stages[i]];
-            if stages[i] > 0 { ks.push(stages[i] - 1) }
+            if stages[i] > 0 && !each { ks.push(stages[i] - 1) }
             for k in ks {
                 let st = &isl.stages[k];
                 let Some(&(p, goal)) = st.goal.first() else { continue };
@@ -1262,6 +1265,9 @@ fn main() {
                 let best = means.iter().cloned().fold(f64::MIN, f64::max);
                 println!("  {:<10} {:<8} {} (goal {goal}), {} genomes: mean {grand:.0}, best {best:.0}; between {:.1}; within {:.1}; noise {:.1}; icc {icc:.2}; split-half r {r:.2}; epsilon {eps:.1}{}",
                     isl.name, st.name, PROBES[p], v.len(), sd(&means), within.sqrt(), (within / signal as f64).sqrt(), if k == stages[i] { "" } else { "  (the rung below)" });
+                if each {
+                    println!("    each genome: {}", means.iter().map(|m| format!("{m:.0}")).collect::<Vec<_>>().join(" "));
+                }
             }
         }
         return;

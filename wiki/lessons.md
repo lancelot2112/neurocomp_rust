@@ -299,7 +299,10 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     strategies a few kernels can build. For each rung, ask what the simplest circuit is that scores,
     simulate it against the world's generator, and make the goal or the world beat it. Run 32, on the fixed
     rungs, passed no prediction rung at all (run 31: five by rarity) and recall stalled on two (which
-    light, not that one came): the earlier passes had measured the shortcut.
+    light, not that one came): the earlier passes had measured the shortcut. Run 33 again: its only
+    passes after generation 519 (selection's cued and uncued, screen's torch and two) were reflexes
+    the rungs allowed, a click timed to the light's onset and a click when glyph and cursor share
+    a cell without ever moving.
 
 56. **Selection on rungs evolves reactions, not learners (experiment 17).** At run 33's 235 no
     island's elite scored better in a longer lifetime; most stalled rungs were flat or only fell

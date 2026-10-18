@@ -1622,8 +1622,10 @@ fn main() {
             }
         }
         // (`ISL_NOVELTY`) species founded on the novelty island
-        for &(i, p, x) in &r.new_species {
-            println!("{g:>4}  {} founds species {} (useful on {}: {x})", islands[i].name, r.species, PROBES[p]);
+        // (numbered in order: `r.species` counts them after this generation's)
+        let first = r.species + 1 - r.new_species.len().min(r.species + 1);
+        for (k, &(i, p, x)) in r.new_species.iter().enumerate() {
+            println!("{g:>4}  {} founds species {} (useful on {}: {x})", islands[i].name, first + k, PROBES[p]);
         }
         // (`ISL_MIGRATE`) the generalist's elites copied into an island it passed a rung for
         for &(f, t, rung, m) in &r.migrated {

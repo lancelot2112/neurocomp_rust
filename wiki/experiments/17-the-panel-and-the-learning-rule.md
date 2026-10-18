@@ -434,3 +434,17 @@ generator's events and scored by surprise (graded in brackets), 48 worlds
   same computation in one word; phase accumulation (comb) is a delay line by another name. Phase
   codes would matter where the context is longer than the ring or the period varies.
 
+**The rest of the audit, for run 33** (each behind its own switch; world tests in `observe.rs`):
+
+| leak | fix | test |
+|---|---|---|
+| the same 48 held-out worlds at every check (a lucky genome passes after enough checks) | `ISL_FRESH_HELD=1`: new held-out worlds for each check | |
+| maze turns wireable under the fixed body (cue on the left half, turn left) | `ISL_MAZE_MIRROR=1`: in half the lifetimes the cue's half is the side that does not pay | a wired turn 1024 as it was, -1024 mirrored (about 0 over lifetimes); a learner that flips after an unstroked choice 1024 and 1003 |
+| shapes' blur rungs told apart by which word is lit | `ISL_SAME_WORD=1`: with blur or shift the two lights share a word | a detector of the eye's first half on tell under blur 2: 554 in their own words, 0 in one word |
+| food from the observer's probe scores (the observer's judgement reached the program's energy) | `ISL_FOOD_WORLD=1`: an eighth of `food` for each stroke the world gives; no strokes, the ration only | |
+
+Left as designed: under the fixed body echo2-8 test a built-in vocal map (the voice's sounds are
+anatomy; the copy rungs, with glyphs drawn each lifetime, are learned), and babble asks only for a
+varied voice, which noise gives. Food from strokes means reading and prediction lifetimes live on
+the ration alone: watch their network sizes in run 33.
+

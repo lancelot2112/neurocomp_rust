@@ -689,6 +689,98 @@ mod tests {
     }
 
     #[test]
+    fn a_mirrored_maze_cue_stops_a_wired_turn_and_not_a_learner() {
+        // policies that see the eye and the affect channel: a reflex turns to the half of the eye
+        // the cue lit on the stem; a learner does the same but flips its rule after a choice that
+        // brought no stroke; on 24 worlds, the cue as it was and mirrored
+        let run = |mirror: bool, learner: bool, seed: u64| -> i32 {
+            let mut w = World::new(seed, 4);
+            w.maze_len = 2;
+            w.gap_max = 2;
+            w.maze_mirror = mirror;
+            w.maze(100);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let (mut right, mut flip, mut chose, mut at, mut decided) = (false, false, false, None, usize::MAX);
+            while !w.done() {
+                let eye = channel(&senses, EYE);
+                let ws = eye.as_words();
+                let half = ws.len() / 2;
+                let (l, r): (u32, u32) = (ws[..half].iter().map(|x| x.count_ones()).sum(), ws[half..].iter().map(|x| x.count_ones()).sum());
+                if channel(&senses, AFFECT).count_ones() > 0 {
+                    chose = false;
+                }
+                let hand = match at {
+                    Some((trial, p, _)) if p >= 2 => {
+                        // (one choice a trial: its first step at the junction)
+                        if trial != decided {
+                            if learner && chose {
+                                flip = !flip;
+                            }
+                            chose = true;
+                            decided = trial;
+                        }
+                        Some(if right != flip { RIGHT } else { LEFT })
+                    }
+                    Some(_) => {
+                        if l + r > 0 {
+                            right = r > l;
+                        }
+                        Some(CLICK)
+                    }
+                    None => None,
+                };
+                let a = w.act(None, hand);
+                senses = w.step(&a);
+                at = w.events.last().unwrap().maze;
+            }
+            maze(&w.events)
+        };
+        let mean = |mirror: bool, learner: bool| (0..24u64).map(|s| run(mirror, learner, 500 + s)).sum::<i32>() / 24;
+        let (reflex, reflex_m, learn, learn_m) = (mean(false, false), mean(true, false), mean(false, true), mean(true, true));
+        eprintln!("maze: reflex {reflex}, mirrored {reflex_m}; learner {learn}, mirrored {learn_m}");
+        assert!(reflex > 600 && reflex_m < -600, "a wired turn is right as it was and wrong mirrored");
+        assert!(learn > 300 && learn_m > 300, "a learner is right either way: {learn} {learn_m}");
+    }
+
+    #[test]
+    fn a_location_detector_tells_blurred_lights_apart_only_in_different_words() {
+        // a fixed detector clicks when the eye's first half holds lines; under blur 2, 48 worlds
+        let run = |same: bool, seed: u64| -> i32 {
+            let mut w = World::new(seed, 4);
+            (w.gap_max, w.reversal_period, w.blur) = (6, 500, 2);
+            if same {
+                w.same_word_lights();
+            }
+            w.conditioning(Conditioning::Reversal, 200);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let ws = channel(&senses, EYE).as_words().to_vec();
+                let lit = ws[..ws.len() / 2].iter().any(|&x| x != 0);
+                let a = w.act(None, if lit { Some(CLICK) } else { None });
+                senses = w.step(&a);
+            }
+            probes(&w.events, 500, &[], &[], &[], &[], &[])[1]
+        };
+        let mean = |same: bool| (0..48u64).map(|s| run(same, 800 + s)).sum::<i32>() / 48;
+        let (apart, one) = (mean(false), mean(true));
+        eprintln!("tell, location detector: lights in their own words {apart}, in one word {one}");
+        assert!(apart > 200 && one.abs() < 60, "{apart} {one}");
+    }
+
+    #[test]
+    fn the_same_word_lights_differ_only_by_pattern() {
+        let mut w = World::new(9, 4);
+        w.same_word_lights();
+        let (a, b) = (w.lights[0].as_words().to_vec(), w.lights[1].as_words().to_vec());
+        let wa: Vec<usize> = (0..a.len()).filter(|&i| a[i] != 0).collect();
+        let wb: Vec<usize> = (0..b.len()).filter(|&i| b[i] != 0).collect();
+        assert_eq!(wa, wb, "one word");
+        assert_eq!(wa.len(), 1);
+        assert_eq!(a[wa[0]].count_ones(), b[wb[0]].count_ones());
+        assert_ne!(a, b);
+    }
+
+    #[test]
     fn the_maze_scores_turning_to_the_food_and_not_a_blind_walker() {
         // test-only policies that see the world's state: one walks the stem and turns to the
         // food's side; one walks and turns at random; one turns at once (never walks the stem)

@@ -415,6 +415,14 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.distract = lesson.distract;
     w.two_lights = lesson.two_lights;
     w.go_tone = lesson.go_tone;
+    // (`set_maze_mirror`) which half of the eye means which turn, drawn per lifetime
+    if maze_mirror() {
+        w.maze_mirror = StdRng::seed_from_u64(seed ^ 0x3A2F_A1E5).gen_bool(0.5);
+    }
+    // (`set_same_word_lights`) the shapes' two lights in one word
+    if same_word_lights() && (lesson.blur > 0 || lesson.shift > 0) {
+        w.same_word_lights();
+    }
     w.blur = lesson.blur;
     w.shift = lesson.shift;
     w.maze_len = lesson.maze_len;
@@ -541,7 +549,13 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
                         r
                     }
                 };
-                fed = food.saturating_mul(row.iter().map(|&x| x.max(0) as i64).sum::<i64>()) / 1024;
+                fed = if food_from_world() {
+                    // (`set_food_from_world`) what the world gave: an eighth of `food` for each
+                    // stroke in the block (a block of 50 steps scoring about 300 fed about as much)
+                    (food / 8).saturating_mul(b.iter().filter(|e| e.stroked).count() as i64)
+                } else {
+                    food.saturating_mul(row.iter().map(|&x| x.max(0) as i64).sum::<i64>()) / 1024
+                };
                 block = w.events.len();
             }
             store = (store + ration + fed).min(ration.saturating_mul(256));
@@ -924,6 +938,56 @@ pub fn set_fair_sequences(on: bool) {
 
 pub fn fair_sequences() -> bool {
     FAIR_SEQUENCES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Held-out worlds drawn fresh at every check (`set_fresh_held`): each check of a rung's goal on
+/// held-out worlds uses as many worlds as it was given, new ones each time (seeds from 2^40 on, by
+/// generation), so repeated checks on one set cannot let a lucky genome through. Off by default.
+static FRESH_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_fresh_held(on: bool) {
+    FRESH_HELD.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn fresh_held() -> bool {
+    FRESH_HELD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The maze's spatial cue mirrored per lifetime (`set_maze_mirror`, `World::maze_mirror`). Off by
+/// default.
+static MAZE_MIRROR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_maze_mirror(on: bool) {
+    MAZE_MIRROR.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn maze_mirror() -> bool {
+    MAZE_MIRROR.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The shapes' two lights in one word (`set_same_word_lights`, `World::same_word_lights`), in
+/// lifetimes with blur or shift. Off by default.
+static SAME_WORD_LIGHTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_same_word_lights(on: bool) {
+    SAME_WORD_LIGHTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn same_word_lights() -> bool {
+    SAME_WORD_LIGHTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Food from the world (`set_food_from_world`): with energy on, each block's food is what the
+/// world gave in it (an eighth of `food` for each stroke), not the observer's probe scores on it, so no
+/// score reaches the program. Off by default.
+static FOOD_FROM_WORLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_food_from_world(on: bool) {
+    FOOD_FROM_WORLD.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn food_from_world() -> bool {
+    FOOD_FROM_WORLD.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Order cycles of varied shape (`set_varied_orders`, with `set_fair_sequences`): see `fair_cycle`.
@@ -1402,6 +1466,9 @@ pub fn evolve_islands<G: Evolvable>(
         // it, so a population cannot fit a fixed set of worlds: their codes and sequences)
         let train: Vec<u64> = if fresh { seeds.iter().map(|s| s.wrapping_add((generation as u64 + 1).wrapping_mul(1_000_003))).collect() } else { seeds.to_vec() };
         let seeds = &train[..];
+        // (`set_fresh_held`) this generation's held-out worlds: new ones at every check
+        let held_now: Vec<u64> = if fresh_held() { (0..held_out.len() as u64).map(|i| (1u64 << 40) + generation as u64 * 4096 + i).collect() } else { held_out.to_vec() };
+        let held_out = &held_now[..];
         let now = stage.clone();
         let mut held = Vec::with_capacity(k);
         let mut met_now = Vec::with_capacity(k);

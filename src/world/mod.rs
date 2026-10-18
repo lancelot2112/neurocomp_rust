@@ -290,6 +290,10 @@ pub struct World {
     pub distract: bool,
     pub two_lights: bool,
     pub go_tone: bool,
+    /// (the maze, a spatial cue) the cue's half of the eye is the side that pays, or with
+    /// `maze_mirror` the other side, drawn per lifetime (`evolve::set_maze_mirror`): which half
+    /// means which turn is the world's, learned in the lifetime from the strokes, not wired
+    pub maze_mirror: bool,
     trial_delay: usize,
     distract_at: Option<usize>,
     scene: Scene,
@@ -573,6 +577,7 @@ impl World {
             distract: false,
             two_lights: false,
             go_tone: false,
+            maze_mirror: false,
             trial_delay: 3,
             distract_at: None,
             scene: Scene::Idle,
@@ -690,8 +695,9 @@ impl World {
         let w = self.lights[0].as_words();
         let half = w.len() / 2;
         let mut out = vec![0u64; w.len()];
+        let at = side != self.maze_mirror;
         for (i, &x) in w.iter().enumerate() {
-            out[i % half + side as usize * half] |= x;
+            out[i % half + at as usize * half] |= x;
         }
         BitVector::from_words(out)
     }
@@ -700,6 +706,18 @@ impl World {
     fn maze_side(&mut self) -> bool {
         let s = self.rng.gen_bool(0.5);
         if self.maze_fixed { *self.maze_first.get_or_insert(s) } else { s }
+    }
+
+    /// The two lights in one word (`evolve::set_same_word_lights`): the second light redrawn with
+    /// the first's number of lines inside the first's word, so the two differ by their pattern,
+    /// not by where they are.
+    pub fn same_word_lights(&mut self) {
+        let a = self.lights[0].as_words().to_vec();
+        let Some(w) = a.iter().position(|&x| x != 0) else { return };
+        let k = a[w].count_ones() as usize;
+        let lines: Vec<usize> = (0..64).collect();
+        let picked: Vec<usize> = lines.choose_multiple(&mut self.rng, k).map(|b| w * 64 + b).collect();
+        self.lights[1] = BitVector::from_bits(&picked, a.len() * 64);
     }
 
     /// The scene after a maze trial: a gap of 0 to `gap_max` steps, then the next trial.

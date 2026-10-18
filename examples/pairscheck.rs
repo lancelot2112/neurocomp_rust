@@ -7,9 +7,9 @@
 //! lines in one word; 0 turns either off).
 //!
 //! The learners:
-//! - **lookup** (the reference, not a strict ceiling: at N = 2 an echoing network beats it): a table written in the harness, not a network. It learns each
-//!   glyph's token on taught steps (as a perfect ear would) and says, each step, the token of the
-//!   glyph shown a step before, if it has one;
+//! - **lookup** (the reference): a table written in the harness, not a network. It learns each
+//!   glyph's token on taught steps (as a perfect ear would) and says, on each step after an untaught
+//!   one, that glyph's token, if it has one (silent after a taught step, as copy scores);
 //! - **blind** (the floor): a random token each step;
 //! - **networks**: the best genomes in a checkpoint (`CKPT`, runs/islands30/checkpoint.txt; the
 //!   islands in `ISLANDS`, reading,generalist,recall; the first `TOP` genomes of each, 3, the best
@@ -102,7 +102,9 @@ fn main() {
                             table[s.min(n - 1)] = Some(s);
                         }
                     }
-                    if t == 0 { None } else { e[t - 1].shown.and_then(|s| table[s.min(n - 1)]) }
+                    // (silent when it heard the teacher: copy counts only untaught tokens, and a
+                    // token said on a taught step counts against it)
+                    if t == 0 || e[t - 1].taught { None } else { e[t - 1].shown.and_then(|s| table[s.min(n - 1)]) }
                 });
                 look += observe::copy(&l) as i64;
                 let mut r = StdRng::seed_from_u64(w ^ 0xB11D);

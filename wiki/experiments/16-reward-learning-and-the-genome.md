@@ -1394,6 +1394,14 @@ rule scores 0. Five other timings (reader lag 2-3, gate lag 1-3, elig 1-3) score
 needs its eligibility lag to match when the target arrives. What is left for reading proper is the
 target: a listener that echoes every token.
 
+**Correction (2026-10-17, later).** The lookup table above said a token on every step, taught or
+not, and copy counts a token said on a taught step against it; so it was no ceiling. Made silent
+after a taught step (as copy scores), it reaches 825 to 1020 (`runs/checks/pairscheck-fair-lookup.txt`,
+200 and 1600 trials). Against that, the hand-made reader with the three-factor rule reaches 102 to
+194, about a fifth, not 80-100%: it learns pairs (the same reader without the rule scores 0), but it
+also speaks on taught steps. A reader evolution found (below, and `runs/pairs-test-1/README.md`)
+reaches 957 at N = 8 and 912 at N = 32 over 1600 trials, 90-97% of the fair table.
+
 ### Rule tables (`EdgeSpec::rule`, gene `rule`; `ISL_RULES=1`)
 
 The panel's second step: the learning rule as a gene. A population's `rule` (16 bits; 0, the

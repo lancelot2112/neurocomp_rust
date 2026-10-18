@@ -18,7 +18,10 @@ Copy on training (goal lines), mean over the run and best:
 
 No arm with the rule passed pairs8 in 200 generations. The one pass (`none`, seed 2) is not
 reading: its best genome is an XOR wire from the ear into the voice (an echo); on 24 fresh worlds
-at pairs128 it scores echo 1026 and copy 0 (`ISL_LESION`), and in examples/pairscheck copy about
-0 at every N. Yet its elite's held-out checks on pairs8 and pairs32 gave copy 340 to 548: in the
-island's version of these rungs an echo earns copy. To be found and fixed before this test means
-anything.
+at pairs128 it scores echo 1026 and copy 0 (`ISL_LESION`). But that is the genome at the end; the
+genome that passed pairs8 (the rung log, `runs/checks/evolved-reader/pairs8-passer.txt`) reads:
+eye kernels born on each glyph copy the move being made (the echo of the teacher), writing by XOR,
+so they cancel the echo on taught steps and speak alone on untaught ones. examples/pairscheck,
+against a lookup table that is silent after taught steps: 957 of 990 at N = 8, 912 of 1014 at N =
+32 (1600 trials), 678 of 1020 at N = 128. Not a leak (an earlier note here said so, retracted).
+The island lost the reader at pairs128, where 200-trial lifetimes are too short (147).

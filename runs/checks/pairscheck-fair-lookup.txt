@@ -1,0 +1,10 @@
+copy (goal 100; lookup a perfect table, blind the floor), mean of 24 worlds; body 1, one-word codes 8
+   N trials |  lookup  blind | networks
+   2    200 |     825    -60 | runs/checks/evolved-reader/pairs8-passer.txt 703, runs/checks/elig/reader-111.txt -12
+   2   1600 |     881    -11 | runs/checks/evolved-reader/pairs8-passer.txt 860, runs/checks/elig/reader-111.txt 78
+   8    200 |     966    -28 | runs/checks/evolved-reader/pairs8-passer.txt 788, runs/checks/elig/reader-111.txt 183
+   8   1600 |     990      0 | runs/checks/evolved-reader/pairs8-passer.txt 957, runs/checks/elig/reader-111.txt 179
+  32    200 |    1016      2 | runs/checks/evolved-reader/pairs8-passer.txt 445, runs/checks/elig/reader-111.txt 169
+  32   1600 |    1014      0 | runs/checks/evolved-reader/pairs8-passer.txt 912, runs/checks/elig/reader-111.txt 194
+ 128    200 |    1018      0 | runs/checks/evolved-reader/pairs8-passer.txt 147, runs/checks/elig/reader-111.txt 102
+ 128   1600 |    1020      0 | runs/checks/evolved-reader/pairs8-passer.txt 678, runs/checks/elig/reader-111.txt 188

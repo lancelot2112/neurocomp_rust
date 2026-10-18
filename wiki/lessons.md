@@ -264,9 +264,12 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     the lines of 84% of other codes; 6 to 8 lines keep that near 20%. With the glyph wired beside
     its sound, 8-line codes and the listener not answering its own voice, a hand-made genome
     echoes at twice echo2's goal (300) and at 136 with eight tokens; before, never above 126.
-52. **A kernel can learn what it writes if credit reaches it (experiment 16).** A three-factor
-    output rule (the kernel fired k steps ago, a modulator channel is on, its output moves toward
-    what its destination holds then, and a kernel wrong at 0 dies) learns 128 arbitrary
-    glyph-to-token pairs in a lifetime at 80-100% of a lookup table, where every network before
-    scored 0 at any N beyond 2. It needs a right target and an eligibility lag matching when the
-    target arrives; with a listener that knows only a few tokens, it learns only those.
+52. **A kernel can learn what it writes if credit reaches it, and births can pair at once when the
+    target is right (experiments 16, 17).** A three-factor output rule (the kernel fired k steps
+    ago, a modulator channel is on, its output moves toward what its destination holds then, and a
+    kernel wrong at 0 dies) learns arbitrary glyph-to-token pairs in a lifetime where every network
+    before scored 0, but only about a fifth of a fair lookup table. A reader evolution found in 10
+    generations does better without it: kernels born on each glyph copy the move being made (the
+    echo of the teacher naming it), and write it by XOR so it cancels the echo on taught steps and
+    speaks alone on untaught ones: 90-97% of the table at 8 and 32 pairs. A first pairing is right
+    when the target is right at birth; the rule matters when it is not.

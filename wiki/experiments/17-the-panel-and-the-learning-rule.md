@@ -84,7 +84,7 @@ hints, not results. From now on a new mechanism is compared on 3 evolutionary se
    wrong at 0, it dies and its input is free for a new birth.
    - **With a right target** (each token heard like its voice code, so one wire echoes the
      teacher exactly), a wire plus a reader learns 128 pairs: copy 195 at N = 128 over 3,200
-     trials, against the lookup's 237; 143 to 147 at 400 trials; the same on 24 other worlds. The
+     trials, against the lookup's 237 (a lookup later found unfair: see 6); 143 to 147 at 400 trials; the same on 24 other worlds. The
      same reader without the rule scores 0. **The first network to learn arbitrary pairs in a
      lifetime.**
    - **With the hand-made genome's own listener as the target**, copy reaches only 26: the reader
@@ -102,12 +102,19 @@ hints, not results. From now on a new mechanism is compared on 3 evolutionary se
 5. **Run 31** (run 30 with `ISL_ELIG=1` and `ISL_PAIRS=1`, reading's pairs8 and pairs32 rungs
    after echo2q): started 9:09 PM ET. Reading passed echo2q at 24 and is on pairs8.
 
-6. **The 3-seed pairs test** ([`runs/pairs-test/README.md`](../../runs/pairs-test/README.md)):
+6. **The 3-seed pairs test** ([`runs/pairs-test-1/README.md`](../../runs/pairs-test-1/README.md)):
    reading alone on pairs8 > pairs32 > pairs128, 200 generations, 3 seeds, three arms (no rule,
    the rule, the rule as a table). No arm with the rule passed pairs8. The one pass, without the
    rule, was an echo wire that the island's held-out check scored copy 340 to 548 on pairs8 and
-   pairs32, while examples/pairscheck and a fresh-world lesion score it at about 0: the island
-   rungs leak echo into copy. The test means nothing until that is fixed.
+   pairs32. **Not a leak** (retracted): the genome that passed pairs8 (`runs/checks/evolved-reader/`)
+   reads. Its eye kernels are born on each glyph copying the move being made, the echo of the
+   teacher naming it, and write by XOR, so the code cancels the echo on taught steps and is said
+   alone on untaught ones. Against a lookup table made fair (silent after a taught step) it reaches
+   957 of 990 at N = 8 and 912 of 1014 at N = 32 over 1600 trials, and 678 of 1020 at N = 128; the
+   hand-made reader with the three-factor rule about 190. The island lost it at pairs128 (200-trial
+   lifetimes are too short for 128 pairs: 147 there), and the best genome at the end only echoes.
+   The earlier "80-100% of the lookup table" for the rule was against an unfair table (a fifth of
+   the fair one).
 7. **Triggers** (`EdgeSpec::trigger`, `ISL_TRIGGERS=1`, one popcount and a compare each): a
    population's kernels count agreeing lines (at least, the default), their silent lines (at
    most), agreeing lines up to halfway between threshold and full (a band), or agreeing lines less

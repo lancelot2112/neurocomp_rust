@@ -440,6 +440,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     // (`set_one_word`) every reading lifetime's codes sparse, in one word
     if lesson.one_word || (reading && one_word() > 0) {
         w.one_word(p, if lesson.code_lines > 0 { lesson.code_lines } else { one_word() });
+    } else if one_word() > 0 && one_word_voice() {
+        // (`set_one_word_voice`) the voice's codes and their sounds one-word in every lifetime
+        w.one_word_voice(p, one_word());
     }
     if lesson.motor_place {
         w.fix_motor();
@@ -951,6 +954,19 @@ pub fn set_fair_sequences(on: bool) {
 
 pub fn fair_sequences() -> bool {
     FAIR_SEQUENCES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The voice one-word everywhere (`set_one_word_voice`, with `set_one_word`): its codes and the
+/// sounds they make drawn as one-word codes in every lifetime, not only those with tokens to read,
+/// so the voice is the same body in a conditioning or maze lifetime as in reading. Off by default.
+static ONE_WORD_VOICE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_one_word_voice(on: bool) {
+    ONE_WORD_VOICE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn one_word_voice() -> bool {
+    ONE_WORD_VOICE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Held-out worlds drawn fresh at every check (`set_fresh_held`): each check of a rung's goal on

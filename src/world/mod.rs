@@ -522,6 +522,22 @@ impl World {
         self.voice.one_word(k, &mut rng);
     }
 
+    /// The voice's codes and their sounds as one-word codes of `k` lines (as `one_word` makes them,
+    /// from the fixed body's seed when there is one), the glyphs left as they are: for lifetimes
+    /// with nothing to read (`evolve::set_one_word_voice`).
+    pub fn one_word_voice(&mut self, physics: u64, k: usize) {
+        let k = if k == 0 { ACTIVE } else { k.min(64) };
+        let n = self.sounds.len();
+        if let Some(b) = self.body {
+            self.sounds = one_word_codes(n, k, &mut StdRng::seed_from_u64(b ^ 0x0E0E));
+            self.voice.one_word(k, &mut StdRng::seed_from_u64(b ^ 0x0E0F));
+            return;
+        }
+        let mut rng = StdRng::seed_from_u64(physics ^ 0x0E1D);
+        self.sounds = one_word_codes(n, k, &mut rng);
+        self.voice.one_word(k, &mut rng);
+    }
+
     /// The body fixed by its own seed, the same in every lifetime of a run (anatomy, not
     /// learned): the voice's and the hand's codes, the sound the voice makes for each token (the
     /// teacher speaks the same language) and the feel of each move. What the world shows (glyphs,

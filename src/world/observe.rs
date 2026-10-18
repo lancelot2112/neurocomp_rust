@@ -785,6 +785,20 @@ mod tests {
     }
 
     #[test]
+    fn the_one_word_voice_is_the_same_in_a_conditioning_and_a_reading_lifetime() {
+        let (mut a, mut b) = (World::new(3, 8), World::new(4, 8));
+        a.fix_body(77);
+        b.fix_body(77);
+        a.one_word(11, 8);
+        b.one_word_voice(12, 8);
+        for k in 0..8 {
+            assert_eq!(a.voice.command(k).as_words(), b.voice.command(k).as_words(), "token {k}");
+            assert_eq!(a.sounds[k].as_words(), b.sounds[k].as_words());
+            assert_eq!(b.voice.command(k).count_ones(), 8);
+        }
+    }
+
+    #[test]
     fn the_same_word_lights_differ_only_by_pattern() {
         let mut w = World::new(9, 4);
         w.same_word_lights();

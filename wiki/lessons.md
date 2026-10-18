@@ -273,3 +273,15 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     echo of the teacher naming it), and write it by XOR so it cancels the echo on taught steps and
     speaks alone on untaught ones: 90-97% of the table at 8 and 32 pairs. A first pairing is right
     when the target is right at birth; the rule matters when it is not.
+53. **Evolved memory can be a timer, not a loop (experiment 17).** Run 31's recall genome that
+    remembers (remember 303 at lag5 on 48 fresh worlds) keeps no reverberating circuit: the light
+    clears a held channel and it refills a few lines a step, so its fill level counts the steps
+    since the light, and the network clicks while it is low. It says that something came, not
+    what, and fades within about ten steps (lag5 held, lag8 and lag16 fading). The generalist's 77
+    self-loops carry no memory at all (taking them out helps recall as often as it hurts).
+54. **Check a pass on every genome, not the first-ranked one (experiment 17).** A rung is judged on
+    the elite's mean, and the population's ranking is not by the goal probe: in run 31's recall
+    population the first-ranked genome scores remember 0 while the fourth scores 303; run 30's
+    rung log kept only the first-ranked genome, so its lag8 pass could not be found again. Score
+    the whole population on fresh worlds (`ISL_SIGNAL`, then one genome at a time), lesion the one
+    that scores (`ISL_LESION`), and trace it (`ISL_TRACE`); from run 32 the rung log keeps the elite.

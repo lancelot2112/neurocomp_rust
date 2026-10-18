@@ -644,3 +644,14 @@ on a mean of 24); screen's spread, 54, is twice its step change, 29: a slower re
 gaining (to 197) and then lost, since nothing locks a gain short of a pass. Not the networks' size:
 these islands' best have 1 to 8 populations.
 
+**Long shifts** (`ISL_LONG_SHIFTS=1`, for run 35). Every write op acted within a 64-bit word, so a
+pattern could travel a vector only through a motion channel (a conveyor, a rule-90 wave) or a chain
+of channels. Two new ops, `lsl:k` and `lsr:k` (`KernelOp::Lsl`, `Lsr`, `kernel::class::long_shift`),
+shift what is written by k bits as one long bit string, the bits leaving a word entering the next,
+then OR it in: still one cheap operation (each word takes its own shifted plus its neighbour's
+spill). A kernel's write may spill a word past its mask; a wire's wraps round its destination.
+Check: a channel fed from the eye with an `lsl:16` self-loop wire carries each step's code up 16
+lines a step, across the word boundary into the next word by the sixth step. A new op is one one
+time in seven. (Run 33's genomes already held many motion channels, 48 rule-90 waves on screen and
+74 conveyors on prediction, but removing them from the genomes that passed rungs changed nothing.)
+

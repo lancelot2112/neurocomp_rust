@@ -29,6 +29,8 @@ what it can build. We do not add special-purpose modules to get a task done.
   - moving bits: shift left or right, and rotate left or right, by 0 to 63 bits. What is written
     is moved, then ORed in. A word carried from a vector's previous frame and shifted is a
     sliding window.
+  - long shifts (`ISL_LONG_SHIFTS`): shift left or right by k bits across word boundaries, the
+    bits leaving a word entering the next, then ORed in, so a pattern can travel a whole vector.
   - Within a step, writes into a vector land in the order their populations appear in the
     genome, whatever their ops; moving a population moves its writes. No op has a fixed place.
     Every edge reads past frames only (lag at least 1), so edges into different vectors are

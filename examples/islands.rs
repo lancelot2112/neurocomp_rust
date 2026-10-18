@@ -186,7 +186,8 @@
 //! `ISL_FRONTIER_PASSED=1` (with `ISL_FRONTIER`): the generalist is also scored on each other
 //! island's last passed rung, in its own world, as more selection cases.
 //! `ISL_TRACE=<island>` (with `ISL_RESUME`): measure only. That island's first genome lives one
-//! delayed-conditioning lifetime of its rung (world `ISL_TRACE_SEED`), printed step by step.
+//! lifetime of its rung (world `ISL_TRACE_SEED`), printed step by step: a prediction rung's token
+//! stream (the surprise probe's), any other a delayed-conditioning lifetime (the remember probe's).
 //! `ISL_ONLY=a,b`: only the named islands (a short test of one ladder).
 //! `ISL_RULES=1`: rule tables (`EdgeSpec::rule`): each population's learning rule a 16-bit gene,
 //! what firing, being held down, and (under `ISL_ELIG`) being right or wrong move on the input or
@@ -946,8 +947,10 @@ fn main() {
         let g = start[i].first().expect("no genome to trace").clone();
         let st = &islands[i].stages[stages[i]];
         let seed: u64 = env("ISL_TRACE_SEED", 60_000u64);
-        println!("trace: {} rung {}, one delayed-conditioning lifetime, world {seed}", name, st.name);
-        println!("step trial t cue pays click present | lines on per vector | kernels fired per population (id:fired)");
+        // a prediction rung (the surprise probe) lives its token stream; any other, delayed conditioning
+        let stream = st.probes.contains(&9);
+        println!("trace: {} rung {}, one {} lifetime, world {seed}", name, st.name, if stream { "token-stream" } else { "delayed-conditioning" });
+        println!("step trial t cue pays tok odd click present | lines on per vector | kernels fired per population (id:fired)");
         let step = std::rc::Rc::new(std::cell::Cell::new(0usize));
         let s2 = step.clone();
         neurocomp::evolve::set_trace(Some(Box::new(move |w: &neurocomp::world::World, net: &neurocomp::program::neurocomp::RuntimeNetwork| {
@@ -960,13 +963,19 @@ fn main() {
                 let ks: Vec<_> = e.group.classes().iter().flat_map(|c| c.kernels().iter()).collect();
                 if ks.is_empty() { None } else { Some(format!("{}:{}", e.spec.salt, ks.iter().filter(|k| k.age == 0).count())) }
             }).collect();
-            println!("{k:5} {ti:>3} {tt:>2} {cue} {pays} {} {} | {} | {}", ev.moved.map_or("-".to_string(), |m| m.to_string()), if ev.present { "on" } else { ".." }, lines.join(" "), fired.join(" "));
+            println!("{k:5} {ti:>3} {tt:>2} {cue} {pays} {} {} {} {} | {} | {}", ev.shown.map_or("-".to_string(), |x| x.to_string()), if ev.odd { "!" } else { "." }, ev.moved.map_or("-".to_string(), |m| m.to_string()), if ev.present { "on" } else { ".." }, lines.join(" "), fired.join(" "));
             // (`ISL_TRACE_WORDS=i`: that vector's words too, in hex, the ones not empty)
             if let Some(i) = std::env::var("ISL_TRACE_WORDS").ok().and_then(|x| x.parse::<usize>().ok()).filter(|&i| i < net.nodes.len()) {
                 let w: Vec<String> = net.nodes[i].current().as_words().iter().enumerate().filter(|(_, x)| **x != 0).map(|(j, x)| format!("{j}:{x:016x}")).collect();
                 println!("      words {}", w.join(" "));
             }
         })));
+        if stream {
+            let (ev, _) = neurocomp::evolve::live_lesson(&g, neurocomp::evolve::Task::Sequence(trials), Physics::Varied, seed ^ 0x9ED, 0, st.lesson.clone());
+            neurocomp::evolve::set_trace(None);
+            println!("surprise {}", neurocomp::world::observe::surprise(&ev));
+            return;
+        }
         let (ev, _) = neurocomp::evolve::live_lesson(&g, neurocomp::evolve::Task::Conditioning(neurocomp::world::Conditioning::Delayed, trials), Physics::Varied, seed ^ 0xDE1A, gap, st.lesson.clone());
         neurocomp::evolve::set_trace(None);
         let row = neurocomp::world::observe::probes(&[], 1, &ev, &[], &[], &[], &[]);

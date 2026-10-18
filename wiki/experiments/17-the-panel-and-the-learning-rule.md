@@ -245,6 +245,18 @@ and 289 to 383 at cycle3; 9 and 10, 151 and 157; the rest 76 or less, 17 to 31 a
 first-ranked genomes are the ones that work. Order2 (a cycle of six over three tokens, goal 150) is
 not solved: best 57, icc 0.00 (no real difference between genomes).
 
+**How genome 6 predicts** (`ISL_TRACE=prediction`, now a token-stream lifetime on a prediction rung;
+world 60006, cycle 7 5 7 1, surprise 508; `runs/checks/lesions/run31-prediction-g06-*`). It
+predicts in 4 of 6 traced worlds (222 to 508). A small held channel (256 bits, C2) carries the
+mismatch: after an odd token it holds about 30 lines a step later, after a kept token under 2; the
+network clicks three steps after an odd token 54% of the time, after a kept one 1%. The lesion map
+(48 worlds, losses as shares of the goal): the C2-to-hand AND wire 1.06, the C2-to-hand OR wire 0.92,
+the hand-to-C2 XOR wire 0.92 (the hand's last act folded into C2, a loop through the body), and a
+population #188 0.92; C2's own shift wires and a C2-to-eye write help when taken out. Open: the
+lesion names #188 ear-to-voice NAND, the network dump an eye-to-C2 NOR under the same id (the
+genome has two populations with id 188, circuit copies keep their ids), so which population brings
+the token stream into C2 is not settled until the tools agree.
+
 From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.
 
 **Integer triggers** (`trigger` 4 to 6, gene `lane`, under `ISL_TRIGGERS`): a kernel reads the lane

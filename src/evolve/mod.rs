@@ -971,6 +971,19 @@ pub fn migrate() -> bool {
     MIGRATE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The islands' best migrate into the generalist (`set_migrate_up`, with `set_frontier_ladders`):
+/// every this many generations each island's best, and an island's best two whenever it passes a
+/// rung the generalist has not; 0 off (the default).
+static MIGRATE_UP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_migrate_up(every: usize) {
+    MIGRATE_UP.store(every, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn migrate_up() -> usize {
+    MIGRATE_UP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The voice one-word everywhere (`set_one_word_voice`, with `set_one_word`): its codes and the
 /// sounds they make drawn as one-word codes in every lifetime, not only those with tokens to read,
 /// so the voice is the same body in a conditioning or maze lifetime as in reading. Off by default.
@@ -1441,8 +1454,9 @@ pub struct IslandGeneration<G> {
     pub ladder_means: Vec<Vec<observe::ProbeRow>>,
     pub ladder_met: Vec<Vec<usize>>,
     pub ladder_checks: Vec<(usize, usize, observe::ProbeRow, bool)>,
-    /// (`set_migrate`) the generalist's elites copied into an island's next population:
-    /// (from island, to island, the rung passed, how many)
+    /// (`set_migrate`, `set_migrate_up`) genomes copied into another island's next population:
+    /// (from island, to island, the rung passed on the ladder it concerns, or `usize::MAX` for the
+    /// periodic move into the generalist, how many)
     pub migrated: Vec<(usize, usize, usize, usize)>,
 }
 
@@ -1748,6 +1762,37 @@ pub fn evolve_islands<G: Evolvable>(
                     next[j][n - 1 - k] = ranked[i][k].clone();
                 }
                 migrated.push((i, j, r, m));
+            }
+        }
+        // (`set_migrate_up`) the islands' best into the generalist: an island's best two when it
+        // passed a rung the generalist has not passed on its ladder, and every `migrate_up()`
+        // generations each island's best, in place of the generalist's last children (never its
+        // elite), so specialists bring their circuits to it to keep or lose under its cases
+        let up = migrate_up();
+        if up > 0 {
+            for gi in (0..k).filter(|&i| !lad[i].is_empty()) {
+                let n = next[gi].len();
+                let room = n.saturating_sub(elite.max(1));
+                let mut slot = 0usize;
+                for j in 0..k {
+                    if j == gi || islands[j].frontier || ranked[j].is_empty() {
+                        continue;
+                    }
+                    let passed = stage[j] != now[j] && lad[gi][j] <= now[j];
+                    let m = if passed { 2 } else if generation % up == 0 { 1 } else { 0 };
+                    let mut sent = 0;
+                    for q in 0..m.min(ranked[j].len()) {
+                        if slot >= room {
+                            break;
+                        }
+                        next[gi][n - 1 - slot] = ranked[j][q].clone();
+                        slot += 1;
+                        sent += 1;
+                    }
+                    if sent > 0 {
+                        migrated.push((j, gi, if passed { now[j] } else { usize::MAX }, sent));
+                    }
+                }
             }
         }
         // the exchange: plasmids from the best of other islands into new children

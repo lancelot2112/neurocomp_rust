@@ -477,3 +477,11 @@ not passed, its best two genomes are copied into the island's next population, t
 there. Smoke test (the passer as the generalist, run 33's prediction elite as the island): two
 migrations, the island past cycle1-100 at 2 and cycle1 at 3 (held out 622 and 379).
 
+**The islands' best into the generalist** (`ISL_MIGRATE_UP=k`, run 34 with k = 25). Plasmid exchange,
+the islands' old way of sharing circuits, has been off since run 22. Now every k generations each
+island's best genome, and an island's best two whenever it passes a rung the generalist has not
+passed on its ladder, replace the generalist's last children (never its elite); lexicase keeps a
+specialist that wins some of the generalist's cases. Smoke test (run 32's one-population cycle1
+passer as the prediction island, 8 genomes): prediction passed cycle1-100 at 1 and sent two up, the
+generalist passed it at 2 and cycle1 at 3.
+

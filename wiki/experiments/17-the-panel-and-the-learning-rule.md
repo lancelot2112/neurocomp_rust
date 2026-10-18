@@ -228,6 +228,16 @@ and a chance event sets again (the refill most likely from the kernels that fire
 one step in 16), not a counter: it holds that a light came, for a random few steps, which is why it
 climbs to lag5 and fades at lag8 and lag16.
 
+**Run 31's lag16 pass is real, by a slower latch** (generation 305, held out 158/150). Rescored at
+lag16 on 48 fresh worlds, eight genomes (8 to 15 of the checkpoint at 310) score 185 to 223 (lag8:
+211 to 287), the other 24 about 0. Genome 14 (`runs/checks/lesions/run31-recall-g14*.txt`) keeps word
+0 of a channel (run 31 keeps every channel's lines unless something clears them): light A resets it
+to the same 16-line pattern, and it refills by OR a few lines every step or two (16, 36, 41 by step
+8, 52 by 14, 60 by 20), the network clicking while it is below full; on other trials it stays full.
+The same kind of memory as genome 3's at lag5, a word's fill level fading back, with the refill
+slowed so it holds about 20 steps. It works in some worlds and not at all in others (3 of 8 traced
+worlds remember 439 to 628; in 5 it never clicks). Neither genome counts with numbers.
+
 From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.
 
 **Integer triggers** (`trigger` 4 to 6, gene `lane`, under `ISL_TRIGGERS`): a kernel reads the lane

@@ -96,6 +96,15 @@ the task. Removing the self-NOR wire costs 2.3 goals.
 
 Files: `runs/checks/selection-dive/` (genomes, lesion maps, a trace excerpt); experiment 17.
 
+### The phase-reset oscillator: an onset detector (run 34, novelty island, generation 85)
+
+A NOR wire from a channel into itself makes it alternate every step; kernels reading the eye write
+into the same channel, and a token unlike the one before shifts the oscillation's phase. A NAND wire
+from the channel into the hand turns one phase into a click, so the click lands 2 steps after the
+change (17 of 21 breaks in a cycle1 stream; 3 of 106 quiet steps). It scores 669 on cycle1 and
+about 0 on cycle2 and cycle3, where the token changes every step. Found by novelty search, whose
+descriptor includes clicks after odd tokens. `runs/checks/novelty-dive/`, experiment 17.
+
 ### The wrap-around threshold (run 33, screen, generation 934)
 
 Two wires from the eye into the hand writing `sub:3` (subtract in byte lanes) and the hand's own

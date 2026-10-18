@@ -802,3 +802,38 @@ the same after steps with no break. Test `shaped_surprise_pays_clicking_then_cli
 Clicking pays first; from clicking always, each false alarm dropped while the breaks are still
 clicked raises the score. A click on every break tops out near 740, since a late window also catches
 the next break's click.
+
+## The novelty island's surprise species (run 34, `runs/checks/novelty-dive/`)
+
+Run 34's novelty island founded species 4 at generation 53 for being useful on surprise (261, in
+its plain world: period 3, breaks 1 in 8, the period drawn per lifetime with `ISL_VARY_PERIOD`).
+Scored on prediction's cycle3, the island's 62 genomes at generation 85 (24 fresh worlds) are near
+0 but one, 16 populations and 7 channels, which scores 301 (goal 200).
+
+It is not a cycle3 predictor. With the period fixed (48 fresh worlds each):
+
+| period | surprise |
+|---|---|
+| 1 (cycle1) | **669** |
+| 2 (cycle2) | -10 |
+| 3 (cycle3) | 7 |
+
+Its cycle3 score is the third of lifetimes whose drawn period is 1 (on 48 other worlds, period
+drawn, it scores 58: fewer of them). On cycle1 it is a strong detector of a token unlike the one
+before, far past what the prediction island, still on cycle1-100 at generation 85, has reached.
+
+Four populations carry it (each lesion takes the whole score): eye to C3 by `set` kernels, C3 into
+itself by a NOR wire, and C3 and C2 into the hand by NAND wires. Traced (cycle1, world 60003, 21
+breaks in 200 steps): it clicks 2 steps after a break on 17 of 21 breaks (inside the 3-step window)
+and on 3 of 106 steps far from any break; otherwise it moves left, which costs nothing in a token
+stream. C3's NOR self-wire makes a 2-step oscillator (its lines alternate about 120 and 360), and
+the kernels' write on a changed token shifts its phase, so the click lands at a fixed phase after
+the change: an onset detector, as run 33's selection reflex was, which works only while the token
+otherwise stays the same.
+
+Why the novelty island found it: its behaviour descriptor includes clicks just after odd tokens
+(b-odd) and other moves (b-moves), so search for new behaviour explores exactly this, and the
+species rule kept it as useful. Two lessons. The species label can mislead when the period is
+drawn: the novelty island's surprise mixes periods, so a cycle1 detector looks like a cycle3 one.
+And nothing carries it where it is useful: novelty migrants go only to the generalist, so the
+prediction island, stuck below cycle1, never sees a genome that would pass cycle1 at once.

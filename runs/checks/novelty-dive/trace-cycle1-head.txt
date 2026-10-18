@@ -1,0 +1,60 @@
+resumed prediction from C:/Users/lfaiv/AppData/Local/Temp/claude/C--Software-source-neurocomp/50a1926e-3ccc-5eab-a49d-7e2027a22782/scratchpad/surp/g18s1.txt: 1 genomes, generation 0, stage 1 (cycle1)
+islands: prediction of 32, elite 8, 24 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 0 (2 plasmids an island), thrift true, reads counted true, channels held in place true, carrying cost 4 a token, plasmids of at most 6 populations (0: any), exclusion true, op choice true, ration 256 a step (0: no energy), food 8192 for 1024 points scored, fresh training worlds true, epigenetic marks true, exploration true, expecting zeros true, accidents true, port gates true, shadow explorers true, pauses drawn true, shadow hints true, edges on hints true, outputs read true, hint bands true, self writes true, loops closed true, heat inputs true, goals judged on the elite true, partial credit true, partial credit on remember true, partial credit on select true, partial credit on the screen true, fair prediction streams true, order cycles of varied shape true, echo and copy per token shown true, win-stay against the other light true, the clock drawn true, held-out worlds fresh at every check true, the voice one-word everywhere true, the generalist's passes migrate true, twin worlds true, the cursor starts off the target true, the delay drawn per lifetime true, mixed lights as one-word codes true, the islands' best 4 into the generalist every 1 (room 64), the maze cue mirrored per lifetime true, the shapes' lights in one word true, food from the world's strokes true, passed rungs kept true, inhibit inputs true, overlap genes true, size classes true, wiring cost 1 a bit of tag distance, populations compete for their destination true, pruning true, branches true, a fixed body true, the three-factor output rule true, triggers true, motions true, one-word codes of 8 lines
+prediction climbs: cycle1-100 > cycle1 > cycle2 > cycle3 > cycle4 > order2 > cycle8
+trace: prediction rung cycle1, one token-stream lifetime, world 60003
+step trial t cue pays tok odd click present | lines on per vector | kernels fired per population (id:fired)
+    1   -  - - - 1 . - .. | 8 0 26 512 0 0 0 0 35 256 | 0#3:0 1#4:0 2#20:0 3#19:0 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100
+    2   -  - - - 1 . 2 .. | 24 0 30 0 0 8 0 0 47 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 18:a62a8118001c000a
+    3   -  - - - 1 . 0 .. | 24 0 8 512 0 0 0 0 45 256 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+    4   -  - - - 1 . 2 .. | 24 0 8 0 0 8 0 0 46 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 18:a62a8118001c000a
+    5   -  - - - 1 . 0 .. | 24 0 8 512 0 0 0 0 46 256 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+    6   -  - - - 1 . 2 .. | 24 0 8 0 0 8 0 0 47 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 18:a62a8118001c000a
+    7   -  - - - 1 . 0 .. | 24 0 8 512 0 0 0 0 46 256 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+    8   -  - - - 4 ! 2 .. | 24 0 8 0 0 8 0 0 47 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:1 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:0100041000040154 18:a62a8118001c000a
+    9   -  - - - 1 . 0 .. | 24 0 8 512 0 7 0 0 47 256 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   10   -  - - - 1 . 2 .. | 24 0 8 0 0 8 0 0 48 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:1 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 18:a62a8118001c000a
+   11   -  - - - 1 . 0 .. | 24 0 8 448 0 0 0 0 45 320 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:1 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   12   -  - - - 3 ! 1 .. | 24 0 8 0 0 8 0 0 46 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:3010090000600004 19:4b88410aa08a0800
+   13   -  - - - 1 . 0 .. | 24 0 8 512 0 7 0 0 46 256 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   14   -  - - - 1 . 2 .. | 24 0 8 0 0 8 0 0 47 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 18:a62a8118001c000a
+   15   -  - - - 1 . 0 .. | 24 0 8 384 0 0 0 0 46 384 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   16   -  - - - 1 . 0 .. | 24 0 8 0 0 8 0 0 47 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   17   -  - - - 1 . 0 .. | 24 0 8 384 0 0 0 0 47 384 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   18   -  - - - 1 . 0 .. | 24 0 8 0 0 8 0 0 48 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   19   -  - - - 1 . 0 .. | 24 0 8 384 0 0 0 0 46 384 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   20   -  - - - 1 . 0 .. | 24 0 8 0 0 8 0 0 47 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   21   -  - - - 5 ! 0 .. | 24 0 8 384 0 0 0 0 47 384 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:8004000000460882 17:62201ba008858010
+   22   -  - - - 1 . 0 .. | 24 0 8 128 0 8 0 0 48 384 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   23   -  - - - 1 . 2 .. | 24 0 8 384 0 6 0 0 47 384 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 18:a62a8118001c000a
+   24   -  - - - 1 . 0 .. | 24 0 8 0 0 2 0 0 48 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   25   -  - - - 1 . 0 .. | 24 0 8 384 0 6 0 0 48 384 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   26   -  - - - 7 ! 0 .. | 24 0 8 0 0 2 0 0 49 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:1851001001010000 17:62201ba008858010
+   27   -  - - - 1 . 0 .. | 24 0 8 512 0 8 0 0 45 256 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:0 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-
+      words 0: 0:00010002d0420100 17:62201ba008858010
+   28   -  - - - 1 . 2 .. | 24 0 8 0 0 7 0 0 46 512 | 0#3:0 1#4:0 2#20:0 3#19:2 4#15:0 5#21:0 7#23:0 8#24:4 9#28:2 10#13:0 11#14:0 13#29:0 14#30:0 15#31:0 say:- task:- screen:- chose:-

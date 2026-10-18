@@ -479,6 +479,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.screen_walls = lesson.screen_walls;
     w.screen_torch = lesson.screen_torch;
     w.screen_dark = lesson.screen_dark;
+    // (`set_cursor_away`) on every screen rung but the dark ones (glow), the cursor starts off the
+    // target
+    w.screen_away = cursor_away() && !lesson.screen_dark;
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
@@ -1103,6 +1106,18 @@ pub fn set_novelty_max(n: usize) {
 
 pub fn novelty_max() -> usize {
     NOVELTY_MAX.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The cursor off the target at a screen trial's start (`set_cursor_away`, `World::screen_away`), on
+/// the rungs that are not dark. Off by default.
+static CURSOR_AWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_cursor_away(on: bool) {
+    CURSOR_AWAY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn cursor_away() -> bool {
+    CURSOR_AWAY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The voice one-word everywhere (`set_one_word_voice`, with `set_one_word`): its codes and the

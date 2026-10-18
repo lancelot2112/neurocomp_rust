@@ -356,6 +356,9 @@ pub struct World {
     /// on the target: clicking at whatever is seen is a respond, not telling glyph-and-cursor from
     /// cursor alone)
     pub screen_dark: bool,
+    /// (`evolve::set_cursor_away`) the cursor never starts a trial on the target, so clicking at
+    /// what is seen hits only after a move
+    pub screen_away: bool,
     /// programs built for this world keep each declared channel in one frame, held in place
     /// from step to step (only clearing writes take lines away, and a write is seen by the edges
     /// after it in the same step); default: the process's (`neurocomp::set_in_place`)
@@ -634,6 +637,7 @@ impl World {
             screen_walls: 0,
             screen_torch: false,
             screen_dark: false,
+            screen_away: false,
             in_place: crate::program::neurocomp::in_place(),
             count_reads: crate::program::neurocomp::count_reads(),
             explore: crate::program::neurocomp::explore(),
@@ -820,7 +824,8 @@ impl World {
             for (k, &c) in free.iter().take(lit).enumerate() {
                 glyph[c] = Some(k);
             }
-            let (target, cursor) = (free[0], free[self.rng.gen_range(0..free.len())]);
+            // (`screen_away`) the cursor never starts on the target: a hit takes a move
+            let (target, cursor) = if self.screen_away && free.len() > 1 { (free[0], free[1 + self.rng.gen_range(0..free.len() - 1)]) } else { (free[0], free[self.rng.gen_range(0..free.len())]) };
             // reachable: a flood from the cursor through free cells
             let mut seen = 1u32 << cursor;
             let mut stack = vec![cursor];

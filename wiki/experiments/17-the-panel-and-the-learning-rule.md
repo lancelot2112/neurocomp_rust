@@ -673,6 +673,7 @@ word has the most lines, at least half a code's. The cursor's mark alone (8 line
 for any move; glyph and cursor (23 lines) give enough to read as the click. A threshold detector
 from wrapping arithmetic and the body's own decoder, with no kernel at all.
 
-Fix to make: on rungs that ask for search, never start the cursor on the target, so every hit takes
-a move.
+The fix (`ISL_CURSOR_AWAY=1`, runs 34 and 35): on every screen rung but the dark ones (glow), the
+cursor never starts a trial on the target, so every hit takes a move. The passer, 48 fresh worlds:
+322 without it, -341 with it.
 

@@ -102,6 +102,15 @@ every birth pairs the glyph with the wrong code.
   never read, and similar glyphs are not read alike. The cap on kernels a population may hold (512)
   bounds how many pairs it can keep.
 
+## Seeded with it ([`runs/pairs-seeded/README.md`](../../runs/pairs-seeded/README.md))
+
+Every genome started as this reader, on a ladder taking the mirror away (pm8, then 6, 4, 2 and 0
+eighths of each sound's lines from its voice code, one's own voice heard from pm6 on), 3 arms × 3
+seeds, 200 generations. All nine kept it (pm8 at generation 2). Three, one per arm, passed pm6 and
+pm4 (generations 46 to 69) and stopped at pm2; none reached pm0. pm6 also turns one's own voice
+back on, and the echo wire then repeats the network's own words (the voice loop of experiment 16),
+so the step confounds a weaker echo with a voice loop.
+
 ## Next
 
 - Rerun the pairs ladders without the mirror (sounds unrelated to voice codes), so the reader must

@@ -959,6 +959,11 @@ fn main() {
                 if ks.is_empty() { None } else { Some(format!("{}:{}", e.spec.salt, ks.iter().filter(|k| k.age == 0).count())) }
             }).collect();
             println!("{k:5} {ti:>3} {tt:>2} {cue} {pays} {} {} | {} | {}", ev.moved.map_or("-".to_string(), |m| m.to_string()), if ev.present { "on" } else { ".." }, lines.join(" "), fired.join(" "));
+            // (`ISL_TRACE_WORDS=i`: that vector's words too, in hex, the ones not empty)
+            if let Some(i) = std::env::var("ISL_TRACE_WORDS").ok().and_then(|x| x.parse::<usize>().ok()).filter(|&i| i < net.nodes.len()) {
+                let w: Vec<String> = net.nodes[i].current().as_words().iter().enumerate().filter(|(_, x)| **x != 0).map(|(j, x)| format!("{j}:{x:016x}")).collect();
+                println!("      words {}", w.join(" "));
+            }
         })));
         let (ev, _) = neurocomp::evolve::live_lesson(&g, neurocomp::evolve::Task::Conditioning(neurocomp::world::Conditioning::Delayed, trials), Physics::Varied, seed ^ 0xDE1A, gap, st.lesson.clone());
         neurocomp::evolve::set_trace(None);

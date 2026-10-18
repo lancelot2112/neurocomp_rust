@@ -16,7 +16,8 @@ log; or a check example built for one question.
 3. **Trace it** (`ISL_TRACE=<island>`, `ISL_TRACE_SEED`): one delayed-conditioning lifetime step by
    step (trial, step, cue, click, every vector's lines on, kernels fired per population). Average
    the vectors by step and trial kind: the vector that still differs once the stimulus is gone is
-   the memory. For reading, `examples/tracecheck` does the same for one hand-made genome.
+   the memory; `ISL_TRACE_WORDS=i` prints vector i's words in hex, to see how it is written (an
+   add carries and drops lines, an OR or a set only adds them). For reading, `examples/tracecheck` does the same for one hand-made genome.
 4. **Draw it** (`examples/netdump`): a checkpoint or rung log as vectors, populations and their
    modulatory inputs, for the dashboard's network view.
 5. **Ask what it learns** (`examples/pairscheck`): any genome file on the paired-associate capacity

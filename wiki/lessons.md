@@ -275,9 +275,10 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     when the target is right at birth; the rule matters when it is not.
 53. **Evolved memory can be a timer, not a loop (experiment 17).** Run 31's recall genome that
     remembers (remember 303 at lag5 on 48 fresh worlds) keeps no reverberating circuit: the light
-    clears a held channel and it refills a few lines a step, so its fill level counts the steps
-    since the light, and the network clicks while it is low. It says that something came, not
-    what, and fades within about ten steps (lag5 held, lag8 and lag16 fading). The generalist's 77
+    clears one 64-bit word of a held channel, and an OR sets it again in a jump at a step that
+    varies (most likely a spontaneously firing kernel); the network clicks while the word is empty.
+    A latch with a random hold, not a counter: it says that something came, not what, and lasts a
+    few steps (lag5 held, lag8 and lag16 fading). The generalist's 77
     self-loops carry no memory at all (taking them out helps recall as often as it hurts).
 54. **Check a pass on every genome, not the first-ranked one (experiment 17).** A rung is judged on
     the elite's mean, and the population's ranking is not by the goal probe: in run 31's recall

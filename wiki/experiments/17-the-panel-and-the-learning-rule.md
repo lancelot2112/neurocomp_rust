@@ -217,10 +217,15 @@ of one lifetime, `ISL_TRACE=recall`, world 60014, remember 861;
 | 7 | 27 | 70% | 49 | 5% |
 | 9 | 33 | 53% | 50 | 3% |
 
-The step after the light, C3 (the genome's one held channel) is cleared from about 47 lines to 0,
-and refills about 4 to 5 lines a step; the network clicks while it is low. Its fill level counts
-the steps since the light: a timer, as a capacitor discharges, not a reverberating loop. It holds
-that a light came recently, not for long: two-thirds full again 9 steps on, which is why it climbs
-to lag5 and fades at lag8 and lag16.
+The store is one 64-bit word, word 0 of C3 (the genome's one held channel; its other 15 words stay
+empty; `ISL_TRACE_WORDS=3`, `runs/checks/lesions/run31-recall-g03-trace-60014-words.txt`). The step
+after the light the whole word is cleared to 0. It is refilled by OR, not by an add (each later
+pattern holds the earlier one's lines), in one or two chunks of 15 to 25 lines at a step that varies
+from trial to trial: in one trial at step 6, in another not before the trial ends. The network
+clicks exactly while the word is empty and stops the step it refills. The steady 4 to 5 lines a step
+in the table is the average over trials of these jumps. So the memory is a latch the light resets
+and a chance event sets again (the refill most likely from the kernels that fire spontaneously,
+one step in 16), not a counter: it holds that a light came, for a random few steps, which is why it
+climbs to lag5 and fades at lag8 and lag16.
 
 From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.

@@ -451,6 +451,18 @@ impl SimpleKernel {
     #[inline]
     fn apply_output(&self, out: &mut BitVector) {
         let op = self.op;
+        // (a long shift) the mask shifted across its words, spilling a word past them, ORed in
+        if let Some((left, n)) = op.long() {
+            let (s, off) = crate::kernel::class::long_shift(self.output_mask.as_words(), left, n);
+            let words = out.as_words_mut();
+            for (j, w) in s.into_iter().enumerate() {
+                let k = self.output_idx as isize + off + j as isize;
+                if w != 0 && k >= 0 && (k as usize) < words.len() {
+                    words[k as usize] |= w;
+                }
+            }
+            return;
+        }
         let f = move |a: u64, b: u64| op.word(a, b);
         out.mask_mut(self.output_idx, &self.output_mask, f);
     }

@@ -755,7 +755,18 @@ impl RuntimeNetwork {
                         // into a port (part of the node), it wraps inside the port
                         let (base, len) = if eg.spec.dst_len > 0 { (eg.dst_word % dw, eg.spec.dst_len.min(dw - eg.dst_word % dw)) } else { (0, dw) };
                         let land = |j: usize| if eg.spec.dst_len > 0 { base + j % len } else { (j + eg.dst_word) % dw };
-                        if src.len() <= len {
+                        if let Some((left, n)) = eg.op.long() {
+                            // (a long shift) the whole source shifted as one bit string, landing
+                            // as a copy does, wrapping round its destination, ORed in
+                            let (s, off) = crate::kernel::class::long_shift(src, left, n);
+                            let span = if eg.spec.dst_len > 0 { len } else { dw } as isize;
+                            let d = dst_curr.as_words_mut();
+                            for (j, w) in s.into_iter().enumerate() {
+                                if w != 0 {
+                                    d[land((j as isize + off).rem_euclid(span) as usize)] |= w;
+                                }
+                            }
+                        } else if src.len() <= len {
                             let d = dst_curr.as_words_mut();
                             for (j, w) in src.iter().enumerate() {
                                 let k = land(j);

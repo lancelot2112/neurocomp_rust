@@ -23,6 +23,49 @@ pub enum KernelOp {
     Shr(u8),
     Rotl(u8),
     Rotr(u8),
+    /// (`set_long_shifts`) what is written shifted by this many bits across word boundaries, the
+    /// bits leaving a word entering the next (left: up, to higher words; right: down), then ORed
+    /// in: a pattern can travel the length of a vector. A kernel's write may spill into the word
+    /// after (left) or before (right) its mask; a wire's wraps round its destination. Where an op
+    /// is applied a word at a time (branches, noise), a plain shift within the word.
+    Lsl(u8),
+    Lsr(u8),
+}
+
+/// Long shifts in the op draw (`set_long_shifts`, `KernelOp::Lsl`, `Lsr`): a new op is one of them
+/// one time in seven. Off by default.
+static LONG_SHIFTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_long_shifts(on: bool) {
+    LONG_SHIFTS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn long_shifts() -> bool {
+    LONG_SHIFTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Words shifted as one long bit string by `n` bits (`left`: toward higher words), the bits leaving
+/// a word entering the next: one word more than given, and where the first lands relative to the
+/// first given (0 left, -1 right).
+pub fn long_shift(m: &[u64], left: bool, n: u8) -> (Vec<u64>, isize) {
+    let n = (n & 63) as u32;
+    let len = m.len();
+    let mut s = vec![0u64; len + 1];
+    if left {
+        for i in 0..=len {
+            let lo = if i < len { m[i] << n } else { 0 };
+            let hi = if n > 0 && i > 0 { m[i - 1] >> (64 - n) } else { 0 };
+            s[i] = lo | hi;
+        }
+        (s, 0)
+    } else {
+        for j in 0..=len {
+            let main = if j > 0 { m[j - 1] >> n } else { 0 };
+            let carry = if n > 0 && j < len { m[j] << (64 - n) } else { 0 };
+            s[j] = main | carry;
+        }
+        (s, -1)
+    }
 }
 
 /// The op choice (`set_op_choice`): ops drawn without the redundant `Rotr`, and a population's op
@@ -75,6 +118,17 @@ impl KernelOp {
             KernelOp::Shr(n) => d | (m >> (n & 63)),
             KernelOp::Rotl(n) => d | m.rotate_left((n & 63) as u32),
             KernelOp::Rotr(n) => d | m.rotate_right((n & 63) as u32),
+            KernelOp::Lsl(n) => d | (m << (n & 63)),
+            KernelOp::Lsr(n) => d | (m >> (n & 63)),
+        }
+    }
+
+    /// A long shift (`Lsl`, `Lsr`): its direction and amount.
+    pub fn long(self) -> Option<(bool, u8)> {
+        match self {
+            KernelOp::Lsl(n) => Some((true, n)),
+            KernelOp::Lsr(n) => Some((false, n)),
+            _ => None,
         }
     }
 
@@ -94,6 +148,8 @@ impl KernelOp {
             KernelOp::Shr(n) => format!("shr:{n}"),
             KernelOp::Rotl(n) => format!("rotl:{n}"),
             KernelOp::Rotr(n) => format!("rotr:{n}"),
+            KernelOp::Lsl(n) => format!("lsl:{n}"),
+            KernelOp::Lsr(n) => format!("lsr:{n}"),
         }
     }
 
@@ -114,6 +170,8 @@ impl KernelOp {
             ("shr", Some(n)) => KernelOp::Shr(n),
             ("rotl", Some(n)) => KernelOp::Rotl(n),
             ("rotr", Some(n)) => KernelOp::Rotr(n),
+            ("lsl", Some(n)) => KernelOp::Lsl(n),
+            ("lsr", Some(n)) => KernelOp::Lsr(n),
             _ => return None,
         })
     }
@@ -123,6 +181,10 @@ impl KernelOp {
     pub fn random<R: rand::Rng + ?Sized>(rng: &mut R) -> Self {
         let n: u8 = rng.gen_range(0..64);
         let k: u8 = rng.gen_range(3..7);
+        // (`set_long_shifts`) a long shift one time in seven
+        if long_shifts() && rng.gen_range(0..7) == 0 {
+            return if rng.gen_bool(0.5) { KernelOp::Lsl(n.max(1)) } else { KernelOp::Lsr(n.max(1)) };
+        }
         if op_choice() {
             return match rng.gen_range(0..12) {
                 0 => KernelOp::Or,
@@ -167,6 +229,8 @@ impl KernelOp {
             KernelOp::Shr(n) => KernelOp::Shr(a(n)),
             KernelOp::Rotl(n) => KernelOp::Rotl(a(n)),
             KernelOp::Rotr(n) => KernelOp::Rotr(a(n)),
+            KernelOp::Lsl(n) => KernelOp::Lsl(a(n)),
+            KernelOp::Lsr(n) => KernelOp::Lsr(a(n)),
             o => o,
         }
     }
@@ -231,6 +295,13 @@ mod op_tests {
         assert_eq!(Shr(4).word(0, 0xF0), 0x0F);
         assert_eq!(Rotl(4).word(0, 0xF000_0000_0000_0000), 0xF);
         assert_eq!(Rotr(4).word(0, 0xF), 0xF000_0000_0000_0000);
+        // long shifts carry across words
+        let (s, off) = super::long_shift(&[0xF000_0000_0000_0000, 0x1], true, 8);
+        assert_eq!((s, off), (vec![0, 0x1F0, 0], 0));
+        let (s, off) = super::long_shift(&[0xFF, 0x1], false, 4);
+        assert_eq!((s, off), (vec![0xF000_0000_0000_0000, 0x1000_0000_0000_000F, 0], -1));
+        assert_eq!(super::KernelOp::parse("lsl:9"), Some(Lsl(9)));
+        assert_eq!(Lsr(3).text(), "lsr:3");
     }
 
     #[test]

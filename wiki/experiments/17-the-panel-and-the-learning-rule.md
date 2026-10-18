@@ -138,3 +138,22 @@ first time, with three local bit operations: an age count, a gate, and death. Tw
 Later, in the panel's order: a learning-slope selection case, permuted-mapping worlds as the
 observer's rule, masks as writable channels, next-byte prediction against an n-gram, then a byte
 terminal and dialogue.
+
+## Motions: conveyors and travelling waves (`Token::Motion`, `ISL_MOTIONS=1`)
+
+A delay a network can use, asked for after run 31's start: a channel that moves by itself each
+step, before any population writes.
+- **A conveyor** (`motion tag k 0`): the channel's words move one place along every 2^(k-1) steps
+  (word i gets what word i-1 held, word 0 is emptied). Word j then holds what was written j moves
+  ago: a delay line as long as the channel, up to 2,048 steps. Conveyors of different strides give
+  delays on time scales a factor of two apart. A population covering the channel sees every delay
+  at once.
+- **A travelling wave** (`motion tag 0 1`): each line becomes the XOR of its two neighbours' (a
+  frame ago), cellular rule 90 across the whole vector; a written pattern spreads out as a wave.
+
+Both are a copy and a shift of words, done once a step (`neurocomp::moved`, unit-tested). Before
+this, the only delays were a population's lag (1 to 8 frames), its span (the OR of up to 64
+frames: that something happened, not what or when), held channels, and shifts inside one word. A
+new token is a motion one time in about twenty under `ISL_MOTIONS`, for one of the genome's
+channels; mutations flip its tag bits, step its stride (0 to 8) and toggle its wave. Not yet
+tried on a task.

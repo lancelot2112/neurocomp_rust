@@ -145,7 +145,7 @@ impl GeneGenome {
             .iter()
             .map(|&v| {
                 let name = match v { INPUT => Some("input".to_string()), OUTPUT => Some("output".to_string()), _ => None };
-                g.add_node(NodeSpec { name, bits: widths[&v] * 64, history_depth: depths[&v], noise: 0, hold: false })
+                g.add_node(NodeSpec { name, bits: widths[&v] * 64, history_depth: depths[&v], noise: 0, hold: false, conveyor: 0, wave: false })
             })
             .collect();
         for e in &self.edges {

@@ -20,6 +20,13 @@ pub struct NodeSpec {
     /// it starts each step with what it held the step before (only clearing writes take lines
     /// away), instead of empty
     pub hold: bool,
+    /// (`evolve::tags::Token::Motion`) a conveyor: before any edge writes, its words move one place
+    /// along (word i gets what word i-1 held, word 0 empty) every 2^(conveyor-1) steps, keeping
+    /// what it held otherwise, so word k holds what was written k moves ago; 0, none
+    pub conveyor: u8,
+    /// (a motion) a travelling wave: before any edge writes, each line becomes the XOR of its two
+    /// neighbours' a step ago (cellular rule 90, across the whole vector)
+    pub wave: bool,
 }
 
 impl NodeSpec {
@@ -30,6 +37,8 @@ impl NodeSpec {
             history_depth: defaults.default_history_depth,
             noise: 0,
             hold: false,
+            conveyor: 0,
+            wave: false,
         }
     }
 }
@@ -42,6 +51,8 @@ impl Default for NodeSpec {
             history_depth: 1,
             noise: 0,
             hold: false,
+            conveyor: 0,
+            wave: false,
         }
     }
 }

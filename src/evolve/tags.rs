@@ -252,6 +252,12 @@ pub enum Token {
     /// (only writes that clear take lines away); otherwise it starts each step empty.
     Channel { tag: u8, width: u8, hold: bool },
     Pop(Pop),
+    /// (`set_motions`) the declared channel nearest `tag` moves by itself each step, before any
+    /// population writes: a conveyor (`conveyor` k > 0: its words move one place along every
+    /// 2^(k-1) steps, so word j holds what was written j moves ago: a delay line, slower for larger
+    /// k), and/or a travelling wave (`wave`: each line becomes the XOR of its neighbours', cellular
+    /// rule 90). The last motion naming a channel wins.
+    Motion { tag: u8, conveyor: u8, wave: bool },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -459,6 +465,21 @@ pub fn birth_lags() -> bool {
     BIRTH_LAGS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Motions (`Token::Motion`): a channel that moves by itself each step, before any population
+/// writes: a conveyor (its words move one place along every 2^(k-1) steps, a delay line whose word
+/// j holds what was written j moves ago; conveyors of different strides give delays on several
+/// time scales), or a travelling wave (cellular rule 90: each line the XOR of its neighbours').
+/// New tokens are motions one time in about twenty. Off by default.
+static MOTIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_motions(on: bool) {
+    MOTIONS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn motions() -> bool {
+    MOTIONS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Triggers (`Pop::trigger`, `EdgeSpec::trigger`): how a population's kernels match, still one
 /// popcount and a compare: at least their threshold of lines agreeing (the default), at most (enough
 /// of their lines silent), a band (too dense a match is no match), or the whole tile (lines on
@@ -584,6 +605,8 @@ struct Channels {
     list: Vec<(u8, usize)>,
     /// whether each holds its lines from step to step
     hold: Vec<bool>,
+    /// (motions) each node's conveyor and wave
+    motion: Vec<(u8, bool)>,
 }
 
 impl Channels {
@@ -600,7 +623,17 @@ impl Channels {
         hold.push(false);
         list.push((ACT, world::ACT_BITS / 64));
         hold.push(false);
-        Self { list, hold }
+        let mut ch = Self { motion: vec![(0, false); list.len()], list, hold };
+        if motions() {
+            for t in tokens {
+                if let Token::Motion { tag, conveyor, wave } = t {
+                    if let Some(i) = ch.internal(*tag) {
+                        ch.motion[i] = ((*conveyor).min(8), *wave);
+                    }
+                }
+            }
+        }
+        ch
     }
 
     /// The self channel's index (just before the act).
@@ -794,6 +827,9 @@ impl TagGenome {
                     c += 1;
                     out += &format!("C{c} channel {tag:08b}  {} bits{}\n", 64usize << (*width).min(MAX_WIDTH), if *hold { "  holds" } else { "" });
                 }
+                Token::Motion { tag, conveyor, wave } => {
+                    out += &format!("   motion {tag:08b}: conveyor {conveyor}{}\n", if *wave { ", wave" } else { "" });
+                }
                 Token::Pop(p) => {
                     let (Some(a), Some(b)) = (ch.from(p), ch.to(p)) else {
                         out += "   (a population with no channel to read or write)\n";
@@ -940,7 +976,9 @@ impl TagGenome {
         let idx: Vec<_> = (0..n)
             .map(|i| {
                 let name = if i == 0 { Some("input".to_string()) } else if i == n - 1 { Some("output".to_string()) } else if i == n - 2 { Some("self".to_string()) } else { None };
-                g.add_node(NodeSpec { name, bits: ch.list[i].1 * 64, history_depth: depth[i], noise: 0, hold: ch.hold[i] })
+                // (a motion) it reads its own last frame to move it
+                let d = if ch.motion[i] != (0, false) { depth[i].max(1) } else { depth[i] };
+                g.add_node(NodeSpec { name, bits: ch.list[i].1 * 64, history_depth: d, noise: 0, hold: ch.hold[i], conveyor: ch.motion[i].0, wave: ch.motion[i].1 })
             })
             .collect();
         for (a, b, spec) in edges {
@@ -1020,6 +1058,7 @@ impl TagGenome {
             .copied()
             .map(|i| match &self.tokens[i] {
                 Token::Channel { width, hold, .. } => Token::Channel { tag: fresh, width: *width, hold: *hold },
+                Token::Motion { conveyor, wave, .. } => Token::Motion { tag: fresh, conveyor: *conveyor, wave: *wave },
                 Token::Pop(p) => {
                     let mut q = p.clone();
                     let here = |t: u8| ch.internal(t) == Some(channel);
@@ -1247,6 +1286,7 @@ impl TagGenome {
         for t in &self.tokens {
             match t {
                 Token::Channel { tag, width, hold } => out += &format!("channel {tag} {width} {}\n", b(*hold)),
+                Token::Motion { tag, conveyor, wave } => out += &format!("motion {tag} {conveyor} {}\n", b(*wave)),
                 Token::Pop(p) => {
                     out += &format!(
                         "pop id={} from={} from_port={} to={} to_port={} wire={} op={} lag={} span={} at={} field={} place={} spread={} count={} fan_in={} fan_out={} quarters={} tonic={} share={} grow={} new_code={} repeat={} repeat_lag={} gate={} gate_lag={} birth_syn={} birth_quarters={} out_min={} out_max={} cap={} code_lines={} out_learn={} fade={} rotate={} sparse={} cover={} tile={} pause={} replicate={} replicate_shift={} mark={} explored={}\n",
@@ -1330,6 +1370,11 @@ impl TagGenome {
                     let v: Vec<u8> = w.map(|x| x.parse().map_err(|_| bad("channel"))).collect::<Result<_, _>>()?;
                     let [tag, width, hold] = v[..] else { return Err(bad("channel")) };
                     out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Channel { tag, width, hold: hold == 1 });
+                }
+                Some("motion") => {
+                    let v: Vec<u8> = w.map(|x| x.parse().map_err(|_| bad("motion"))).collect::<Result<_, _>>()?;
+                    let [tag, conveyor, wave] = v[..] else { return Err(bad("motion")) };
+                    out.last_mut().ok_or_else(|| bad("before any genome"))?.tokens.push(Token::Motion { tag, conveyor, wave: wave == 1 });
                 }
                 Some("pop") => {
                     let kv: std::collections::HashMap<&str, &str> = w.filter_map(|x| x.split_once('=')).collect();
@@ -1883,7 +1928,13 @@ impl Evolvable for TagGenome {
         match rng.gen_range(0..16) {
             // a new token (two chances in sixteen: new populations are the raw material)
             0 | 15 => {
-                let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..=MAX_WIDTH), hold: rng.gen_bool(0.25) } } else { Token::Pop(g.random_pop(rng)) };
+                let t = if rng.gen_bool(0.3) { Token::Channel { tag: rng.r#gen(), width: rng.gen_range(0..=MAX_WIDTH), hold: rng.gen_bool(0.25) } } else if motions() && rng.gen_bool(0.15) {
+                    // (with `set_motions`) a motion for one of its channels, a conveyor of stride
+                    // 1 to 4 or a wave
+                    let tags: Vec<u8> = g.tokens.iter().filter_map(|t| if let Token::Channel { tag, .. } = t { Some(*tag) } else { None }).collect();
+                    let tag = tags.choose(rng).copied().unwrap_or_else(|| rng.r#gen());
+                    if rng.gen_bool(0.75) { Token::Motion { tag, conveyor: rng.gen_range(1..=4), wave: false } } else { Token::Motion { tag, conveyor: 0, wave: true } }
+                } else { Token::Pop(g.random_pop(rng)) };
                 let at = rng.gen_range(0..=n);
                 g.tokens.insert(at, t);
             }
@@ -1995,6 +2046,11 @@ impl Evolvable for TagGenome {
                         0 => *tag ^= bit,
                         1 => *width = step(*width, 0, MAX_WIDTH),
                         _ => *hold = !*hold,
+                    },
+                    Token::Motion { tag, conveyor, wave } => match rng.gen_range(0..3) {
+                        0 => *tag ^= bit,
+                        1 => *conveyor = step(*conveyor, 0, 8),
+                        _ => *wave = !*wave,
                     },
                     Token::Pop(p) => match rng.gen_range(0..if triggers() { 58 } else if rule_tables() { 57 } else if eligibility() { 56 } else if birth_lags() { 55 } else if branches() { 54 } else if crate::program::neurocomp::prune() { 52 } else if overlap_genes() { 51 } else if inhibit_inputs() { 50 } else if heat_inputs() { 48 } else if hint_band() { 46 } else if read_outputs() { 45 } else if crate::program::neurocomp::shadow() { 44 } else if port_gates() { 43 } else if accident() { 40 } else if zeros() { 39 } else { 38 }) {
                         0 => p.from ^= bit,

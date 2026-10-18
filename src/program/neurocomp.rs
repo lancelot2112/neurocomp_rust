@@ -109,6 +109,30 @@ pub const RETARGET: u32 = 128;
 /// Where a shadow's kernel stands against a hint band (`EdgeSpec::hint_low`): 1 when it is partly
 /// right (more than `low` quarters of its `lines` came on, fewer than `high`), -1 when at or under
 /// `low`, 0 when fully right (or it wrote nothing).
+/// A moving channel's next frame (`NodeSpec::conveyor`, `NodeSpec::wave`), from its last: a
+/// conveyor's words one place along (word i gets word i-1, word 0 empty) when the step count is a
+/// multiple of 2^(conveyor-1), else as they were; then, with a wave, each line the XOR of its two
+/// neighbours (cellular rule 90, across the whole vector; lines past the ends read as off).
+pub fn moved(prev: &[u64], conveyor: u8, wave: bool, steps: u64) -> Vec<u64> {
+    let mut v = prev.to_vec();
+    if conveyor > 0 && steps % (1u64 << (conveyor - 1).min(30)) == 0 {
+        v.rotate_right(1);
+        if let Some(w) = v.first_mut() {
+            *w = 0;
+        }
+    }
+    if wave {
+        let old = v.clone();
+        let k = old.len();
+        for i in 0..k {
+            let lo = if i > 0 { old[i - 1] >> 63 } else { 0 };
+            let hi = if i + 1 < k { old[i + 1] << 63 } else { 0 };
+            v[i] = ((old[i] << 1) | lo) ^ ((old[i] >> 1) | hi);
+        }
+    }
+    v
+}
+
 pub fn in_band(lines: u32, residue: u32, low: u8, high: u8) -> i32 {
     if lines == 0 {
         return 0;
@@ -154,6 +178,8 @@ pub struct RuntimeNetwork {
     pub noise: Vec<usize>,
     /// per node: it holds its lines from step to step instead of starting empty
     pub hold: Vec<bool>,
+    /// (motions) each node's conveyor stride and wave (`NodeSpec::conveyor`, `NodeSpec::wave`)
+    pub motion: Vec<(u8, bool)>,
     /// per node: held in place (a declared channel, when built so): one frame, never cleared or
     /// copied, read as it is now (writes earlier in this step included) whatever the lag: no
     /// history
@@ -421,9 +447,10 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(i as u64 ^ 0xA0A0)).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
+        let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -497,7 +524,8 @@ impl RuntimeNetwork {
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
+        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
     }
 
     /// Advance histories and process all edges once.
@@ -513,6 +541,18 @@ impl RuntimeNetwork {
                 continue;
             }
             n.advance(if hold && matches!(mode, AdvanceMode::Clear) { AdvanceMode::CopyPrev } else { mode });
+        }
+
+        // (motions) a conveyor's words move one place along (every 2^(stride-1) steps; else it keeps
+        // what it held), and a wave's lines each become the XOR of their neighbours', from the
+        // frame before, ahead of any write
+        let steps = self.steps;
+        for (n, &(conveyor, wave)) in self.nodes.iter_mut().zip(&self.motion) {
+            if (conveyor == 0 && !wave) || n.frames() < 2 {
+                continue;
+            }
+            let v = moved(n.get_frame(1).as_words(), conveyor, wave, steps);
+            n.current_mut().as_words_mut().copy_from_slice(&v);
         }
 
         // Execute edges in their order (the genome's): writes into a vector land in that order,
@@ -1557,5 +1597,32 @@ mod tests {
         let output = net.read_output();
         assert_eq!(output.count_ones(), 1);
 
+    }
+}
+
+#[cfg(test)]
+mod motion_tests {
+    use super::moved;
+
+    #[test]
+    fn a_conveyor_carries_a_word_one_place_a_move() {
+        // stride 1: every step
+        let a = moved(&[7, 0, 0], 1, false, 0);
+        assert_eq!(a, vec![0, 7, 0]);
+        assert_eq!(moved(&a, 1, false, 1), vec![0, 0, 7]);
+        // off the end it is gone
+        assert_eq!(moved(&[0, 0, 7], 1, false, 2), vec![0, 0, 0]);
+        // stride 2: every second step, held in between
+        assert_eq!(moved(&[7, 0], 2, false, 1), vec![7, 0]);
+        assert_eq!(moved(&[7, 0], 2, false, 2), vec![0, 7]);
+    }
+
+    #[test]
+    fn a_wave_is_rule_90() {
+        // one line becomes its two neighbours, across a word boundary too
+        assert_eq!(moved(&[1 << 5], 0, true, 0), vec![(1 << 4) | (1 << 6)]);
+        assert_eq!(moved(&[1 << 63, 0], 0, true, 0), vec![1 << 62, 1]);
+        // lines 0 and 2: line 1 sees both and cancels (XOR), line 3 sees line 2, line -1 is off
+        assert_eq!(moved(&[0b101], 0, true, 0), vec![0b1000]);
     }
 }

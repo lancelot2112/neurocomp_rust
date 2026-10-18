@@ -837,3 +837,25 @@ species rule kept it as useful. Two lessons. The species label can mislead when 
 drawn: the novelty island's surprise mixes periods, so a cycle1 detector looks like a cycle3 one.
 And nothing carries it where it is useful: novelty migrants go only to the generalist, so the
 prediction island, stuck below cycle1, never sees a genome that would pass cycle1 at once.
+
+## Sending novelty's species to the islands, and a leak it found (`ISL_NOVEL_MIGRATE`, `ISL_VARY_UP`)
+
+`ISL_NOVEL_MIGRATE=1` (run 35): a new species' founder is copied into every island whose current
+rung is scored on the probe it was useful on. Smoke test, run 34's checkpoint at 120 with the
+prediction, novelty and selection islands: at 123 a species useful on surprise (273) was sent into
+prediction, which then passed cycle1-100 (125, held out 609), cycle1 (126, 428), cycle2 (127, 233)
+and cycle3 (132, 222) in ten generations, after 120 on cycle1-100.
+
+Too fast. Rescored with the period fixed (48 fresh worlds), the cycle2 and cycle3 passers are the
+cycle1 detector: 438 and 293 with the period drawn per lifetime (`ISL_VARY_PERIOD`), -10 and 5
+with it fixed. Drawing the period from 1 to the rung's lets a detector of a shorter cycle score in
+the shorter lifetimes, enough to pass. Run 34's recall has the same leak through `ISL_VARY_LAG`:
+its lag8 passer scores 260 with the delay drawn, 0 with it fixed at 8.
+
+The fix, `ISL_VARY_UP=1` (run 35): the delay and the period are drawn from the rung's to twice it.
+A shorter memory or detector scores in no lifetime; one wired to the rung's value alone, in about
+half. The same passers drawn up: cycle3 passer 24 to 27, lag8 passer 0, while run 34's lag1 passer
+(a real one-step memory) keeps 90 to 204 (goal 150).
+
+So run 34's recall climb past the first rungs and any prediction pass under the drawn period are
+not what they seem; its rung moves on those ladders should be read with this in mind.

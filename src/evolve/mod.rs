@@ -429,7 +429,14 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     w.gap_max = gap;
     w.teacher_rate = lesson.teach;
     // (`set_vary_lag`) a delayed lifetime's delay drawn for the lifetime, 1 to the rung's
-    w.delay = if vary_lag() && lesson.delay > 1 && lesson.vary_delay == 0 { StdRng::seed_from_u64(seed ^ 0xDE1A_7A61).gen_range(1..=lesson.delay) } else { lesson.delay };
+    // (`set_vary_up`: the rung's to twice it, so a shorter memory scores in no lifetime)
+    w.delay = if vary_lag() && vary_up() && lesson.delay > 0 && lesson.vary_delay == 0 {
+        StdRng::seed_from_u64(seed ^ 0xDE1A_7A61).gen_range(lesson.delay..=2 * lesson.delay)
+    } else if vary_lag() && lesson.delay > 1 && lesson.vary_delay == 0 {
+        StdRng::seed_from_u64(seed ^ 0xDE1A_7A61).gen_range(1..=lesson.delay)
+    } else {
+        lesson.delay
+    };
     w.vary_delay = lesson.vary_delay;
     w.distract = lesson.distract;
     w.two_lights = lesson.two_lights;
@@ -494,7 +501,15 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         Task::Sequence(n) | Task::Reading(n) => {
             let mut r = StdRng::seed_from_u64(seed ^ 0x5E9);
             // (`set_vary_period`) a cycle rung's period drawn for the lifetime, 1 to the rung's
-            let period = if vary_period() && lesson.period > 1 && lesson.period <= tokens { r.gen_range(1..=lesson.period) } else { lesson.period };
+            // (`set_vary_up`: the rung's to twice it, at most the tokens, so a detector of a shorter
+            // cycle scores in no lifetime)
+            let period = if vary_period() && vary_up() && lesson.period > 0 && lesson.period < tokens {
+                r.gen_range(lesson.period..=(2 * lesson.period).min(tokens))
+            } else if vary_period() && lesson.period > 1 && lesson.period <= tokens {
+                r.gen_range(1..=lesson.period)
+            } else {
+                lesson.period
+            };
             // (a prediction lifetime: a cycle drawn for this lifetime, some tokens replaced by a
             // random other one, which the observer marks as breaking it)
             let cycle: Vec<usize> = if fair_sequences() && period > 0 { fair_cycle(period, tokens, &mut r) } else { (0..period).map(|_| r.gen_range(0..tokens)).collect() };
@@ -1062,6 +1077,21 @@ pub fn set_vary_period(on: bool) {
 
 pub fn vary_period() -> bool {
     VARY_PERIOD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The drawn delay and period from the rung's up (`set_vary_up`, with `set_vary_lag` or
+/// `set_vary_period`): the rung's to twice it, not 1 to the rung's. Drawn down, a memory or cycle
+/// detector for a shorter one scored in the shorter lifetimes, enough to pass: run 34's lag8 passer
+/// scored 260 drawn and 0 at 8, its cycle3 passer (a cycle1 detector) 293 drawn and 5 at 3. Drawn
+/// up, it scores in none, and one wired to the rung's value alone in about half. Off by default.
+static VARY_UP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_vary_up(on: bool) {
+    VARY_UP.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn vary_up() -> bool {
+    VARY_UP.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 pub fn set_mixed_codes(on: bool) {

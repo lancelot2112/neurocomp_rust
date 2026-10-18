@@ -111,6 +111,13 @@ pm4 (generations 46 to 69) and stopped at pm2; none reached pm0. pm6 also turns 
 back on, and the echo wire then repeats the network's own words (the voice loop of experiment 16),
 so the step confounds a weaker echo with a voice loop.
 
+**The ladder split** ([`runs/pairs-seeded-2/README.md`](../../runs/pairs-seeded-2/README.md)): with
+pm8v put in (the full mirror, one's own voice heard) before pm6, 7 of 9 runs reach pm2 (3 of 9
+before), all passing pm8v at generation 2. With the three-factor rule all three seeds get there,
+and fastest (pm4 by generation 20 to 32); without it, and with rule tables, two of three. None
+passes pm2, where a quarter of each sound's lines come from its voice code: the echo is mostly
+wrong and no listener has been learned.
+
 ## Next
 
 - Rerun the pairs ladders without the mirror (sounds unrelated to voice codes), so the reader must

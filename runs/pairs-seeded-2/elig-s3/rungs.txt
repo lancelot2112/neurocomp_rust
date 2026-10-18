@@ -1,0 +1,76 @@
+island reading generation 2 stage 1 passed pm8
+genome 5
+pop id=1 from=178 from_port=1 to=75 to_port=1 wire=1 op=add:4 lag=1 span=1 at=20655 field=0 place=0 spread=0 count=8 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=1 repeat_lag=2 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=5 pause=- replicate=2 replicate_shift=0 mark=0 explored=0 accident=13 gate_at=1
+pop id=4 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=255 explored=0 accident=16 heat=156:1 heat_at=1
+channel 120 3 1
+channel 74 3 0
+channel 102 3 0
+channel 30 4 0
+channel 202 3 0
+island reading generation 28 stage 2 passed pm8v
+genome 19
+channel 4 2 1
+pop id=12 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=255 explored=0 accident=16 heat=156:1 heat_at=1
+channel 30 3 1
+channel 31 4 0
+channel 83 3 0
+pop id=14 from=158 from_port=1 to=87 to_port=0 wire=0 op=nor lag=1 span=1 at=50110 field=3 place=0 spread=0 count=5 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=4 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=1 cover=1 tile=7 pause=- replicate=4 replicate_shift=1 mark=0 explored=0 accident=15 from_output=1 heat=191:1 heat_at=0 elig=1 gate_at=1
+pop id=16 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=31 explored=0 accident=16 heat=156:1 heat_at=1 elig=1
+channel 239 2 0
+channel 84 3 0
+pop id=15 from=87 from_port=0 to=84 to_port=0 wire=1 op=or lag=1 span=1 at=0 field=0 place=0 spread=0 count=0 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=1 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=6 pause=- replicate=0 replicate_shift=0 mark=0 explored=0 from_output=1
+pop id=18 from=84 from_port=0 to=86 to_port=0 wire=1 op=or lag=1 span=1 at=0 field=0 place=0 spread=0 count=0 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=1 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=6 pause=- replicate=0 replicate_shift=0 mark=0 explored=0
+pop id=13 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=7 explored=0 accident=16 heat=156:1 heat_at=1
+channel 197 3 0
+channel 144 3 0
+pop id=17 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=31 explored=0 accident=16 heat=156:1 heat_at=1
+channel 140 3 0
+pop id=1 from=178 from_port=1 to=75 to_port=1 wire=1 op=add:4 lag=1 span=1 at=20655 field=0 place=0 spread=0 count=8 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=1 repeat_lag=2 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=5 pause=- replicate=2 replicate_shift=0 mark=0 explored=0 accident=13 gate_at=1
+channel 30 4 0
+island reading generation 32 stage 3 passed pm6
+genome 20
+channel 4 2 1
+pop id=12 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=255 explored=0 accident=16 heat=156:1 heat_at=1
+channel 30 3 1
+channel 31 4 0
+channel 83 3 0
+pop id=14 from=158 from_port=1 to=87 to_port=0 wire=0 op=nor lag=1 span=1 at=50110 field=3 place=0 spread=0 count=5 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=4 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=1 cover=1 tile=7 pause=- replicate=4 replicate_shift=1 mark=0 explored=0 accident=15 from_output=1 heat=191:1 heat_at=0 elig=1 gate_at=1
+channel 36 9 1
+pop id=16 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=1 explored=0 accident=16 heat=156:1 heat_at=1 elig=1
+channel 239 3 0
+pop id=18 from=84 from_port=0 to=86 to_port=0 wire=1 op=or lag=1 span=1 at=0 field=0 place=0 spread=0 count=0 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=1 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=6 pause=- replicate=0 replicate_shift=0 mark=0 explored=0 grip=32
+pop id=13 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=0 explored=0 accident=16 heat=156:1 heat_at=1
+channel 197 3 0
+channel 144 4 0
+pop id=17 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=1 explored=0 accident=16 heat=156:1 heat_at=1
+channel 140 3 0
+pop id=1 from=178 from_port=1 to=75 to_port=1 wire=1 op=add:4 lag=1 span=1 at=20655 field=0 place=0 spread=0 count=8 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=1 repeat_lag=1 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=5 pause=- replicate=2 replicate_shift=0 mark=0 explored=0 accident=13 gate_at=1
+channel 84 3 0
+pop id=19 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=1 explored=0 accident=16 heat=156:1 heat_at=1 elig=1 grip=8
+channel 243 3 0
+channel 113 3 0
+channel 244 3 0
+island reading generation 33 stage 4 passed pm4
+genome 20
+channel 4 2 1
+pop id=12 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=255 explored=0 accident=16 heat=156:1 heat_at=1
+channel 30 3 1
+channel 31 4 0
+channel 83 3 0
+pop id=14 from=158 from_port=1 to=87 to_port=0 wire=0 op=nor lag=1 span=1 at=50110 field=3 place=0 spread=0 count=5 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=4 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=1 cover=1 tile=7 pause=- replicate=4 replicate_shift=1 mark=0 explored=0 accident=15 from_output=1 heat=191:1 heat_at=0 elig=1 gate_at=1
+channel 36 9 1
+pop id=16 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=0 explored=0 accident=16 heat=156:1 heat_at=1 elig=1
+channel 239 3 0
+pop id=18 from=84 from_port=0 to=86 to_port=0 wire=1 op=or lag=1 span=1 at=0 field=0 place=0 spread=0 count=0 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=1 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=6 pause=- replicate=0 replicate_shift=0 mark=0 explored=0 grip=32
+pop id=13 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=0 explored=0 accident=16 heat=156:1 heat_at=1
+channel 197 3 0
+channel 144 4 0
+pop id=17 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=0 explored=0 accident=16 heat=156:1 heat_at=1
+channel 140 3 0
+pop id=1 from=178 from_port=1 to=75 to_port=1 wire=1 op=add:4 lag=1 span=1 at=20655 field=0 place=0 spread=0 count=8 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=0 repeat=1 repeat_lag=1 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=5 pause=- replicate=2 replicate_shift=0 mark=0 explored=0 accident=13 gate_at=1
+channel 84 3 0
+pop id=15 from=87 from_port=0 to=84 to_port=0 wire=1 op=or lag=1 span=1 at=0 field=0 place=0 spread=0 count=0 fan_in=4 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=1 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=0 cover=1 tile=6 pause=- replicate=0 replicate_shift=0 mark=0 explored=0 from_output=1
+pop id=19 from=17 from_port=1 to=149 to_port=1 wire=0 op=xor lag=1 span=1 at=4712 field=2 place=0 spread=0 count=8 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=1 new_code=1 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=61 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=0 mark=0 explored=0 accident=16 heat=156:1 heat_at=1 elig=1 grip=8
+channel 243 3 0
+channel 113 3 0
+channel 244 3 0

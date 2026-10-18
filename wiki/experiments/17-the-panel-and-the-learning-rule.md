@@ -102,6 +102,18 @@ hints, not results. From now on a new mechanism is compared on 3 evolutionary se
 5. **Run 31** (run 30 with `ISL_ELIG=1` and `ISL_PAIRS=1`, reading's pairs8 and pairs32 rungs
    after echo2q): started 9:09 PM ET. Reading passed echo2q at 24 and is on pairs8.
 
+6. **The 3-seed pairs test** ([`runs/pairs-test/README.md`](../../runs/pairs-test/README.md)):
+   reading alone on pairs8 > pairs32 > pairs128, 200 generations, 3 seeds, three arms (no rule,
+   the rule, the rule as a table). No arm with the rule passed pairs8. The one pass, without the
+   rule, was an echo wire that the island's held-out check scored copy 340 to 548 on pairs8 and
+   pairs32, while examples/pairscheck and a fresh-world lesion score it at about 0: the island
+   rungs leak echo into copy. The test means nothing until that is fixed.
+7. **Triggers** (`EdgeSpec::trigger`, `ISL_TRIGGERS=1`, one popcount and a compare each): a
+   population's kernels count agreeing lines (at least, the default), their silent lines (at
+   most), agreeing lines up to halfway between threshold and full (a band), or agreeing lines less
+   those on outside the mask in its words (the whole tile, an XOR). Built and unit-tested; not yet
+   checked on a task.
+
 ## What it means, and what is next
 
 The panel's central gap, learning an arbitrary map within a lifetime, is closed by hand for the

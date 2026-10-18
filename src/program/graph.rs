@@ -276,6 +276,9 @@ pub struct EdgeSpec {
     /// - bit 12, wrong at 0, it dies.
     /// 3 in a two-bit entry reads as 1. `RULE_SEED` is the runtime's own rules.
     pub rule: u16,
+    /// (`evolve::tags::set_triggers`) its kernels' trigger (`SimpleKernel::trigger`): 0 at least
+    /// (the count of agreeing lines), 1 at most (silent lines), 2 a band, 3 the whole tile
+    pub trigger: u8,
 }
 
 /// The rule table that is the runtime's own rules (`EdgeSpec::rule`): Hebbian on firing,
@@ -346,6 +349,7 @@ impl EdgeSpec {
             birth_lag: 0,
             elig: 0,
             rule: 0,
+            trigger: 0,
         }
     }
 }

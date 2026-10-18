@@ -30,6 +30,12 @@ pub struct SimpleKernel {
     pub fire_anti: bool,
     /// (a rule table) held down, the input learns Hebbian instead
     pub held_hebb: bool,
+    /// (`EdgeSpec::trigger`) what its count is: 0 the lines that agree (it fires on at least its
+    /// threshold of them); 1 its lines that are off (at most: it fires when enough are silent);
+    /// 2 the lines that agree, but none when more than halfway from its threshold to all of its
+    /// lines agree (a band: too dense a match is no match); 3 the lines that agree less the lines
+    /// on in its words outside its mask (the whole tile, as an XOR: extra lines count against it)
+    pub trigger: u8,
     /// its match code: a small code written into a match vector when it matches
     pub match_code: Option<BitVector>,
     /// the extra lines of its confirmed code: when what it predicted came true, it writes its
@@ -62,7 +68,7 @@ pub struct SimpleKernel {
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, fire_anti: false, held_hebb: false, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, lost: false, room: None, tile_at: None }.counted()
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, fire_anti: false, held_hebb: false, trigger: 0, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, lost: false, room: None, tile_at: None }.counted()
     }
 
     /// A tile kernel: it reads bits `start .. start + bits` of its input (a tile, which may
@@ -111,6 +117,7 @@ impl SimpleKernel {
         k.learn_fire = self.learn_fire;
         k.fire_anti = self.fire_anti;
         k.held_hebb = self.held_hebb;
+        k.trigger = self.trigger;
         k
     }
 
@@ -199,8 +206,31 @@ impl SimpleKernel {
     }
 
     /// How many of its lines agree with the input (on lines that are on; or, with a pattern,
-    /// cared lines whose value matches).
+    /// cared lines whose value matches), read through its trigger (`trigger`).
     pub fn agreement(&self, input: &BitVector) -> usize {
+        let count = self.agreement_plain(input);
+        match self.trigger {
+            1 => self.lines.saturating_sub(count),
+            2 => {
+                let hi = self.threshold + self.lines.saturating_sub(self.threshold) / 2;
+                if count > hi { 0 } else { count }
+            }
+            3 => count.saturating_sub(self.outside(input)),
+            _ => count,
+        }
+    }
+
+    /// The lines on in its words that its mask does not hold (for the whole-tile trigger).
+    fn outside(&self, input: &BitVector) -> usize {
+        let m = self.input_mask.as_words();
+        if let Some(ws) = &self.words {
+            return ws.iter().map(|&w| (self.at(input, w) & !m[w as usize]).count_ones() as usize).sum();
+        }
+        let x = input.as_slice(self.input_idx, self.input_mask.word_len());
+        x.iter().zip(m).filter(|(_, mw)| **mw != 0).map(|(a, mw)| (a & !mw).count_ones() as usize).sum()
+    }
+
+    fn agreement_plain(&self, input: &BitVector) -> usize {
         if let Some(ws) = &self.words {
             let m = self.input_mask.as_words();
             return match &self.pattern {
@@ -266,6 +296,7 @@ impl SimpleKernel {
             learn_fire: true,
             fire_anti: false,
             held_hebb: false,
+            trigger: 0,
             lost: false,
             match_code: None,
             confirm_mask: None,
@@ -781,6 +812,27 @@ mod tests {
         let mut t = [0u64];
         k.mark_output(&mut t);
         assert_eq!(t[0], u64::MAX);
+    }
+
+    #[test]
+    fn each_trigger_reads_its_own_count() {
+        let mut k = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        let v = |w: u64| BitVector::from_words(vec![w]);
+        // at least: the lines that agree
+        assert_eq!(k.agreement(&v(0x0F)), 4);
+        // at most: its lines that are off
+        k.trigger = 1;
+        assert_eq!(k.agreement(&v(0x0F)), 4);
+        assert_eq!(k.agreement(&v(0x00)), 8);
+        // a band: up to halfway from its threshold (4) to all its lines (8), none above
+        k.trigger = 2;
+        assert_eq!(k.agreement(&v(0x3F)), 6);
+        assert_eq!(k.agreement(&v(0xFF)), 0);
+        // the whole tile: lines on outside the mask count against it
+        let mut t = SimpleKernel::new(BitVector::from_words(vec![0x0F]), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        t.trigger = 3;
+        assert_eq!(t.agreement(&v(0x0F)), 4);
+        assert_eq!(t.agreement(&v(0xFF)), 0);
     }
 
     #[test]

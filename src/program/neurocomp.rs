@@ -532,6 +532,15 @@ impl RuntimeNetwork {
         // (the three-factor rule) the kernels that died last step go before any edge runs; (a
         // rule table) its kernels take their firing and held-down moves from it
         for eg in edges.iter_mut() {
+            // (a trigger) its kernels match the way its gene says
+            if eg.spec.trigger != 0 {
+                let t = eg.spec.trigger;
+                if let Some(class) = eg.group.classes_mut().first_mut() {
+                    for k in class.kernels_mut() {
+                        k.trigger = t;
+                    }
+                }
+            }
             if eg.spec.rule != 0 {
                 let (f, h) = (crate::program::graph::rule_entry(eg.spec.rule, 0), crate::program::graph::rule_entry(eg.spec.rule, 2));
                 if let Some(class) = eg.group.classes_mut().first_mut() {

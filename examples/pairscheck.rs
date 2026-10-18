@@ -53,6 +53,7 @@ fn main() {
     neurocomp::evolve::tags::set_birth_lags(true);
     neurocomp::evolve::tags::set_eligibility(true);
     neurocomp::evolve::tags::set_rule_tables(true);
+    neurocomp::evolve::tags::set_triggers(true);
     neurocomp::evolve::tags::set_branches(true);
     neurocomp::evolve::tags::set_inhibit_inputs(true);
     neurocomp::evolve::tags::set_overlap_genes(true);

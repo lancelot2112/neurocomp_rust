@@ -202,4 +202,25 @@ selected on what the specialists already do. Run 32 has it.
   remember a little. So the memory is not held in a self-loop; where the delay is carried (a
   lag, the clock, a held channel) needs a step-by-step trace.
 
+**Where the delay is carried: a held channel that the light empties and that refills** (a trace
+of one lifetime, `ISL_TRACE=recall`, world 60014, remember 861;
+`runs/checks/lesions/run31-recall-g03-trace-60014.txt`). Genome 3 remembers in 15 of 16 worlds
+(remember 174 to 861; one world 0). Per step of a trial, over 92 cue trials and 108 others:
+
+| step | cue: C3 lines | cue: clicks | other: C3 lines | other: clicks |
+|---|---|---|---|---|
+| 0 (light A) | 47 | 17% | 44 | 18% |
+| 1 | 0 | 15% | 45 | 16% |
+| 2 | 6 | 14% | 45 | 13% |
+| 3 | 11 | 98% | 46 | 9% |
+| 5 | 20 | 90% | 47 | 8% |
+| 7 | 27 | 70% | 49 | 5% |
+| 9 | 33 | 53% | 50 | 3% |
+
+The step after the light, C3 (the genome's one held channel) is cleared from about 47 lines to 0,
+and refills about 4 to 5 lines a step; the network clicks while it is low. Its fill level counts
+the steps since the light: a timer, as a capacitor discharges, not a reverberating loop. It holds
+that a light came recently, not for long: two-thirds full again 9 steps on, which is why it climbs
+to lag5 and fades at lag8 and lag16.
+
 From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.

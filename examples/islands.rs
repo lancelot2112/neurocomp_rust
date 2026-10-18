@@ -183,6 +183,8 @@
 //! (its words one place along every 2^(k-1) steps: a delay line) or a travelling wave (rule 90).
 //! `ISL_FRONTIER_PASSED=1` (with `ISL_FRONTIER`): the generalist is also scored on each other
 //! island's last passed rung, in its own world, as more selection cases.
+//! `ISL_TRACE=<island>` (with `ISL_RESUME`): measure only. That island's first genome lives one
+//! delayed-conditioning lifetime of its rung (world `ISL_TRACE_SEED`), printed step by step.
 //! `ISL_ONLY=a,b`: only the named islands (a short test of one ladder).
 //! `ISL_RULES=1`: rule tables (`EdgeSpec::rule`): each population's learning rule a 16-bit gene,
 //! what firing, being held down, and (under `ISL_ELIG`) being right or wrong move on the input or
@@ -931,6 +933,37 @@ fn main() {
                     isl.name, st.name, PROBES[p], v.len(), sd(&means), within.sqrt(), (within / signal as f64).sqrt(), if k == stages[i] { "" } else { "  (the rung below)" });
             }
         }
+        return;
+    }
+    // (`ISL_TRACE=<island>`, with `ISL_RESUME`: measure only. That island's first genome lives one
+    // delayed-conditioning lifetime of its current rung (the remember probe's, world
+    // `ISL_TRACE_SEED`, 60000 by default), printed step by step: the trial, its step, whether it is
+    // a cue trial, the click, each vector's lines on, and the kernels each population fired.)
+    if let Ok(name) = std::env::var("ISL_TRACE") {
+        let i = islands.iter().position(|x| x.name == name).expect("ISL_TRACE names no island");
+        let g = start[i].first().expect("no genome to trace").clone();
+        let st = &islands[i].stages[stages[i]];
+        let seed: u64 = env("ISL_TRACE_SEED", 60_000u64);
+        println!("trace: {} rung {}, one delayed-conditioning lifetime, world {seed}", name, st.name);
+        println!("step trial t cue pays click present | lines on per vector | kernels fired per population (id:fired)");
+        let step = std::rc::Rc::new(std::cell::Cell::new(0usize));
+        let s2 = step.clone();
+        neurocomp::evolve::set_trace(Some(Box::new(move |w: &neurocomp::world::World, net: &neurocomp::program::neurocomp::RuntimeNetwork| {
+            let k = s2.get() + 1;
+            s2.set(k);
+            let ev = w.events.last().unwrap();
+            let (ti, tt, cue, pays) = ev.trial.map_or(("-".to_string(), "-".to_string(), "-", "-"), |(a, b, c, d)| (a.to_string(), b.to_string(), if c { "A" } else { "b" }, if d { "$" } else { "." }));
+            let lines: Vec<String> = net.nodes.iter().map(|n| n.current().count_ones().to_string()).collect();
+            let fired: Vec<String> = net.edges.iter().filter_map(|e| {
+                let ks: Vec<_> = e.group.classes().iter().flat_map(|c| c.kernels().iter()).collect();
+                if ks.is_empty() { None } else { Some(format!("{}:{}", e.spec.salt, ks.iter().filter(|k| k.age == 0).count())) }
+            }).collect();
+            println!("{k:5} {ti:>3} {tt:>2} {cue} {pays} {} {} | {} | {}", ev.moved.map_or("-".to_string(), |m| m.to_string()), if ev.present { "on" } else { ".." }, lines.join(" "), fired.join(" "));
+        })));
+        let (ev, _) = neurocomp::evolve::live_lesson(&g, neurocomp::evolve::Task::Conditioning(neurocomp::world::Conditioning::Delayed, trials), Physics::Varied, seed ^ 0xDE1A, gap, st.lesson.clone());
+        neurocomp::evolve::set_trace(None);
+        let row = neurocomp::world::observe::probes(&[], 1, &ev, &[], &[], &[], &[]);
+        println!("remember {} (respond {})", row[4], row[0]);
         return;
     }
     // (`ISL_LESION=n`, with `ISL_RESUME`: measure only, nothing evolves. Each island's best genome

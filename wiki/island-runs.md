@@ -1,7 +1,7 @@
 # Island runs compared
 
-Every island run so far (`runs/islands3` to `runs/islands18`), side by side: what each changed,
-and how far each island climbed. Details are in experiments 13 to 16.
+Every island run so far (`runs/islands3` to `runs/islands34`), side by side: what each changed,
+and how far each island climbed. Details are in experiments 13 to 17.
 
 ## What each run changed
 
@@ -68,8 +68,29 @@ rung. Every move from run 6 on was also passed on 48 held-out worlds.
 | 20 | feel (157; mean 51) | lag4 (127; **lag3 at 36**) | echo2 (13) | first | first (feel: mean 48) | first (**glow: mean 117**) | shift8 (593) | **10% of 521** |
 | 21 | feel (44; mean 7) | **distract (104): every delay rung, lag16 at 88** | echo2 (21) | first (**cycle1: mean 58**) | first (feel: mean 24) | first (glow: mean 99) | feel (442) | 7% of 521 |
 | 22 (no exchange) | feel (33; **mean 35**) | lag16 (582) | echo2 (17) | first (**cycle1: mean 78**) | first (**feel: mean 45**) | first (glow: mean 105) | feel (259) | none moved |
+| 23 (to 296) | feel (124) | lag1 (231) | echo2 (12) | first | first | first | first | none moved |
+| 24 (to 409) | feel (94) | lag3 (19) | echo2 (6) | first | first | first | feel (272) | none moved |
+| 25 | feel-100 (52) | lag3 (336) | echo2 (107) | cycle2 (335) | feel (214) | glow (11) | blur1 (482) | none moved |
+| 26 | feel-100 (486) | lag4 (337) | echo2 (176) | cycle2 (565) | feel (142) | torch (274) | feel (281) | none moved |
+| 27 (to 536) | feel-100 (17) | lag3 (63) | echo2 (404) | cycle2 (270) | first | glow (55) | feel-100 (266) | none moved |
+| 28 (to 255) | tell (95) | lag3 (88) | echo2m8 (224) | first | first | torch (150) | shift8 (214) | none moved |
+| 29 (to 535) | feel-100 (54) | lag3 (74) | echo2 (49) | first | first | glow (53) | feel-100 (24) | none moved |
+| 30 (to 266) | feel-100 (29) | lag16 (209) | echo2q (12) | cycle2 (255) | learn (50) | torch (42) | winstay (234) | none moved |
+| 31 (to 411) | repeat (98) | distract (305) | pairs8 (24) | order2 (314) | learn (283) | torch (47) | blur2 (149) | none moved |
+| 32 | tell (12) | two (409) | pairs8 (65) | first | feel (474) | torch (21) | feel-300 (323) | none moved |
+| 33 (to 1118) | tell (11) | two (469) | pairs8 (33) | cycle3 (519) | feel (325) | **row (1031)** | blur1 (22) | none moved |
 
-Two cautions for reading it:
+Selection passed its first rung only in run 33 (cued at 566, uncued at 568, to short), by an
+onset-timing reflex. The generalist climbed the islands' ladders itself from run 32 (5 rungs: up to
+cycle2, echo2q, tell, lag3, torch) and run 33 (9: up to pairs8, tell, lag4, torch). Runs 23 to 33
+ran without plasmid exchange.
+
+Three cautions for reading it:
+- **Ladders changed between runs 25 and 33**: step rungs (feel-100, glow-150, cycle1-100),
+  reading's mirror and pairs rungs, recall's fair last rungs and the fair streams make a name
+  later in the table a different, usually harder, rung (run 31's prediction and recall passes past
+  lag16 were later found to be shortcuts; experiment 17). Several of run 33's late passes were
+  reflexes too (selection, screen's torch, two).
 - **Runs 3 to 6 trained on the same 12 worlds every generation**, and a population can fit them.
   Run 6's maze did (476-658 on its training worlds, -69 to -177 on fresh ones), and run 3's
   shapes climbed on training scores the held-out check would have stopped. From run 7 on, the

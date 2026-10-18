@@ -24,3 +24,11 @@
    kernel network may predict nothing.
 10. **Density under fan-in.** When many channels are ORed into one vector, what keeps its density
     low: k-winners caps, gains, or evolved sub-masks?
+11. **Can evolution find and improve the learning rule?** By hand, the three-factor output rule
+   learns 128 arbitrary pairs in a lifetime when its target is right
+   ([experiment 17](experiments/17-the-panel-and-the-learning-rule.md)). Does evolution find its
+   timing (run 31), improve on the seed table (`ISL_RULES`), and build the right target (a
+   listener that echoes every token), on 3 evolutionary seeds?
+12. **Does a lifetime learner keep learning?** Select on the learning slope (late minus early in a
+   lifetime), and check that a learner found on 400-step lifetimes still gains over 10^5 steps
+   and on raw bytes against an n-gram.

@@ -15,6 +15,7 @@ branch `ccr-8d772201-st7vqw` under `research/`. Experiment numbers here refer to
 | [library-task.md](library-task.md) | design: a world of books and questions, staged for evolution |
 | [experiments/](experiments/) | this branch's experiments |
 | [island-runs.md](island-runs.md) | the island runs side by side: what each changed, how far each island climbed |
+| [panel/](panel/) | the panel on evolving general agents with bit math (2026-10-17): four memos and their answers; summary in [experiments/17](experiments/17-the-panel-and-the-learning-rule.md) |
 | [open-questions.md](open-questions.md) | what is still unknown |
 
 ## In one paragraph

@@ -238,6 +238,13 @@ The same kind of memory as genome 3's at lag5, a word's fill level fading back, 
 slowed so it holds about 20 steps. It works in some worlds and not at all in others (3 of 8 traced
 worlds remember 439 to 628; in 5 it never clicks). Neither genome counts with numbers.
 
+**Run 31's prediction passes are real** (cycle3 at 302, cycle4 at 313, then on order2; the first run
+past cycle2). The checkpoint at 315, 32 genomes on 48 fresh worlds each (surprise, goal 200):
+genomes 0 to 8 but 3 score 177 to 272 at cycle4 (genome 6 best, `runs/checks/lesions/run31-prediction-g06.txt`)
+and 289 to 383 at cycle3; 9 and 10, 151 and 157; the rest 76 or less, 17 to 31 about 0. Here the
+first-ranked genomes are the ones that work. Order2 (a cycle of six over three tokens, goal 150) is
+not solved: best 57, icc 0.00 (no real difference between genomes).
+
 From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.
 
 **Integer triggers** (`trigger` 4 to 6, gene `lane`, under `ISL_TRIGGERS`): a kernel reads the lane

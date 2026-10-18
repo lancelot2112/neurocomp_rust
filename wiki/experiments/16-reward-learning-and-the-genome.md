@@ -1315,3 +1315,29 @@ run, as anatomy is, so evolution can build it in (echo, the hand's moves); glyph
 cues and what pays are still drawn with each world, so learning is forced by the world. A lifetime
 with fewer tokens has the first of the same codes; with one-word codes the body's sounds and voice
 codes come from the body's seed too. Run 30 has it with `ISL_ONE_WORD=8`.
+
+### The paired-associate capacity curve (examples/pairscheck)
+
+The panel's first gate (see the panel memos, 2026-10-17): how many arbitrary glyph-to-token pairs
+a lifetime learns. Reading lifetimes of N tokens, glyphs drawn afresh each lifetime, fade6
+(teacher on six tokens in eight after the first quarter), under the run-30 body (a fixed body,
+8-line one-word codes), scored by copy (goal 100) on 24 worlds at 400 and 3200 trials
+(`runs/checks/pairscheck-capacity.txt`; reading lifetimes may now have up to 128 tokens):
+
+| N | trials | lookup table | blind | run 30's best genomes (9: reading, generalist, recall) | hand-made echo genome (echo2 300) |
+|---|---|---|---|---|---|
+| 2 | 400 | 99 | -34 | -48 to 0 | 135 |
+| 2 | 3200 | 119 | -9 | -26 to 1 | 167 |
+| 8 | 400 | 210 | -7 | -10 to 0 | 55 |
+| 8 | 3200 | 220 | -1 | -7 to 5 | 39 |
+| 32 | 400 | 213 | 3 | -4 to 2 | 7 |
+| 32 | 3200 | 243 | 0 | -1 to 1 | 11 |
+| 128 | 400 | 148 | 0 | -2 to 1 | 3 |
+| 128 | 3200 | 237 | 0 | 0 | 2 |
+
+The lookup (written in the harness: each glyph's token learned on its taught steps, said a step
+after the glyph) scores 148 to 243 and gains with experience; no network learns a single pair
+above the blind floor beyond N = 2, where the echo genome's 135 to 167 come from repeating what it
+heard (it beats the table, so at N = 2 copy can be won without reading), and its score falls with
+N and does not rise with lifetime length. The gap the panel named is confirmed: today's runtime
+and genomes learn no arbitrary glyph-to-token map in a lifetime, at any N.

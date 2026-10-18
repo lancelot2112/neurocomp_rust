@@ -1,0 +1,10 @@
+copy (goal 100; lookup is the ceiling, blind the floor), mean of 24 worlds; body 1, one-word codes 8
+   N trials |  lookup  blind | networks
+   2    400 |      99    -34 | reading #0 -17, reading #1 -48, reading #2 -41, generalist #0 -28, generalist #1 -28, generalist #2 -34, recall #0 0, recall #1 -6, recall #2 0, echo300.txt 135
+   2   3200 |     119     -9 | reading #0 0, reading #1 -9, reading #2 1, generalist #0 -7, generalist #1 -26, generalist #2 0, recall #0 0, recall #1 0, recall #2 0, echo300.txt 167
+   8    400 |     210     -7 | reading #0 -5, reading #1 -1, reading #2 0, generalist #0 0, generalist #1 -7, generalist #2 -10, recall #0 0, recall #1 -4, recall #2 0, echo300.txt 55
+   8   3200 |     220     -1 | reading #0 -1, reading #1 0, reading #2 0, generalist #0 4, generalist #1 5, generalist #2 0, recall #0 0, recall #1 0, recall #2 0, echo300.txt 39
+  32    400 |     213      3 | reading #0 -4, reading #1 -4, reading #2 -3, generalist #0 2, generalist #1 -4, generalist #2 -1, recall #0 0, recall #1 0, recall #2 0, echo300.txt 7
+  32   3200 |     243      0 | reading #0 -1, reading #1 -1, reading #2 -1, generalist #0 0, generalist #1 0, generalist #2 1, recall #0 0, recall #1 0, recall #2 0, echo300.txt 11
+ 128    400 |     148      0 | reading #0 0, reading #1 0, reading #2 1, generalist #0 -1, generalist #1 -2, generalist #2 0, recall #0 0, recall #1 -1, recall #2 0, echo300.txt 3
+ 128   3200 |     237      0 | reading #0 0, reading #1 0, reading #2 0, generalist #0 0, generalist #1 0, generalist #2 0, recall #0 0, recall #1 0, recall #2 0, echo300.txt 2

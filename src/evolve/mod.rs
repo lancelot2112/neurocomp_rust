@@ -404,7 +404,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     };
     // (a lesson's token count changes only reading lifetimes; conditioning keeps its 8)
     let reading = matches!(task, Task::Sequence(_) | Task::Reading(_) | Task::Mixed(_));
-    let tokens = if reading { lesson.tokens.clamp(2, 8) } else { 8 };
+    let tokens = if reading { lesson.tokens.clamp(2, 128) } else { 8 };
     let mut w = World::with_physics(p, seed, tokens);
     w.gap_max = gap;
     w.teacher_rate = lesson.teach;

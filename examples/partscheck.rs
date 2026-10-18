@@ -157,6 +157,10 @@ fn main() {
     }
                 let g = format!("genome 5\nchannel {e} 3 0\nchannel {h} 3 0\n{chain}{babbler}\n{ear}\n{glyphs}\n{listener}\n{reader}");
                 let g = TagGenome::from_text(&g).unwrap_or_else(|x| panic!("{x}")).remove(0);
+                // (`DUMP=path`: the genome built, as text, for other checks)
+                if let Ok(p) = std::env::var("DUMP") {
+                    std::fs::write(p, g.to_text()).unwrap();
+                }
                 let score = |lesson: Lesson, p: usize, trials: usize| {
                     let s = probe_all_in(vec![g.clone()], trials, Physics::Varied, &worlds, 6, &[p], lesson);
                     s[0].probes.iter().map(|r| r[p] as i64).sum::<i64>() / worlds.len() as i64

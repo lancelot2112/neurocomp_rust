@@ -10,6 +10,9 @@ fn main() {
     // (`SENTENCE=1`) sentences in every lifetime (`evolve::set_sentences`)
     neurocomp::evolve::set_sentences(std::env::var("SENTENCE").is_ok_and(|v| v == "1"));
     neurocomp::evolve::tags::set_read_outputs(true);
+    // (`ONE_WORD=k`: one-word codes of k lines, `evolve::set_one_word`; `BODY=seed`: a fixed body)
+    neurocomp::evolve::set_one_word(std::env::var("ONE_WORD").ok().and_then(|x| x.parse().ok()).unwrap_or(0));
+    neurocomp::evolve::set_body(std::env::var("BODY").ok().and_then(|x| x.parse().ok()).unwrap_or(0));
     // wires from the ear to the voice (and what the voice said a step ago taken away)
     let g = TagGenome::from_text(&std::fs::read_to_string(std::env::args().nth(1).unwrap()).unwrap()).unwrap().remove(0);
     for (m, quiet) in [(8usize, true), (6, true), (4, true), (8, false), (6, false), (4, false), (0, false)] {

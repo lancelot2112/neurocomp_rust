@@ -297,3 +297,11 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     rungs, passed no prediction rung at all (run 31: five by rarity) and recall stalled on two (which
     light, not that one came): the earlier passes had measured the shortcut.
 
+56. **Selection on rungs evolves reactions, not learners (experiment 17).** At run 33's 235 no
+    island's elite scored better in a longer lifetime; most stalled rungs were flat or only fell
+    one to three mutations away, and on the noisy ones lexicase paid a child for being different
+    about as much as for being better. Most rungs can be passed without learning in the lifetime,
+    because what they ask stays the same from one lifetime to the next. Learning is selected when
+    the world varies between lifetimes and stays predictable within one; measure it by what it
+    buys in the lifetime (late minus early, learning off against on), on tasks never selected on.
+

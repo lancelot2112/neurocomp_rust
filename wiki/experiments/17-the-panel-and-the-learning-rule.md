@@ -180,3 +180,26 @@ paused and do no work.
 **Scored on passed rungs too** (`ISL_FRONTIER_PASSED=1`): besides each other island's current rung,
 its last passed rung, in its own world, joins the cases as rows of its own, so the generalist is
 selected on what the specialists already do. Run 32 has it.
+
+## Are the loops memory? (recall, runs 30 and 31)
+
+- **The generalist does not remember** (remember about 0 at lag16 on held-out worlds all run 30).
+  Taking out its 77 self-loops one at a time raises remember more often than it lowers it (19
+  against 2, at most 12% of the goal).
+- **Run 30's recall island has lost its memory.** Its best genome at the end, and the one the rung
+  log kept when lag8 was passed at 209, score remember 0 on 24 and 96 fresh worlds; all 32 of
+  its genomes at the end: mean -1 at lag8, best 20, split-half r 0.32
+  (`runs/checks/lesions/run30-recall-signal.txt`). The lag8 pass (held out 162/150) was made by
+  the elite's mean, and the rung log kept only the first-ranked genome.
+- **Run 31's recall population does remember, but not its first-ranked genome.** On 48 fresh worlds
+  at lag5 its 32 genomes score mean 25, best 303 (split-half r 0.91, icc 0.34: real differences);
+  one by one, genome 3 scores 303, genome 5 158, five more 56 to 93; genome 0, the one every
+  "best genome" tool picks up, scores 0. The ranking the run keeps is not by remember.
+- **Genome 3's memory path** (`runs/checks/lesions/run31-recall-g03*.txt`, 48 worlds, remember 381):
+  an OR wire from C1 into the hand, gated and paused while C7 is empty (taking it out costs 3.7
+  goals of remember), and two kernel populations from C7 into C1 (tonic 1 in 16, kernels that
+  expect zeros: about 2 goals each). C7's own self-loops are clears, and taking them out raises
+  remember a little. So the memory is not held in a self-loop; where the delay is carried (a
+  lag, the clock, a held channel) needs a step-by-step trace.
+
+From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.

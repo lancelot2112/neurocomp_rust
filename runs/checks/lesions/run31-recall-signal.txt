@@ -1,0 +1,4 @@
+recall climbs: respond > lag1 > lag2 > lag3 > lag4 > lag5 > lag8 > lag16 > distract > vary > two
+signal on 48 fresh worlds (island, rung, goal probe, genomes): mean, best genome; sd between genome means; sd across worlds in a genome; noise in one mean; icc (share of one world's spread that is between genomes); split-half r (genome means on odd worlds against even); epsilon (median over worlds of the spread across genomes)
+  recall     lag5     remember (goal 150), 32 genomes: mean 25, best 303; between 71.3; within 97.4; noise 14.1; icc 0.34; split-half r 0.91; epsilon 10.0
+  recall     lag4     remember (goal 150), 32 genomes: mean 20, best 276; between 76.1; within 96.0; noise 13.9; icc 0.38; split-half r 0.92; epsilon 9.0  (the rung below)

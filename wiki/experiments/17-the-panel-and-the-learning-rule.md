@@ -859,3 +859,16 @@ half. The same passers drawn up: cycle3 passer 24 to 27, lag8 passer 0, while ru
 
 So run 34's recall climb past the first rungs and any prediction pass under the drawn period are
 not what they seem; its rung moves on those ladders should be read with this in mind.
+
+## Run 34's end (stopped at 179 for run 35)
+
+29 rung moves in 179 generations, 15 of them the generalist's on its own ladders, all but two by
+generation 49 (run 33 had 16 by then): recall to two (82; the generalist on recall's ladder to two
+at 128), switching to feel-300 (35), reading to pairs8 (49), shapes to blur1 (26), selection past
+its step rung, mixclick (21); prediction, maze and screen passed nothing. Its rung log was the
+first written in the generation that passed, and every recall passer rescored reproduces its
+pass, but recall's passes from lag3 on were the drawn-delay leak (above). Generations slowed from
+about 25 seconds to 98, as the novelty island grew: 39 species, from generation 148 on nearly all
+founded for respond (200 to 897), some for remember (239 to 626) and one each for tell and
+surprise. Run 35 (started 7:37 PM ET) adds more branches, long shifts, the cycle3-100 step, shaped
+surprise, novelty's species sent to the islands and the delay and period drawn from the rung's up.

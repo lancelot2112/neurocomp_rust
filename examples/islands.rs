@@ -171,6 +171,12 @@
 //! one of its kernels' thresholds moves by its own threshold times how full that vector was a
 //! frame ago, down when warm, up when cool. A new population has one one time in four.
 //!
+//! `ISL_ELIG=1`: the three-factor output rule (`EdgeSpec::elig`): a kernel that fired k steps
+//! ago is checked while its gate is open against what its destination holds then; right, it counts
+//! up; wrong, an output line moves toward what is there and it counts down; wrong at 0 it dies. A
+//! new population has it one time in four (k 1 or 2), a property steps k (0 to 4).
+//! `ISL_PAIRS=1`: reading's paired-associate rungs, pairs8 and pairs32, after echo2q: glyph-to-token
+//! pairs drawn each lifetime, each token heard like its voice code, goal copy 100.
 //! `ISL_MIRROR=1`: easier rungs before reading's echo2, the same lesson (two tokens, every one
 //! said by the teacher) with each token's sound made like the voice's code for it, in eighths of
 //! its lines (`World::mirror_sounds`): echo2q (heard exactly as said, and one's own voice not
@@ -788,6 +794,33 @@ fn main() {
                     st.name = name.into();
                     st.lesson.mirror = m;
                     st.lesson.quiet = quiet;
+                    isl.stages.insert(k + j, st);
+                }
+            }
+        }
+    }
+    // (`ISL_PAIRS=1`: reading's paired-associate rungs after echo2q (or before echo2): glyph to
+    // token pairs drawn afresh each lifetime, 8 and then 32 of them, the teacher on six tokens in
+    // eight after the first quarter, each token heard like its voice code and one's own voice not
+    // heard (so a wire from the ear echoes the teacher exactly), goal copy 100: where a reader under
+    // the three-factor rule learns 128 pairs by hand, `examples/pairscheck`)
+    if env("ISL_PAIRS", 0u8) == 1 {
+        let probe = |n: &str| neurocomp::world::observe::PROBES.iter().position(|p| *p == n).unwrap();
+        let (echo, copy) = (probe("echo"), probe("copy"));
+        for isl in islands.iter_mut() {
+            let at = isl.stages.iter().position(|s| s.name == "echo2q").map(|k| k + 1).or_else(|| isl.stages.iter().position(|s| s.name == "echo2"));
+            if let Some(k) = at {
+                let base = isl.stages[k.min(isl.stages.len() - 1)].clone();
+                for (j, n) in [8usize, 32].into_iter().enumerate() {
+                    let mut st = base.clone();
+                    st.name = format!("pairs{n}");
+                    st.lesson.tokens = n;
+                    st.lesson.teach = 6;
+                    st.lesson.babble = trials / 4;
+                    st.lesson.mirror = 8;
+                    st.lesson.quiet = true;
+                    st.probes = vec![echo, copy];
+                    st.goal = vec![(copy, 100)];
                     isl.stages.insert(k + j, st);
                 }
             }

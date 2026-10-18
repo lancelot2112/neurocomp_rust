@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~"];
 /// How many probes there are.
-pub const NPROBES: usize = 30;
+pub const NPROBES: usize = 31;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -194,7 +194,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -686,6 +686,40 @@ pub fn screen(events: &[Event]) -> i32 {
         return 0;
     }
     ((hits * cells - clicks) * 1024 / (trials.len() as i64 * (cells - 1))) as i32
+}
+
+/// The screen with partial credit (`evolve::set_partial_screen`): as `screen`, and a trial in which
+/// the cursor reached the target but no click hit it counts half a hit. A searcher that does not
+/// yet click scores; one that also clicks on what it finds scores more. (With the cursor starting
+/// off the target, `World::screen_away`, reaching it takes a move.)
+pub fn screen_graded(events: &[Event]) -> i32 {
+    let mut trials = std::collections::BTreeMap::new();
+    let mut cells = 2i64;
+    let (mut clicks, mut hits) = (0i64, 0i64);
+    for e in events {
+        if let Some((t, c)) = e.screen {
+            cells = c as i64;
+            let r = trials.entry(t).or_insert((false, false));
+            if e.on_target {
+                r.0 = true;
+            }
+            if e.chose == Some(true) {
+                r.1 = true;
+            }
+        }
+        if e.scene == SceneKind::Screen {
+            if let Some(h) = e.chose {
+                clicks += 1;
+                hits += h as i64;
+            }
+        }
+    }
+    if trials.is_empty() {
+        return 0;
+    }
+    let reached = trials.values().filter(|r| r.0 && !r.1).count() as i64;
+    // (a hit is worth cells - 1 here: its click less; a trial that only reached the target, half that)
+    (((hits * cells - clicks) * 1024 + reached * (cells - 1) * 512) / (trials.len() as i64 * (cells - 1))) as i32
 }
 
 /// Sequence: steps where a next token was due, and those where the program said it on the
@@ -1429,6 +1463,41 @@ mod tests {
         let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
         let (selector, both, silent) = (mean(0), mean(1), mean(2));
         assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
+    }
+
+    #[test]
+    fn graded_screen_pays_search_before_the_click_on_what_it_finds() {
+        // a torch screen of two cells, the cursor starting off the target; policies that see the
+        // eye: a sitter clicks when it sees a glyph and never moves; a wanderer moves at random and
+        // never clicks; a searcher moves until it sees a glyph and then clicks
+        let run = |kind: u8, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 4);
+            (w.screen_w, w.screen_h, w.screen_lit, w.screen_torch, w.screen_away, w.gap_max) = (2, 1, 1, true, true, 2);
+            w.screen(100);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let mark = w.cursor_mark.count_ones();
+            while !w.done() {
+                let eye = channel(&senses, EYE);
+                let glyph = eye.as_words().iter().any(|x| x.count_ones() > mark);
+                let walk = if rand::Rng::gen_bool(&mut rng, 0.5) { LEFT } else { RIGHT };
+                let hand = match kind {
+                    0 => glyph.then_some(CLICK),
+                    1 => Some(walk),
+                    _ => Some(if glyph { CLICK } else { walk }),
+                };
+                let a = w.act(None, hand);
+                senses = w.step(&a);
+            }
+            (screen(&w.events), screen_graded(&w.events))
+        };
+        let mean = |kind: u8| {
+            let v: Vec<(i32, i32)> = (0..12u64).map(|s| run(kind, 600 + s)).collect();
+            (v.iter().map(|x| x.0).sum::<i32>() / 12, v.iter().map(|x| x.1).sum::<i32>() / 12)
+        };
+        let (sit, wander, search) = (mean(0), mean(1), mean(2));
+        eprintln!("screen (graded): sitter {sit:?}, wanderer {wander:?}, searcher {search:?}");
+        assert!(wander.1 > sit.1 && search.1 > wander.1 && search.0 > 600 && wander.0 <= 0, "{sit:?} {wander:?} {search:?}");
     }
 
     #[test]

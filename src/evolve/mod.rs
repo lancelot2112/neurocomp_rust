@@ -805,7 +805,19 @@ pub fn partial() -> bool {
 
 /// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
 pub fn graded(p: usize) -> usize {
-    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, _ => p } } else { p }
+    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, _ => p } } else { p }
+}
+
+/// Partial credit on the screen too (`set_partial_screen`, with `set_partial`): selection uses
+/// `observe::screen_graded`, reaching the target without a hit counting half a hit. Off by default.
+static PARTIAL_SCREEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_partial_screen(on: bool) {
+    PARTIAL_SCREEN.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial_screen() -> bool {
+    PARTIAL_SCREEN.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Partial credit on select too (`set_partial_select`, with `set_partial`): selection uses

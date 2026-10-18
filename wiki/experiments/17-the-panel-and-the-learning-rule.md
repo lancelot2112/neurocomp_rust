@@ -677,3 +677,19 @@ The fix (`ISL_CURSOR_AWAY=1`, runs 34 and 35): on every screen rung but the dark
 cursor never starts a trial on the target, so every hit takes a move. The passer, 48 fresh worlds:
 322 without it, -341 with it.
 
+**Partial credit on the screen** (`ISL_PARTIAL_SCREEN=1`, runs 34 and 35). With the cursor starting off
+the target, searching earned nothing until a click followed: a sitter that clicks at what it sees
+scores 0, a wanderer 0, only a searcher that moves and then clicks scores. Selection now uses
+screen~: a trial in which the cursor reached the target without a hit counts half a hit (a hit is
+worth cells - 1, its click less; half that). Test
+`graded_screen_pays_search_before_the_click_on_what_it_finds` (two cells, torch, 12 worlds):
+
+| policy | screen | screen~ |
+|---|---|---|
+| sitter (clicks at a glyph, never moves) | 0 | 0 |
+| wanderer (moves at random, never clicks) | 0 | 512 |
+| searcher (moves until it sees the glyph, then clicks) | 1024 | 1024 |
+
+Events carry whether the cursor is on the target after the step's move, for the observer only
+(`Event::on_target`).
+

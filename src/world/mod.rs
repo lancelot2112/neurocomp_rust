@@ -135,6 +135,8 @@ pub struct Event {
     /// (a mixed lifetime) the block's task, 0 respond, 1 babble, 2 still, for the observer alone
     /// (the network feels only the task cue, and only while it is shown)
     pub task: Option<usize>,
+    /// (a screen step) the cursor on the target after this step's move, for the observer alone
+    pub on_target: bool,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -877,7 +879,7 @@ impl World {
         let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
         let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if self.sentence {
@@ -1075,6 +1077,7 @@ impl World {
                     if let Some(n) = to.filter(|&n| tr.walls >> n & 1 == 0) {
                         tr.cursor = n;
                     }
+                    ev.on_target = tr.cursor == tr.target;
                     if moved == Some(CLICK) {
                         ev.chose = Some(tr.cursor == tr.target);
                         if tr.cursor == tr.target {

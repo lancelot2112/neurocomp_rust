@@ -26,6 +26,10 @@ pub struct SimpleKernel {
     pub learn_held: bool,
     /// learn Hebbian when it fires (on by default)
     pub learn_fire: bool,
+    /// (a rule table, `EdgeSpec::rule`) on firing, the input learns anti-Hebbian instead
+    pub fire_anti: bool,
+    /// (a rule table) held down, the input learns Hebbian instead
+    pub held_hebb: bool,
     /// its match code: a small code written into a match vector when it matches
     pub match_code: Option<BitVector>,
     /// the extra lines of its confirmed code: when what it predicted came true, it writes its
@@ -58,7 +62,7 @@ pub struct SimpleKernel {
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, lost: false, room: None, tile_at: None }.counted()
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, fire_anti: false, held_hebb: false, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, lost: false, room: None, tile_at: None }.counted()
     }
 
     /// A tile kernel: it reads bits `start .. start + bits` of its input (a tile, which may
@@ -105,6 +109,8 @@ impl SimpleKernel {
         k.tonic = self.tonic;
         k.learn_held = self.learn_held;
         k.learn_fire = self.learn_fire;
+        k.fire_anti = self.fire_anti;
+        k.held_hebb = self.held_hebb;
         k
     }
 
@@ -258,6 +264,8 @@ impl SimpleKernel {
             pattern: None,
             learn_held: true,
             learn_fire: true,
+            fire_anti: false,
+            held_hebb: false,
             lost: false,
             match_code: None,
             confirm_mask: None,
@@ -522,7 +530,9 @@ impl KernelTrait for SimpleKernel {
             self.lost = lost;
             if self.learn_held {
                 if self.pattern.is_some() {
-                    self.move_pattern_line(ctx.input, true, rng);
+                    self.move_pattern_line(ctx.input, !self.held_hebb, rng);
+                } else if self.held_hebb {
+                    self.strengthen(ctx, &stats, rng);
                 } else {
                     self.search_remap(ctx, &stats, rng);
                 }
@@ -531,7 +541,9 @@ impl KernelTrait for SimpleKernel {
         }
         if !self.learn_fire {
         } else if self.pattern.is_some() {
-            self.move_pattern_line(ctx.input, false, rng);
+            self.move_pattern_line(ctx.input, self.fire_anti, rng);
+        } else if self.fire_anti {
+            self.search_remap(ctx, &stats, rng);
         } else {
             self.strengthen(ctx, &stats, rng);
         }

@@ -529,8 +529,24 @@ impl RuntimeNetwork {
                 nodes[i].current_mut().bit_set(b);
             }
         }
-        // (the three-factor rule) the kernels that died last step go before any edge runs
+        // (the three-factor rule) the kernels that died last step go before any edge runs; (a
+        // rule table) its kernels take their firing and held-down moves from it
         for eg in edges.iter_mut() {
+            if eg.spec.rule != 0 {
+                let (f, h) = (crate::program::graph::rule_entry(eg.spec.rule, 0), crate::program::graph::rule_entry(eg.spec.rule, 2));
+                if let Some(class) = eg.group.classes_mut().first_mut() {
+                    for k in class.kernels_mut() {
+                        if f == 0 {
+                            k.learn_fire = false;
+                        }
+                        k.fire_anti = f == 2;
+                        if h == 0 {
+                            k.learn_held = false;
+                        }
+                        k.held_hebb = h == 2;
+                    }
+                }
+            }
             if !eg.dying.is_empty() {
                 let dead = std::mem::take(&mut eg.dying);
                 if let Some(class) = eg.group.classes_mut().first_mut() {
@@ -786,7 +802,13 @@ impl RuntimeNetwork {
             // each kernel that fired `elig` steps ago is checked against its destination now, less
             // what this population writes this step; right, it counts up; wrong, an output line
             // moves toward what is there and it counts down, and wrong at 0 it dies
-            if sp.elig > 0 && sp.teacher.is_none() {
+            // (a rule table) what each eligible check moves; without one, the runtime's own
+            let rule = if sp.rule != 0 { sp.rule } else { crate::program::graph::RULE_SEED };
+            let entry = |at: u8| crate::program::graph::rule_entry(rule, at);
+            let (right_in, wrong_in, wrong_out, dies) = (entry(6), entry(8), entry(10), rule & (1 << 12) != 0);
+            if (sp.elig > 0 || entry(4) == 1) && sp.teacher.is_none() {
+                // what it read when it fired `elig` steps ago (for the input moves)
+                let then = if sp.elig > 0 && (right_in > 0 || wrong_in > 0) { Some(view(&nodes[eg.src.idx], live[eg.src.idx], eg.src.read_back + sp.elig as usize, 1, eg.window)) } else { None };
                 if let Some(class) = eg.group.classes_mut().first_mut() {
                     let mut target: Vec<u64> = nodes[eg.dst].current().as_words().to_vec();
                     for &k in &fired[i] {
@@ -797,20 +819,33 @@ impl RuntimeNetwork {
                             }
                         }
                     }
+                    // (a rule table) on firing, the output moves toward what is there
+                    if entry(4) == 1 {
+                        for &k in &fired[i] {
+                            class.kernels_mut()[k].learn_toward(&target, sp.out_learn, rng);
+                        }
+                    }
                     for (k, kk) in class.kernels_mut().iter_mut().enumerate() {
-                        if kk.age as usize != sp.elig as usize {
+                        if sp.elig == 0 || kk.age as usize != sp.elig as usize {
                             continue;
                         }
                         let o = kk.output_mask.as_words();
                         let lines: u32 = o.iter().map(|w| w.count_ones()).sum();
                         let held: u32 = o.iter().enumerate().map(|(j, &m)| (m & target.get(kk.output_idx + j).copied().unwrap_or(0)).count_ones()).sum();
-                        if lines > 0 && 2 * held >= lines {
+                        let right = lines > 0 && 2 * held >= lines;
+                        let input = if right { right_in } else { wrong_in };
+                        if let Some(then) = then.as_ref().filter(|_| input > 0) {
+                            if input == 1 { kk.reinforce(then, rng) } else { kk.fade(then, rng) }
+                        }
+                        if right {
                             kk.confirmed = kk.confirmed.saturating_add(1).min(8);
-                        } else if kk.confirmed == 0 {
+                        } else if kk.confirmed == 0 && dies {
                             eg.dying.push(k);
                         } else {
-                            kk.confirmed -= 1;
-                            kk.learn_toward(&target, sp.out_learn, rng);
+                            kk.confirmed = kk.confirmed.saturating_sub(1);
+                            if wrong_out == 1 {
+                                kk.learn_toward(&target, sp.out_learn, rng);
+                            }
                         }
                     }
                 }

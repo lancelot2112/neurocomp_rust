@@ -263,6 +263,29 @@ pub struct EdgeSpec {
     /// the next step, so its input is uncovered and a new kernel can be born there). Newborns
     /// start at 2.
     pub elig: u8,
+    /// (`evolve::tags::set_rule_tables`) the population's learning rule as a table: 0, the
+    /// runtime's own rules; else (bit 15 set) two bits an entry, what each event moves:
+    /// - bits 0-1, firing, the input: 0 nothing, 1 Hebbian (a line from off to on), 2 anti-Hebbian;
+    /// - bits 2-3, held down, the input: 0 nothing, 1 anti-Hebbian, 2 Hebbian;
+    /// - bits 4-5, firing, the output: 0 nothing, 1 one line toward what the destination holds
+    ///   then, less the population's own writes (when its gate is open);
+    /// - bits 6-7, eligible and right (`elig`), the input it fired on: 0 nothing, 1 Hebbian, 2
+    ///   anti-Hebbian;
+    /// - bits 8-9, eligible and wrong, the input it fired on: the same;
+    /// - bits 10-11, eligible and wrong, the output: 0 nothing, 1 one line toward what is there;
+    /// - bit 12, wrong at 0, it dies.
+    /// 3 in a two-bit entry reads as 1. `RULE_SEED` is the runtime's own rules.
+    pub rule: u16,
+}
+
+/// The rule table that is the runtime's own rules (`EdgeSpec::rule`): Hebbian on firing,
+/// anti-Hebbian held down, and under eligibility, wrong: the output moves, and wrong at 0 it dies.
+pub const RULE_SEED: u16 = 0x8000 | 1 | (1 << 2) | (1 << 10) | (1 << 12);
+
+/// One entry of a rule table (`EdgeSpec::rule`): the two bits at `at`, 3 read as 1.
+pub fn rule_entry(rule: u16, at: u8) -> u8 {
+    let e = ((rule >> at) & 3) as u8;
+    if e == 3 { 1 } else { e }
 }
 
 impl EdgeSpec {
@@ -322,6 +345,7 @@ impl EdgeSpec {
             branch: None,
             birth_lag: 0,
             elig: 0,
+            rule: 0,
         }
     }
 }

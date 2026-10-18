@@ -1393,3 +1393,36 @@ each lifetime, at 80-100% of the lookup table, rising with lifetime length (128 
 rule scores 0. Five other timings (reader lag 2-3, gate lag 1-3, elig 1-3) score near 0: the rule
 needs its eligibility lag to match when the target arrives. What is left for reading proper is the
 target: a listener that echoes every token.
+
+### Rule tables (`EdgeSpec::rule`, gene `rule`; `ISL_RULES=1`)
+
+The panel's second step: the learning rule as a gene. A population's `rule` (16 bits; 0, the
+runtime's own rules) says what each event moves, two bits an entry: firing, the input (nothing,
+Hebbian, anti-Hebbian); held down, the input (nothing, anti-Hebbian, Hebbian); firing, the output
+(nothing, one line toward what the destination holds then, less the population's own writes);
+eligible and right, the input it fired on (nothing, reinforce, fade); eligible and wrong, the same;
+eligible and wrong, the output (nothing, one line toward what is there); and a bit for dying wrong
+at 0. `RULE_SEED` (0x9405) is the runtime's own rules. With `ISL_RULES=1` a new population starts
+with the seed, so nothing changes until a mutation flips one bit of its table.
+
+The reader that learns 128 pairs (pairscheck `MIRROR=8`, wire + reader, lag 1, gate lag 1, elig 1)
+with hand-made tables, one entry changed each (`runs/checks/rules/`, `runs/checks/pairscheck-rules.txt`):
+
+| N | trials | lookup | no table | seed | no death | wrong fades input | right reinforces input | no held anti-Hebbian | firing moves output | wrong moves no output | firing anti-Hebbian |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 2 | 400 | 99 | 65 | 65 | **95** | 64 | 65 | 65 | 65 | 65 | 35 |
+| 8 | 400 | 210 | 176 | 176 | **191** | 176 | 176 | 176 | 176 | 176 | 149 |
+| 8 | 3200 | 220 | 176 | 176 | 52 | 176 | 176 | 176 | 176 | 176 | 27 |
+| 32 | 400 | 213 | 188 | 188 | **222** | 188 | 188 | 188 | 188 | 188 | 134 |
+| 32 | 3200 | 243 | 195 | 195 | 108 | 195 | 195 | 195 | 195 | 195 | 46 |
+| 128 | 400 | 148 | 143 | 143 | 147 | 143 | 143 | 143 | 143 | 143 | 103 |
+| 128 | 3200 | 237 | 195 | 195 | **230** | 193 | 195 | 192 | 195 | 195 | 60 |
+
+The seed is exactly the runtime's rules (every number the same as no table). Death does the work:
+without the output move on a wrong check the reader scores the same, so a wrong pairing is fixed
+by its kernel dying and a new one being born, not by moving its output. Without death the reader
+learns faster in short lifetimes (222 at N = 32, above the lookup table's 213, and 230 at N = 128)
+but loses what it learned in long ones (52 at N = 8 over 3200 trials): kernels that are never
+removed keep drifting. Anti-Hebbian firing breaks learning. The rest change nothing here. So the
+table has entries that matter and a real trade-off (death: stable; no death: fast but forgetful)
+for evolution to find its way in.

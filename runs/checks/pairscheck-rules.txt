@@ -1,0 +1,10 @@
+copy (goal 100; lookup a perfect table, blind the floor), mean of 24 worlds; body 1, one-word codes 8
+   N trials |  lookup  blind | networks
+   2    400 |      99    -34 | no table 65, seed.txt 65, no-death.txt 95, wrong-fades-input.txt 64, right-reinforces-input.txt 65, no-held-anti.txt 65, fire-moves-output.txt 65, wrong-no-output-move.txt 65, fire-anti.txt 35
+   2   3200 |     119     -9 | no table 88, seed.txt 88, no-death.txt 119, wrong-fades-input.txt 88, right-reinforces-input.txt 88, no-held-anti.txt 88, fire-moves-output.txt 88, wrong-no-output-move.txt 88, fire-anti.txt -71
+   8    400 |     210     -7 | no table 176, seed.txt 176, no-death.txt 191, wrong-fades-input.txt 176, right-reinforces-input.txt 176, no-held-anti.txt 176, fire-moves-output.txt 176, wrong-no-output-move.txt 176, fire-anti.txt 149
+   8   3200 |     220     -1 | no table 176, seed.txt 176, no-death.txt 52, wrong-fades-input.txt 176, right-reinforces-input.txt 176, no-held-anti.txt 176, fire-moves-output.txt 176, wrong-no-output-move.txt 176, fire-anti.txt 27
+  32    400 |     213      3 | no table 188, seed.txt 188, no-death.txt 222, wrong-fades-input.txt 188, right-reinforces-input.txt 188, no-held-anti.txt 188, fire-moves-output.txt 188, wrong-no-output-move.txt 188, fire-anti.txt 134
+  32   3200 |     243      0 | no table 195, seed.txt 195, no-death.txt 108, wrong-fades-input.txt 195, right-reinforces-input.txt 195, no-held-anti.txt 195, fire-moves-output.txt 195, wrong-no-output-move.txt 195, fire-anti.txt 46
+ 128    400 |     148      0 | no table 143, seed.txt 143, no-death.txt 147, wrong-fades-input.txt 143, right-reinforces-input.txt 143, no-held-anti.txt 143, fire-moves-output.txt 143, wrong-no-output-move.txt 143, fire-anti.txt 103
+ 128   3200 |     237      0 | no table 195, seed.txt 195, no-death.txt 230, wrong-fades-input.txt 193, right-reinforces-input.txt 195, no-held-anti.txt 192, fire-moves-output.txt 195, wrong-no-output-move.txt 195, fire-anti.txt 60

@@ -291,7 +291,7 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     `two`, that the thrift case ranked first on `row`); from runs 34 and 35 it keeps the generation
     that passed. Before trusting a dumped passer, check that it reproduces its held-out score. Runs 29 to 33's
     dumps, rescored (`runs/checks/rung-recovery.md`): 87 of 105 still held a genome that scores
-    the rung, 14 more have a relative in the run's final population, 8 are lost (most of them run 33's
+    the rung, 12 more have a relative in the run's final population (one weak), 10 are lost (most of them
     recall delay rungs); the good ones are in each run's `rungs-fixed.txt`.
 
 55. **Score the cheapest strategy before trusting a rung (experiment 17).** Run 31's prediction

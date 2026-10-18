@@ -286,3 +286,12 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     rung log kept only the first-ranked genome, so its lag8 pass could not be found again. Score
     the whole population on fresh worlds (`ISL_SIGNAL`, then one genome at a time), lesion the one
     that scores (`ISL_LESION`), and trace it (`ISL_TRACE`); from run 32 the rung log keeps the elite.
+
+55. **Score the cheapest strategy before trusting a rung (experiment 17).** Run 31's prediction
+    passes were real on fresh worlds and still not prediction: breaks were mostly tokens the cycle
+    never showed, so a rare-token detector passed cycle1-4, and order2 was told by the token before.
+    Recall's distract and vary fell to a timer from any light. Trivial networks (empty, reflexes,
+    tonic noise) scored 0 on every rung but the two built for them; the leaks were one level up,
+    strategies a few kernels can build. For each rung, ask what the simplest circuit is that scores,
+    simulate it against the world's generator, and make the goal or the world beat it.
+

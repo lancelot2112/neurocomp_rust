@@ -236,9 +236,30 @@ fn n_said(e: &Event) -> i64 {
     if e.sentence.is_empty() { e.said.is_some() as i64 } else { e.sentence.len() as i64 }
 }
 
+/// (`set_fair_said`) echo and copy per token they could answer, not only per token said: the
+/// count divided by is the tokens said or the tokens shown that count (taught for echo, untaught
+/// for copy), whichever is more, so saying one token in a lifetime cannot score by luck. Off by
+/// default.
+static FAIR_SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_fair_said(on: bool) {
+    FAIR_SAID.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn fair_said() -> bool {
+    FAIR_SAID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// What echo or copy divides by: the tokens said, or (`set_fair_said`) the tokens said or the ones
+/// shown that count (`taught` for echo), whichever is more.
+fn per(ev: &[&Event], taught: bool) -> i64 {
+    let said: i64 = ev.iter().map(|e| n_said(e)).sum();
+    if fair_said() { said.max(ev.iter().filter(|e| e.shown.is_some() && e.taught == taught).count() as i64) } else { said }
+}
+
 pub fn copy(events: &[Event]) -> i32 {
     let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
-    let said: i64 = ev.iter().map(|e| n_said(e)).sum();
+    let said: i64 = per(&ev, false);
     if said == 0 {
         return 0;
     }
@@ -256,7 +277,7 @@ pub fn copy(events: &[Event]) -> i32 {
 /// says the taught ones too); echoing every taught token two steps later scores about 900.
 pub fn echo(events: &[Event]) -> i32 {
     let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
-    let said: i64 = ev.iter().map(|e| n_said(e)).sum();
+    let said: i64 = per(&ev, true);
     if said == 0 {
         return 0;
     }

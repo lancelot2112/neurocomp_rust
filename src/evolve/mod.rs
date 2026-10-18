@@ -462,8 +462,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
             let mut r = StdRng::seed_from_u64(seed ^ 0x5E9);
             // (a prediction lifetime: a cycle drawn for this lifetime, some tokens replaced by a
             // random other one, which the observer marks as breaking it)
-            let cycle: Vec<usize> = (0..lesson.period).map(|_| r.gen_range(0..tokens)).collect();
+            let cycle: Vec<usize> = if fair_sequences() && lesson.period > 0 { fair_cycle(lesson.period, tokens, &mut r) } else { (0..lesson.period).map(|_| r.gen_range(0..tokens)).collect() };
             let mut odd = Vec::with_capacity(n);
+            let mut last: Option<usize> = None;
             let toks: Vec<usize> = (0..n)
                 .map(|i| {
                     if cycle.is_empty() {
@@ -471,8 +472,15 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
                         return r.gen_range(0..tokens);
                     }
                     let c = cycle[i % cycle.len()];
-                    let t = if lesson.noise > 0 && r.gen_ratio(lesson.noise.min(8), 8) { (c + r.gen_range(1..tokens)) % tokens } else { c };
+                    // (`set_fair_sequences`: never two breaks in a row, which would leave a pair the
+                    // cycle never has, telling the break by the token before alone)
+                    let t = if lesson.noise > 0 && r.gen_ratio(lesson.noise.min(8), 8) && !(fair_sequences() && odd.last() == Some(&true)) {
+                        if fair_sequences() { fair_odd(&cycle, i, last, tokens, &mut r) } else { (c + r.gen_range(1..tokens)) % tokens }
+                    } else {
+                        c
+                    };
                     odd.push(t != c);
+                    last = Some(t);
                     t
                 })
                 .collect();
@@ -901,6 +909,62 @@ pub fn set_frontier_ladders(start: Option<Vec<usize>>) {
 
 pub fn frontier_ladders() -> Option<Vec<usize>> {
     FRONTIER_LADDERS.lock().unwrap().clone()
+}
+
+/// Fair prediction streams (`set_fair_sequences`): a cycle uses each of its tokens equally often
+/// (`fair_cycle`), and a token that breaks it is one of the cycle's own tokens, one that may follow
+/// the token before it where the cycle has such (`fair_odd`). So a rare token never marks a break
+/// and, on a cycle where each token has two successors, the token before does not either: only the
+/// two before do. Off by default.
+static FAIR_SEQUENCES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_fair_sequences(on: bool) {
+    FAIR_SEQUENCES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn fair_sequences() -> bool {
+    FAIR_SEQUENCES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A cycle of `period` tokens out of `tokens`, each used equally often: up to `tokens` long, that
+/// many distinct tokens in a random order; longer (a multiple), each token said `period / tokens`
+/// times in a row, in a random order of tokens (period 6 of 3: A A B B C C, each token followed by
+/// itself once and by the next once, so which comes is set by the two tokens before, not one).
+pub fn fair_cycle(period: usize, tokens: usize, r: &mut StdRng) -> Vec<usize> {
+    let tokens = tokens.max(1);
+    let mut order: Vec<usize> = (0..tokens).collect();
+    for i in (1..order.len()).rev() {
+        order.swap(i, r.gen_range(0..=i));
+    }
+    if period <= tokens {
+        order.truncate(period);
+        return order;
+    }
+    let reps = period.div_ceil(tokens);
+    order.iter().flat_map(|&t| std::iter::repeat(t).take(reps)).take(period).collect()
+}
+
+/// The token that breaks a fair cycle at position `i`: one the cycle has right after the token
+/// shown before it (`before`; None: the cycle's own token before position `i`), other than the one
+/// due; if there is none, any other of the cycle's tokens; if the cycle has one token only, any
+/// other token. Breaks never come two in a row, so the token after a break makes a pair the cycle
+/// has too.
+pub fn fair_odd(cycle: &[usize], i: usize, before: Option<usize>, tokens: usize, r: &mut StdRng) -> usize {
+    let p = cycle.len();
+    let due = cycle[i % p];
+    let before = before.unwrap_or(cycle[(i + p - 1) % p]);
+    let mut next: Vec<usize> = (0..p).filter(|&j| cycle[j] == before).map(|j| cycle[(j + 1) % p]).filter(|&t| t != due).collect();
+    next.sort_unstable();
+    next.dedup();
+    if next.is_empty() {
+        next = cycle.iter().copied().filter(|&t| t != due).collect();
+        next.sort_unstable();
+        next.dedup();
+    }
+    if next.is_empty() {
+        return (due + r.gen_range(1..tokens.max(2))) % tokens.max(2);
+    }
+    next[r.gen_range(0..next.len())]
 }
 
 /// Sparse one-word codes in every reading lifetime (`set_one_word`; a lesson's `one_word` sets
@@ -1536,6 +1600,37 @@ pub fn evolve_islands<G: Evolvable>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fair_cycles_use_each_token_equally_and_breaks_keep_to_its_tokens() {
+        let mut r = StdRng::seed_from_u64(5);
+        for (period, tokens) in [(1usize, 8usize), (2, 8), (4, 8), (8, 8), (6, 3)] {
+            let c = fair_cycle(period, tokens, &mut r);
+            assert_eq!(c.len(), period);
+            let mut count = vec![0; tokens];
+            for &t in &c {
+                count[t] += 1;
+            }
+            let used: Vec<usize> = count.iter().copied().filter(|&x| x > 0).collect();
+            assert!(used.iter().all(|&x| x == used[0]), "{c:?}");
+            for i in 0..50 {
+                let o = fair_odd(&c, i, None, tokens, &mut r);
+                assert_ne!(o, c[i % period]);
+                if period > 1 {
+                    assert!(c.contains(&o), "{c:?} {o}");
+                }
+            }
+        }
+        // period 6 over 3: A A B B C C; a break keeps the pair legal (the token before can be
+        // followed by it somewhere in the cycle), so only the two before tell it
+        let c = fair_cycle(6, 3, &mut r);
+        assert!(c[0] == c[1] && c[2] == c[3] && c[4] == c[5] && c[0] != c[2] && c[2] != c[4] && c[0] != c[4], "{c:?}");
+        for i in 0..60 {
+            let o = fair_odd(&c, i, None, 3, &mut r);
+            let before = c[(i + 5) % 6];
+            assert!((0..6).any(|j| c[j] == before && c[(j + 1) % 6] == o), "{c:?} at {i}: {o}");
+        }
+    }
 
     #[test]
     fn size_classes_are_a_factor_of_four_apart() {

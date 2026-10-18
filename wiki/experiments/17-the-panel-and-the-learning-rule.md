@@ -250,7 +250,7 @@ past cycle2). The checkpoint at 315, 32 genomes on 48 fresh worlds each (surpris
 genomes 0 to 8 but 3 score 177 to 272 at cycle4 (genome 6 best, `runs/checks/lesions/run31-prediction-g06.txt`)
 and 289 to 383 at cycle3; 9 and 10, 151 and 157; the rest 76 or less, 17 to 31 about 0. Here the
 first-ranked genomes are the ones that work. Order2 (a cycle of six over three tokens, goal 150) is
-not solved: best 57, icc 0.00 (no real difference between genomes).
+not solved: best 57, icc 0.00 (no real difference between genomes). (Later, the audit below: these passes are real but not prediction; the old streams let a rare-token detector pass every cycle rung.)
 
 **How genome 6 predicts** (`ISL_TRACE=prediction`, now a token-stream lifetime on a prediction rung;
 world 60006, cycle 7 5 7 1, surprise 508; `runs/checks/lesions/run31-prediction-g06-*`). It
@@ -345,3 +345,37 @@ uses remember~, where a cue trial clicked only in the two steps after its window
 the same on no-cue trials; the goal stays on remember. World test (lag8): on time 1024 on both, one
 step late about 0 on remember and about 512 on remember~, clicking every third step about 0. A trial
 spent by an early click (fair vary) scores nothing on either.
+
+**The perception rungs** (code read plus simulation of the stream generator, 600-1500 lifetimes a
+cell, surprise in parts per 1024; goal 200, order2 150):
+
+| detector | cycle1 | cycle2 | cycle3 | cycle4 | order2 | cycle8 |
+|---|---|---|---|---|---|---|
+| sees the break mark (ceiling) | 781 | 778 | 776 | 775 | 777 | 780 |
+| rare token (old streams) | 751 | 680 | 603 | 535 | 118 | 323 |
+| model of the token before (old) | 700 | 706 | 697 | 695 | **503** | 687 |
+| rare token (fair streams) | 749 | 0 | 0 | 0 | 0 | 1 |
+| model of the token before (fair) | 716 | 693 | 717 | 716 | **-1** | 708 |
+| token one period back compared (fair) | 781 | 760 | 717 | 635 | 438 | 497 |
+
+A break was drawn from all the tokens, so mostly one the cycle never shows: every cycle rung was
+passed by rarity, which is what run 31's genome 6 is. And order2's cycle (six of three tokens drawn
+at random) was told by the token before alone. **Fair streams** (`ISL_FAIR_SEQUENCES=1`): a cycle
+uses each of its tokens equally often (period 6 of 3 is A A B B C C, so each token has two
+successors, set by the two before), a break is one of the cycle's tokens that may follow the token
+shown before it, and breaks never come two in a row (a second break left a pair the cycle never has:
+the model of the token before still scored 189 to 198 until that went). Cycle1 cannot be helped (one
+token: any change is new). A detector that compares with the token one period back is prediction of
+the cycle, and is meant to score.
+
+Also found and fixed for run 32: **feel**'s goals were under what random moves after a stroke reach
+(204 mean, best 273 in 48 worlds, `examples/feelcheck.rs`), and the fixed body makes the click
+wireable (a click reflex 1024): now feel-300 then feel 500. **echo and copy** divided by tokens said,
+so a genome saying one token a lifetime could pass by luck (an elite of eight on 48 worlds: 1 to 2 in
+100 per check); `ISL_FAIR_SAID=1` divides by the tokens said or the tokens shown that count,
+whichever is more. Found and not changed: under the fixed body echo2-8's sound-to-voice map can be
+built in (the docs said learned in the lifetime); babble is met by any noisy voice; shapes' blur
+rungs keep the two lights in different words in 7 worlds of 8, so a fixed location reflex passes
+tell; the held-out set is reused at every check. Fine: copy and pairs (no leak: only untaught tokens
+count), screen, the lowered-goal steps, the training and held-out worlds kept apart.
+

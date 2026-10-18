@@ -179,7 +179,14 @@ paused and do no work.
 
 **Scored on passed rungs too** (`ISL_FRONTIER_PASSED=1`): besides each other island's current rung,
 its last passed rung, in its own world, joins the cases as rows of its own, so the generalist is
-selected on what the specialists already do. Run 32 has it.
+selected on what the specialists already do.
+
+**The generalist on ladders of its own** (`ISL_FRONTIER_LADDERS=1`, which replaces the above in run
+32): it holds a rung of its own on each other island's ladder, scored in that island's world, plus
+one rung below it drawn at random (what it passed stays in selection), and moves up each ladder as
+that island would (goal on its elite's mean for the rung's hold, then the held-out check). So it is
+no longer scored on rungs it has not reached, only because a specialist reached them. Smoke test: a
+random babbler as generalist passes reading's babble held out and moves to echo2q.
 
 ## Are the loops memory? (recall, runs 30 and 31)
 

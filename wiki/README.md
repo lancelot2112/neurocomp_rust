@@ -13,6 +13,7 @@ branch `ccr-8d772201-st7vqw` under `research/`. Experiment numbers here refer to
 | [evolution.md](evolution.md) | genomes and the world, for evolving kernel networks |
 | [kernel-cells-and-context.md](kernel-cells-and-context.md) | the last stretch: kernel cells, context holding, prediction error |
 | [library-task.md](library-task.md) | design: a world of books and questions, staged for evolution |
+| [intelligent-design.md](intelligent-design.md) | concept (tabled): agents designing genomes in the grammar to speed up evolutionary search |
 | [experiments/](experiments/) | this branch's experiments |
 | [island-runs.md](island-runs.md) | the island runs side by side: what each changed, how far each island climbed |
 | [panel/](panel/) | the panel on evolving general agents with bit math (2026-10-17): four memos and their answers; summary in [experiments/17](experiments/17-the-panel-and-the-learning-rule.md) |

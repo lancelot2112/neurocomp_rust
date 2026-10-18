@@ -300,6 +300,12 @@ pub struct Lesson {
     /// task selection (`Task::Mixed`): trials a block, and a cue for the block's task
     pub mixed_block: usize,
     pub mixed_cue: bool,
+    /// (a mixed lifetime) the cue felt only for each block's first this many steps (0: all the
+    /// block), the blocks' tasks drawn at random (not alternating), and a third task, still
+    /// (glyphs shown, neither click nor voice)
+    pub mixed_cue_steps: usize,
+    pub mixed_random: bool,
+    pub mixed_three: bool,
     pub screen_w: usize,
     pub screen_h: usize,
     pub screen_lit: usize,
@@ -316,11 +322,16 @@ pub struct Lesson {
     pub food: u64,
 }
 
-/// A mixed lifetime's block `b` (`Task::Mixed`): even, a conditioning block; odd, a reading one.
+/// A mixed lifetime's block `b` (`Task::Mixed`): even, a conditioning block; odd, a reading one
+/// (`Lesson::mixed_random`: drawn; `mixed_three`: or a still block, glyphs shown as in reading).
 fn mixed_block(w: &mut World, b: usize, lesson: &Lesson, tokens: usize, seed: u64) {
     let n = lesson.mixed_block.max(1);
-    w.task_cue = lesson.mixed_cue.then_some(b % 2);
-    if b % 2 == 0 {
+    let kinds = if lesson.mixed_three { 3 } else { 2 };
+    let task = if lesson.mixed_random { StdRng::seed_from_u64(seed ^ 0x7A5C ^ (b as u64).wrapping_mul(0x9E37_79B9)).gen_range(0..kinds) } else { b % kinds };
+    w.task = Some(task);
+    w.task_cue = lesson.mixed_cue.then_some(task);
+    w.task_cue_left = (lesson.mixed_cue_steps > 0).then_some(lesson.mixed_cue_steps);
+    if task == 0 {
         w.reversal_period = n;
         w.conditioning(Conditioning::Reversal, n);
     } else {
@@ -350,7 +361,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 

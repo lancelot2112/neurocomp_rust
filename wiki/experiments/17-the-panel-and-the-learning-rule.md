@@ -587,3 +587,18 @@ its own context. A new population has one one time in four; a mutation adds (up 
 changes one (target bit, op, rotation, trigger). Checked: an eye-to-hand population with one more
 branch into a private channel fills it with 54 to 80 lines a step, 0 without.
 
+**Selection's longer ladder** (`ISL_SELECT_MORE=1`, runs 34 and 35). Run 33's selection island
+passed cued (held out 641) and uncued at 565-568, the first selection passes of any run: graded
+select did make it click (respond 0 to 350-500, clicks in reading about 0). Most likely it told the
+blocks apart by the codes' look (glyphs 8 lines in word 0, lights 16 in a random word), which
+`ISL_MIXED_CODES` removes in run 34. The ladder after uncued: short with a goal (select 600), then
+**held** (the task cue felt only for a block's first 3 steps and the blocks' tasks drawn at random,
+not alternating, so the task must be held through the block: selection joined to recall), then
+**three** (a third task, still: glyphs shown, neither click nor voice; select becomes (respond +
+babble + still) / 3 less the costs, still being 1024 less the rate of acting in still blocks).
+Events carry the block's task for the observer only (`Event::task`); the world now draws three task
+cues (the first two as before). Test `held_three_tasks_need_the_cue_held_through_the_block`, 12
+worlds: a holder of the last cue felt 1022, a two-task selector (babbling in still blocks) 680, a
+network acting only while the cue is felt 699 (inaction earns the still third, so three, the last
+rung, has no goal).
+

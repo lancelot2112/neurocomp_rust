@@ -132,6 +132,9 @@ pub struct Event {
     pub screen: Option<(usize, usize)>,
     /// conditioning: this step is in the trial's response window (the observer's mark)
     pub window: bool,
+    /// (a mixed lifetime) the block's task, 0 respond, 1 babble, 2 still, for the observer alone
+    /// (the network feels only the task cue, and only while it is shown)
+    pub task: Option<usize>,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -255,6 +258,10 @@ pub struct World {
     cues: Vec<BitVector>,
     /// the task on now, felt as its cue every step (none: no cue)
     pub task_cue: Option<usize>,
+    /// (a mixed lifetime) the block's task (`Event::task`), and how many more steps its cue is
+    /// felt (None: all the block)
+    pub task: Option<usize>,
+    pub task_cue_left: Option<usize>,
     voice: Effector,
     hand: Effector,
     cond_total: usize,
@@ -577,8 +584,11 @@ impl World {
             tones: codes(2, &mut r(0x7070)),
             lights: codes(2, &mut r(0x1167)),
             felt: codes(MOVES, &mut r(0xFE17)),
-            cues: codes(2, &mut r(0xC0E5)),
+            // (three: a cue per task; the first two as they always were, drawn first)
+            cues: codes(3, &mut r(0xC0E5)),
             task_cue: None,
+            task: None,
+            task_cue_left: None,
             voice: Effector::new(tokens, &mut r(0x7AC7)),
             hand: Effector::new(MOVES, &mut r(0x40B5)),
             cond_total: 0,
@@ -858,7 +868,7 @@ impl World {
         let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
         let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if self.sentence {
@@ -1154,7 +1164,18 @@ impl World {
             ev.stroked = true;
         }
         if let Some(k) = self.task_cue {
-            put(&mut senses, TOUCH, &self.cues[k % self.cues.len()].clone());
+            // (held) the cue felt only for the block's first steps
+            let show = match self.task_cue_left {
+                Some(0) => false,
+                Some(n) => {
+                    self.task_cue_left = Some(n - 1);
+                    true
+                }
+                None => true,
+            };
+            if show {
+                put(&mut senses, TOUCH, &self.cues[k % self.cues.len()].clone());
+            }
         }
         ev.present = self.present;
         self.events.push(ev);

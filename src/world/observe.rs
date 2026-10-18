@@ -506,7 +506,22 @@ pub fn feel_graded(events: &[Event]) -> i32 {
 /// (Set by `evolve::probe_scores_in` from a mixed lifetime: `probes` leaves it 0.)
 pub fn select(events: &[Event]) -> i32 {
     let (respond, babbled, voice, clicks) = select_parts(events);
-    (respond + babbled) / 2 - voice - clicks
+    match still(events) {
+        // (three tasks) the still blocks too: neither click nor voice there
+        Some(s) => (respond + babbled + s) / 3 - voice - clicks,
+        None => (respond + babbled) / 2 - voice - clicks,
+    }
+}
+
+/// (a mixed lifetime with still blocks, `Lesson::mixed_three`) 1024 less the rate of steps with a
+/// click or a voice in the still blocks; None if there are none.
+pub fn still(events: &[Event]) -> Option<i32> {
+    let st: Vec<&Event> = events.iter().filter(|e| e.task == Some(2)).collect();
+    if st.is_empty() {
+        return None;
+    }
+    let acts = st.iter().filter(|e| e.moved == Some(CLICK) || e.said.is_some() || !e.sentence.is_empty()).count();
+    Some(1024 - (acts * 1024 / st.len()) as i32)
 }
 
 /// What a network does, for the novelty island (`evolve::set_novelty`; probes 21 to 28, never a
@@ -562,7 +577,10 @@ pub fn behaviour(events: &[&[Event]]) -> [i32; 8] {
 /// `select` gives it 0, so a gradient leads to responding before it is gated by the task.
 pub fn select_graded(events: &[Event]) -> i32 {
     let (respond, babbled, voice, clicks) = select_parts(events);
-    (respond + babbled) / 2 - (voice + clicks) / 4
+    match still(events) {
+        Some(s) => (respond + babbled + s) / 3 - (voice + clicks) / 4,
+        None => (respond + babbled) / 2 - (voice + clicks) / 4,
+    }
 }
 
 /// The parts of `select`: responding in the conditioning blocks, babbling in the reading blocks,
@@ -570,7 +588,8 @@ pub fn select_graded(events: &[Event]) -> i32 {
 /// a lifetime lacks either kind of block.
 pub fn select_parts(events: &[Event]) -> (i32, i32, i32, i32) {
     let cond: Vec<Event> = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_))).cloned().collect();
-    let seq: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    // (the still blocks are not reading blocks: `still` scores them)
+    let seq: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence && e.task != Some(2)).collect();
     if cond.is_empty() || seq.is_empty() {
         return (0, 0, 0, 0);
     }
@@ -579,7 +598,8 @@ pub fn select_parts(events: &[Event]) -> (i32, i32, i32, i32) {
     let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
     let voice = (cond.iter().filter(|e| e.said.is_some()).count() * 1024 / cond.len()) as i32;
     let clicks = (seq.iter().filter(|e| e.moved == Some(CLICK)).count() * 1024 / seq.len()) as i32;
-    (respond, babble(events), voice, clicks)
+    let reading: Vec<Event> = events.iter().filter(|e| e.task != Some(2)).cloned().collect();
+    (respond, babble(&reading), voice, clicks)
 }
 
 /// Repeating what paid: over a maze lifetime's choices in order, how often the next turn is the
@@ -1422,6 +1442,58 @@ mod tests {
         let (bab, refl, sel) = (mean(0), mean(1), mean(2));
         eprintln!("select (graded): babbler {bab:?}, reflex {refl:?}, selector {sel:?}");
         assert!(refl.0 < bab.0 && refl.1 > bab.1 && sel.1 > refl.1 && sel.0 > 600, "{bab:?} {refl:?} {sel:?}");
+    }
+
+    #[test]
+    fn held_three_tasks_need_the_cue_held_through_the_block() {
+        // blocks of a drawn task (respond, babble, still), the cue felt for 3 steps; policies that
+        // read the touch channel: a holder keeps the last cue it felt and does that task; a
+        // reactor acts only while a cue is felt; a two-task selector (holds the cue, but babbles in
+        // still blocks too)
+        let run = |kind: u8, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let cues: Vec<Vec<u64>> = (0..3).map(|k| w.cues[k % w.cues.len()].as_words().to_vec()).collect();
+            let mut held: Option<usize> = None;
+            for b in 0..9 {
+                let task = if b < 3 { b } else { rand::Rng::gen_range(&mut rng, 0..3) };
+                w.task = Some(task);
+                w.task_cue = Some(task);
+                w.task_cue_left = Some(3);
+                if task == 0 {
+                    w.reversal_period = 40;
+                    w.conditioning(Conditioning::Reversal, 20);
+                } else {
+                    let toks: Vec<usize> = (0..200).map(|_| rand::Rng::gen_range(&mut rng, 0..2)).collect();
+                    w.sequence_marked(&toks, &vec![false; 200]);
+                }
+                while !w.done() {
+                    let touch = channel(&senses, TOUCH).as_words().to_vec();
+                    let felt = cues.iter().position(|c| *c == touch);
+                    if felt.is_some() {
+                        held = felt;
+                    }
+                    let now = if kind == 1 { felt } else { held };
+                    let seen = channel(&senses, EYE).count_ones() > 0;
+                    let token = rand::Rng::gen_range(&mut rng, 0..2);
+                    let (say, hand) = match now {
+                        Some(0) => (None, seen.then_some(CLICK)),
+                        Some(1) => (Some(token), None),
+                        Some(_) if kind == 2 => (Some(token), None),
+                        _ => (None, None),
+                    };
+                    let a = w.act(say, hand);
+                    senses = w.step(&a);
+                }
+            }
+            select(&w.events)
+        };
+        let mean = |kind: u8| (0..12u64).map(|s| run(kind, 700 + s)).sum::<i32>() / 12;
+        let (holder, reactor, two) = (mean(0), mean(1), mean(2));
+        eprintln!("held three: holder {holder}, reactor {reactor}, two-task selector {two}");
+        assert!(holder > 600 && reactor < holder - 300 && two < holder - 150, "{holder} {reactor} {two}");
     }
 
     #[test]

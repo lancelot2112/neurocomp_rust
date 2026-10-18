@@ -252,6 +252,8 @@
 //! or a selection block's end.
 //!
 //! `ISL_SELECT_STEP=1`: selection's step rung, mixclick, before cued (see `SELECT_STEP`).
+//! `ISL_SELECT_MORE=1`: selection's longer ladder, short given a goal, then held and three (see
+//! `SELECTION_MORE`).
 //!
 //! `ISL_MIGRATE=1` (with `ISL_FRONTIER_LADDERS`): the generalist's passes migrate. When it passes a
 //! rung on an island's ladder that the island has not passed, its best two genomes are copied into
@@ -763,6 +765,9 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "senses" => stage.lesson.sense_place = v == "1",
                 "cue" => stage.lesson.mixed_cue = v == "1",
                 "block" => stage.lesson.mixed_block = v.parse().expect("block"),
+                "cuesteps" => stage.lesson.mixed_cue_steps = v.parse().expect("cuesteps"),
+                "random" => stage.lesson.mixed_random = v == "1",
+                "three" => stage.lesson.mixed_three = v == "1",
                 "sw" => stage.lesson.screen_w = v.parse().expect("sw"),
                 "sh" => stage.lesson.screen_h = v.parse().expect("sh"),
                 "lit" => stage.lesson.screen_lit = v.parse().expect("lit"),
@@ -920,6 +925,15 @@ const SCREEN_LADDER: &str = "glow probes=screen sw=2 sh=1 lit=1 torch=1 dark=1 g
 /// ever held cued's goal on its training worlds: its elites babbled and never clicked.
 const SELECT_STEP: &str = "mixclick probes=mixclick tokens=2 cue=1 goal=mixclick@100;";
 
+/// Selection's longer ladder (`ISL_SELECT_MORE=1`): short given a goal, then held (the cue felt
+/// only for a block's first 3 steps and the blocks' tasks drawn at random, so the task must be held
+/// through the block) and three (a third task, still: glyphs shown, neither click nor voice).
+const SELECTION_MORE: &str = "cued probes=select tokens=2 cue=1 goal=select@600; \
+    uncued probes=select tokens=2 cue=0 goal=select@600; \
+    short probes=select tokens=2 cue=0 block=10 goal=select@600; \
+    held probes=select tokens=2 cue=1 cuesteps=3 random=1 block=20 goal=select@600; \
+    three probes=select tokens=2 cue=1 cuesteps=3 random=1 three=1 block=20";
+
 const SELECTION_LADDER: &str = "cued probes=select tokens=2 cue=1 goal=select@600; \
     uncued probes=select tokens=2 cue=0 goal=select@600; \
     short probes=select tokens=2 cue=0 block=10";
@@ -1072,7 +1086,10 @@ fn main() {
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 "maze" => isl.stages = ladder(MAZE_LADDER),
                 "screen" => isl.stages = ladder(SCREEN_LADDER),
-                "selection" => isl.stages = ladder(&if env("ISL_SELECT_STEP", 0u8) == 1 { format!("{SELECT_STEP} {SELECTION_LADDER}") } else { SELECTION_LADDER.to_string() }),
+                "selection" => {
+                    let base = if env("ISL_SELECT_MORE", 0u8) == 1 { SELECTION_MORE } else { SELECTION_LADDER };
+                    isl.stages = ladder(&if env("ISL_SELECT_STEP", 0u8) == 1 { format!("{SELECT_STEP} {base}") } else { base.to_string() })
+                }
                 _ => {}
             }
         }

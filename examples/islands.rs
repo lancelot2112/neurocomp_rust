@@ -959,15 +959,16 @@ fn main() {
             let ev = w.events.last().unwrap();
             let (ti, tt, cue, pays) = ev.trial.map_or(("-".to_string(), "-".to_string(), "-", "-"), |(a, b, c, d)| (a.to_string(), b.to_string(), if c { "A" } else { "b" }, if d { "$" } else { "." }));
             let lines: Vec<String> = net.nodes.iter().map(|n| n.current().count_ones().to_string()).collect();
-            let fired: Vec<String> = net.edges.iter().filter_map(|e| {
+            // (each population as its place in the genome's list and its id: `place#id:fired`)
+            let fired: Vec<String> = net.edges.iter().enumerate().filter_map(|(i, e)| {
                 let ks: Vec<_> = e.group.classes().iter().flat_map(|c| c.kernels().iter()).collect();
-                if ks.is_empty() { None } else { Some(format!("{}:{}", e.spec.salt, ks.iter().filter(|k| k.age == 0).count())) }
+                if ks.is_empty() { None } else { Some(format!("{i}#{}:{}", e.spec.salt, ks.iter().filter(|k| k.age == 0).count())) }
             }).collect();
             println!("{k:5} {ti:>3} {tt:>2} {cue} {pays} {} {} {} {} | {} | {}", ev.shown.map_or("-".to_string(), |x| x.to_string()), if ev.odd { "!" } else { "." }, ev.moved.map_or("-".to_string(), |m| m.to_string()), if ev.present { "on" } else { ".." }, lines.join(" "), fired.join(" "));
-            // (`ISL_TRACE_WORDS=i`: that vector's words too, in hex, the ones not empty)
-            if let Some(i) = std::env::var("ISL_TRACE_WORDS").ok().and_then(|x| x.parse::<usize>().ok()).filter(|&i| i < net.nodes.len()) {
+            // (`ISL_TRACE_WORDS=i,j`: those vectors' words too, in hex, the ones not empty)
+            for i in std::env::var("ISL_TRACE_WORDS").unwrap_or_default().split(',').filter_map(|x| x.trim().parse::<usize>().ok()).filter(|&i| i < net.nodes.len()) {
                 let w: Vec<String> = net.nodes[i].current().as_words().iter().enumerate().filter(|(_, x)| **x != 0).map(|(j, x)| format!("{j}:{x:016x}")).collect();
-                println!("      words {}", w.join(" "));
+                println!("      words {i}: {}", w.join(" "));
             }
         })));
         if stream {
@@ -1021,8 +1022,6 @@ fn main() {
             let names: Vec<String> = groups.iter().flat_map(|(n, probes, _, _)| probes.iter().map(move |&p| format!("{n}:{}", &PROBES[p][..PROBES[p].len().min(6)]))).collect();
             let goals: Vec<f64> = groups.iter().flat_map(|(_, probes, _, goal)| probes.iter().map(move |_| *goal as f64)).collect();
             let base = score(best);
-            let (_, edges, _) = best.wiring();
-            let label = |id: u32| edges.iter().find(|e| e.0 == id).map_or(String::new(), |e| format!("{}->{} {}{}", e.1, e.2, e.3, if e.4 { " wire" } else { "" }));
             println!("  {} (best genome, {} populations); subtasks and their means: {}", isl.name, best.populations(), names.iter().zip(&base).map(|(n, b)| format!("{n} {b:.0}")).collect::<Vec<_>>().join(", "));
             let mut shares = Vec::new();
             let mut tops = vec![0usize; names.len()];
@@ -1041,7 +1040,7 @@ fn main() {
                     shares.push(most.abs() / total);
                     tops[top] += 1;
                 }
-                println!("    #{:<6} {:<34} {}{}", p.id, label(p.id), loss.iter().map(|x| format!("{:>6.2}", x)).collect::<Vec<_>>().join(""), if matters { format!("   top {} ({:.0}% of its loss)", names[top], 100.0 * most.abs() / total) } else { "   (matters little)".into() });
+                println!("    #{:<6} {:<34} {}{}", p.id, best.label(p), loss.iter().map(|x| format!("{:>6.2}", x)).collect::<Vec<_>>().join(""), if matters { format!("   top {} ({:.0}% of its loss)", names[top], 100.0 * most.abs() / total) } else { "   (matters little)".into() });
             }
             let mean_share = if shares.is_empty() { 0.0 } else { shares.iter().sum::<f64>() / shares.len() as f64 };
             println!("  {}: {mattering} of {} populations matter (a loss of 5% of a goal or more in all); their mean share on their top subtask {:.2} (spread evenly over {} subtasks it would be {:.2}); populations by top subtask: {}", isl.name, best.populations(), mean_share, names.len(), 1.0 / names.len().max(1) as f64, names.iter().zip(&tops).filter(|(_, c)| **c > 0).map(|(n, c)| format!("{n} {c}")).collect::<Vec<_>>().join(", "));

@@ -871,6 +871,32 @@ impl TagGenome {
         out
     }
 
+    /// Give every population an id of its own: a population whose id an earlier one already has
+    /// (two parents of one lineage joined by crossover) takes the next free id.
+    pub fn unique_ids(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        let mut next = self.next_id.max(self.pops().map(|p| p.id + 1).max().unwrap_or(0));
+        for t in self.tokens.iter_mut() {
+            if let Token::Pop(p) = t {
+                if !seen.insert(p.id) {
+                    p.id = next;
+                    seen.insert(next);
+                    next += 1;
+                }
+            }
+        }
+        self.next_id = next;
+    }
+
+    /// A population's ends and op as the runtime resolves them (`from->to op`), or why it has none.
+    pub fn label(&self, p: &Pop) -> String {
+        let ch = Channels::of(&self.tokens);
+        match (ch.from(p), ch.to(p)) {
+            (Some(a), Some(b)) => format!("{}->{} {}{}", ch.name(a), ch.name(b), p.op.text(), if p.wire { " wire" } else { "" }),
+            _ => "(no channel to read or write)".to_string(),
+        }
+    }
+
     /// The runtime graph: one node per channel (senses first, act last), one edge per population.
     pub fn graph(&self) -> Graph<NodeSpec, EdgeSpec, Directed> {
         let ch = Channels::of(&self.tokens);
@@ -2190,7 +2216,9 @@ impl Evolvable for TagGenome {
         }
         let a = rng.gen_range(0..=self.tokens.len());
         let b = rng.gen_range(0..=other.tokens.len());
-        TagGenome { tokens: self.tokens[..a].iter().chain(other.tokens[b..].iter()).cloned().collect(), next_id: self.next_id.max(other.next_id) }
+        let mut g = TagGenome { tokens: self.tokens[..a].iter().chain(other.tokens[b..].iter()).cloned().collect(), next_id: self.next_id.max(other.next_id) };
+        g.unique_ids();
+        g
     }
 }
 
@@ -2199,6 +2227,21 @@ mod tests {
     use super::*;
     use crate::evolve::{live, Physics, Task};
     use crate::world::Conditioning;
+
+    #[test]
+    fn a_crossover_child_never_repeats_an_id() {
+        let mut rng = <StdRng as rand::SeedableRng>::seed_from_u64(4);
+        let c = 0x5A;
+        let pop = |id: u32| { let mut p = Pop::new(id, c, c); p.id = id; Token::Pop(p) };
+        let a = TagGenome { tokens: vec![Token::Channel { tag: c, width: 3, hold: false }, pop(1), pop(2), pop(3)], next_id: 4 };
+        for _ in 0..200 {
+            let child = a.crossover(&a, &mut rng);
+            let ids: Vec<u32> = child.pops().map(|p| p.id).collect();
+            let set: std::collections::HashSet<u32> = ids.iter().copied().collect();
+            assert_eq!(ids.len(), set.len(), "{ids:?}");
+            assert!(child.next_id > ids.iter().copied().max().unwrap_or(0));
+        }
+    }
 
     #[test]
     fn tags_name_channels_and_ports_have_their_own_tags() {

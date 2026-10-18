@@ -252,10 +252,26 @@ mismatch: after an odd token it holds about 30 lines a step later, after a kept 
 network clicks three steps after an odd token 54% of the time, after a kept one 1%. The lesion map
 (48 worlds, losses as shares of the goal): the C2-to-hand AND wire 1.06, the C2-to-hand OR wire 0.92,
 the hand-to-C2 XOR wire 0.92 (the hand's last act folded into C2, a loop through the body), and a
-population #188 0.92; C2's own shift wires and a C2-to-eye write help when taken out. Open: the
-lesion names #188 ear-to-voice NAND, the network dump an eye-to-C2 NOR under the same id (the
-genome has two populations with id 188, circuit copies keep their ids), so which population brings
-the token stream into C2 is not settled until the tools agree.
+the eye-to-C2 NOR #188 0.92; C2's own shift wires and a C2-to-eye write help when taken out. (The
+genome has two populations with id 188, because a string crossover had copied one; the ear-to-voice
+NAND under the same id loses 0.00. Crossover now renumbers repeated ids, and the lesion labels each
+population from itself: `run31-prediction-g06-relabelled.txt`.)
+
+**The word trace** (`ISL_TRACE_WORDS=2,11`, C2 and the act, `run31-prediction-g06-words.txt`)
+shows a familiarity detector, not a prediction of the next token. The eye-to-C2 NOR fires on the
+step after a token it knows: after 1, 5 or 7 (the cycle's tokens) 173 times in 180; after 2, 3, 4
+or 6 (tokens the cycle never shows) 3 times in 15. It is silent for the first 9 steps of the
+lifetime, then fires, so its mask most likely fits the frequent tokens during the lifetime. While
+it fires, C2 sits at a fixed point: the hand's word is all ones, the hand-to-C2 XOR writes it, the
+NOR clears it, and C2 stays empty (144 of 172 kept steps). When the NOR is silent C2 is not cleared,
+fills (often all 64 lines), and the C2-to-hand wires and the hand-to-C2 XOR pass it around the loop
+for two to four steps (ffff..., then a pattern, then its complement) until the hand's word is all
+ones again. Clicks happen in that transient. In this lifetime the network clicks within three steps
+after 17 of 28 odd tokens and after 12 of 108 kept ones. An odd token that is itself 1, 5 or 7 is
+missed: the NOR fires on it. So the genome tells a rare token from a frequent one. It does not know
+which token comes next. That is enough for cycle4, where odd tokens are drawn from all eight and so
+are mostly ones the cycle never shows. It cannot be enough for order2, where an odd token is a
+familiar token out of place, which is the rung run 31 has not solved.
 
 From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.
 

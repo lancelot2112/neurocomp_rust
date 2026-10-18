@@ -858,6 +858,19 @@ pub fn body() -> u64 {
     BODY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The generalist scored on passed rungs too (`set_frontier_passed`): at the frontier, besides
+/// each other island's current rung, its last passed rung, in its own world, as more selection
+/// cases. Off by default.
+static FRONTIER_PASSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_frontier_passed(on: bool) {
+    FRONTIER_PASSED.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn frontier_passed() -> bool {
+    FRONTIER_PASSED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Sparse one-word codes in every reading lifetime (`set_one_word`; a lesson's `one_word` sets
 /// it for one): `World::one_word` with this many lines a code, 0 off (the default).
 static ONE_WORD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -1275,8 +1288,34 @@ pub fn evolve_islands<G: Evolvable>(
                         found[g].extend(&s.notes);
                     }
                 }
+                // (`set_frontier_passed`) and each other island's last passed rung, in its own
+                // world: rows of their own, joining the cases, so the generalist is selected on
+                // what the specialists already do as well as on what none does yet
+                if frontier_passed() {
+                    for (j, other) in islands.iter().enumerate() {
+                        if j == i || other.frontier || stage[j] == 0 {
+                            continue;
+                        }
+                        let ps = &other.stages[stage[j] - 1];
+                        for &p in &ps.probes {
+                            if !wanted.contains(&p) {
+                                wanted.push(p);
+                            }
+                        }
+                        for (g, s) in probe_all_in(genomes.clone(), trials, physics, seeds, gap, &ps.probes, ps.lesson).iter().enumerate() {
+                            for (k, r) in s.probes.iter().enumerate() {
+                                let mut row = [0i32; observe::NPROBES];
+                                for &p in &ps.probes {
+                                    row[p] = r[p];
+                                }
+                                rows[g].push(row);
+                                works[g].push(s.works[k]);
+                            }
+                        }
+                    }
+                }
                 let scored: Vec<Probed<G>> = genomes.into_iter().enumerate().map(|(g, genome)| {
-                    let work = works[g].iter().sum::<u64>() / seeds.len().max(1) as u64;
+                    let work = works[g].iter().sum::<u64>() / works[g].len().max(1) as u64;
                     Probed { probes: rows[g].clone(), works: works[g].clone(), work, genome, notes: merge_notes(found[g].iter().copied()) }
                 }).collect();
                 (scored, wanted)

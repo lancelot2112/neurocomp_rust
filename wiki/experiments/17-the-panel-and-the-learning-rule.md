@@ -157,3 +157,26 @@ frames: that something happened, not what or when), held channels, and shifts in
 new token is a motion one time in about twenty under `ISL_MOTIONS`, for one of the genome's
 channels; mutations flip its tag bits, step its stride (0 to 8) and toggle its wave. Not yet
 tried on a task.
+
+## Why the generalist babbles (run 30's best, generation 265)
+
+The generalist is scored at the frontier: on each other island's current rung, the ones no network
+has passed. Its held-out scores (generalist.csv) are almost all babble (about 1,000: say every token
+at least once) and select (about 400); every frontier subtask is near 0 for every genome. Lexicase
+has nothing to choose on but those two, so the generalist keeps a babbling path and drifts. In run
+31, where reading starts on echo2q without a babble rung, its total fell from about 1,400 to about
+300.
+
+Its best network has 232 populations on 11 vectors, with 404 modulatory inputs (137 pauses, 119
+gates, 105 inhibit inputs). 77 populations write back into their own channel, 70 of them on one
+4,096-bit channel, mostly clear, and and nor. The lesion map (24 fresh worlds,
+`runs/checks/lesions/run30-final.txt`) finds all 232 "matter", but with losses of both signs: taking
+out one ear-to-channel population raises echo by 86% of its goal and lowers win-stay by 78% of its.
+Every part perturbs every subtask (a mean share of 0.41 on its top subtask, 0.08 if spread evenly):
+a tangle where any change helps one subtask and hurts another, not parts that each do a job. The
+self-loops cost little: a clear loop empties its channel, and populations whose input is empty are
+paused and do no work.
+
+**Scored on passed rungs too** (`ISL_FRONTIER_PASSED=1`): besides each other island's current rung,
+its last passed rung, in its own world, joins the cases as rows of its own, so the generalist is
+selected on what the specialists already do. Run 32 has it.

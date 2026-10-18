@@ -781,3 +781,24 @@ Run 35 adds a step, cycle3-100 (`ISL_STEPS=...,cycle3=100`), which a lag-3 detec
 one time in seven passes. Run 34 already draws the period per lifetime (`ISL_VARY_PERIOD=1`, 1 to
 the rung's), so on cycle3 lag-1 and lag-2 comparators score in part of the lifetimes: that, not
 held breaks, is the graded path to a lag-3 one.
+
+**Shaped surprise (`ISL_PARTIAL_SURPRISE=1`, run 35).** Surprise gives nothing to a network that
+clicks at all until its clicks follow breaks more than other steps: never, always and at random all
+score 0, so a population that never clicks has no slope to climb. surprise+ (`observe::surprise_shaped`,
+probe 31, for selection only; the goal stays on surprise) pays a quarter for the share of breaks
+followed by a click (in 3 steps; 4 to 6 late counts half) and three quarters for that share less
+the same after steps with no break. Test `shaped_surprise_pays_clicking_then_clicking_on_breaks`
+(breaks 1 in 8, 12 streams):
+
+| strategy | surprise | surprise+ |
+|---|---|---|
+| never clicks | 0 | 0 |
+| clicks at random, 1 step in 4 | -6 | 161 |
+| clicks always | 0 | 256 |
+| a third of the breaks | 303 | 321 |
+| every break, and 1 step in 4 at random | 344 | 421 |
+| every break | 779 | 740 |
+
+Clicking pays first; from clicking always, each false alarm dropped while the breaks are still
+clicked raises the score. A click on every break tops out near 740, since a late window also catches
+the next break's click.

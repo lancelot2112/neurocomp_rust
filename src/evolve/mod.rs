@@ -785,7 +785,20 @@ pub fn partial() -> bool {
 
 /// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
 pub fn graded(p: usize) -> usize {
-    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, _ => p } } else { p }
+    if partial() { match p { 7 => 15, 9 if partial_surprise() => 31, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, _ => p } } else { p }
+}
+
+/// Surprise shaped from clicking at all (`set_partial_surprise`, with `set_partial`): selection uses
+/// `observe::surprise_shaped` in place of `surprise_graded`, clicking after breaks at all paying a
+/// quarter before clicking only after them pays the rest. Off by default.
+static PARTIAL_SURPRISE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_partial_surprise(on: bool) {
+    PARTIAL_SURPRISE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial_surprise() -> bool {
+    PARTIAL_SURPRISE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Partial credit on the screen too (`set_partial_screen`, with `set_partial`): selection uses

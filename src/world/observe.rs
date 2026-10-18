@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+"];
 /// How many probes there are.
-pub const NPROBES: usize = 31;
+pub const NPROBES: usize = 32;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -194,7 +194,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -430,6 +430,39 @@ pub fn surprise_graded(events: &[Event]) -> i32 {
         return 0;
     }
     ((odd_near * 1024 / odd - kept_near * 1024 / kept) + (odd_late * 512 / odd - kept_late * 512 / kept)) as i32
+}
+
+/// Surprise shaped from clicking at all (`evolve::set_partial_surprise`): a quarter for clicking after
+/// breaks at all (hit, the share of breaks with a click in the 3 steps after), three quarters for
+/// lining up with them (hit less the same share after steps with no break in the 3 before), a
+/// click 4 to 6 steps late counting half in both. Never clicking scores 0, clicking always 256,
+/// and each false alarm dropped while the breaks are still clicked raises it (a click on every
+/// break about 740: a late window also catches the next break's click; test
+/// `shaped_surprise_pays_clicking_then_clicking_on_breaks`). For selection only: a rung's goal stays on `surprise`.
+pub fn surprise_shaped(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    let clicked = |t: usize, a: usize, b: usize| (t + a..=(t + b).min(ev.len().saturating_sub(1))).any(|u| ev[u].moved == Some(CLICK));
+    // each step's credit: 2 a click in the 3 steps after, else 1 one 4 to 6 steps after, else 0
+    let credit = |t: usize| if clicked(t, 1, 3) { 2 } else if clicked(t, 4, 6) { 1 } else { 0 };
+    let (mut odd, mut odd_c, mut kept, mut kept_c) = (0i64, 0i64, 0i64, 0i64);
+    for t in 0..ev.len().saturating_sub(6) {
+        if ev[t].shown.is_none() {
+            continue;
+        }
+        if ev[t].odd {
+            odd += 1;
+            odd_c += credit(t);
+        } else if !(t.saturating_sub(6)..t).any(|u| ev[u].odd) {
+            kept += 1;
+            kept_c += credit(t);
+        }
+    }
+    if odd == 0 || kept == 0 {
+        return 0;
+    }
+    let hit = odd_c * 512 / odd;
+    let fa = kept_c * 512 / kept;
+    (hit / 4 + (hit - fa) * 3 / 4) as i32
 }
 
 /// Remember with partial credit (`evolve::set_partial_remember`): a cue trial clicked in its window
@@ -1463,6 +1496,46 @@ mod tests {
         let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
         let (selector, both, silent) = (mean(0), mean(1), mean(2));
         assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
+    }
+
+    #[test]
+    fn shaped_surprise_pays_clicking_then_clicking_on_breaks() {
+        // a stream with breaks 1 in 8; strategies that see the break flags, clicking the step after
+        let mut w = World::new(1, 2);
+        w.step(&w.act(None, None));
+        let mut template = w.events[0].clone();
+        template.scene = SceneKind::Sequence;
+        let run = |policy: u8, seed: u64| -> (i32, i32) {
+            let mut r = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let odd: Vec<bool> = (0..600).map(|_| rand::Rng::gen_ratio(&mut r, 1, 8)).collect();
+            let mut ev = Vec::new();
+            for t in 0..odd.len() {
+                let mut e = template.clone();
+                e.shown = Some(t % 3);
+                e.odd = odd[t];
+                let seen = t > 0 && odd[t - 1];
+                let click = match policy {
+                    0 => false,                                                // never
+                    1 => true,                                                 // always
+                    2 => rand::Rng::gen_ratio(&mut r, 1, 4),                   // at random
+                    3 => seen || rand::Rng::gen_ratio(&mut r, 1, 4),           // breaks, and noise
+                    4 => seen && rand::Rng::gen_ratio(&mut r, 1, 3),           // a third of the breaks
+                    _ => seen,                                                 // every break
+                };
+                e.moved = click.then_some(CLICK);
+                ev.push(e);
+            }
+            (surprise(&ev), surprise_shaped(&ev))
+        };
+        let mean = |p: u8| { let v: Vec<(i32, i32)> = (0..12).map(|s| run(p, 40 + s)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 12, v.iter().map(|x| x.1).sum::<i32>() / 12) };
+        let m: Vec<(i32, i32)> = (0..6).map(mean).collect();
+        eprintln!("surprise / surprise+: never {:?}, always {:?}, random {:?}, breaks and noise {:?}, a third of the breaks {:?}, every break {:?}", m[0], m[1], m[2], m[3], m[4], m[5]);
+        // the old probe gives nothing to clicking at all; the shaped one does, and more as the
+        // clicks line up with the breaks
+        assert!(m[0].1 == 0 && m[1].0.abs() < 40 && m[2].0.abs() < 60);
+        assert!(m[1].1 > 200 && m[2].1 > 50);
+        assert!(m[3].1 > m[1].1 && m[5].1 > m[3].1 && m[5].1 > 700);
+        assert!(m[4].1 > m[2].1);
     }
 
     #[test]

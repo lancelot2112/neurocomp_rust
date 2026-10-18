@@ -54,6 +54,10 @@ fn main() {
     let (e, h) = (74u8, 150u8);
     // (`ONE_WORD=1`: every token's glyph, sound and voice code in word 0, `World::one_word`)
     let one_word = std::env::var("ONE_WORD").is_ok_and(|v| v == "1");
+    // (`MIRROR=m`: each token heard like the voice's code for it, m eighths of its lines, and one's
+    // own voice not heard (`Lesson::mirror`, `quiet`): a wire from the ear to the voice echoes, so
+    // the reader's target, the listener's echo, is right; 0 by default)
+    let mirror_m: usize = std::env::var("MIRROR").ok().and_then(|x| x.parse().ok()).unwrap_or(0);
     println!("listener lag, birth lag, gate lag: echo2 echo | fade6 copy, echo   (goals: echo 150, copy 100)");
     // (`GLYPH_REPEAT=k`: the glyph kernels' births copy what H held k frames ago, its busiest
     // word: the sound; 0, they write at their own place)
@@ -150,6 +154,14 @@ fn main() {
             reader.push('\n');
             let fade = std::env::var("FADE").unwrap_or("2".into());
             reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("repeat", "1".into()), ("repeat_lag", r.to_string()), ("fade", fade), ("gate", "231:0".into()), ("gate_lag", (r - 1).max(1).to_string()), ("gate_at", "0".into()), ("branch", "230".into()), ("branch_at", "0".into())]);
+        } else if let Some(k) = std::env::var("ELIG").ok().and_then(|x| x.parse::<u8>().ok()) {
+            // (`ELIG=k`: the reader under the three-factor output rule, `EdgeSpec::elig`: a kernel
+            // that fired k steps ago is checked while the ear had lines on `g` frames ago, against
+            // what the voice holds then less the reader's own writes (the listener's echo of the
+            // teacher), and learns its output or dies; its fired kernels branch into F, so the
+            // listener does not answer its voice either)
+            neurocomp::evolve::tags::set_eligibility(true);
+            reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("birth_lag", v[1].to_string()), ("gate", "56:1".into()), ("gate_lag", v[2].to_string()), ("gate_at", "1".into()), ("elig", k.to_string()), ("branch", "200".into()), ("branch_at", "0".into())]);
         } else {
             reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("birth_lag", v[1].to_string()), ("gate", "56:1".into()), ("gate_lag", v[2].to_string()), ("gate_at", "1".into()), ("pause", "212:0".into()), ("pause_at", "0".into())]);
         }
@@ -165,8 +177,8 @@ fn main() {
                     let s = probe_all_in(vec![g.clone()], trials, Physics::Varied, &worlds, 6, &[p], lesson);
                     s[0].probes.iter().map(|r| r[p] as i64).sum::<i64>() / worlds.len() as i64
                 };
-                let e2 = score(Lesson { tokens: 2, teach: 8, babble: 100, one_word, code_lines: std::env::var("LINES").ok().and_then(|x| x.parse().ok()).unwrap_or(0), ..Lesson::default() }, echo, 200);
-                let f6 = Lesson { tokens: 8, teach: 6, babble: 200, one_word, code_lines: std::env::var("LINES").ok().and_then(|x| x.parse().ok()).unwrap_or(0), ..Lesson::default() };
+                let e2 = score(Lesson { tokens: 2, teach: 8, babble: 100, one_word, mirror: mirror_m, quiet: mirror_m > 0, code_lines: std::env::var("LINES").ok().and_then(|x| x.parse().ok()).unwrap_or(0), ..Lesson::default() }, echo, 200);
+                let f6 = Lesson { tokens: 8, teach: 6, babble: 200, one_word, mirror: mirror_m, quiet: mirror_m > 0, code_lines: std::env::var("LINES").ok().and_then(|x| x.parse().ok()).unwrap_or(0), ..Lesson::default() };
                 let (c6, e6) = (score(f6.clone(), copy, 400), score(f6, echo, 400));
                 println!("  {lag} {birth} {gate}: {e2} | {c6}, {e6}");
             }

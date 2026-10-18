@@ -1,0 +1,2 @@
+genome 1
+pop id=871 from=56 from_port=1 to=31 to_port=1 wire=1 op=or lag=1 span=1 at=61583 field=0 place=0 spread=0 count=2 fan_in=16 fan_out=16 quarters=2 tonic=0 share=0 grow=0 new_code=0 repeat=0 repeat_lag=3 gate=- gate_lag=1 birth_syn=16 birth_quarters=3 out_min=8 out_max=64 cap=512 code_lines=16 out_learn=4 fade=2 rotate=0 sparse=1 cover=1 tile=7 pause=- replicate=5 replicate_shift=1 mark=0 explored=0 accident=18 gate_at=1

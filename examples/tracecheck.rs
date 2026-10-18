@@ -166,6 +166,14 @@ fn main() {
             reader.push('\n');
             let fade = std::env::var("FADE").unwrap_or("2".into());
             reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("repeat", "1".into()), ("repeat_lag", r.to_string()), ("fade", fade), ("gate", "231:0".into()), ("gate_lag", (r - 1).max(1).to_string()), ("gate_at", "0".into()), ("branch", "230".into()), ("branch_at", "0".into())]);
+        } else if let Some(k) = std::env::var("ELIG").ok().and_then(|x| x.parse::<u8>().ok()) {
+            // (`ELIG=k`: the reader under the three-factor output rule, `EdgeSpec::elig`: a kernel
+            // that fired k steps ago is checked while the ear had lines on `g` frames ago, against
+            // what the voice holds then less the reader's own writes (the listener's echo of the
+            // teacher), and learns its output or dies; its fired kernels branch into F, so the
+            // listener does not answer its voice either)
+            neurocomp::evolve::tags::set_eligibility(true);
+            reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("birth_lag", v[1].to_string()), ("gate", "56:1".into()), ("gate_lag", v[2].to_string()), ("gate_at", "1".into()), ("elig", k.to_string()), ("branch", "200".into()), ("branch_at", "0".into())]);
         } else {
             reader += &pop(25, &[("from", "7".into()), ("to", "31".into()), ("wire", "0".into()), ("count", "0".into()), ("grow", "1".into()), ("lag", v[0].to_string()), ("birth_lag", v[1].to_string()), ("gate", "56:1".into()), ("gate_lag", v[2].to_string()), ("gate_at", "1".into()), ("pause", "212:0".into()), ("pause_at", "0".into())]);
         }

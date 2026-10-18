@@ -1,0 +1,10 @@
+copy (goal 100; lookup a perfect table, blind the floor), mean of 24 worlds; body 1, one-word codes 8
+   N trials |  lookup  blind | networks
+   2    400 |      99    -34 | wireonly.txt -159, rd-none.txt -2, rd-222.txt -49, rd-221.txt -55, rd-212.txt -58, rd-111.txt 65, rd-232.txt -47, rd-323.txt -13
+   2   3200 |     119     -9 | wireonly.txt -136, rd-none.txt 3, rd-222.txt -8, rd-221.txt -28, rd-212.txt 0, rd-111.txt 88, rd-232.txt -2, rd-323.txt 2
+   8    400 |     210     -7 | wireonly.txt -39, rd-none.txt -9, rd-222.txt -10, rd-221.txt -23, rd-212.txt -6, rd-111.txt 176, rd-232.txt -12, rd-323.txt -14
+   8   3200 |     220     -1 | wireonly.txt -35, rd-none.txt -2, rd-222.txt -12, rd-221.txt -9, rd-212.txt -5, rd-111.txt 176, rd-232.txt -8, rd-323.txt -7
+  32    400 |     213      3 | wireonly.txt -9, rd-none.txt 0, rd-222.txt -4, rd-221.txt -2, rd-212.txt -2, rd-111.txt 188, rd-232.txt 1, rd-323.txt -3
+  32   3200 |     243      0 | wireonly.txt -8, rd-none.txt 0, rd-222.txt -3, rd-221.txt -4, rd-212.txt -1, rd-111.txt 195, rd-232.txt -1, rd-323.txt -3
+ 128    400 |     148      0 | wireonly.txt -2, rd-none.txt -1, rd-222.txt -2, rd-221.txt -2, rd-212.txt -1, rd-111.txt 143, rd-232.txt -2, rd-323.txt -1
+ 128   3200 |     237      0 | wireonly.txt -2, rd-none.txt 0, rd-222.txt 0, rd-221.txt 0, rd-212.txt 0, rd-111.txt 195, rd-232.txt -1, rd-323.txt -1

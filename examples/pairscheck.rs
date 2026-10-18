@@ -3,7 +3,7 @@
 //! lifetime, the teacher saying six tokens in eight after the first quarter (fade6), scored by
 //! `copy` (saying the token whose glyph was shown, untaught, 1 to 4 steps later, minus 9 to 12 steps
 //! later, per token said), at two lifetime lengths (`TRIALS`, 400, and eight times that), on 24
-//! worlds. Under the run-30 body by default (`BODY=1`: a fixed body; `ONE_WORD=8`: every code 8
+//! worlds (`MIRROR=m`: tokens heard like their voice codes). Under the run-30 body by default (`BODY=1`: a fixed body; `ONE_WORD=8`: every code 8
 //! lines in one word; 0 turns either off).
 //!
 //! The learners:
@@ -27,7 +27,10 @@ fn var(k: &str, d: usize) -> usize {
 }
 
 fn lesson(n: usize, trials: usize) -> Lesson {
-    Lesson { tokens: n, teach: 6, babble: trials / 4, ..Lesson::default() }
+    // (`MIRROR=m`: each token heard like the voice's code for it, m eighths of its lines, one's own
+    // voice not heard: a wire from the ear to the voice echoes the teacher exactly)
+    let m = var("MIRROR", 0);
+    Lesson { tokens: n, teach: 6, babble: trials / 4, mirror: m, quiet: m > 0, ..Lesson::default() }
 }
 
 /// The world's events for a lifetime with a learner written in the harness saying `say(t)` at
@@ -47,6 +50,8 @@ fn main() {
     neurocomp::evolve::set_one_word(var("ONE_WORD", 8));
     // the run-30 runtime switches its genomes were evolved under
     neurocomp::evolve::tags::set_port_gates(true);
+    neurocomp::evolve::tags::set_birth_lags(true);
+    neurocomp::evolve::tags::set_eligibility(true);
     neurocomp::evolve::tags::set_branches(true);
     neurocomp::evolve::tags::set_inhibit_inputs(true);
     neurocomp::evolve::tags::set_overlap_genes(true);
@@ -54,7 +59,9 @@ fn main() {
     neurocomp::program::neurocomp::set_write_compete(true);
     neurocomp::program::neurocomp::set_prune(true);
     let copy = PROBES.iter().position(|p| *p == "copy").unwrap();
-    let worlds: Vec<u64> = (70_000..70_024).collect();
+    // (`WORLDS=s`: the first of 24 world seeds, 70000 by default)
+    let w0 = var("WORLDS", 70_000) as u64;
+    let worlds: Vec<u64> = (w0..w0 + 24).collect();
     let base = var("TRIALS", 400);
     // the networks: from a checkpoint's islands, and files
     let mut nets: Vec<(String, TagGenome)> = Vec::new();

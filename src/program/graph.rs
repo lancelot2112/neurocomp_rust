@@ -253,6 +253,16 @@ pub struct EdgeSpec {
     /// being made: what was done before what is sensed now (imitation: one's own voice is heard
     /// after it is made). 0: the move being made (a reflex)
     pub birth_lag: u8,
+    /// (`evolve::tags::set_eligibility`) the three-factor output rule: 0 none; k > 0, a kernel
+    /// that fired k steps ago (and not since: its own count of steps since it fired) is eligible,
+    /// and while its gate is open (the modulator: a channel or port that had lines on, `gate_lag`
+    /// frames ago; with no gate, always) it is checked against what its destination holds now,
+    /// less what its own population writes this step: right if it holds at least half the lines
+    /// it writes (it counts up, to 8), else one of its output lines moves toward a line held there
+    /// (chance 2^-out_learn a line) and it counts down; wrong at 0, it dies (it is removed before
+    /// the next step, so its input is uncovered and a new kernel can be born there). Newborns
+    /// start at 2.
+    pub elig: u8,
 }
 
 impl EdgeSpec {
@@ -311,6 +321,7 @@ impl EdgeSpec {
             grip: 0,
             branch: None,
             birth_lag: 0,
+            elig: 0,
         }
     }
 }

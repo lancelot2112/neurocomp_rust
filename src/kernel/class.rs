@@ -232,6 +232,16 @@ mod op_tests {
         assert_eq!(Rotl(4).word(0, 0xF000_0000_0000_0000), 0xF);
         assert_eq!(Rotr(4).word(0, 0xF), 0xF000_0000_0000_0000);
     }
+
+    #[test]
+    fn removed_kernels_go_and_the_rest_keep_their_order() {
+        use crate::bitvec::BitVector;
+        use crate::kernel::simple::SimpleKernel;
+        let k = |t: usize| SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![0xF0]), 0, t, Or);
+        let mut c = super::KernelClass::with_kernels((1..=5).map(k).collect());
+        c.remove_kernels(&[3, 1, 3, 9]);
+        assert_eq!(c.kernels().iter().map(|x| x.threshold).collect::<Vec<_>>(), vec![1, 3, 5]);
+    }
 }
 
 pub struct KernelClassTemperature {
@@ -472,5 +482,15 @@ impl<K: KernelTrait> KernelClass<K> {
     }
 
     pub fn clear(&mut self) { self.active_kernels.clear() }
+    /// Remove these kernels (indices into this step's kernels, any order); the rest keep their
+    /// order.
+    pub fn remove_kernels(&mut self, idx: &[usize]) {
+        let mut idx: Vec<usize> = idx.iter().copied().filter(|&i| i < self.active_kernels.len()).collect();
+        idx.sort_unstable();
+        idx.dedup();
+        for &i in idx.iter().rev() {
+            self.active_kernels.remove(i);
+        }
+    }
     pub fn is_empty(&self) -> bool { self.active_kernels.is_empty() }
 }

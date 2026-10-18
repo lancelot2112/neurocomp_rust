@@ -1341,3 +1341,47 @@ above the blind floor beyond N = 2, where the echo genome's 135 to 167 come from
 heard (it beats the table, so at N = 2 copy can be won without reading), and its score falls with
 N and does not rise with lifetime length. The gap the panel named is confirmed: today's runtime
 and genomes learn no arbitrary glyph-to-token map in a lifetime, at any N.
+
+### The three-factor output rule (`EdgeSpec::elig`, gene `elig`, `ISL_ELIG`-able via `tags::set_eligibility`)
+
+The panel's first mechanism: a kernel learns what it writes, and a wrong pairing dies. A kernel
+that fired `elig` steps ago (its own count of steps since firing: eligibility) is checked while
+its population's gate is open (the modulator: a channel or port that had lines on `gate_lag`
+frames ago) against what its destination holds now, less what its own population writes this
+step. Right (it holds at least half the lines it writes): it counts up (its `confirmed`, to 8).
+Wrong: one output line moves toward a line held there (chance 2^-out_learn a line) and it counts
+down; wrong at 0 it dies, removed before the next step, so its input is uncovered and a new kernel
+can be born there (newborns start at 2). All u8 counts and word ops, local to the kernel; off
+unless a population has the gene.
+
+**With the hand-made genome's own listener as the target** (partscheck `READER=l,b,g ELIG=k`,
+8-line one-word codes, glyph wire, LOOP=3, listener 1 3 2; the reader's ear gate the modulator,
+its fired kernels branched into F so the listener does not answer it): copy at best 26 over 27
+timings (no reader -13, the plain reader 16), echo kept (echo2 up to 337). Recorded: kernels now
+die and are reborn (2 to 5 live, not 319), and right pairs appear, but only for the 3 or 4 tokens
+the listener can echo (the babbler's codes); more babblers (8, 16, 32) do not help (copy at most
+20). The target, not the rule, limits it.
+
+**With a right target** (pairscheck `MIRROR=8`: each token heard like its voice code, one's own
+voice not heard, so one wire from the ear to the voice echoes the teacher exactly; the genome is
+that wire and a reader, `runs/checks/elig/`): the capacity curve, copy on 24 worlds
+(`runs/checks/pairscheck-mirror-elig.txt`), and on 24 other worlds after choosing the timing
+(`...-heldout.txt`, in brackets):
+
+| N | trials | lookup table | blind | wire alone | wire + reader, no rule | wire + reader with the rule (lag 1, gate lag 1, elig 1) |
+|---|---|---|---|---|---|---|
+| 2 | 400 | 99 (83) | -34 | -159 | -2 (-32) | 65 (68) |
+| 2 | 3200 | 119 (124) | -9 | -136 | 3 (0) | 88 (90) |
+| 8 | 400 | 210 (208) | -7 | -39 | -9 (-15) | **176 (177)** |
+| 8 | 3200 | 220 (218) | -1 | -35 | -2 (3) | **176 (181)** |
+| 32 | 400 | 213 (205) | 3 | -9 | 0 (-3) | **188 (192)** |
+| 32 | 3200 | 243 (241) | 0 | -8 | 0 (0) | **195 (198)** |
+| 128 | 400 | 148 (142) | 0 | -2 | -1 (-2) | **143 (147)** |
+| 128 | 3200 | 237 (237) | 0 | -2 | 0 (0) | **195 (197)** |
+
+The first network to learn arbitrary pairs in a lifetime: 128 glyph-to-token pairs drawn afresh
+each lifetime, at 80-100% of the lookup table, rising with lifetime length (128 tokens: 143 to
+195), passing the panel's gate (N = 32 well above chance and rising). The same reader without the
+rule scores 0. Five other timings (reader lag 2-3, gate lag 1-3, elig 1-3) score near 0: the rule
+needs its eligibility lag to match when the target arrives. What is left for reading proper is the
+target: a listener that echoes every token.

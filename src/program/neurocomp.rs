@@ -331,6 +331,9 @@ pub struct RuntimeEdgeGroup {
     pub share: usize,
     pub grip: Option<u8>,
     pub detached: bool,
+    /// (the three-factor rule, `EdgeSpec::elig`) its kernels that died this step, removed before
+    /// the next
+    pub dying: Vec<usize>,
 }
 
 impl RuntimeEdgeGroup {
@@ -403,7 +406,7 @@ impl RuntimeNetwork {
                 spawned: false,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
-                share: 0, grip: None, detached: false,
+                share: 0, grip: None, detached: false, dying: Vec::new(),
                 teach_fired: Vec::new(),
                 teach_src: None,
                 targets: Vec::new(),
@@ -481,7 +484,7 @@ impl RuntimeNetwork {
                 spawned: false,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
-                share: 0, grip: None, detached: false,
+                share: 0, grip: None, detached: false, dying: Vec::new(),
                 teach_fired: Vec::new(),
                 teach_src: None,
                 targets: Vec::new(),
@@ -524,6 +527,15 @@ impl RuntimeNetwork {
             for _ in 0..k {
                 let b = node_rngs[i].gen_range(0..bits.max(1));
                 nodes[i].current_mut().bit_set(b);
+            }
+        }
+        // (the three-factor rule) the kernels that died last step go before any edge runs
+        for eg in edges.iter_mut() {
+            if !eg.dying.is_empty() {
+                let dead = std::mem::take(&mut eg.dying);
+                if let Some(class) = eg.group.classes_mut().first_mut() {
+                    class.remove_kernels(&dead);
+                }
             }
         }
         let mut fired: Vec<Vec<usize>> = vec![Vec::new(); edges.len()];
@@ -768,6 +780,39 @@ impl RuntimeNetwork {
                 }
                 if !open {
                     continue;
+                }
+            }
+            // (the three-factor rule, `EdgeSpec::elig`) the modulator is on (the gate is open):
+            // each kernel that fired `elig` steps ago is checked against its destination now, less
+            // what this population writes this step; right, it counts up; wrong, an output line
+            // moves toward what is there and it counts down, and wrong at 0 it dies
+            if sp.elig > 0 && sp.teacher.is_none() {
+                if let Some(class) = eg.group.classes_mut().first_mut() {
+                    let mut target: Vec<u64> = nodes[eg.dst].current().as_words().to_vec();
+                    for &k in &fired[i] {
+                        let kk = &class.kernels()[k];
+                        for (j, &m) in kk.output_mask.as_words().iter().enumerate() {
+                            if let Some(t) = target.get_mut(kk.output_idx + j) {
+                                *t &= !m;
+                            }
+                        }
+                    }
+                    for (k, kk) in class.kernels_mut().iter_mut().enumerate() {
+                        if kk.age as usize != sp.elig as usize {
+                            continue;
+                        }
+                        let o = kk.output_mask.as_words();
+                        let lines: u32 = o.iter().map(|w| w.count_ones()).sum();
+                        let held: u32 = o.iter().enumerate().map(|(j, &m)| (m & target.get(kk.output_idx + j).copied().unwrap_or(0)).count_ones()).sum();
+                        if lines > 0 && 2 * held >= lines {
+                            kk.confirmed = kk.confirmed.saturating_add(1).min(8);
+                        } else if kk.confirmed == 0 {
+                            eg.dying.push(k);
+                        } else {
+                            kk.confirmed -= 1;
+                            kk.learn_toward(&target, sp.out_learn, rng);
+                        }
+                    }
                 }
             }
             // a predictor learns against its target a frame later, not against its destination
@@ -1020,6 +1065,10 @@ impl RuntimeNetwork {
                 if sp.expect {
                     k.expecting(Some(src));
                 }
+                // (the three-factor rule) a newborn starts with two chances
+                if sp.elig > 0 {
+                    k.confirmed = 2;
+                }
                 if eg.new_code {
                     let d = nodes[eg.dst].current_mut();
                     apply(&mut d.as_words_mut()[dw..dw + 1], out_mask.as_words(), eg.op);
@@ -1107,6 +1156,10 @@ impl RuntimeNetwork {
             if sp.expect {
                 k.expecting(Some(src));
             }
+            // (the three-factor rule) a newborn starts with two chances
+            if sp.elig > 0 {
+                k.confirmed = 2;
+            }
             if eg.new_code {
                 // a new code fires as it is born (the input that recruited it is here now)
                 let d = nodes[eg.dst].current_mut();
@@ -1187,7 +1240,7 @@ impl RuntimeNetwork {
                     spawned: true,
                     silent: true,
                     scratch: BitVector::new(len.max(1) * 64, Some(0)),
-                    share: 0, grip: None, detached: false,
+                    share: 0, grip: None, detached: false, dying: Vec::new(),
                     teach_fired: Vec::new(),
                     teach_src: None,
                     targets,
@@ -1234,7 +1287,7 @@ impl RuntimeNetwork {
                 spawned: true,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
-                share: 0, grip: None, detached: false,
+                share: 0, grip: None, detached: false, dying: Vec::new(),
                 teach_fired: Vec::new(),
                 teach_src: None,
                 targets: Vec::new(),

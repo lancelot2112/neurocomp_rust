@@ -1,0 +1,10 @@
+copy (goal 100; lookup a perfect table, blind the floor), mean of 24 worlds; body 1, one-word codes 8
+   N trials |  lookup  blind | networks
+   2    400 |      83    -40 | rd-111.txt 68, rd-none.txt -32
+   2   3200 |     124     -3 | rd-111.txt 90, rd-none.txt 0
+   8    400 |     208     -6 | rd-111.txt 177, rd-none.txt -15
+   8   3200 |     218     -6 | rd-111.txt 181, rd-none.txt 3
+  32    400 |     205     -4 | rd-111.txt 192, rd-none.txt -3
+  32   3200 |     241      0 | rd-111.txt 198, rd-none.txt 0
+ 128    400 |     142      0 | rd-111.txt 147, rd-none.txt -2
+ 128   3200 |     237      0 | rd-111.txt 197, rd-none.txt 0

@@ -602,3 +602,29 @@ worlds: a holder of the last cue felt 1022, a two-task selector (babbling in sti
 network acting only while the cue is felt 699 (inaction earns the still third, so three, the last
 rung, has no goal).
 
+## How run 33's selection passed cued (a deep dive, `runs/checks/selection-dive/`)
+
+The elite that passed cued at 566 (14 populations; on 24 fresh worlds select 667, respond 506,
+babble 1024, voice in conditioning 96, clicks in reading 1) does not read the task cue or hold a
+task, and it is not the codes' look: with lights drawn like glyphs (`ISL_MIXED_CODES`) it scores 692,
+on uncued 629, on short 620. Traced on uncued (`ISL_TRACE`, which now plays a mixed lifetime on a
+selection rung, and logs each step's voice and the block's task): it **clicks when the eye was dark,
+then lit, then lit with the same code** (106 of 120 such steps in conditioning blocks, 2 of 1458
+others), a pattern a light makes coming out of darkness and a glyph stream, never dark, does not.
+Its voice follows continuous seeing (45% of steps after four lit ones; about 10% after a dark one in
+conditioning blocks, the small voice cost it pays). Lesions: two C2-to-voice XORs (0.48, 0.47), an
+eye-to-hand XOR (0.16), an eye-to-hand clear (0.11), an eye-to-hand set wire and a hand-to-C2 clear
+wire (0.06 each). Selection by the stimulus's timing: the rungs allow it because the two tasks show
+the world differently.
+
+The best at 860 (73 populations, select about 520, below the goal) found something else: a period-2
+oscillator (#613, C9 to C9 NOR wire, a loss of 2.3 goals when removed) shares the steps between the
+hand and the voice, both reflexes to a lit eye a step ago: it never clicks the step after C9 was high
+(0 of 919), clicks on the other phase, and talks mostly on the high one; it clicks in reading blocks
+too (about 330 to 460 per 1024 steps).
+
+For run 34's ladder: held, two tasks, can still be passed by stimulus timing; three cannot, because
+still blocks show the same glyph stream as reading blocks and only the cue tells babble from quiet.
+A selection test proper wants every task's blocks to show the same stimuli, the cue alone saying
+what to do.
+

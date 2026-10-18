@@ -1,0 +1,20 @@
+resumed selection from C:/Users/lfaiv/AppData/Local/Temp/claude/C--Software-source-neurocomp/50a1926e-3ccc-5eab-a49d-7e2027a22782/scratchpad/seldive/pass0.txt: 1 genomes, generation 0, stage 0 (cued)
+islands: selection of 32, elite 8, 24 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 0 (2 plasmids an island), thrift true, reads counted true, channels held in place true, carrying cost 4 a token, plasmids of at most 6 populations (0: any), exclusion true, op choice true, ration 256 a step (0: no energy), food 8192 for 1024 points scored, fresh training worlds true, epigenetic marks true, exploration true, expecting zeros true, accidents true, port gates true, shadow explorers true, pauses drawn true, shadow hints true, edges on hints true, outputs read true, hint bands true, self writes true, loops closed true, heat inputs true, goals judged on the elite true, partial credit true, partial credit on remember true, partial credit on select true, fair prediction streams true, order cycles of varied shape true, echo and copy per token shown true, win-stay against the other light true, the clock drawn true, held-out worlds fresh at every check true, the maze cue mirrored per lifetime true, the shapes' lights in one word true, food from the world's strokes true, passed rungs kept true, inhibit inputs true, overlap genes true, size classes true, wiring cost 1 a bit of tag distance, populations compete for their destination true, pruning true, branches true, a fixed body true, the three-factor output rule true, triggers true, motions true, one-word codes of 8 lines
+selection climbs: cued > uncued > short
+lesion map on 24 fresh worlds: each island's best genome scored on its subtasks, then with each population taken out; a loss is the subtask's mean less the lesioned mean, as a share of that rung's goal
+  selection (best genome, 14 populations); subtasks and their means: selection cued:select 667
+    #325    hand->C2 clear wire                  0.06   top selection cued:select (100% of its loss)
+    #368    C6->C2 clear                         0.00   (matters little)
+    #369    eye->hand xor                        0.16   top selection cued:select (100% of its loss)
+    #326    C2->voice xor                        0.48   top selection cued:select (100% of its loss)
+    #292    eye->hand xor                       -0.10   top selection cued:select (100% of its loss)
+    #320    eye->hand clear                      0.11   top selection cued:select (100% of its loss)
+    #319    C6->A clear                         -0.01   (matters little)
+    #370    eye->hand set wire                   0.00   (matters little)
+    #371    C6->C2 clear                         0.00   (matters little)
+    #372    C2->C6 clear wire                    0.01   (matters little)
+    #373    C6->C2 clear                        -0.00   (matters little)
+    #374    C2->voice xor                        0.47   top selection cued:select (100% of its loss)
+    #375    C6->A clear                         -0.00   (matters little)
+    #376    eye->hand set wire                   0.06   top selection cued:select (100% of its loss)
+  selection: 7 of 14 populations matter (a loss of 5% of a goal or more in all); their mean share on their top subtask 1.00 (spread evenly over 1 subtasks it would be 1.00); populations by top subtask: selection cued:select 7

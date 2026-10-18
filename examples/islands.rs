@@ -93,6 +93,16 @@
 //! the trials and does not pay), vary (each trial's delay drawn from 1 to 8: the memory held until
 //! the window opens, not timed), two (the other light shows on no-cue trials: which light came).
 //!
+//! `ISL_RECALL_FAIR=1` (with `ISL_RECALL_LONG`): the long ladder's last rungs made fair. The
+//! audit found distract passed by clicking 8 steps after any light (about 878 against 150: the
+//! no-cue trials showed nothing at the cue's time) and vary by delay lines from the light (one
+//! about 384, two about 768). Now: two, then distract with two lights (the flash is the light the
+//! trial did not show first), then vary with two lights and a tone as the window opens, where a
+//! click before the window spends the trial. Policies in the world's test, 8 worlds: distract
+//! held 1024, clicking 8 after any light about 0 (was 380-540); vary held to the tone 1024, two
+//! delay lines 290-470 (was 670-810; the earlier line spends the trial), so a goal on vary must
+//! be over about 500.
+//!
 //! `ISL_SHADOW_HINT=1` (with `ISL_SHADOW`): shadows as indicators. A shadow starts only by
 //! accident (each population's own rate), not when its population is stuck; what it predicts
 //! well over a generation is not built but noted on the population as a hint (shared information
@@ -519,6 +529,7 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "vary" => stage.lesson.vary_delay = v.parse().expect("vary"),
                 "distract" => stage.lesson.distract = v == "1",
                 "two" => stage.lesson.two_lights = v == "1",
+                "go" => stage.lesson.go_tone = v == "1",
                 "period" => stage.lesson.period = v.parse().expect("period"),
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
                 "blur" => stage.lesson.blur = v.parse().expect("blur"),
@@ -598,6 +609,23 @@ const RECALL_LONG_LADDER: &str = "respond probes=respond swaps=0 goal=respond@10
     distract probes=respond+remember delay=8 distract=1 goal=remember@150; \
     vary probes=respond+remember vary=8 goal=remember@150; \
     two probes=respond+remember delay=8 two=1";
+
+/// Recall's long ladder with fair rungs (`ISL_RECALL_FAIR=1`): after lag16, two lights (which one
+/// came), then a distractor of the other light during the delay (a latch on the latest light is
+/// wrong; with the other light on no-cue trials, clicking a fixed time after any light scores 0),
+/// then a delay drawn per trial with a tone as the window opens (which light came held until the
+/// tone; a delay line from the light hits only when the drawn delay matches it).
+const RECALL_FAIR_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
+    lag1 probes=respond+remember delay=1 goal=remember@150; \
+    lag2 probes=respond+remember delay=2 goal=remember@150; \
+    lag3 probes=respond+remember delay=3 goal=remember@150; \
+    lag4 probes=respond+remember delay=4 goal=remember@150; \
+    lag5 probes=respond+remember delay=5 goal=remember@150; \
+    lag8 probes=respond+remember delay=8 goal=remember@150; \
+    lag16 probes=respond+remember delay=16 goal=remember@150; \
+    two probes=respond+remember delay=8 two=1 goal=remember@150; \
+    distract probes=respond+remember delay=8 two=1 distract=1 goal=remember@150; \
+    vary probes=respond+remember vary=8 two=1 go=1";
 
 /// Prediction's ladder: a stream of tokens in a cycle, one in eight replaced by another; the
 /// program is scored on clicking after a token that broke the cycle (surprise), with no code to
@@ -787,7 +815,7 @@ fn main() {
             match isl.name.as_str() {
                 "reading" => isl.stages = ladder(READING_LADDER),
                 "switching" => isl.stages = ladder(SWITCHING_LADDER),
-                "recall" => isl.stages = ladder(if env("ISL_RECALL_LONG", 0u8) == 1 { RECALL_LONG_LADDER } else { RECALL_LADDER }),
+                "recall" => isl.stages = ladder(if env("ISL_RECALL_LONG", 0u8) == 1 && env("ISL_RECALL_FAIR", 0u8) == 1 { RECALL_FAIR_LADDER } else if env("ISL_RECALL_LONG", 0u8) == 1 { RECALL_LONG_LADDER } else { RECALL_LADDER }),
                 "prediction" => isl.stages = ladder(PREDICTION_LADDER),
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 "maze" => isl.stages = ladder(MAZE_LADDER),

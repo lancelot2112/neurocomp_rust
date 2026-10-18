@@ -298,3 +298,45 @@ its first line and the one with its last; it fires when the first is greater (8)
 the second: a count against a set point another population writes. Integer triggers (4 to 9) keep
 their mask where it is (it names the lane): a firing or held-down kernel moves no mask line, and a
 learned value learns by its number. Unit-tested; not yet tried on a task.
+
+## Auditing the rungs (run 31's ladders, run 32's settings)
+
+Do the rungs test what their names say? Two checks: trivial networks scored on every rung, and a
+reading of each probe's code.
+
+**Cheater networks.** Ten genomes were scored on all 78 rungs of the 8 ladders, on 48 fresh worlds
+each (`ISL_LESION=48`, each rung its own checkpoint). The ten: empty, senses wired to the act, ear to
+voice and eye to hand, tonic kernels on the act or the hand (several rates), the self channel wired
+to the act, and all ones on the act. Every goal probe is about 0 (within 30) except two rungs built
+to be passed that way: reading's babble (a tonic voice 821 against 768) and echo2q (an ear-to-voice
+wire 515 against 150; from echo2m8 on, the wire scores about 0). The table and the genomes are in
+the session's audit folder, not in the repo.
+
+**The code read** found rungs that trivial networks miss but simple timers pass:
+
+- **distract** (delay 8, the other light flashed during the delay on half the trials): no-cue trials
+  showed nothing at the cue's time, so clicking 8 steps after any light scores 380 to 540 (8 worlds),
+  against a goal of 150.
+- **vary** (each trial's delay drawn from 1 to 8): the window always sits a fixed time after the
+  light, and clicks before it cost nothing, so two delay lines from the light score 670 to 810, one
+  290 to 470. It did not test "held until the window, not timed".
+- Still open (not changed yet): win-stay with no swaps can be met by a clicker that ignores which
+  light it sees; the self channel's clock word can time a reversal or a block switch; the held-out
+  set is the same 48 worlds at every recheck; under a fixed body the maze's turn rungs can be built
+  in.
+
+**The fix** (`ISL_RECALL_FAIR=1`, in run 32): after lag16 the ladder is two (the other light on
+no-cue trials), then distract with two lights, its flash being the light the trial did not show
+first, then vary with two lights, a tone as the window opens, and a click before the window
+spending the trial. The world's test (8 worlds, policies that read the senses):
+
+| rung | holds which light came | timer or latch on any light | delay lines from light A |
+|---|---|---|---|
+| distract (old) | 1024 | 380 to 540 (clicks 8 after any light) | |
+| distract (fair) | 1024 | -37 (8 after any), 0 (latch), 60 (the latest light) | |
+| vary (old) | about 1024 (clicks until 12 after) | | 670 to 810 (two), 290 to 470 (one) |
+| vary (fair) | 1024 (held to the tone) | 0 (on the tone), 0 (any light held) | 290 to 470 (two: the earlier spends the trial) |
+
+A delay line can still be right on the trials whose delay it matches, so a goal on fair vary must be
+over about 500; it is the ladder's last rung, with no goal.
+

@@ -278,12 +278,18 @@ pub struct World {
     /// delayed conditioning: each trial's delay drawn from 1 to `vary_delay` (0: always `delay`);
     /// with `distract`, on half the trials the other light flashes once during the delay (it does
     /// not pay, and on a trial with no cue it is all that shows); with `two_lights`, a trial with no
-    /// cue shows the other light where a cue trial shows the first. A delay over 5 starts the
-    /// window at the delay's step and lengthens the trial to fit (up to 5: the window at 5-7, as
-    /// always).
+    /// cue shows the other light where a cue trial shows the first, and a distractor is the light
+    /// that trial did not show first (so remembering the latest light is wrong on every trial
+    /// with one). A delay over 5 starts the window at the delay's step and lengthens the trial to
+    /// fit (up to 5: the window at 5-7, as always). With `go_tone`, a tone sounds as the window
+    /// opens on every trial: a delay drawn each trial cannot be timed from the light, so the
+    /// network holds which light came until the tone asks for it; a click before the window spends
+    /// the trial (it cannot pay, and its window is not marked), so clicking at fixed times after
+    /// the light is right only on the trials whose delay it matches (one delay in about three).
     pub vary_delay: usize,
     pub distract: bool,
     pub two_lights: bool,
+    pub go_tone: bool,
     trial_delay: usize,
     distract_at: Option<usize>,
     scene: Scene,
@@ -566,6 +572,7 @@ impl World {
             vary_delay: 0,
             distract: false,
             two_lights: false,
+            go_tone: false,
             trial_delay: 3,
             distract_at: None,
             scene: Scene::Idle,
@@ -874,9 +881,17 @@ impl World {
                             }
                         }
                         if self.distract_at == Some(t) {
-                            put(&mut senses, EYE, &self.lights[1].clone());
+                            let other = if self.two_lights && !cue { 0 } else { 1 };
+                            put(&mut senses, EYE, &self.lights[other].clone());
                         }
-                        ev.window = (ws..=ws + 2).contains(&t);
+                        // (`go_tone`) a click before the window spends the trial
+                        if self.go_tone && click && t < ws {
+                            stroked = true;
+                        }
+                        if self.go_tone && t == ws {
+                            put(&mut senses, EAR, &self.tones[0].clone());
+                        }
+                        ev.window = (ws..=ws + 2).contains(&t) && !(self.go_tone && stroked);
                         if cue && click && ev.window && !stroked {
                             self.stroke_next = true;
                             stroked = true;

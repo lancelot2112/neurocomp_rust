@@ -964,6 +964,61 @@ mod tests {
         let that = run(&two, 9, &|s, _| (8..=9).contains(&s), true);
         assert!(which > 600, "{which}");
         assert!(that.abs() < 120, "{that}");
+        // the fixed rungs (two lights, a distractor of the other light, a tone at the window):
+        // timing from any light scores about 0; holding which light came first scores
+        let ear_run = |set: &dyn Fn(&mut World), seed: u64, policy: &dyn Fn(usize, bool, usize) -> bool| -> i32 {
+            // policy(steps since the trial's first light, was it A, steps since the tone)
+            let mut d = World::new(seed, 4);
+            set(&mut d);
+            d.conditioning(Conditioning::Delayed, 200);
+            let a = d.lights[0].clone();
+            let tone = d.tones[0].clone();
+            let mut prev = BitVector::new(SENSE_BITS, Some(0));
+            let (mut since, mut first_a, mut tone_since, mut any_since) = (999usize, false, 999usize, 999usize);
+            let mut trial = usize::MAX;
+            while !d.done() {
+                if let Scene::Conditioning(_, left, t, _, _) = d.scene {
+                    if left != trial || t == 0 {
+                        trial = left;
+                        since = 999;
+                    }
+                }
+                let eye = channel(&prev, EYE);
+                let lit = eye.count_ones() > 0;
+                if lit && since >= 999 {
+                    since = 1;
+                    first_a = eye.as_words() == a.as_words();
+                } else {
+                    since = since.saturating_add(1);
+                }
+                any_since = if lit { 1 } else { any_since.saturating_add(1) };
+                tone_since = if channel(&prev, EAR).as_words() == tone.as_words() { 1 } else { tone_since.saturating_add(1) };
+                let _ = any_since;
+                let act = d.act(None, if policy(since, first_a, tone_since) { Some(CLICK) } else { None });
+                prev = d.step(&act);
+            }
+            probes(&[], 50, &d.events, &[], &[], &[], &[])[4]
+        };
+        let fair_distract = |w: &mut World| { w.delay = 8; w.distract = true; w.two_lights = true; };
+        let held = ear_run(&fair_distract, 7, &|s, a, _| a && (8..=9).contains(&s));
+        assert!(held > 600, "{held}");
+        // a clicker 8 steps after any light (the distractor too) and a latch on any light
+        let any8 = run(&fair_distract, 7, &|s, _| (8..=9).contains(&s), true);
+        let latch = run(&fair_distract, 7, &|s, _| s <= 10, true);
+        let latest_a = run(&fair_distract, 7, &|s, a| a && s <= 10, true);
+        assert!(any8.abs() < 120 && latch.abs() < 120, "{any8} {latch}");
+        assert!(latest_a < held - 300, "{latest_a} {held}");
+        // a delay drawn each trial with a tone at the window: holding A until the tone scores;
+        // delay lines from the light, a latch on any light, and clicking on the tone do not
+        let fair_vary = |w: &mut World| { w.vary_delay = 8; w.go_tone = true; w.two_lights = true; };
+        let hold = ear_run(&fair_vary, 5, &|s, a, g| a && s < 999 && g <= 2);
+        assert!(hold > 600, "{hold}");
+        let lines = ear_run(&fair_vary, 5, &|s, a, _| a && (s == 3 || s == 6));
+        let on_tone = ear_run(&fair_vary, 5, &|_, _, g| g <= 2);
+        let any_hold = ear_run(&fair_vary, 5, &|s, _, g| s < 999 && g <= 2);
+        assert!(lines < 450 && lines < hold - 400, "{lines} {hold}");
+        eprintln!("fair rungs: distract held {held}, any light at 8 {any8}, latch {latch}, latest A {latest_a}; vary held to the tone {hold}, delay lines {lines}, on the tone {on_tone}, any light held {any_hold}");
+        assert!(on_tone.abs() < 120 && any_hold.abs() < 120, "{on_tone} {any_hold}");
         // up to a delay of 5 the window is where it always was (steps 5-7)
         let mut w = World::new(1, 4);
         w.delay = 3;

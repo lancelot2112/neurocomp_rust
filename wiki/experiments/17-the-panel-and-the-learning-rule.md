@@ -448,3 +448,18 @@ anatomy; the copy rungs, with glyphs drawn each lifetime, are learned), and babb
 varied voice, which noise gives. Food from strokes means reading and prediction lifetimes live on
 the ration alone: watch their network sizes in run 33.
 
+**Why nothing passes cued** (selection's first rung, select@600; `ISL_SELECT_PARTS=24` on run 32's
+checkpoint at about 350): all eight of the elite babble in the reading blocks and never click,
+respond 0, babble 981 to 1024, the voice in conditioning 32 to 47, clicks 0: select 457 to 464. To
+reach 600 a genome must click at the lights too, and a click reflex fires at the glyphs in the
+reading blocks as well: select = (1024 + 1024) / 2 - 1024 = about 0, far below babbling alone.
+Only a reflex gated by the task cue scores (1024), two changes at once: a valley. **Partial credit
+on select** (`ISL_PARTIAL_SELECT=1`, in run 33): selection uses select~, the costs at a quarter
+(test `graded_select_climbs_from_babbling_to_clicking_before_the_task_gates_it`, 12 worlds):
+
+| policy | select | select~ |
+|---|---|---|
+| babbler (reading blocks only, never clicks) | 512 | 512 |
+| reflex (also clicks at anything the eye shows) | 3 | 769 |
+| selector (clicks only in conditioning blocks) | 1024 | 1024 |
+

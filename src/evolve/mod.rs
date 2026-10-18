@@ -729,6 +729,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
     row[13] = observe::select(&mix);
+    row[19] = observe::select_graded(&mix);
     row[14] = observe::feel(&fel);
     row[17] = observe::feel_graded(&fel);
     for (p, x) in row.iter_mut().enumerate() {
@@ -759,7 +760,19 @@ pub fn partial() -> bool {
 
 /// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
 pub fn graded(p: usize) -> usize {
-    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, 4 if partial_remember() => 18, _ => p } } else { p }
+    if partial() { match p { 7 => 15, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, _ => p } } else { p }
+}
+
+/// Partial credit on select too (`set_partial_select`, with `set_partial`): selection uses
+/// `observe::select_graded`, the costs at a quarter. Off by default.
+static PARTIAL_SELECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_partial_select(on: bool) {
+    PARTIAL_SELECT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial_select() -> bool {
+    PARTIAL_SELECT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Partial credit on remember too (`set_partial_remember`, with `set_partial`): selection uses

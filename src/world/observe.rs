@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~"];
 /// How many probes there are.
-pub const NPROBES: usize = 19;
+pub const NPROBES: usize = 20;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -194,7 +194,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -505,17 +505,34 @@ pub fn feel_graded(events: &[Event]) -> i32 {
 /// one that does both all the time scores far below 0; one that does only one task about half.
 /// (Set by `evolve::probe_scores_in` from a mixed lifetime: `probes` leaves it 0.)
 pub fn select(events: &[Event]) -> i32 {
+    let (respond, babbled, voice, clicks) = select_parts(events);
+    (respond + babbled) / 2 - voice - clicks
+}
+
+/// Task selection with partial credit (`evolve::set_partial_select`): the costs, the voice in
+/// conditioning and clicks in reading, counted at a quarter. Clicking at whatever the eye shows
+/// then scores above babbling alone ((1024 + 1024) / 2 - 1024 / 4 = 768 against about 500), where
+/// `select` gives it 0, so a gradient leads to responding before it is gated by the task.
+pub fn select_graded(events: &[Event]) -> i32 {
+    let (respond, babbled, voice, clicks) = select_parts(events);
+    (respond + babbled) / 2 - (voice + clicks) / 4
+}
+
+/// The parts of `select`: responding in the conditioning blocks, babbling in the reading blocks,
+/// and the costs, the voice in conditioning and clicks in reading (each per 1024 steps); all 0 if
+/// a lifetime lacks either kind of block.
+pub fn select_parts(events: &[Event]) -> (i32, i32, i32, i32) {
     let cond: Vec<Event> = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_))).cloned().collect();
     let seq: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
     if cond.is_empty() || seq.is_empty() {
-        return 0;
+        return (0, 0, 0, 0);
     }
     let tr = trials(&cond, (3, 5), (7, 9));
     let all = |_: &Trial| true;
     let respond = rate(&tr, all, |x| x.3) - rate(&tr, all, |x| x.4);
     let voice = (cond.iter().filter(|e| e.said.is_some()).count() * 1024 / cond.len()) as i32;
     let clicks = (seq.iter().filter(|e| e.moved == Some(CLICK)).count() * 1024 / seq.len()) as i32;
-    (respond + babble(events)) / 2 - voice - clicks
+    (respond, babble(events), voice, clicks)
 }
 
 /// Repeating what paid: over a maze lifetime's choices in order, how often the next turn is the
@@ -1305,6 +1322,45 @@ mod tests {
         let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
         let (selector, both, silent) = (mean(0), mean(1), mean(2));
         assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
+    }
+
+    #[test]
+    fn graded_select_climbs_from_babbling_to_clicking_before_the_task_gates_it() {
+        // a babbler says a token in reading blocks only (cued) and never clicks; a reflex also
+        // clicks whenever the eye is lit, in either block; a selector clicks only in conditioning
+        let run = |kind: u8, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            for b in 0..4 {
+                w.task_cue = Some(b % 2);
+                if b % 2 == 0 {
+                    w.reversal_period = 40;
+                    w.conditioning(Conditioning::Reversal, 40);
+                } else {
+                    let toks: Vec<usize> = (0..400).map(|_| rand::Rng::gen_range(&mut rng, 0..2)).collect();
+                    w.sequence_marked(&toks, &vec![false; 400]);
+                }
+                while !w.done() {
+                    let seen = channel(&senses, EYE).count_ones() > 0;
+                    let reading = w.task_cue == Some(1);
+                    let token = rand::Rng::gen_range(&mut rng, 0..2);
+                    let say = if reading { Some(token) } else { None };
+                    let hand = match kind { 1 => seen.then_some(CLICK), 2 => (seen && !reading).then_some(CLICK), _ => None };
+                    let a = w.act(say, hand);
+                    senses = w.step(&a);
+                }
+            }
+            (select(&w.events), select_graded(&w.events))
+        };
+        let mean = |kind: u8| {
+            let v: Vec<(i32, i32)> = (0..12u64).map(|s| run(kind, 900 + s)).collect();
+            (v.iter().map(|x| x.0).sum::<i32>() / 12, v.iter().map(|x| x.1).sum::<i32>() / 12)
+        };
+        let (bab, refl, sel) = (mean(0), mean(1), mean(2));
+        eprintln!("select (graded): babbler {bab:?}, reflex {refl:?}, selector {sel:?}");
+        assert!(refl.0 < bab.0 && refl.1 > bab.1 && sel.1 > refl.1 && sel.0 > 600, "{bab:?} {refl:?} {sel:?}");
     }
 
     #[test]

@@ -735,7 +735,9 @@ pub fn probe_scores<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: 
 /// `probe_scores` in a world set by a lesson.
 pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, seed: u64, gap: usize, wanted: &[usize], lesson: Lesson) -> (observe::ProbeRow, u64) {
     let period = (trials / (lesson.swaps + 1)).max(1);
-    let want = |ps: &[usize]| ps.iter().any(|p| wanted.contains(p));
+    // (the novelty island) its behaviour reads every kind of lifetime
+    let beh = wanted.iter().any(|&p| (21..=28).contains(&p));
+    let want = |ps: &[usize]| beh || ps.iter().any(|p| wanted.contains(p));
     let (rev, w1) = if want(&[0, 1, 2, 3, 5]) { live_lesson(g, Task::Reversal { trials, period, worst_phase: false }, physics, seed, gap, lesson) } else { (vec![], 0) };
     let (del, w2) = if want(&[4]) { live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap, lesson) } else { (vec![], 0) };
     let (seq, w3) = if want(&[6, 7, 8, 15]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
@@ -751,6 +753,10 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     row[19] = observe::select_graded(&mix);
     // (selection's step rung) responding in a mixed lifetime's conditioning blocks, alone
     row[20] = observe::select_parts(&mix).0;
+    if beh {
+        let b = observe::behaviour(&[&rev, &del, &seq, &pat, &maz, &scr, &mix, &fel]);
+        row[21..29].copy_from_slice(&b);
+    }
     row[14] = observe::feel(&fel);
     row[17] = observe::feel_graded(&fel);
     for (p, x) in row.iter_mut().enumerate() {
@@ -1064,6 +1070,24 @@ pub fn set_generalist_room(n: usize) {
 
 pub fn generalist_room() -> usize {
     GENERALIST_ROOM.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The novelty island (`ISL_NOVELTY` in examples/islands.rs): an island named "novelty" is selected
+/// on the novelty of its behaviour (`observe::behaviour`: what it does in each kind of lifetime),
+/// the mean distance to its 8 nearest among its population and an archive of past behaviours. A
+/// novel genome whose mean on some probe (babble aside) reaches `NOVELTY_USEFUL` and whose behaviour
+/// is at least `NOVELTY_APART` from every species so far founds a species: its founder is kept every
+/// generation and the island grows by four genomes, up to `set_novelty_max`.
+pub const NOVELTY_USEFUL: i32 = 200;
+pub const NOVELTY_APART: i64 = 512;
+static NOVELTY_MAX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(128);
+
+pub fn set_novelty_max(n: usize) {
+    NOVELTY_MAX.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn novelty_max() -> usize {
+    NOVELTY_MAX.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The voice one-word everywhere (`set_one_word_voice`, with `set_one_word`): its codes and the
@@ -1490,6 +1514,11 @@ pub struct Island {
 }
 
 impl Island {
+    /// The novelty island (`set_novelty`): selected on how new its behaviour is, not on a goal.
+    pub fn is_novelty(&self) -> bool {
+        self.name == "novelty"
+    }
+
     /// An island with one stage: these probes in the plain world, forever.
     pub fn plain(name: &str, probes: Vec<usize>) -> Self {
         Self { name: name.into(), stages: vec![Stage { name: "all".into(), probes, lesson: Lesson::default(), goal: vec![], hold: 0 }], frontier: false }
@@ -1540,6 +1569,9 @@ pub struct IslandGeneration<G> {
     /// (from island, to island, the rung passed on the ladder it concerns, or `usize::MAX` for the
     /// periodic move into the generalist, how many)
     pub migrated: Vec<(usize, usize, usize, usize)>,
+    /// (`set_novelty`) species founded this generation (island, probe, score) and how many there are
+    pub new_species: Vec<(usize, usize, i32)>,
+    pub species: usize,
 }
 
 /// Islands: each population evolves by lexicase on its own probes (`evolve_lexicase`'s breeding),
@@ -1600,11 +1632,17 @@ pub fn evolve_islands<G: Evolvable>(
         _ => Vec::new(),
     }).collect();
     let mut lmet: Vec<Vec<usize>> = lad.iter().map(|l| vec![0; l.len()]).collect();
+    // (`set_novelty`) the novelty island's archive of behaviours and its species (a founder genome,
+    // its behaviour, the probe it was useful on)
+    let mut archive: Vec<[i64; 8]> = Vec::new();
+    let mut species: Vec<(G, [i64; 8], usize)> = Vec::new();
     for generation in first..generations {
         let lad_now = lad.clone();
         let mut ladder_means: Vec<Vec<observe::ProbeRow>> = lad.iter().map(|l| vec![[0i32; observe::NPROBES]; l.len()]).collect();
         let mut ladder_checks = Vec::new();
         let mut ladder_met = lmet.clone();
+        // (`set_novelty`) species founded this generation: (island, the probe, its score)
+        let mut new_species: Vec<(usize, usize, i32)> = Vec::new();
         // (`set_migrate`) the generalist's passes on its own ladders this generation
         let mut passes: Vec<(usize, usize, usize)> = Vec::new();
         // (`fresh`: the training worlds are new every generation, the same for every genome in
@@ -1637,7 +1675,7 @@ pub fn evolve_islands<G: Evolvable>(
                 let mut works = vec![Vec::new(); genomes.len()];
                 let mut found: Vec<Vec<Note>> = vec![Vec::new(); genomes.len()];
                 for (j, other) in islands.iter().enumerate() {
-                    if j == i || other.frontier {
+                    if j == i || other.frontier || other.is_novelty() {
                         continue;
                     }
                     let c = lad[i][j];
@@ -1683,7 +1721,7 @@ pub fn evolve_islands<G: Evolvable>(
                 let mut works = vec![vec![0u64; seeds.len()]; genomes.len()];
                 let mut found: Vec<Vec<Note>> = vec![Vec::new(); genomes.len()];
                 for (j, other) in islands.iter().enumerate() {
-                    if j == i || other.frontier {
+                    if j == i || other.frontier || other.is_novelty() {
                         continue;
                     }
                     let os = &other.stages[stage[j]];
@@ -1707,7 +1745,7 @@ pub fn evolve_islands<G: Evolvable>(
                 // what the specialists already do as well as on what none does yet
                 if frontier_passed() {
                     for (j, other) in islands.iter().enumerate() {
-                        if j == i || other.frontier || stage[j] == 0 {
+                        if j == i || other.frontier || other.is_novelty() || stage[j] == 0 {
                             continue;
                         }
                         let ps = &other.stages[stage[j] - 1];
@@ -1765,6 +1803,59 @@ pub fn evolve_islands<G: Evolvable>(
                     }
                 }
                 lexicase_breed(&both, &cases, thrift, on[i], pop, elite, &mut rng)
+            } else if isl.is_novelty() {
+                // (`set_novelty`) each genome's behaviour, its mean over its lifetimes; its novelty,
+                // the mean distance (L1) to its 8 nearest among the others and the archive, written
+                // as probe 29 on its rows, the one case it is selected on (with thrift)
+                let behs: Vec<[i64; 8]> = scored.iter().map(|s| {
+                    let mut b = [0i64; 8];
+                    for r in &s.probes {
+                        for d in 0..8 {
+                            b[d] += r[21 + d] as i64;
+                        }
+                    }
+                    let n = s.probes.len().max(1) as i64;
+                    b.map(|x| x / n)
+                }).collect();
+                let dist = |a: &[i64; 8], b: &[i64; 8]| a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum::<i64>();
+                let nov: Vec<i64> = (0..behs.len()).map(|g| {
+                    let mut d: Vec<i64> = behs.iter().enumerate().filter(|(h, _)| *h != g).map(|(_, b)| dist(&behs[g], b)).chain(archive.iter().map(|b| dist(&behs[g], b))).collect();
+                    d.sort_unstable();
+                    let k = d.len().min(8).max(1);
+                    d.iter().take(k).sum::<i64>() / k as i64
+                }).collect();
+                for (s, &v) in scored.iter_mut().zip(&nov) {
+                    for r in s.probes.iter_mut() {
+                        r[29] = v.min(i32::MAX as i64) as i32;
+                    }
+                }
+                // the archive: the two most novel behaviours each generation
+                let mut by: Vec<usize> = (0..nov.len()).collect();
+                by.sort_by_key(|&g| std::cmp::Reverse(nov[g]));
+                for &g in by.iter().take(2) {
+                    if archive.len() < 4096 {
+                        archive.push(behs[g]);
+                    }
+                }
+                // species: a novel genome useful on some probe (its mean at least
+                // `NOVELTY_USEFUL`, babble aside) and unlike every species so far founds one
+                for &g in by.iter().take(4) {
+                    let m = probe_means(&scored[g].probes);
+                    let useful = ALL_PROBES.iter().copied().filter(|&p| p != 8).max_by_key(|&p| m[p]);
+                    if let Some(p) = useful.filter(|&p| m[p] >= NOVELTY_USEFUL) {
+                        if species.iter().all(|s| dist(&s.1, &behs[g]) >= NOVELTY_APART) && species.len() < 64 {
+                            species.push((scored[g].genome.clone(), behs[g], p));
+                            new_species.push((i, p, m[p]));
+                        }
+                    }
+                }
+                let size = (pop + 4 * species.len()).min(novelty_max().max(pop));
+                let (order, mut children) = lexicase_breed(&scored, &[29], thrift, on[i], size, elite, &mut rng);
+                // each species' founder lives on beside the children
+                for s in &species {
+                    children.push(s.0.clone());
+                }
+                (order, children)
             } else {
                 lexicase_breed(&scored, &wanted, thrift, on[i], pop, elite, &mut rng)
             };
@@ -1890,7 +1981,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks, migrated });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks, migrated, new_species, species: species.len() });
         last = ranked;
         pops = next;
     }

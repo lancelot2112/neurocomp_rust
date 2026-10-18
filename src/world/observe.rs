@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty"];
 /// How many probes there are.
-pub const NPROBES: usize = 21;
+pub const NPROBES: usize = 30;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -194,7 +194,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -507,6 +507,53 @@ pub fn feel_graded(events: &[Event]) -> i32 {
 pub fn select(events: &[Event]) -> i32 {
     let (respond, babbled, voice, clicks) = select_parts(events);
     (respond + babbled) / 2 - voice - clicks
+}
+
+/// What a network does, for the novelty island (`evolve::set_novelty`; probes 21 to 28, never a
+/// goal): over every event of the lifetimes given, in parts per 1024, its click rate in conditioning
+/// scenes and in token streams, its voice rate in token streams and in conditioning, its click rate
+/// in the three steps after a stroke, its share of steps with another move (a turn, up or down), how
+/// many of eight tokens it said, and its click rate in the three steps after an odd token. Acts in
+/// their context, read from the log alone.
+pub fn behaviour(events: &[&[Event]]) -> [i32; 8] {
+    let all: Vec<&Event> = events.iter().flat_map(|e| e.iter()).collect();
+    let rate = |pick: &dyn Fn(&Event) -> bool, act: &dyn Fn(&Event) -> bool| -> i32 {
+        let n = all.iter().filter(|e| pick(e)).count();
+        if n == 0 { 0 } else { (all.iter().filter(|e| pick(e) && act(e)).count() * 1024 / n) as i32 }
+    };
+    let cond = |e: &Event| matches!(e.scene, SceneKind::Conditioning(_));
+    let seq = |e: &Event| e.scene == SceneKind::Sequence;
+    let click = |e: &Event| e.moved == Some(CLICK);
+    let voice = |e: &Event| e.said.is_some() || !e.sentence.is_empty();
+    let after = |flag: &dyn Fn(&Event) -> bool| -> i32 {
+        let (mut n, mut c) = (0usize, 0usize);
+        for (t, e) in all.iter().enumerate() {
+            if (t.saturating_sub(3)..t).any(|u| flag(all[u])) {
+                n += 1;
+                c += click(e) as usize;
+            }
+        }
+        if n == 0 { 0 } else { (c * 1024 / n) as i32 }
+    };
+    let mut said = 0u64;
+    for e in &all {
+        if let Some(t) = e.said {
+            said |= 1 << t.min(7);
+        }
+        for &t in &e.sentence {
+            said |= 1 << t.min(7);
+        }
+    }
+    [
+        rate(&cond, &click),
+        rate(&seq, &click),
+        rate(&seq, &voice),
+        rate(&cond, &voice),
+        after(&|e: &Event| e.stroked),
+        rate(&|_| true, &|e: &Event| e.moved.is_some() && e.moved != Some(CLICK)),
+        (said.count_ones() * 128) as i32,
+        after(&|e: &Event| e.odd),
+    ]
 }
 
 /// Task selection with partial credit (`evolve::set_partial_select`): the costs, the voice in

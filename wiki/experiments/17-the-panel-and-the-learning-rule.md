@@ -565,3 +565,16 @@ pairs (24 worlds): the reaction mostly cancels; not to exactly 0, since the netw
 when the codes' roles swap. What each code means was already drawn per lifetime (lights, glyphs,
 cues); twins make a fixed answer to one of them pay nothing.
 
+**A novelty island with species** (`ISL_NOVELTY=1`, in run 34). No goals: its genomes are selected on
+how new their behaviour is (`observe::behaviour`, read from the log: click rates in conditioning and
+in token streams, voice rates in each, clicks in the three steps after a stroke and after an odd
+token, other moves, tokens said; every kind of lifetime is lived), the mean L1 distance to the 8
+nearest in the island and in an archive (the two most novel each generation join it). A novel genome
+whose mean on some probe, babble aside, reaches 200 and whose behaviour is at least 512 from every
+species founds one: its founder is kept every generation and the island grows by four genomes, up to
+`ISL_NOVELTY_MAX` (128). Its most novel join the generalist with `ISL_MIGRATE_UP`; the generalist
+never climbs it. Smoke test, started from run 33's genomes (8 a generation): five species in four
+generations (useful on respond 1000, 735, 524, 760 and remember 211), the island grown to 23. From
+nothing every behaviour is 0, so the island starts on drift. Expect many species to be reflex
+variants useful on respond; the 512 apart rule limits how many.
+

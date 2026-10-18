@@ -269,6 +269,13 @@
 //! whole genomes bring a specialist's circuits, which lexicase keeps if they win some of the
 //! generalist's cases and crossover can then join with others.
 //!
+//! `ISL_NOVELTY=1` (`ISL_NOVELTY_MAX`, 128): a novelty island, selected on what its networks do
+//! being new (`observe::behaviour`: click and voice rates in conditioning and token streams, clicks
+//! after a stroke and after an odd token, other moves, tokens said), against its population and an
+//! archive; no goals. A novel genome useful on some probe (a mean of 200 or more, babble aside)
+//! founds a species: its founder is kept and the island grows by four genomes, up to the max. With
+//! `ISL_MIGRATE_UP` its most novel genomes join the generalist.
+//!
 //! Step 2 of the learning plan (experiment 17): what stayed the same from lifetime to lifetime, and
 //! so could be wired in, drawn per lifetime. `ISL_TWINS=1`: lifetimes in pairs (seeds 2k, 2k+1)
 //! living one world, the second with its two lights' roles swapped and the maze's cue mirrored, so
@@ -952,6 +959,7 @@ fn main() {
     neurocomp::evolve::set_one_word_voice(env("ISL_ONE_WORD_VOICE", 0u8) == 1);
     neurocomp::evolve::set_migrate(env("ISL_MIGRATE", 0u8) == 1);
     neurocomp::evolve::set_twins(env("ISL_TWINS", 0u8) == 1);
+    neurocomp::evolve::set_novelty_max(env("ISL_NOVELTY_MAX", 128usize));
     neurocomp::evolve::set_vary_lag(env("ISL_VARY_LAG", 0u8) == 1);
     neurocomp::evolve::set_vary_period(env("ISL_VARY_PERIOD", 0u8) == 1);
     neurocomp::evolve::set_mixed_codes(env("ISL_MIXED_CODES", 0u8) == 1);
@@ -1034,6 +1042,13 @@ fn main() {
     // naked or from a checkpoint)
     if env("ISL_SELECTION", 0u8) == 1 {
         let lesson = Lesson { tokens: 2, mixed_cue: true, ..Lesson::default() };
+        // (`ISL_NOVELTY=1`) the novelty island: every lifetime's behaviour and probes, selected on
+        // novelty alone (`evolve::Island::is_novelty`)
+        if env("ISL_NOVELTY", 0u8) == 1 {
+            let mut probes: Vec<usize> = ALL_PROBES.to_vec();
+            probes.extend(21..=29);
+            islands.push(Island { name: "novelty".into(), frontier: false, stages: vec![Stage { name: "open".into(), probes, lesson: plain(), goal: vec![], hold: 0 }] });
+        }
         islands.push(Island { name: "selection".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![13], lesson, goal: vec![], hold: 0 }] });
     }
     // (`ISL_LADDERS=1`: the default ladders; `ISL_LADDER_<island>`: one's own)
@@ -1309,7 +1324,7 @@ fn main() {
             let mut groups: Vec<(String, Vec<usize>, Lesson, i32)> = Vec::new();
             let mut seen: Vec<usize> = Vec::new();
             for (j, other) in islands.iter().enumerate() {
-                if other.frontier || (!isl.frontier && j != i) || (isl.frontier && j == i) {
+                if other.frontier || other.is_novelty() || (!isl.frontier && j != i) || (isl.frontier && j == i) {
                     continue;
                 }
                 let st = &other.stages[stages[j]];
@@ -1512,7 +1527,7 @@ fn main() {
             Some(format!("{} {} {} (met {}/{})", isl.name, st.name, g.join(" "), r.met[i], st.hold.max(1)))
         }).chain(islands.iter().enumerate().filter(|(i, _)| !r.ladders[*i].is_empty()).flat_map(|(i, isl)| {
             // (`ISL_FRONTIER_LADDERS`) the generalist's own rung on each ladder
-            islands.iter().enumerate().filter(move |(j, o)| *j != i && !o.frontier).filter_map(move |(j, o)| {
+            islands.iter().enumerate().filter(move |(j, o)| *j != i && !o.frontier && !o.is_novelty()).filter_map(move |(j, o)| {
                 let st = &o.stages[r.ladders[i][j]];
                 if st.goal.is_empty() {
                     return None;
@@ -1532,6 +1547,10 @@ fn main() {
                 let g2: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], m[p])).collect();
                 println!("{g:>4}  {} held its goal on training; its elite held out: {} ({})", isl.name, g2.join(" "), if pass { "moves on" } else { "stays" });
             }
+        }
+        // (`ISL_NOVELTY`) species founded on the novelty island
+        for &(i, p, x) in &r.new_species {
+            println!("{g:>4}  {} founds species {} (useful on {}: {x})", islands[i].name, r.species, PROBES[p]);
         }
         // (`ISL_MIGRATE`) the generalist's elites copied into an island it passed a rung for
         for &(f, t, rung, m) in &r.migrated {
@@ -1617,7 +1636,7 @@ fn main() {
                     let mut shown: Vec<usize> = Vec::new();
                     let mut m = [0i32; neurocomp::world::observe::NPROBES];
                     for (j, other) in islands.iter().enumerate() {
-                        if j == i || other.frontier {
+                        if j == i || other.frontier || other.is_novelty() {
                             continue;
                         }
                         let os = &other.stages[if r.ladders[i].is_empty() { r.stage[j] } else { r.ladders[i][j] }];

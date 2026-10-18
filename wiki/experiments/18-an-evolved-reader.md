@@ -89,8 +89,9 @@ every birth pairs the glyph with the wrong code.
   first time needs no correction, so the network never needs to learn what it writes. Output
   learning (the three-factor rule) only matters when the first pairing can be wrong.
 - **The rule may get in the way.** In the 3-seed tests the reader evolved in one seed of three (and
-  again in the rerun), always in the arm without the three-factor rule; none of the arms with the rule
-  found it on seeds 1 to 3 (seeds 4 to 6 are running). A guess: the rule's death removes kernels whose check fails while the target is not
+  again in the rerun), always in the arm without the three-factor rule. Over 6 seeds (`runs/pairs-test-2/`) it was found
+  once in 18 runs: 1 of 6 without the rule, 0 of 12 with it, a difference within chance at this
+  count; finding it from a bare genome is rare under every arm. A guess: the rule's death removes kernels whose check fails while the target is not
   there, killing pairs that births had made right.
 - **The world did half the work.** Reading here is "say what the teacher says, remembered by
   glyph". The hard part of reading, hearing a sound and finding the motor code that makes it, the

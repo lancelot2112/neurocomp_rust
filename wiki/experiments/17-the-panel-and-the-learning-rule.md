@@ -121,6 +121,10 @@ hints, not results. From now on a new mechanism is compared on 3 evolutionary se
    those on outside the mask in its words (the whole tile, an XOR). Built and unit-tested; not yet
    checked on a task.
 
+8. **The pairs test on 6 seeds** ([`runs/pairs-test-2/README.md`](../../runs/pairs-test-2/README.md),
+   pairs8 > pairs16 > pairs32, goal 300): the reader found once in 18 runs (no rule, seed 2: pairs8
+   at 10, pairs16 at 14); with the rule 0 of 12, without 1 of 6. Rare under every arm.
+
 ## What it means, and what is next
 
 The panel's central gap, learning an arbitrary map within a lifetime, is closed by hand for the

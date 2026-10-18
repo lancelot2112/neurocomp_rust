@@ -462,7 +462,8 @@ fn ops_and_loops(genomes: &[TagGenome]) -> String {
             if let Token::Pop(p) = t {
                 let name = if p.wire { "wire".to_string() } else {
                     let t = ["at-least", "at-most", "band", "tile", "int>=", "int<=", "int~", "int-learned", "lanes>", "lanes<"][(p.trigger as usize).min(9)];
-                    let lane = if p.trigger >= 4 { format!("/{}", 1u32 << p.lane.clamp(3, 6)) } else { String::new() };
+                    // (the width used: two lanes compared are at most 32 bits each)
+                    let lane = if p.trigger >= 8 { format!("/{}", 1u32 << p.lane.clamp(3, 5)) } else if p.trigger >= 4 { format!("/{}", 1u32 << p.lane.clamp(3, 6)) } else { String::new() };
                     format!("{t}{lane}{}", if p.expect { "+0" } else { "" })
                 };
                 match inputs.iter_mut().find(|c| c.0 == name) {

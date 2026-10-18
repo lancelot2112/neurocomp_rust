@@ -1016,6 +1016,19 @@ pub fn migrate() -> bool {
     MIGRATE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Novelty's species reach the islands (`set_novel_migrate`, with `set_novelty`): when the novelty
+/// island founds a species useful on a probe, its founder is copied into the next population of
+/// every island whose current rung is scored on that probe, to win or lose there. Off by default.
+static NOVEL_MIGRATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_novel_migrate(on: bool) {
+    NOVEL_MIGRATE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn novel_migrate() -> bool {
+    NOVEL_MIGRATE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Step 2 of the learning plan (experiment 17), each off by default:
 /// - `set_twins`: lifetimes in pairs (seeds 2k, 2k+1) in one world, the second with its lights'
 ///   roles swapped and the maze's cue mirrored, so a fixed policy nets 0 over a pair;
@@ -1644,6 +1657,9 @@ pub struct IslandGeneration<G> {
     /// (`set_novelty`) species founded this generation (island, probe, score) and how many there are
     pub new_species: Vec<(usize, usize, i32)>,
     pub species: usize,
+    /// (`set_novel_migrate`) species founders sent this generation: (novelty island, to island, the
+    /// probe it was useful on)
+    pub novel_sent: Vec<(usize, usize, usize)>,
 }
 
 /// Islands: each population evolves by lexicase on its own probes (`evolve_lexicase`'s breeding),
@@ -1715,6 +1731,8 @@ pub fn evolve_islands<G: Evolvable>(
         let mut ladder_met = lmet.clone();
         // (`set_novelty`) species founded this generation: (island, the probe, its score)
         let mut new_species: Vec<(usize, usize, i32)> = Vec::new();
+        // (`set_novel_migrate`) their founders: (island, the probe, the genome)
+        let mut founders: Vec<(usize, usize, G)> = Vec::new();
         // (`set_migrate`) the generalist's passes on its own ladders this generation
         let mut passes: Vec<(usize, usize, usize)> = Vec::new();
         // (`fresh`: the training worlds are new every generation, the same for every genome in
@@ -1918,6 +1936,7 @@ pub fn evolve_islands<G: Evolvable>(
                         if species.iter().all(|s| dist(&s.1, &behs[g]) >= NOVELTY_APART) && species.len() < 64 {
                             species.push((scored[g].genome.clone(), behs[g], p));
                             new_species.push((i, p, m[p]));
+                            founders.push((i, p, scored[g].genome.clone()));
                         }
                     }
                 }
@@ -2009,6 +2028,28 @@ pub fn evolve_islands<G: Evolvable>(
                 migrated.push((i, j, r, m));
             }
         }
+        // (`set_novel_migrate`) each new species' founder into every island whose current rung is
+        // scored on the probe it was useful on, in place of one of its last children (behind any
+        // genomes migrated there already)
+        let mut novel_sent = Vec::new();
+        if novel_migrate() {
+            let mut placed = vec![0usize; k];
+            for (i, p, g) in &founders {
+                for j in 0..k {
+                    let isl = &islands[j];
+                    if j == *i || isl.frontier || isl.is_novelty() || next[j].is_empty() || !isl.stages[stage[j]].probes.contains(p) {
+                        continue;
+                    }
+                    let taken = migrated.iter().filter(|m: &&(usize, usize, usize, usize)| m.1 == j).map(|m| m.3).sum::<usize>() + placed[j];
+                    let n = next[j].len();
+                    if taken < n {
+                        next[j][n - 1 - taken] = g.clone();
+                        placed[j] += 1;
+                        novel_sent.push((*i, j, *p));
+                    }
+                }
+            }
+        }
         // (`set_migrate_up`) the islands' best into the generalist, beside its own children (not in
         // their place): every `migrate_up()` generations each island's best `migrate_up_n()`, and
         // an island's best two at least whenever it passed a rung the generalist has not passed on
@@ -2053,7 +2094,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks, migrated, new_species, species: species.len() });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks, migrated, new_species, species: species.len(), novel_sent });
         last = ranked;
         pops = next;
     }

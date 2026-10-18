@@ -178,7 +178,9 @@
 //! new population has it one time in four (k 1 or 2), a property steps k (0 to 4).
 //! `ISL_TRIGGERS=1`: triggers (`EdgeSpec::trigger`): a population's kernels match at least their
 //! threshold (the default), at most (enough of their lines silent), in a band (too dense a match is
-//! none), or over the whole tile (lines on outside the mask count against them); a property draws it.
+//! none), or over the whole tile (lines on outside the mask count against them); or as integers, the
+//! lane (8 to 64 bits, gene `lane`) holding a kernel's first mask line read as a number and compared
+//! with its threshold's share of the lane's range (at least, at most, near); a property draws it.
 //! `ISL_MOTIONS=1`: motions (`Token::Motion`): a channel may move by itself each step, a conveyor
 //! (its words one place along every 2^(k-1) steps: a delay line) or a travelling wave (rule 90).
 //! `ISL_FRONTIER_PASSED=1` (with `ISL_FRONTIER`): the generalist is also scored on each other

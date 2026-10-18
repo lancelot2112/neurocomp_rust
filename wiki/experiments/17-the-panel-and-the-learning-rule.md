@@ -229,3 +229,11 @@ one step in 16), not a counter: it holds that a light came, for a random few ste
 climbs to lag5 and fades at lag8 and lag16.
 
 From run 32 the rung log keeps the whole elite that passed (`ISL_RUNG_LOG`), best first.
+
+**Integer triggers** (`trigger` 4 to 6, gene `lane`, under `ISL_TRIGGERS`): a kernel reads the lane
+(8, 16, 32 or 64 bits) that holds its mask's first line as an unsigned number v, and compares it
+with c, its threshold's share of its lines times the lane's largest value (a threshold stays a
+fraction of the kernel's own mask): at least (v >= c), at most (v <= c), or near (within an eighth
+of the lane's range). Met, its count is all its lines. With ADD and SUB in lanes a population can
+count; with these another can act when a count reaches a value: a timer that counts, where run 31's
+recall genome has only a latch with a random hold. Unit-tested; not yet tried on a task.

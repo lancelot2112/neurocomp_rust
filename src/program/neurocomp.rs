@@ -574,10 +574,11 @@ impl RuntimeNetwork {
         for eg in edges.iter_mut() {
             // (a trigger) its kernels match the way its gene says
             if eg.spec.trigger != 0 {
-                let t = eg.spec.trigger;
+                let (t, lane) = (eg.spec.trigger, eg.spec.lane);
                 if let Some(class) = eg.group.classes_mut().first_mut() {
                     for k in class.kernels_mut() {
                         k.trigger = t;
+                        k.lane = lane;
                     }
                 }
             }

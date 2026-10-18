@@ -212,8 +212,11 @@ pub struct Pop {
     /// (`set_rule_tables`) the learning rule as a table (`EdgeSpec::rule`): 0 the runtime's own.
     /// A wire has none.
     pub rule: u16,
-    /// (`set_triggers`) its kernels' trigger (`EdgeSpec::trigger`, 0 to 3). A wire has none.
+    /// (`set_triggers`) its kernels' trigger (`EdgeSpec::trigger`, 0 to 6; 4 to 6 integer). A wire
+    /// has none.
     pub trigger: u8,
+    /// (`set_triggers`) the lane width of an integer trigger, 2^lane bits (3 to 6)
+    pub lane: u8,
     /// (`set_overlap_genes`) how much of a kernel's mask taken lines (a better-matched kernel's,
     /// or an inhibit input's) must cover to hold it down, in quarters: more than this many (1 to
     /// 4; 2, more than half, as without the gene; 4: never held down by overlap)
@@ -237,7 +240,7 @@ impl Pop {
             count: 0, fan_in: p.start_syn, fan_out: p.start_out, quarters: p.start_quarters, tonic: 0, share: false,
             grow: false, new_code: false, repeat: false, repeat_lag: 1, gate: None, gate_lag: 1, birth_syn: p.birth_syn,
             birth_quarters: p.birth_quarters, out_min: p.out_min, out_max: p.out_max, cap: p.cap, code_lines: p.code_lines,
-            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, branch: None, branch_at: 0, birth_lag: 0, elig: 0, rule: 0, trigger: 0, inhibit_quarters: 2, grip: 16, hint: None,
+            out_learn: p.out_learn, fade: p.fade, rotate: 0, sparse: false, cover: false, tile: 6, pause: None, replicate: 0, replicate_shift: false, mark: 0, explored: false, expect: false, accident: 0, to_input: false, from_output: false, gate_at: 0, pause_at: 0, teacher: None, hit_quarters: 3, hint_low: 1, heat: None, heat_at: 0, inhibitor: None, inhibitor_at: 0, branch: None, branch_at: 0, birth_lag: 0, elig: 0, rule: 0, trigger: 0, lane: 6, inhibit_quarters: 2, grip: 16, hint: None,
         }
     }
 
@@ -965,7 +968,8 @@ impl TagGenome {
                 birth_lag: if birth_lags() && !p.wire { p.birth_lag.min(4) } else { 0 },
                 elig: if eligibility() && !p.wire { p.elig.min(4) } else { 0 },
                 rule: if rule_tables() && !p.wire { p.rule } else { 0 },
-                trigger: if triggers() && !p.wire { p.trigger.min(3) } else { 0 },
+                trigger: if triggers() && !p.wire { p.trigger.min(6) } else { 0 },
+                lane: p.lane.clamp(3, 6),
                 inhibit_quarters: if overlap_genes() { p.inhibit_quarters.clamp(1, 4) } else { 2 },
                 grip: if crate::program::neurocomp::prune() { p.grip.max(1) } else { 0 },
                 hint_low: if hint_band() { p.hint_low.min(p.hit_quarters.saturating_sub(1)).max(1) } else { 0 },
@@ -1326,6 +1330,9 @@ impl TagGenome {
                     if p.trigger != 0 {
                         out.insert_str(out.len() - 1, &format!(" trigger={}", p.trigger));
                     }
+                    if p.lane != 6 {
+                        out.insert_str(out.len() - 1, &format!(" lane={}", p.lane));
+                    }
                     if p.birth_lag > 0 {
                         out.insert_str(out.len() - 1, &format!(" birth_lag={}", p.birth_lag));
                     }
@@ -1416,6 +1423,7 @@ impl TagGenome {
                         elig: kv.get("elig").and_then(|x| x.parse().ok()).unwrap_or(0),
                         rule: kv.get("rule").and_then(|x| u16::from_str_radix(x, 16).ok()).unwrap_or(0),
                         trigger: kv.get("trigger").and_then(|x| x.parse().ok()).unwrap_or(0),
+                        lane: kv.get("lane").and_then(|x| x.parse().ok()).unwrap_or(6),
                         inhibit_quarters: kv.get("inhibit_quarters").and_then(|x| x.parse().ok()).unwrap_or(2),
                         grip: kv.get("grip").and_then(|x| x.parse().ok()).unwrap_or(16),
                         gate_at: kv.get("gate_at").and_then(|x| x.parse().ok()).unwrap_or(0),
@@ -2138,7 +2146,7 @@ impl Evolvable for TagGenome {
                         55 if eligibility() => p.elig = step(p.elig, 0, 4),
                         // (a rule table) one bit of it flips (a population without one starts
                         // from the runtime's own rules)
-                        57 if triggers() => p.trigger = rng.gen_range(0..4),
+                        57 if triggers() => if rng.gen_bool(0.25) { p.lane = rng.gen_range(3..=6) } else { p.trigger = rng.gen_range(0..7) },
                         56 if rule_tables() => p.rule = (if p.rule == 0 { crate::program::graph::RULE_SEED } else { p.rule }) ^ (1 << rng.gen_range(0..13)),
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {

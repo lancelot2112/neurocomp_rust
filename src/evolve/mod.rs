@@ -498,27 +498,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
             // (a prediction lifetime: a cycle drawn for this lifetime, some tokens replaced by a
             // random other one, which the observer marks as breaking it)
             let cycle: Vec<usize> = if fair_sequences() && period > 0 { fair_cycle(period, tokens, &mut r) } else { (0..period).map(|_| r.gen_range(0..tokens)).collect() };
-            let mut odd = Vec::with_capacity(n);
-            let mut last: Option<usize> = None;
-            let toks: Vec<usize> = (0..n)
-                .map(|i| {
-                    if cycle.is_empty() {
-                        odd.push(false);
-                        return r.gen_range(0..tokens);
-                    }
-                    let c = cycle[i % cycle.len()];
-                    // (`set_fair_sequences`: never two breaks in a row, which would leave a pair the
-                    // cycle never has, telling the break by the token before alone)
-                    let t = if lesson.noise > 0 && r.gen_ratio(lesson.noise.min(8), 8) && !(fair_sequences() && odd.last() == Some(&true)) {
-                        if fair_sequences() { fair_odd(&cycle, i, last, tokens, &mut r) } else { (c + r.gen_range(1..tokens)) % tokens }
-                    } else {
-                        c
-                    };
-                    odd.push(t != c);
-                    last = Some(t);
-                    t
-                })
-                .collect();
+            let (toks, odd) = prediction_stream(&cycle, n, lesson.noise, 0, tokens, &mut r);
             w.teacher = matches!(task, Task::Reading(_));
             w.sequence_marked(&toks, &odd)
         }
@@ -1205,6 +1185,43 @@ pub fn set_varied_orders(on: bool) {
 
 pub fn varied_orders() -> bool {
     VARIED_ORDERS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A prediction lifetime's stream: `n` tokens of `cycle` (empty: random tokens), some replaced by
+/// a break (`noise` in 8, fair with `set_fair_sequences`, each held `hold` steps), and which are
+/// breaks. (Holding breaks was tried as an easier cycle3 and did not help a partly right
+/// detector: `held_frequent_breaks_do_not_help_a_partly_right_detector`.)
+pub fn prediction_stream(cycle: &[usize], n: usize, noise: u32, hold: usize, tokens: usize, r: &mut StdRng) -> (Vec<usize>, Vec<bool>) {
+    let mut odd = Vec::with_capacity(n);
+    let mut last: Option<usize> = None;
+    // (`Lesson::odd_hold`) steps of a held break still to come
+    let mut held = 0usize;
+    let toks: Vec<usize> = (0..n)
+        .map(|i| {
+            if cycle.is_empty() {
+                odd.push(false);
+                return r.gen_range(0..tokens);
+            }
+            let c = cycle[i % cycle.len()];
+            // (`set_fair_sequences`: never two breaks in a row, which would leave a pair the
+            // cycle never has, telling the break by the token before alone)
+            let go_on = held > 0;
+            held = held.saturating_sub(1);
+            let start = !go_on && noise > 0 && r.gen_ratio(noise.min(8), 8) && !(fair_sequences() && odd.last() == Some(&true));
+            if start && hold > 1 {
+                held = hold - 1;
+            }
+            let t = if go_on || start {
+                if fair_sequences() { fair_odd(cycle, i, last, tokens, r) } else { (c + r.gen_range(1..tokens)) % tokens }
+            } else {
+                c
+            };
+            odd.push(t != c);
+            last = Some(t);
+            t
+        })
+        .collect();
+    (toks, odd)
 }
 
 /// A cycle of `period` tokens out of `tokens`, each used equally often: up to `tokens` long, that
@@ -2033,6 +2050,54 @@ pub fn evolve_islands<G: Evolvable>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_frequent_breaks_do_not_help_a_partly_right_detector() {
+        // surprise as the observer scores it: clicks in the 3 steps after a break, less after
+        // steps with no break in the 3 before; strategies on the token stream itself
+        set_fair_sequences(true);
+        let score = |noise: u32, hold: usize, policy: u8| -> i64 {
+            let mut total = 0;
+            for seed in 0..24u64 {
+                let mut r = StdRng::seed_from_u64(seed);
+                let cycle = fair_cycle(3, 8, &mut r);
+                let (tok, odd) = prediction_stream(&cycle, 400, noise, hold, 8, &mut r);
+                let mut click = vec![false; tok.len() + 1];
+                for t in 3..tok.len() {
+                    click[t + 1] = match policy {
+                        0 => tok[t] != tok[t - 3],                                // lag-3 comparator
+                        1 => tok[t] != tok[t - 3] && r.gen_ratio(1, 3),           // right a third of the time
+                        2 => tok[t] == tok[t - 1],                                // the cycle1 repeat detector
+                        _ => r.gen_ratio(1, 4),                                   // clicking at random
+                    };
+                }
+                let after = |t: usize| (t + 1..=(t + 3).min(tok.len())).any(|u| click[u]);
+                let (mut o, mut oc, mut k, mut kc) = (0i64, 0i64, 0i64, 0i64);
+                for t in 0..tok.len() - 3 {
+                    if odd[t] {
+                        o += 1;
+                        oc += after(t) as i64;
+                    } else if !(t.saturating_sub(3)..t).any(|u| odd[u]) {
+                        k += 1;
+                        kc += after(t) as i64;
+                    }
+                }
+                total += oc * 1024 / o.max(1) - kc * 1024 / k.max(1);
+            }
+            total / 24
+        };
+        let (full3, part3, rep3, rand3) = (score(1, 0, 0), score(1, 0, 1), score(1, 0, 2), score(1, 0, 3));
+        let (full_e, part_e, rep_e, rand_e) = (score(2, 2, 0), score(2, 2, 1), score(2, 2, 2), score(2, 2, 3));
+        eprintln!("cycle3: lag-3 {full3}, a third right {part3}, repeats {rep3}, random {rand3}; cycle3e: lag-3 {full_e}, a third right {part_e}, repeats {rep_e}, random {rand_e}");
+        set_fair_sequences(false);
+        // cycle3 already pays a partly right detector in proportion (a third right passes its goal
+        // of 200), holding breaks adds nothing to it and costs the full detector its false alarms
+        // after each break; and a break may repeat the token before, which a cycle of distinct
+        // tokens never does, so sameness tells it (a leak, unused by run 33's population)
+        assert!(full3 > 600 && part3 > 200 && (part_e - part3).abs() < 60 && full_e < full3);
+        assert!(rep3 > 600 && rep_e > 300);
+        assert!(rand3.abs() < 60 && rand_e.abs() < 60);
+    }
 
     #[test]
     fn fair_cycles_use_each_token_equally_and_breaks_keep_to_its_tokens() {

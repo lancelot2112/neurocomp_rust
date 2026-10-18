@@ -745,3 +745,39 @@ fixes for both (same-stimulus held and three rungs for selection; the cursor sta
 target and screen~ for screen), and the voice one-word everywhere, the novelty island and the
 islands' migrants into the generalist. The rung log's island dumps were a generation late through
 run 33; runs 29 to 33's are being rescored and corrected (`runs/islandsNN/rungs-fixed.txt`).
+
+## Does prediction need partial credit? (run 33's cycle3)
+
+Prediction has had partial credit since run 24: selection uses surprise~, a click 4 to 6 steps
+after a break counting half. Run 33's prediction island sat on cycle3 (a fair cycle of three
+tokens, breaks 1 in 8) from generation 519 to its stop at 1118. Its final population, 24 fresh
+worlds (`ISL_SIGNAL=24 ISL_SIGNAL_EACH=1`): surprise mean -4, best 25 (goal 200); the spread
+between genomes is all noise (icc 0.00, split-half r -0.16). It had also lost what it passed: its
+best on cycle2 was 18.
+
+Strategies played on the stream itself (test
+`held_frequent_breaks_do_not_help_a_partly_right_detector`, 24 worlds, 400 tokens):
+
+| strategy | cycle3 | breaks 2 in 8, each held 2 steps |
+|---|---|---|
+| lag-3 comparator (click when a token differs from the one 3 back) | 718 | 489 |
+| the same, right a third of the time | 273 | 279 |
+| same token as the step before | 827 | 554 |
+| clicking at random | -17 | 0 |
+
+So surprise already pays a partly right detector in proportion: right a third of the time passes
+cycle3's goal. Held and frequent breaks, meant as an easier cycle3, add nothing to it and cost the
+full detector (its false alarms after each held break fall on steps counted as kept); that rung
+was dropped. Cycle3's trouble is not the shape of the credit: no genome compares a token with the
+one three steps back at all.
+
+A leak found on the way: in a fair cycle of distinct tokens (period up to the token count) no
+other token follows the one before, so a break is another of the cycle's tokens, and it may be the
+token before itself; a cycle of distinct tokens never repeats, so a sameness detector scores 827
+on cycle3, and every cycle2 break is a repeat. Run 33's population did not use it (sameness is
+hard for kernels that count lines on). Not fixed yet.
+
+Run 35 adds a step, cycle3-100 (`ISL_STEPS=...,cycle3=100`), which a lag-3 detector right about
+one time in seven passes. Run 34 already draws the period per lifetime (`ISL_VARY_PERIOD=1`, 1 to
+the rung's), so on cycle3 lag-1 and lag-2 comparators score in part of the lifetimes: that, not
+held breaks, is the graded path to a lag-3 one.

@@ -1316,6 +1316,14 @@ cues and what pays are still drawn with each world, so learning is forced by the
 with fewer tokens has the first of the same codes; with one-word codes the body's sounds and voice
 codes come from the body's seed too. Run 30 has it with `ISL_ONE_WORD=8`.
 
+**Run 30** (stopped at 266, `runs/islands30/README.md`): 24 rung moves, 7 past rungs run 29 never
+passed (recall to lag16, screen glow and torch, the maze feel-100 and feel, prediction cycle1-100
+and cycle1, shapes feel, repeat and win-stay), against run 29's 15 in 535 generations. Fixing the
+body is the largest single gain in the island runs: what each lifetime used to rediscover (its own
+moves and their feel) evolution can now build in. Reading alone fell behind (echo2q all run), and
+no genome learns an arbitrary pair (the capacity curve, about 0 at every N). Run 31 is run 30 with
+the three-factor output rule and the pairs rungs.
+
 ### The paired-associate capacity curve (examples/pairscheck)
 
 The panel's first gate (see the panel memos, 2026-10-17): how many arbitrary glyph-to-token pairs

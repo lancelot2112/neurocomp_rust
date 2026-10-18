@@ -56,3 +56,43 @@ locality rule. Candidates that stay local:
 - a per-line `u8` write counter that decays, kept by the line itself (presynaptic scaling);
 - a homeostatic rate per cell, subtracted from its own drive;
 - simply keeping codes sparse enough that no line is common.
+
+## Evolved designs
+
+Circuits evolution found on this branch that do a job in an unplanned way, recorded so they can be
+reused, rebuilt or watched for.
+
+### The onset reflex: task by stimulus timing (run 33, selection, generation 566)
+
+**What it does.** In a mixed lifetime (blocks of "click at the lights" and blocks of "babble while
+glyphs show") it clicks when the eye was **dark, then lit, then lit with the same code** (106 of 120
+such steps in respond blocks, 2 of 1458 other steps) and talks when the eye has **stayed lit**
+(45% of steps after four lit ones). A light comes out of darkness for three steps; a glyph stream
+never lets the eye go dark. So the two tasks are told apart by the timing of what is seen, with no
+use of the task cue, no memory of the task and no reading of the codes themselves (it scores the
+same, about 630 to 690 against a goal of 600, cued or uncued, and with lights drawn like glyphs).
+14 populations.
+
+**In bit operations** (the parts the lesion map and the genome show; the word-level path that keeps
+it from clicking in a continuous stream is not yet traced):
+- eye-to-hand kernel populations (XOR, XOR, AND-NOT/clear), each with an **execution pause on the
+  eye**: they run only while the eye had lines a frame ago, so they cannot act on a light's first
+  step, which came after darkness;
+- eye-to-hand SET wires, paused on other vectors, copying the eye's code into the hand;
+- a voice path: channel C2 to the voice by XOR at lag 3, gated on touch and paused unless the hand
+  had lines a frame ago, with a hand-to-C2 AND-NOT wire (the hand's act clears C2).
+
+**Why it matters.** It uses execution pauses, a per-population gate on a vector's previous frame,
+as a temporal-context detector: "was this lit a step ago" costs nothing to compute and decides
+whether a population runs at all. Any rung whose tasks show the world with different timing can be
+passed this way, which is why selection's held and three now show the same stimuli in every block
+(experiment 17).
+
+**Related: the time-share oscillator** (same island, generation 860, 73 populations). A wire from a
+channel to itself writing NOR (`C9 = NOR(C9 a frame ago)`) flips every line every step, a period-2
+clock; AND-NOT wires from it into the hand let clicks through only on alternate steps, and the voice
+acts mostly on the others: two reflexes to a lit eye share the steps instead of being selected by
+the task. Removing the self-NOR wire costs 2.3 goals.
+
+Files: `runs/checks/selection-dive/` (genomes, lesion maps, a trace excerpt); experiment 17.
+

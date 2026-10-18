@@ -926,6 +926,18 @@ pub fn fair_sequences() -> bool {
     FAIR_SEQUENCES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Order cycles of varied shape (`set_varied_orders`, with `set_fair_sequences`): see `fair_cycle`.
+/// Off by default.
+static VARIED_ORDERS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_varied_orders(on: bool) {
+    VARIED_ORDERS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn varied_orders() -> bool {
+    VARIED_ORDERS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// A cycle of `period` tokens out of `tokens`, each used equally often: up to `tokens` long, that
 /// many distinct tokens in a random order; longer (a multiple), each token said `period / tokens`
 /// times in a row, in a random order of tokens (period 6 of 3: A A B B C C, each token followed by
@@ -939,6 +951,27 @@ pub fn fair_cycle(period: usize, tokens: usize, r: &mut StdRng) -> Vec<usize> {
     if period <= tokens {
         order.truncate(period);
         return order;
+    }
+    // (`set_varied_orders`) each token said period / tokens times, in a random order whose pairs
+    // (each token and the next, around the cycle) are all different and never a token twice: the
+    // token before never says what comes, the two before always do, and the cycle's shape changes
+    // from lifetime to lifetime (A B A C B C, A B C A C B ...), so no fixed rule on which tokens
+    // repeat tells a break
+    if varied_orders() && period % tokens == 0 {
+        let reps = period / tokens;
+        let mut c: Vec<usize> = (0..period).map(|i| i % tokens).collect();
+        for _ in 0..10_000 {
+            for i in (1..c.len()).rev() {
+                c.swap(i, r.gen_range(0..=i));
+            }
+            let pairs: Vec<(usize, usize)> = (0..period).map(|i| (c[i], c[(i + 1) % period])).collect();
+            let mut distinct = pairs.clone();
+            distinct.sort_unstable();
+            distinct.dedup();
+            if distinct.len() == period && reps > 1 && pairs.iter().all(|p| p.0 != p.1) {
+                return c;
+            }
+        }
     }
     let reps = period.div_ceil(tokens);
     order.iter().flat_map(|&t| std::iter::repeat(t).take(reps)).take(period).collect()
@@ -956,6 +989,13 @@ pub fn fair_odd(cycle: &[usize], i: usize, before: Option<usize>, tokens: usize,
     let mut next: Vec<usize> = (0..p).filter(|&j| cycle[j] == before).map(|j| cycle[(j + 1) % p]).filter(|&t| t != due).collect();
     next.sort_unstable();
     next.dedup();
+    // (`set_varied_orders`, a cycle longer than its tokens) the break keeps the pair with the token
+    // after it too, so the token before or after never tells it; where no token does, no break
+    if varied_orders() && p > tokens {
+        let after = cycle[(i + 1) % p];
+        next.retain(|&x| (0..p).any(|j| cycle[j] == x && cycle[(j + 1) % p] == after));
+        return if next.is_empty() { due } else { next[r.gen_range(0..next.len())] };
+    }
     if next.is_empty() {
         next = cycle.iter().copied().filter(|&t| t != due).collect();
         next.sort_unstable();

@@ -398,3 +398,39 @@ The self channel's word 2 counted steps from 0, so a network could time the reve
 lifetime at a number drawn from the lifetime's seed: traced on two worlds, the clock read 1 at step 2
 in both with the switch off, `...bc1a` and `...8d8a` with it on, still one up a step.
 
+## Phase codes against frame codes (`examples/phasecheck.rs`)
+
+Can a fixed circuit of word operations tell a break in the token stream, and does it need phase?
+Policies that read the eye's history as a network does (a token's phase: its glyph folded to a
+byte, modelled as a byte drawn per token per lifetime), their clicks replayed into the real
+generator's events and scored by surprise (graded in brackets), 48 worlds
+(`runs/checks/phasecheck.txt`):
+
+| stream | rung | rare | frames | window | comb | oracle |
+|---|---|---|---|---|---|---|
+| old | cycle4 | 521 | 7 | 2 | 656 | 783 |
+| old | order2 | 93 | -28 | 0 | 493 | 782 |
+| fair (run 32) | cycle4 | -2 | -31 | -24 | 636 | 778 |
+| fair (run 32) | order2 | 2 | **766** | **749** | 459 | 788 |
+| fair, varied orders | order2 | -1 | 0 | 2 | 664 | 930 |
+
+- **frames** is a fixed rule on the last three frames by XOR (a break when "this token is the one
+  before" answers as a step earlier); **window** the same rule read from byte lanes of one word
+  that holds the last eight phases (shifted left 8 each step, the new phase ORed in): phase as
+  position in a word. Both learn nothing, and both passed run 32's fair order2 (goal 150), because
+  its cycle always had the shape A A B B C C. **Order cycles of varied shape**
+  (`ISL_VARIED_ORDERS=1`): each token twice in a random order, all pairs different, no token twice
+  in a row, and a break keeping the pairs with the tokens before and after it. Then the fixed rules
+  score about 0, a model of the token before -1 and one of the two before 863 (the stream
+  simulation, `freq7.py` in the session's scratchpad).
+- **comb** is a phase accumulator: each token's phase added into a wrapping byte lane, a click when
+  the sum of the last `period` phases changes. It is interference at the cycle's period, and it
+  works on every cycle rung (459 to 758) because the rung's period is the same every lifetime: it
+  predicts each token from the one a period back, which is real prediction of a cycle (a delay of
+  the period, as a conveyor or the history ring gives). It also fires when a break leaves the
+  window, which the graded score counts (over the oracle on cycle4).
+- **Phase is not needed on these rungs**: a delay of one period (or the two tokens before) is
+  enough, and the history ring or a conveyor gives it. Phase as position in a word (window) is the
+  same computation in one word; phase accumulation (comb) is a delay line by another name. Phase
+  codes would matter where the context is longer than the ring or the period varies.
+

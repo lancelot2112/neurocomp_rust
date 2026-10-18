@@ -1,0 +1,18 @@
+surprise (graded) on 48 worlds, mean; fair streams true, varied orders false
+rung             blind          rare        frames        window          comb        oracle
+cycle2           0 (0)         0 (0)       -3 (-3)         1 (5)     758 (693)     780 (757)
+cycle4           0 (0)       -2 (16)     -31 (-32)     -24 (-21)    636 (1007)     778 (757)
+order2           0 (0)         2 (8)     766 (716)     749 (698)     459 (743)     788 (773)
+cycle8           0 (0)        3 (28)       -5 (-6)        -1 (2)     506 (657)     780 (763)
+surprise (graded) on 48 worlds, mean; fair streams false, varied orders false
+rung             blind          rare        frames        window          comb        oracle
+cycle2           0 (0)     691 (691)       -7 (-7)       -5 (-2)     780 (780)     786 (784)
+cycle4           0 (0)     521 (541)        7 (11)        8 (16)    656 (1042)     783 (775)
+order2           0 (0)       93 (90)     -28 (-22)     -27 (-18)     493 (826)     782 (780)
+cycle8           0 (0)     126 (127)        4 (10)         1 (8)     502 (675)     782 (776)
+surprise (graded) on 48 worlds, mean; fair streams true, varied orders true
+rung             blind          rare        frames        window          comb        oracle
+cycle2           0 (0)         0 (0)       -3 (-3)         1 (5)     758 (693)     780 (757)
+cycle4           0 (0)       -2 (16)     -31 (-32)     -24 (-21)    636 (1007)     778 (757)
+order2           0 (0)        -1 (5)         0 (0)         2 (3)     664 (801)     930 (923)
+cycle8           0 (0)        3 (28)       -5 (-6)        -1 (2)     506 (657)     780 (763)

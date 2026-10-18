@@ -463,3 +463,17 @@ on select** (`ISL_PARTIAL_SELECT=1`, in run 33): selection uses select~, the cos
 | reflex (also clicks at anything the eye shows) | 3 | 769 |
 | selector (clicks only in conditioning blocks) | 1024 | 1024 |
 
+**Selection and prediction stuck at their first rungs (for run 34).** No run's selection island has
+ever held cued's goal (select@600) on its training worlds: in run 33 at 100 the elite still babbled
+and never clicked (respond 0, babble 981 to 1024, select 470 to 492), though select~ makes an
+ungated click reflex worth 769. `ISL_SELECT_STEP=1` puts a step before cued, mixclick: the mixed
+lifetime scored on responding in its conditioning blocks alone (goal 100), so clicking at the lights
+pays before it has to be gated by the task. Prediction's first rung is not hard: run 32's
+generalist passed cycle1-100 at generation 7 with one population (an eye-to-hand NOR of kernels that
+expect zeros, 361 on 24 fresh worlds under run 33's settings), while the prediction island, its
+networks grown to 64 looped populations, scored 13 and never passed it in 600 generations. Search,
+not the test. `ISL_MIGRATE=1`: when the generalist passes a rung on an island's ladder the island has
+not passed, its best two genomes are copied into the island's next population, to win or lose
+there. Smoke test (the passer as the generalist, run 33's prediction elite as the island): two
+migrations, the island past cycle1-100 at 2 and cycle1 at 3 (held out 622 and 379).
+

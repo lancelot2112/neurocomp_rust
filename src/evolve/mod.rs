@@ -727,12 +727,14 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (maz, w5) = if want(&[10, 12]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
     let (scr, w6) = if want(&[11]) { live_lesson(g, Task::Screen(trials), physics, seed ^ 0x5C2E, gap, lesson) } else { (vec![], 0) };
     let blocks = (trials / lesson.mixed_block.max(1)).max(2);
-    let (mix, w7) = if want(&[13]) { live_lesson(g, Task::Mixed(blocks), physics, seed ^ 0x313C, gap, lesson) } else { (vec![], 0) };
+    let (mix, w7) = if want(&[13, 20]) { live_lesson(g, Task::Mixed(blocks), physics, seed ^ 0x313C, gap, lesson) } else { (vec![], 0) };
     let (fel, w8) = if want(&[14, 17]) { live_lesson(g, Task::Feel(trials * 5), physics, seed ^ 0xFEE1, gap, lesson) } else { (vec![], 0) };
     let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
     row[13] = observe::select(&mix);
     row[19] = observe::select_graded(&mix);
+    // (selection's step rung) responding in a mixed lifetime's conditioning blocks, alone
+    row[20] = observe::select_parts(&mix).0;
     row[14] = observe::feel(&fel);
     row[17] = observe::feel_graded(&fel);
     for (p, x) in row.iter_mut().enumerate() {
@@ -954,6 +956,19 @@ pub fn set_fair_sequences(on: bool) {
 
 pub fn fair_sequences() -> bool {
     FAIR_SEQUENCES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The generalist's passes reach the islands (`set_migrate`, with `set_frontier_ladders`): when it
+/// passes a rung on an island's ladder that the island has not passed, its best genomes are copied
+/// into that island's next population, to win or lose there. Off by default.
+static MIGRATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_migrate(on: bool) {
+    MIGRATE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn migrate() -> bool {
+    MIGRATE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The voice one-word everywhere (`set_one_word_voice`, with `set_one_word`): its codes and the
@@ -1426,6 +1441,9 @@ pub struct IslandGeneration<G> {
     pub ladder_means: Vec<Vec<observe::ProbeRow>>,
     pub ladder_met: Vec<Vec<usize>>,
     pub ladder_checks: Vec<(usize, usize, observe::ProbeRow, bool)>,
+    /// (`set_migrate`) the generalist's elites copied into an island's next population:
+    /// (from island, to island, the rung passed, how many)
+    pub migrated: Vec<(usize, usize, usize, usize)>,
 }
 
 /// Islands: each population evolves by lexicase on its own probes (`evolve_lexicase`'s breeding),
@@ -1491,6 +1509,8 @@ pub fn evolve_islands<G: Evolvable>(
         let mut ladder_means: Vec<Vec<observe::ProbeRow>> = lad.iter().map(|l| vec![[0i32; observe::NPROBES]; l.len()]).collect();
         let mut ladder_checks = Vec::new();
         let mut ladder_met = lmet.clone();
+        // (`set_migrate`) the generalist's passes on its own ladders this generation
+        let mut passes: Vec<(usize, usize, usize)> = Vec::new();
         // (`fresh`: the training worlds are new every generation, the same for every genome in
         // it, so a population cannot fit a fixed set of worlds: their codes and sequences)
         let train: Vec<u64> = if fresh { seeds.iter().map(|s| s.wrapping_add((generation as u64 + 1).wrapping_mul(1_000_003))).collect() } else { seeds.to_vec() };
@@ -1680,6 +1700,7 @@ pub fn evolve_islands<G: Evolvable>(
                         pass
                     };
                     if pass {
+                        passes.push((i, j, lad[i][j]));
                         lad[i][j] += 1;
                         lmet[i][j] = 0;
                     }
@@ -1712,6 +1733,23 @@ pub fn evolve_islands<G: Evolvable>(
             next.push(children);
             contest.push(crate::program::neurocomp::take_contest());
         }
+        // (`set_migrate`) a generalist that passed a rung on an island's ladder the island has not
+        // passed: its best (up to two of its elite) join that island's next population, in place
+        // of its last children, and are judged there like any other genome
+        let mut migrated = Vec::new();
+        if migrate() {
+            for &(i, j, r) in &passes {
+                if stage[j] > r || next[j].is_empty() {
+                    continue;
+                }
+                let m = elite.clamp(1, 2).min(ranked[i].len()).min(next[j].len());
+                let n = next[j].len();
+                for k in 0..m {
+                    next[j][n - 1 - k] = ranked[i][k].clone();
+                }
+                migrated.push((i, j, r, m));
+            }
+        }
         // the exchange: plasmids from the best of other islands into new children
         let mut moved = Vec::new();
         if k > 1 && generation > first && every > 0 && generation % every == 0 {
@@ -1726,7 +1764,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks, migrated });
         last = ranked;
         pops = next;
     }

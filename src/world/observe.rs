@@ -188,26 +188,12 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     let remember = rate(&td, |x| x.1, |x| x.3) - rate(&td, |x| !x.1, |x| x.3);
     // win-stay: each click (in the response window) on a light is stroked if the trial paid;
     // the next trial showing the same light is clicked or not
-    let (mut won, mut won_n, mut lost, mut lost_n) = (0i64, 0i64, 0i64, 0i64);
-    for i in 0..tr.len() {
-        if !tr[i].3 {
-            continue;
-        }
-        let Some(next) = tr[i + 1..].iter().find(|x| x.1 == tr[i].1) else { continue };
-        if tr[i].2 {
-            won_n += 1;
-            won += next.3 as i64;
-        } else {
-            lost_n += 1;
-            lost += next.3 as i64;
-        }
-    }
     // (a lifetime with no stroked click to compare against an unstroked one scores 0: with no
     // swaps a light either always pays or never does, so a clicker that ignores strokes and keeps
     // to one light had only one side, and scored +1024 or -1024 by which light it kept to, a
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
-    let win_stay = if won_n == 0 || lost_n == 0 { 0 } else { (won * 1024 / won_n - lost * 1024 / lost_n) as i32 };
+    let win_stay = win_stay_of(&tr, fair_win_stay());
     [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed)]
 }
 
@@ -248,6 +234,51 @@ pub fn set_fair_said(on: bool) {
 
 pub fn fair_said() -> bool {
     FAIR_SAID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Win-stay from a lifetime's trials: after a click on a light, the click rate on that light's next
+/// trial when the click was stroked less when it was not; with `fair` (`set_fair_win_stay`), less
+/// the same on the other light's next trial, halved. 0 when a side has no data.
+fn win_stay_of(tr: &[Trial], fair: bool) -> i32 {
+    // (`set_fair_win_stay`: the same, less the same rates on the next trial of the other light,
+    // halved: a click that follows any recent stroke, whichever light, cancels out, and only a
+    // click that follows what was stroked on that light scores)
+    let stay = |same: bool| -> Option<i64> {
+        let (mut won, mut won_n, mut lost, mut lost_n) = (0i64, 0i64, 0i64, 0i64);
+        for i in 0..tr.len() {
+            if !tr[i].3 {
+                continue;
+            }
+            let Some(next) = tr[i + 1..].iter().find(|x| (x.1 == tr[i].1) == same) else { continue };
+            if tr[i].2 {
+                won_n += 1;
+                won += next.3 as i64;
+            } else {
+                lost_n += 1;
+                lost += next.3 as i64;
+            }
+        }
+        if won_n == 0 || lost_n == 0 { None } else { Some(won * 1024 / won_n - lost * 1024 / lost_n) }
+    };
+    if fair {
+        match (stay(true), stay(false)) { (Some(s), Some(o)) => ((s - o) / 2) as i32, _ => 0 }
+    } else {
+        stay(true).unwrap_or(0) as i32
+    }
+}
+
+/// (`set_fair_win_stay`) win-stay against the other light: the stroked-minus-unstroked rate of
+/// clicking the next trial of the same light, less that of the next trial of the other light,
+/// halved. A clicker driven by any recent stroke, whichever light, scores about 0 or less (the
+/// audit: 205 on the old probe). Off by default.
+static FAIR_WIN_STAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_fair_win_stay(on: bool) {
+    FAIR_WIN_STAY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn fair_win_stay() -> bool {
+    FAIR_WIN_STAY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// What echo or copy divides by: the tokens said, or (`set_fair_said`) the tokens said or the ones
@@ -1259,6 +1290,61 @@ mod tests {
             let mean = |learner: bool| (0..12u64).map(|s| run(learner, period, 100 + s)).sum::<i32>() / 12;
             let (l, s) = (mean(true), mean(false));
             assert!(l > 500 && s.abs() < 80, "period {period}: learner {l}, stubborn {s}");
+        }
+    }
+
+    #[test]
+    fn fair_win_stay_cancels_a_clicker_driven_by_any_recent_stroke() {
+        // a learner clicks a light unless its last click on that light went unstroked; a recency
+        // clicker clicks any light within `k` steps of a stroke (else one trial in ten); 24
+        // worlds, no swaps and swaps every 50 trials
+        let run = |learner: bool, k: usize, period: usize, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 4);
+            (w.gap_max, w.reversal_period) = (6, period);
+            w.conditioning(Conditioning::Reversal, 200);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let (mut lights, mut clicked, mut before, mut since): (Vec<(Vec<u64>, Option<bool>)>, Option<usize>, bool, usize) = (vec![], None, false, 999);
+            let mut coin = false;
+            while !w.done() {
+                let eye = channel(&senses, EYE).as_words().to_vec();
+                let shown = eye.iter().any(|&x| x != 0);
+                if channel(&senses, AFFECT).count_ones() > 0 {
+                    since = 0;
+                    if let Some(c) = clicked.take() { lights[c].1 = Some(true) }
+                } else {
+                    since = since.saturating_add(1);
+                }
+                if shown && !before {
+                    if let Some(c) = clicked.take() { lights[c].1 = Some(false) }
+                    coin = rand::Rng::gen_ratio(&mut rng, 1, 10);
+                }
+                let second = shown && before;
+                before = shown;
+                let mut hand = None;
+                if second && clicked.is_none() {
+                    let c = lights.iter().position(|l| l.0 == eye).unwrap_or_else(|| { lights.push((eye.clone(), None)); lights.len() - 1 });
+                    if if learner { lights[c].1 != Some(false) } else { since <= k || coin } {
+                        hand = Some(CLICK);
+                        clicked = Some(c);
+                    }
+                }
+                let a = w.act(None, hand);
+                senses = w.step(&a);
+            }
+            let tr = trials(&w.events, (3, 5), (7, 9));
+            (win_stay_of(&tr, false), win_stay_of(&tr, true))
+        };
+        for period in [200, 50] {
+            let mean = |learner: bool, k: usize| {
+                let v: Vec<(i32, i32)> = (0..24u64).map(|s| run(learner, k, period, 300 + s)).collect();
+                (v.iter().map(|x| x.0).sum::<i32>() / 24, v.iter().map(|x| x.1).sum::<i32>() / 24)
+            };
+            let (learn_old, learn_fair) = mean(true, 0);
+            let (rec_old, rec_fair) = mean(false, 16);
+            eprintln!("period {period}: learner old {learn_old} fair {learn_fair}; recency clicker old {rec_old} fair {rec_fair}");
+            assert!(learn_fair > 300, "period {period}: learner {learn_fair}");
+            assert!(rec_fair < 80 && rec_fair < learn_fair - 300, "period {period}: recency {rec_fair} (old {rec_old})");
         }
     }
 

@@ -74,6 +74,20 @@ static CONTEST_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 static CONTEST_LOST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static CONTEST_LET_GO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The clock drawn (`set_clock_drawn`): the self channel's step count starts each lifetime at a
+/// number drawn from the lifetime's seed, so it still counts steps but no longer says when in the
+/// lifetime a step is (a reversal at trial 100, a block's end), which a network could time from it.
+/// Off by default.
+static CLOCK_DRAWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_clock_drawn(on: bool) {
+    CLOCK_DRAWN.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn clock_drawn() -> bool {
+    CLOCK_DRAWN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// (steps, kernels held down by another population, populations that let go) since last read.
 pub fn take_contest() -> (u64, u64, u64) {
     (CONTEST_STEPS.swap(0, Ordering::Relaxed), CONTEST_LOST.swap(0, Ordering::Relaxed), CONTEST_LET_GO.swap(0, Ordering::Relaxed))
@@ -206,6 +220,8 @@ pub struct RuntimeNetwork {
     last_work: u64,
     last_ran: u64,
     steps: u64,
+    /// (`set_clock_drawn`) where this lifetime's clock (the self channel's word 2) starts
+    clock_from: u64,
 }
 
 /// The frame a read `back` steps reaches: a node held in place has no history, and is read as
@@ -450,7 +466,7 @@ impl RuntimeNetwork {
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -525,7 +541,7 @@ impl RuntimeNetwork {
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0 }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: if clock_drawn() { (seed ^ 0xC10C_C10C_C10C_C10C).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) } else { 0 } }
     }
 
     /// Advance histories and process all edges once.
@@ -1443,13 +1459,14 @@ impl RuntimeNetwork {
     /// - word 0: last step's work (kernels matched plus words wired), as a thermometer: the low
     ///   `bit length of the count` lines on, so popcount reads the order of magnitude;
     /// - word 1: how many kernels it has, the same way;
-    /// - word 2: the steps so far in binary (line k flips every 2^k steps: a clock);
+    /// - word 2: the steps so far in binary (line k flips every 2^k steps: a clock), from a start
+    ///   drawn each lifetime under `set_clock_drawn`;
     /// - word 3: how many edges ran last step (not paused), the same way as word 0.
     fn write_self(&mut self) {
         let Some(m) = self.self_node else { return };
         let therm = |x: u64| -> u64 { let b = 64 - x.leading_zeros(); if b >= 64 { u64::MAX } else { (1u64 << b) - 1 } };
         let kernels: u64 = self.edges.iter().map(|e| e.group.kernel_count() as u64).sum();
-        let words = [therm(self.last_work), therm(kernels), self.steps, therm(self.last_ran)];
+        let words = [therm(self.last_work), therm(kernels), self.steps.wrapping_add(self.clock_from), therm(self.last_ran)];
         let cur = self.nodes[m].current_mut().as_words_mut();
         for (d, w) in cur.iter_mut().zip(words) {
             *d = w;

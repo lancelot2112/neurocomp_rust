@@ -320,8 +320,8 @@ the session's audit folder, not in the repo.
 - **vary** (each trial's delay drawn from 1 to 8): the window always sits a fixed time after the
   light, and clicks before it cost nothing, so two delay lines from the light score 670 to 810, one
   290 to 470. It did not test "held until the window, not timed".
-- Still open (not changed yet): win-stay with no swaps can be met by a clicker that ignores which
-  light it sees; the self channel's clock word can time a reversal or a block switch; the held-out
+- Fixed for run 33 (below): win-stay met by a clicker that ignores which light it sees, and the
+  self channel's clock word timing a reversal or a block switch. Still open: the held-out
   set is the same 48 worlds at every recheck; under a fixed body the maze's turn rungs can be built
   in.
 
@@ -378,4 +378,23 @@ built in (the docs said learned in the lifetime); babble is met by any noisy voi
 rungs keep the two lights in different words in 7 worlds of 8, so a fixed location reflex passes
 tell; the held-out set is reused at every check. Fine: copy and pairs (no leak: only untaught tokens
 count), screen, the lowered-goal steps, the training and held-out worlds kept apart.
+
+**Win-stay and the clock** (for run 33). Win-stay compared, after a click on a light, the click
+rate on that light's next trial when the click was stroked against when it was not. A clicker that
+ignores which light it sees and clicks while a stroke is recent met it: the stroked light pays
+again, so its next trial comes while the stroke is still recent. `ISL_FAIR_WINSTAY=1` takes off the
+same rates on the other light's next trial and halves the difference
+(`win_stay_of`, test `fair_win_stay_cancels_a_clicker_driven_by_any_recent_stroke`, 24 worlds):
+
+| policy | old | fair |
+|---|---|---|
+| recency clicker (any light within 16 steps of a stroke), no swaps | 314 | -308 |
+| the same, swaps every 50 trials | 319 | -291 |
+| learner (a light unless its last click on it went unstroked), no swaps | 1024 | 1017 |
+| the same, swaps every 50 trials | 1024 | 742 |
+
+The self channel's word 2 counted steps from 0, so a network could time the reversal at trial 100
+(near step 1300, give or take about 20) or a selection block's end. `ISL_CLOCK_DRAWN=1` starts it each
+lifetime at a number drawn from the lifetime's seed: traced on two worlds, the clock read 1 at step 2
+in both with the switch off, `...bc1a` and `...8d8a` with it on, still one up a step.
 

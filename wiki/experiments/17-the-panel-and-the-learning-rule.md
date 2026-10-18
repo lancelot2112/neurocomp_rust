@@ -487,3 +487,53 @@ carries on. Lexicase keeps a specialist that wins some of the generalist's cases
 passer as the prediction island, 8 genomes): prediction passed cycle1-100 at 1 and sent two up, the
 generalist passed it at 2 and cycle1 at 3.
 
+## Is there a gradient, does anything learn, and what would select learners? (run 33 at 235)
+
+Three audits, with the goal stated as general-purpose learning agents.
+
+**Gradient** (`examples/gradcheck.rs`, `GC_KIDS>0`; numbers in `runs/checks/gradcheck/`). From each
+island's elite: 200 single mutants, 100 children bred as lexicase breeds them, 50 three-step walks,
+all scored against the parent on the same 32 fresh worlds, gains re-scored on 32 new ones.
+
+| island, rung | parent (sd over worlds) | mutants worse / neutral / better | score unchanged | landscape |
+|---|---|---|---|---|
+| recall, lag5 | 0 (0) | 4 / 94 / 2% | 55% | climbable: a bred child +174 confirmed, a walk +67 |
+| switching, tell | 0-5 (0-22) | 0 / 98 / 2% | 44-47% | rare jumps (1 in 200, +105, marginal) |
+| reading, pairs8 | -2 (46) | 3 / 97 / 0 | 86% | flat |
+| shapes, blur1 | 25-78 (169-246) | 0 / 100 / 0 | 87% | flat, noisy |
+| screen, torch | 21 (50) | 2 / 98 / 0 | 38% | flat (differences are noise) |
+| prediction, cycle1-100 | 40 (149) | 8 / 92 / 0 | 71% | rugged: only worse |
+| maze, feel-300 | 207 (167) | 22 / 78 / 0 | 63% | rugged: walks fall step by step |
+| selection, cued | 505 graded (1.4) | 10 / 84 / 6% | 78% | plateau with cliffs (+3 gains, -504 falls) |
+
+Where children do differ, the noise between worlds (sd 50 to 250 on maze, prediction, shapes, screen)
+is larger than any one-step gain (30 or less); simulated on the measured data, lexicase on 24 lives
+gives a zero-gain child with its own noise about as many children as a child 1 sd better: on noisy
+rungs being different pays about as well as being better. **No parent scores higher in a longer
+lifetime** (half against twice the trials, every difference within 1.3 se); the one rise is
+reading's echo (430, 653, 748). The elites react; they do not learn their rungs.
+
+**The world** (re-audit under run 34's switches, read only). Most rungs need no learning in the
+lifetime: every prediction rung (the period is the same each lifetime, so a fixed delay
+comparator passes), respond, feel, babble, echo, lag1 to lag16, the screen's navigation rungs, and
+selection's rungs (glyphs are 8 lines in word 0, lights 16 lines in a random word, so "click when the
+eye holds many lines, talk when word 0 holds few" passes cued, uncued and short). Rungs that do need
+learning: the swaps (relearning), discriminate, win-stay, recall's two, distract and vary, symbol,
+pick and crowd, pairs, read, and the mirrored maze (one bit). Fixed policies on rungs with a drawn
+mapping now score +1024 or -1024 a lifetime, and with fresh held-out sets and a hold of 1 each check
+is a new draw: a lottery pass every 25 to 70 generations. Also: pairs' silent first 50 tokens count
+against copy (a one-shot learner's ceiling about 400); food from strokes may starve stroke-free
+lifetimes; the grammar draws a kernel's motor primitive each lifetime, so a wired click may not be
+expressible; touch feels moves that do nothing.
+
+**The literature** (design review): open-ended worlds (Tierra, Avida, Polyworld, Geb, Lenia) gave
+diversity and arms races, not learners; learning evolves when the world changes between lifetimes
+but is predictable within one (Stephens 1991; Dunlap and Stephens 2009), and where it does not
+change, learning is wired in (Hinton and Nowlan 1987): this project's lessons 41, 53 and 55. The
+evidence for transferable in-lifetime learners is task distributions drawn per lifetime with
+held-out tasks (meta-RL, Duan et al. 2016, Wang et al. 2018; XLand and AdA). POET and minimal
+criterion coevolution (Wang et al. 2019; Brant and Stanley 2017) address missing gradients by
+generating environments. Recommended: a varied-contingency world in the current harness before any
+shared arena; the ladders kept as held-out measurement, scored by a learning slope (late minus early
+in a lifetime) and a plasticity lesion (learning off: what learning bought).
+

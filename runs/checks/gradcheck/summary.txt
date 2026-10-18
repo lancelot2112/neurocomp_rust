@@ -1,0 +1,188 @@
+
+== switching rung tell goal tell; worlds 32; probes ['respond', 'tell']
+parent raw 4.5 (sd across worlds 21.6); graded 4.5 (sd 21.6, se of a mean 3.8)
+  mut1   n=200: worse 3% neutral 96% better 0%; identical on every world/probe 47% (genome text unchanged 14%); best mean gain +141.5 (mut1), median +0.0, worst -24.7
+  breed  n=100: worse 4% neutral 96% better 0%; identical on every world/probe 26% (genome text unchanged 3%); best mean gain +10.3 (breed), median -3.0, worst -26.1
+  walk   n=150: worse 1% neutral 99% better 0%; identical on every world/probe 22% (genome text unchanged 3%); best mean gain +10.3 (walk48.3), median -4.4, worst -23.7
+  walk step 1: 50 genomes, better (>2se) 0, identical to parent 22, mean gain -2.4, best +3.8
+  walk step 2: 50 genomes, better (>2se) 0, identical to parent 6, mean gain -3.4, best +10.3
+  walk step 3: 50 genomes, better (>2se) 0, identical to parent 5, mean gain -3.9, best +10.3
+  rescore on 32 new worlds: parent graded 0.0 raw 0.0
+    mut1#4         gain first +141.5 -> again +105.2 (se 50.1); raw again +105.2
+    mut1#25        gain first +10.3 -> again +13.3 (se 7.4); raw again +13.3
+    mut1#54        gain first +10.3 -> again +13.3 (se 7.4); raw again +13.3
+    mut1#103       gain first +10.3 -> again +13.3 (se 7.4); raw again +13.3
+    mut1#110       gain first +10.3 -> again +13.3 (se 7.4); raw again +13.3
+    walk38.2#416   gain first +10.3 -> again +13.3 (se 7.4); raw again +13.3
+    walk48.2#446   gain first +10.3 -> again +13.3 (se 7.4); raw again +13.3
+    walk48.3#447   gain first +10.3 -> again +13.3 (se 7.4); raw again +13.3
+    walk42.2#428   gain first +8.5 -> again -5.7 (se 5.8); raw again -5.7
+    walk42.3#429   gain first +8.5 -> again -5.7 (se 5.8); raw again -5.7
+  lifetime: half 11.5, normal 4.5, twice -0.2 (raw goal; twice-half -11.8, se 7.8)
+     respond: half 779.4 normal 830.5 twice 865.6
+  split-half r of gains over 297 children that differ: 0.56 (sd of gain 10.4)
+  lexicase sim (paired per-world sd 23.9; baseline share 1/32=3.1%): gain 0.0sd=0: elite 72%, parent of 7.7% children; gain 0.5sd=12: elite 82%, parent of 12.1% children; gain 1.0sd=24: elite 89%, parent of 16.6% children; gain 2.0sd=48: elite 97%, parent of 20.4% children; gain 3.0sd=72: elite 98%, parent of 26.2% children; gain 4.0sd=95: elite 99%, parent of 28.4% children
+
+== recall rung lag5 goal remember; worlds 32; probes ['remember', 'respond']
+parent raw 0.0 (sd across worlds 0.0); graded 0.0 (sd 0.0, se of a mean 0.0)
+  mut1   n=200: worse 2% neutral 98% better 1%; identical on every world/probe 57% (genome text unchanged 15%); best mean gain +40.5 (mut1), median +0.0, worst -37.0
+  breed  n=100: worse 8% neutral 91% better 1%; identical on every world/probe 32% (genome text unchanged 9%); best mean gain +19.6 (breed), median +0.0, worst -123.6
+  walk   n=150: worse 4% neutral 95% better 1%; identical on every world/probe 27% (genome text unchanged 4%); best mean gain +163.4 (walk3.3), median +0.0, worst -40.1
+  walk step 1: 50 genomes, better (>2se) 0, identical to parent 26, mean gain -1.3, best +9.8
+  walk step 2: 50 genomes, better (>2se) 0, identical to parent 11, mean gain +0.4, best +58.1
+  walk step 3: 50 genomes, better (>2se) 2, identical to parent 4, mean gain +3.4, best +163.4
+  rescore on 32 new worlds: parent graded 0.0 raw 0.0
+    mut1#15        gain first +40.5 -> again +41.1 (se 21.1); raw again +39.9
+    breed#279      gain first +19.6 -> again +83.0 (se 27.9); raw again +76.3
+    breed#297      gain first +16.8 -> again +8.9 (se 3.8); raw again +7.4
+    mut1#188       gain first +12.6 -> again -1.3 (se 8.8); raw again -16.9
+    mut1#3         gain first +10.8 -> again +8.8 (se 3.1); raw again +7.9
+    walk3.3#312    gain first +163.4 -> again +69.2 (se 42.9); raw again +66.0
+    walk3.2#311    gain first +58.1 -> again +96.0 (se 42.4); raw again +88.3
+    walk5.3#318    gain first +46.7 -> again +44.8 (se 22.1); raw again +42.4
+    walk2.2#308    gain first +24.2 -> again -39.4 (se 19.1); raw again -52.3
+    walk2.3#309    gain first +24.2 -> again -39.4 (se 19.1); raw again -52.3
+  lifetime: half 0.0, normal 0.0, twice 0.0 (raw goal; twice-half +0.0, se 0.0)
+     respond: half 949.6 normal 954.3 twice 952.5
+  split-half r of gains over 262 children that differ: 0.80 (sd of gain 17.2)
+  lexicase sim (paired per-world sd 24.1; baseline share 1/32=3.1%): gain 0.0sd=0: elite 75%, parent of 10.6% children; gain 0.5sd=12: elite 90%, parent of 14.5% children; gain 1.0sd=24: elite 96%, parent of 19.1% children; gain 2.0sd=48: elite 100%, parent of 28.5% children; gain 3.0sd=72: elite 99%, parent of 32.3% children; gain 4.0sd=96: elite 100%, parent of 34.9% children
+
+== reading rung pairs8 goal copy; worlds 32; probes ['copy', 'echo']
+parent raw -13.5 (sd across worlds 56.4); graded -13.5 (sd 56.4, se of a mean 10.0)
+  mut1   n=200: worse 0% neutral 100% better 0%; identical on every world/probe 43% (genome text unchanged 8%); best mean gain +15.4 (mut1), median +0.0, worst -22.2
+  breed  n=100: worse 1% neutral 99% better 0%; identical on every world/probe 25% (genome text unchanged 3%); best mean gain +11.3 (breedx), median +0.0, worst -20.5
+  walk   n=150: worse 1% neutral 99% better 0%; identical on every world/probe 19% (genome text unchanged 2%); best mean gain +15.0 (walk23.3), median -0.3, worst -31.4
+  walk step 1: 50 genomes, better (>2se) 0, identical to parent 20, mean gain -1.0, best +11.4
+  walk step 2: 50 genomes, better (>2se) 0, identical to parent 4, mean gain -1.5, best +15.0
+  walk step 3: 50 genomes, better (>2se) 0, identical to parent 4, mean gain -2.0, best +15.0
+  rescore on 32 new worlds: parent graded -27.4 raw -27.4
+    mut1#32        gain first +15.4 -> again +0.4 (se 10.9); raw again +0.4
+    mut1#98        gain first +12.0 -> again -1.2 (se 10.5); raw again -1.2
+    breedx#220     gain first +11.3 -> again +2.8 (se 7.1); raw again +2.8
+    breedx#280     gain first +11.3 -> again +2.8 (se 7.1); raw again +2.8
+    breedx#288     gain first +11.3 -> again +2.8 (se 7.1); raw again +2.8
+    walk23.2#371   gain first +15.0 -> again -4.4 (se 8.4); raw again -4.4
+    walk23.3#372   gain first +15.0 -> again -4.4 (se 8.4); raw again -4.4
+    walk1.1#304    gain first +11.4 -> again +3.3 (se 7.5); raw again +3.3
+    walk1.2#305    gain first +11.4 -> again +3.3 (se 7.5); raw again +3.3
+    walk1.3#306    gain first +11.4 -> again +3.3 (se 7.5); raw again +3.3
+  lifetime: half -21.4, normal -13.5, twice -10.7 (raw goal; twice-half +10.7, se 11.9)
+     echo: half 499.3 normal 635.9 twice 682.3
+  split-half r of gains over 311 children that differ: 0.25 (sd of gain 7.5)
+  lexicase sim (paired per-world sd 41.2; baseline share 1/32=3.1%): gain 0.0sd=0: elite 71%, parent of 6.7% children; gain 0.5sd=21: elite 82%, parent of 11.3% children; gain 1.0sd=41: elite 98%, parent of 16.8% children; gain 2.0sd=82: elite 100%, parent of 28.1% children; gain 3.0sd=124: elite 100%, parent of 38.1% children; gain 4.0sd=165: elite 100%, parent of 40.4% children
+
+== prediction rung cycle1-100 goal surprise; worlds 32; probes ['surprise']
+parent raw 21.5 (sd across worlds 129.8); graded 39.9 (sd 149.1, se of a mean 26.4)
+  mut1   n=200: worse 6% neutral 94% better 0%; identical on every world/probe 70% (genome text unchanged 4%); best mean gain +15.5 (mut1), median +0.0, worst -66.0
+  breed  n=100: worse 11% neutral 89% better 0%; identical on every world/probe 51% (genome text unchanged 4%); best mean gain +24.4 (breedx), median +0.0, worst -91.2
+  walk   n=150: worse 11% neutral 89% better 0%; identical on every world/probe 55% (genome text unchanged 1%); best mean gain +15.5 (walk48.3), median +0.0, worst -92.7
+  walk step 1: 50 genomes, better (>2se) 0, identical to parent 35, mean gain -11.7, best +2.6
+  walk step 2: 50 genomes, better (>2se) 0, identical to parent 28, mean gain -17.4, best +12.6
+  walk step 3: 50 genomes, better (>2se) 0, identical to parent 19, mean gain -23.6, best +15.5
+  rescore on 32 new worlds: parent graded 22.3 raw 7.9
+    breedx#253     gain first +24.4 -> again -35.4 (se 21.1); raw again -30.4
+    mut1#101       gain first +15.5 -> again -0.1 (se 17.4); raw again +2.1
+    breed#204      gain first +14.1 -> again -40.2 (se 44.2); raw again -4.1
+    breedx#210     gain first +12.2 -> again +10.2 (se 22.3); raw again +14.4
+    breedx#266     gain first +12.2 -> again +10.2 (se 22.3); raw again +14.4
+    walk48.3#447   gain first +15.5 -> again -0.1 (se 17.4); raw again +2.1
+    walk16.2#350   gain first +12.6 -> again +12.8 (se 16.3); raw again +3.3
+    walk16.3#351   gain first +12.6 -> again +12.8 (se 16.3); raw again +3.3
+    walk40.3#423   gain first +3.9 -> again +1.9 (se 7.1); raw again +1.9
+    walk14.1#343   gain first +2.6 -> again +0.0 (se 0.0); raw again +0.0
+  lifetime: half -3.4, normal 21.5, twice 7.5 (raw goal; twice-half +10.9, se 20.0)
+  split-half r of gains over 176 children that differ: 0.22 (sd of gain 26.0)
+  lexicase sim (paired per-world sd 149.1; baseline share 1/32=3.1%): gain 0.0sd=0: elite 88%, parent of 11.9% children; gain 0.5sd=75: elite 96%, parent of 20.0% children; gain 1.0sd=149: elite 100%, parent of 27.7% children; gain 2.0sd=298: elite 100%, parent of 43.8% children; gain 3.0sd=447: elite 100%, parent of 48.9% children; gain 4.0sd=596: elite 100%, parent of 51.5% children
+
+== maze rung feel-300 goal feel; worlds 32; probes ['feel']
+parent raw 131.2 (sd across worlds 83.3); graded 196.2 (sd 115.0, se of a mean 20.3)
+  mut1   n=200: worse 24% neutral 76% better 0%; identical on every world/probe 56% (genome text unchanged 12%); best mean gain +12.7 (mut1), median +0.0, worst -190.3
+  breed  n=100: worse 37% neutral 63% better 0%; identical on every world/probe 44% (genome text unchanged 5%); best mean gain +13.0 (breed), median -0.2, worst -227.2
+  walk   n=150: worse 31% neutral 69% better 0%; identical on every world/probe 37% (genome text unchanged 7%); best mean gain +28.3 (walk34.3), median -2.9, worst -193.0
+  walk step 1: 50 genomes, better (>2se) 0, identical to parent 30, mean gain -19.3, best +0.0
+  walk step 2: 50 genomes, better (>2se) 0, identical to parent 16, mean gain -39.8, best +28.3
+  walk step 3: 50 genomes, better (>2se) 0, identical to parent 10, mean gain -55.6, best +28.3
+  rescore on 32 new worlds: parent graded 177.3 raw 124.9
+    breed#230      gain first +13.0 -> again +24.9 (se 20.9); raw again +12.6
+    mut1#147       gain first +12.7 -> again +6.9 (se 25.6); raw again -14.9
+    mut1#84        gain first +12.6 -> again +27.6 (se 23.1); raw again +21.4
+    mut1#168       gain first +11.7 -> again +12.5 (se 19.9); raw again +11.2
+    mut1#47        gain first +11.5 -> again +8.3 (se 17.7); raw again +4.3
+    walk34.2#404   gain first +28.3 -> again +20.4 (se 19.5); raw again +2.7
+    walk34.3#405   gain first +28.3 -> again +20.4 (se 19.5); raw again +2.7
+    walk32.2#398   gain first +27.8 -> again +17.8 (se 20.5); raw again +7.5
+    walk32.3#399   gain first +27.8 -> again +17.8 (se 20.5); raw again +7.5
+    walk33.3#402   gain first +1.0 -> again +6.8 (se 19.0); raw again -5.5
+  lifetime: half 109.4, normal 131.2, twice 110.2 (raw goal; twice-half +0.8, se 18.3)
+  split-half r of gains over 238 children that differ: 0.92 (sd of gain 67.1)
+  lexicase sim (paired per-world sd 111.6; baseline share 1/32=3.1%): gain 0.0sd=0: elite 90%, parent of 13.2% children; gain 0.5sd=56: elite 99%, parent of 21.7% children; gain 1.0sd=112: elite 100%, parent of 30.0% children; gain 2.0sd=223: elite 100%, parent of 44.9% children; gain 3.0sd=335: elite 100%, parent of 49.4% children; gain 4.0sd=446: elite 100%, parent of 52.6% children
+
+== screen rung torch goal screen; worlds 32; probes ['screen']
+parent raw 20.7 (sd across worlds 49.5); graded 20.7 (sd 49.5, se of a mean 8.8)
+  mut1   n=200: worse 2% neutral 98% better 0%; identical on every world/probe 39% (genome text unchanged 8%); best mean gain +16.8 (mut1), median +0.0, worst -41.8
+  breed  n=100: worse 12% neutral 88% better 0%; identical on every world/probe 12% (genome text unchanged 1%); best mean gain +9.7 (breed), median -10.0, worst -36.8
+  walk   n=150: worse 7% neutral 93% better 0%; identical on every world/probe 19% (genome text unchanged 1%); best mean gain +12.0 (walk32.2), median -7.3, worst -38.6
+  walk step 1: 50 genomes, better (>2se) 0, identical to parent 17, mean gain -5.5, best +12.0
+  walk step 2: 50 genomes, better (>2se) 0, identical to parent 8, mean gain -9.6, best +12.0
+  walk step 3: 50 genomes, better (>2se) 0, identical to parent 3, mean gain -10.9, best +10.7
+  rescore on 32 new worlds: parent graded 10.2 raw 10.2
+    mut1#13        gain first +16.8 -> again -3.8 (se 11.3); raw again -3.8
+    breed#249      gain first +9.7 -> again +15.4 (se 9.3); raw again +15.4
+    mut1#82        gain first +8.3 -> again +16.6 (se 12.8); raw again +16.6
+    mut1#58        gain first +7.3 -> again +3.8 (se 9.9); raw again +3.8
+    mut1#145       gain first +5.7 -> again +0.8 (se 11.0); raw again +0.8
+    walk32.1#397   gain first +12.0 -> again -11.3 (se 9.0); raw again -11.3
+    walk32.2#398   gain first +12.0 -> again -11.3 (se 9.0); raw again -11.3
+    walk25.3#378   gain first +10.7 -> again +1.4 (se 11.4); raw again +1.4
+    walk15.1#346   gain first +9.7 -> again +15.4 (se 9.3); raw again +15.4
+    walk48.1#445   gain first +8.4 -> again +4.0 (se 12.1); raw again +4.0
+  lifetime: half 13.3, normal 20.7, twice 8.2 (raw goal; twice-half -5.2, se 14.3)
+  split-half r of gains over 332 children that differ: 0.02 (sd of gain 9.5)
+  lexicase sim (paired per-world sd 69.2; baseline share 1/32=3.1%): gain 0.0sd=0: elite 83%, parent of 13.3% children; gain 0.5sd=35: elite 95%, parent of 21.1% children; gain 1.0sd=69: elite 98%, parent of 30.8% children; gain 2.0sd=138: elite 100%, parent of 47.5% children; gain 3.0sd=208: elite 100%, parent of 54.3% children; gain 4.0sd=277: elite 100%, parent of 61.6% children
+
+== shapes rung blur1 goal tell; worlds 32; probes ['respond', 'tell']
+parent raw 77.8 (sd across worlds 246.1); graded 77.8 (sd 246.1, se of a mean 43.5)
+  mut1   n=200: worse 0% neutral 100% better 0%; identical on every world/probe 52% (genome text unchanged 16%); best mean gain +32.1 (mut1), median +0.0, worst -77.8
+  breed  n=100: worse 0% neutral 100% better 0%; identical on every world/probe 33% (genome text unchanged 4%); best mean gain +32.1 (breedx), median +0.0, worst -95.0
+  walk   n=150: worse 1% neutral 99% better 0%; identical on every world/probe 29% (genome text unchanged 3%); best mean gain +32.1 (walk21.2), median +0.0, worst -108.8
+  walk step 1: 50 genomes, better (>2se) 0, identical to parent 24, mean gain -13.3, best +32.1
+  walk step 2: 50 genomes, better (>2se) 0, identical to parent 15, mean gain -18.1, best +32.1
+  walk step 3: 50 genomes, better (>2se) 0, identical to parent 4, mean gain -25.6, best +28.6
+  rescore on 32 new worlds: parent graded -4.9 raw -4.9
+    mut1#184       gain first +32.1 -> again +3.7 (se 2.7); raw again +3.7
+    breedx#215     gain first +32.1 -> again +3.7 (se 2.7); raw again +3.7
+    breedx#220     gain first +32.1 -> again +3.7 (se 2.7); raw again +3.7
+    breedx#237     gain first +32.1 -> again +3.7 (se 2.7); raw again +3.7
+    breedx#281     gain first +32.1 -> again +3.7 (se 2.7); raw again +3.7
+    walk21.1#364   gain first +32.1 -> again +3.7 (se 2.7); raw again +3.7
+    walk21.2#365   gain first +32.1 -> again +3.7 (se 2.7); raw again +3.7
+    walk2.3#309    gain first +28.6 -> again +3.0 (se 2.2); raw again +3.0
+    walk7.1#322    gain first +28.6 -> again +0.0 (se 0.0); raw again +0.0
+    walk7.2#323    gain first +28.6 -> again +3.0 (se 2.2); raw again +3.0
+  lifetime: half 84.6, normal 77.8, twice 78.9 (raw goal; twice-half -5.8, se 5.0)
+     respond: half 435.4 normal 433.9 twice 432.9
+  split-half r of gains over 271 children that differ: 0.19 (sd of gain 31.8)
+  lexicase sim (paired per-world sd 162.3; baseline share 1/32=3.1%): gain 0.0sd=0: elite 100%, parent of 22.0% children; gain 0.5sd=81: elite 100%, parent of 30.2% children; gain 1.0sd=162: elite 100%, parent of 38.8% children; gain 2.0sd=325: elite 100%, parent of 44.1% children; gain 3.0sd=487: elite 100%, parent of 44.4% children; gain 4.0sd=649: elite 100%, parent of 44.4% children
+
+== selection rung cued goal select; worlds 32; probes ['select']
+parent raw 480.4 (sd across worlds 5.5); graded 504.5 (sd 1.4, se of a mean 0.3)
+  mut1   n=200: worse 14% neutral 82% better 4%; identical on every world/probe 74% (genome text unchanged 5%); best mean gain +6.9 (mut1), median +0.0, worst -486.4
+  breed  n=100: worse 30% neutral 61% better 9%; identical on every world/probe 50% (genome text unchanged 2%); best mean gain +4.4 (breedx), median +0.0, worst -556.5
+  walk   n=150: worse 16% neutral 77% better 7%; identical on every world/probe 68% (genome text unchanged 2%); best mean gain +4.4 (walk5.3), median +0.0, worst -504.5
+  walk step 1: 50 genomes, better (>2se) 2, identical to parent 43, mean gain -10.7, best +3.0
+  walk step 2: 50 genomes, better (>2se) 4, identical to parent 34, mean gain -18.8, best +4.4
+  walk step 3: 50 genomes, better (>2se) 5, identical to parent 25, mean gain -27.3, best +4.4
+  rescore on 32 new worlds: parent graded 504.5 raw 480.3
+    mut1#77        gain first +6.9 -> again +4.4 (se 1.9); raw again +0.7
+    mut1#26        gain first +4.4 -> again -3.7 (se 7.9); raw again +9.2
+    mut1#133       gain first +4.4 -> again -3.7 (se 7.9); raw again +9.2
+    breedx#209     gain first +4.4 -> again -3.7 (se 7.9); raw again +9.2
+    breed#244      gain first +4.4 -> again -3.7 (se 7.9); raw again +9.2
+    walk5.2#317    gain first +4.4 -> again -3.7 (se 7.9); raw again +9.2
+    walk5.3#318    gain first +4.4 -> again -3.7 (se 7.9); raw again +9.2
+    walk13.2#341   gain first +3.2 -> again +2.8 (se 0.3); raw again +11.5
+    walk13.3#342   gain first +3.2 -> again +2.8 (se 0.3); raw again +11.5
+    walk22.1#367   gain first +3.0 -> again +3.1 (se 0.2); raw again +12.3
+  lifetime: half 480.8, normal 480.4, twice 479.2 (raw goal; twice-half -1.6, se 1.3)
+  split-half r of gains over 149 children that differ: 0.99 (sd of gain 154.6)
+  lexicase sim (paired per-world sd 2.0; baseline share 1/32=3.1%): gain 0.0sd=0: elite 49%, parent of 7.0% children; gain 0.5sd=1: elite 71%, parent of 11.2% children; gain 1.0sd=2: elite 76%, parent of 16.4% children; gain 2.0sd=4: elite 100%, parent of 31.1% children; gain 3.0sd=6: elite 100%, parent of 46.2% children; gain 4.0sd=8: elite 100%, parent of 53.8% children

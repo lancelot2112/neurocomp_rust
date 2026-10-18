@@ -269,6 +269,11 @@
 //! whole genomes bring a specialist's circuits, which lexicase keeps if they win some of the
 //! generalist's cases and crossover can then join with others.
 //!
+//! `ISL_LEARN_BATTERY=n` (with `ISL_RESUME`; `ISL_LEARN_TRIALS`, `ISL_LEARN_TOP`): measure only.
+//! The learning battery: rungs that need learning in the lifetime, scored for each island's best
+//! genomes on n fresh worlds by the slope (the last quarter of a lifetime less the first) and the
+//! gap (learning on less learning frozen, `program::neurocomp::set_frozen`). See `learn_battery`.
+//!
 //! `ISL_ONE_WORD_VOICE=1` (with `ISL_ONE_WORD`): the voice one-word everywhere. `ISL_ONE_WORD`
 //! drew the voice's codes as one-word codes only in lifetimes with tokens (reading, prediction,
 //! selection); elsewhere they were 16 lines in a random word, so the voice was a different body in
@@ -619,6 +624,87 @@ fn pairs(a: &ProbeRow, b: &ProbeRow, only: &[usize]) -> String {
 /// A probe by (the start of) its name.
 fn probe_named(n: &str) -> usize {
     PROBES.iter().position(|p| p.starts_with(n)).unwrap_or_else(|| panic!("no probe named {n}"))
+}
+
+/// The learning battery (`ISL_LEARN_BATTERY=n`): rungs that need learning in the lifetime (the
+/// world audit's list), each scored on n fresh worlds (seeds 80000 on) for each island's first
+/// `ISL_LEARN_TOP` genomes as resumed, and for a network that does nothing. For each lifetime: the
+/// probe over the whole lifetime, over its first and its last quarter (the slope: late less early),
+/// and over the same lifetime with learning frozen (`program::neurocomp::set_frozen`: no mask moves,
+/// births, copies, output moves or exploration; the gap: learning on less off). A reaction scores
+/// the same frozen and its slope is about 0; a learner gains late and loses frozen. Means with
+/// their standard errors.
+fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: usize, gap: usize, top: usize) {
+    use neurocomp::evolve::{live_lesson, Task};
+    use neurocomp::world::{observe, Conditioning, Event};
+    // (island, rung, probe)
+    let tasks: [(&str, &str, usize); 9] = [
+        ("switching", "discrim", 2), ("switching", "winstay", 5), ("switching", "swap1", 3),
+        ("recall", "two", 4), ("reading", "pairs8", 6), ("maze", "turn", 10), ("maze", "symbol", 10),
+        ("screen", "pick", 11), ("shapes", "paying", 2),
+    ];
+    let score = |p: usize, ev: &[Event], period: usize| -> i32 {
+        let e: &[Event] = &[];
+        let row = match p {
+            4 => observe::probes(e, 1, ev, e, e, e, e),
+            6 => observe::probes(e, 1, e, ev, e, e, e),
+            10 => observe::probes(e, 1, e, e, e, ev, e),
+            11 => observe::probes(e, 1, e, e, e, e, ev),
+            _ => observe::probes(ev, period, e, e, e, e, e),
+        };
+        row[p]
+    };
+    let life = |g: &TagGenome, p: usize, l: &Lesson, seed: u64| -> (Vec<Event>, usize) {
+        let period = (trials / (l.swaps + 1)).max(1);
+        let ev = match p {
+            4 => live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), Physics::Varied, seed ^ 0xDE1A, gap, l.clone()).0,
+            6 => live_lesson(g, Task::Reading(trials), Physics::Varied, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..l.clone() }).0,
+            10 => live_lesson(g, Task::Maze(trials), Physics::Varied, seed ^ 0x3A2E, gap, l.clone()).0,
+            11 => live_lesson(g, Task::Screen(trials), Physics::Varied, seed ^ 0x5C2E, gap, l.clone()).0,
+            _ => live_lesson(g, Task::Reversal { trials, period, worst_phase: false }, Physics::Varied, seed, gap, l.clone()).0,
+        };
+        (ev, period)
+    };
+    let mean_se = |v: &[i64]| -> (f64, f64) {
+        let m = v.iter().sum::<i64>() as f64 / v.len().max(1) as f64;
+        let var = v.iter().map(|&x| (x as f64 - m).powi(2)).sum::<f64>() / (v.len().max(2) - 1) as f64;
+        (m, (var / v.len().max(1) as f64).sqrt())
+    };
+    let empty = TagGenome { tokens: vec![], next_id: 1 };
+    let mut who: Vec<(String, &TagGenome)> = vec![("nothing".to_string(), &empty)];
+    for (i, isl) in islands.iter().enumerate() {
+        for (k, g) in start[i].iter().take(top.max(1)).enumerate() {
+            who.push((format!("{}#{k}", isl.name), g));
+        }
+    }
+    println!("learning battery on {n} fresh worlds, {trials} trials a lifetime: full (frozen), slope late-early (se), gap on-off (se)");
+    for &(iname, rung, p) in &tasks {
+        let Some(isl) = islands.iter().find(|x| x.name == iname) else { continue };
+        let Some(st) = isl.stages.iter().find(|s| s.name == rung) else { continue };
+        println!("{iname} {rung} ({}):", PROBES[p]);
+        for (name, g) in &who {
+            let (mut full, mut froz, mut slope, mut gapv) = (vec![], vec![], vec![], vec![]);
+            for s in 80_000..80_000 + n {
+                neurocomp::program::neurocomp::set_frozen(false);
+                let (ev, period) = life(g, p, &st.lesson, s);
+                neurocomp::program::neurocomp::set_frozen(true);
+                let (fz, _) = life(g, p, &st.lesson, s);
+                neurocomp::program::neurocomp::set_frozen(false);
+                let q = ev.len() / 4;
+                let (a, b) = (score(p, &ev, period) as i64, score(p, &fz, period) as i64);
+                let (early, late) = (score(p, &ev[..q], period) as i64, score(p, &ev[ev.len() - q..], period) as i64);
+                full.push(a);
+                froz.push(b);
+                slope.push(late - early);
+                gapv.push(a - b);
+            }
+            let (f, _) = mean_se(&full);
+            let (z, _) = mean_se(&froz);
+            let (sl, sls) = mean_se(&slope);
+            let (gp, gps) = mean_se(&gapv);
+            println!("  {name:<14} {f:>6.0} ({z:>5.0})   slope {sl:>6.0} ({sls:>4.0})   gap {gp:>6.0} ({gps:>4.0})");
+        }
+    }
 }
 
 /// A ladder from its text (see the header).
@@ -1166,6 +1252,13 @@ fn main() {
             let e = elite.max(1).min(start[i].len());
             println!("{:<11} [stage {} {}] {}", isl.name, stages[i], isl.stages[stages[i]].name, ops_and_loops(&start[i][..e]));
         }
+        return;
+    }
+    // (`ISL_LEARN_BATTERY=n`, with `ISL_RESUME`: nothing evolves; the learning battery, see
+    // `learn_battery`, on n fresh worlds, then it stops)
+    let battery: u64 = env("ISL_LEARN_BATTERY", 0);
+    if battery > 0 {
+        learn_battery(&islands, &start, battery, env("ISL_LEARN_TRIALS", trials), gap, env("ISL_LEARN_TOP", 1usize));
         return;
     }
     // (`ISL_SELECT_PARTS=n`, with `ISL_RESUME`: nothing evolves; the selection island's first

@@ -537,3 +537,21 @@ generating environments. Recommended: a varied-contingency world in the current 
 shared arena; the ladders kept as held-out measurement, scored by a learning slope (late minus early
 in a lifetime) and a plasticity lesion (learning off: what learning bought).
 
+**The learning battery** (`ISL_LEARN_BATTERY=n`, measure only; `runs/checks/learn-battery/`). Nine
+rungs that need learning in the lifetime (switching discrim, winstay and swap1, recall two, reading
+pairs8, maze turn and symbol, screen pick, shapes paying), each scored on n fresh worlds for each
+island's best genomes and a network that does nothing: the probe over the lifetime, the slope (its
+last quarter less its first), and the gap (learning on less the same lifetime with learning frozen,
+`program::neurocomp::set_frozen`: no mask moves, births, copies, output moves, teachers or
+exploration). Checked on a known learner, the evolved pairs reader: pairs8 373 on, -61 frozen, a gap
+of **434** (se 10). (Births read a copy of the grow gene on the edge group; the first freeze missed
+it and gave a gap of 0.) On pairs the slope is inflated for anything that copies, as the teacher is
+silent for the first 50 tokens; there the gap is the measure.
+
+Baseline, 24 worlds, each island's best two (19 genomes, 9 tasks): **no genome learns any battery
+task**. In run 32's final checkpoint the largest gap is 29 (se 11); at run 33's 350, 37 (se 19, the
+generalist on win-stay) and 18 (se 7, a recall genome on pairs8). With about 170 comparisons a run, a
+few near 2 to 2.6 se are what chance gives; against the reader's 434 they are nothing. The elites'
+battery scores are near 0, and where they are not (shapes on discrim, 83) frozen scores the same.
+This is the floor every claim of a general learner has to beat.
+

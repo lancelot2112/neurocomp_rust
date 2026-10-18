@@ -74,6 +74,19 @@ static CONTEST_STEPS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU6
 static CONTEST_LOST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static CONTEST_LET_GO: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Learning frozen (`set_frozen`), for measuring what learning buys a lifetime (`ISL_LEARN_BATTERY`
+/// in examples/islands.rs): the same network with no mask moves, births, replication, output moves,
+/// teachers, accidents or exploration. Never on in a run. Off by default.
+static FROZEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_frozen(on: bool) {
+    FROZEN.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn frozen() -> bool {
+    FROZEN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The clock drawn (`set_clock_drawn`): the self channel's step count starts each lifetime at a
 /// number drawn from the lifetime's seed, so it still counts steps but no longer says when in the
 /// lifetime a step is (a reversal at trial 100, a block's end), which a network could time from it.
@@ -546,6 +559,26 @@ impl RuntimeNetwork {
 
     /// Advance histories and process all edges once.
     pub fn tick(&mut self, mode: AdvanceMode, adj_temperature: i16) {
+        // (`set_frozen`, measurement only) no learning in the lifetime: kernels keep their masks and
+        // outputs, and nothing is born, copied or explored
+        if frozen() {
+            self.explore = false;
+            self.shadow = false;
+            for eg in self.edges.iter_mut() {
+                eg.spec.grow = false;
+                eg.grow = false;
+                eg.spec.replicate = 0;
+                eg.spec.elig = 0;
+                eg.spec.teacher = None;
+                eg.spec.accident = 0;
+                for class in eg.group.classes_mut() {
+                    for k in class.kernels_mut() {
+                        k.learn_fire = false;
+                        k.learn_held = false;
+                    }
+                }
+            }
+        }
         // Advance all nodes first so writes go into a fresh current frame
         // (a node that holds starts from its last frame: only clearing writes take lines away; one
         // held in place stays where it is, its ring, if it has one, keeping the frames before)

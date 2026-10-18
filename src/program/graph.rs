@@ -289,7 +289,8 @@ pub struct EdgeSpec {
     pub rule: u16,
     /// (`evolve::tags::set_triggers`) its kernels' trigger (`SimpleKernel::trigger`): 0 at least
     /// (the count of agreeing lines), 1 at most (silent lines), 2 a band, 3 the whole tile; 4 to 6
-    /// integer (a lane's value at least, at most, or near a share of its range)
+    /// integer (a lane's value at least, at most, or near a share of its range); 7 a learned value;
+    /// 8, 9 the first lane of its mask greater, or less, than the last
     pub trigger: u8,
     /// (integer triggers) the lane width, 2^lane bits
     pub lane: u8,

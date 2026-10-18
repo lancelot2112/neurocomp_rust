@@ -237,3 +237,12 @@ fraction of the kernel's own mask): at least (v >= c), at most (v <= c), or near
 of the lane's range). Met, its count is all its lines. With ADD and SUB in lanes a population can
 count; with these another can act when a count reaches a value: a timer that counts, where run 31's
 recall genome has only a latch with a random hold. Unit-tested; not yet tried on a task.
+
+**A learned value and two lanes compared** (`trigger` 7 to 9). Trigger 7: a kernel keeps its own
+number; it fires when its lane is within an eighth of the lane's range of it, and each time it
+fires the number moves a quarter of the way toward what it saw (a newborn takes the first value it
+sees): a cell tuned to a count. Triggers 8 and 9: the mask spans two lanes of a word, the one with
+its first line and the one with its last; it fires when the first is greater (8) or less (9) than
+the second: a count against a set point another population writes. Integer triggers (4 to 9) keep
+their mask where it is (it names the lane): a firing or held-down kernel moves no mask line, and a
+learned value learns by its number. Unit-tested; not yet tried on a task.

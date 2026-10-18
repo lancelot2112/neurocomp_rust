@@ -212,7 +212,7 @@ pub struct Pop {
     /// (`set_rule_tables`) the learning rule as a table (`EdgeSpec::rule`): 0 the runtime's own.
     /// A wire has none.
     pub rule: u16,
-    /// (`set_triggers`) its kernels' trigger (`EdgeSpec::trigger`, 0 to 6; 4 to 6 integer). A wire
+    /// (`set_triggers`) its kernels' trigger (`EdgeSpec::trigger`, 0 to 9; 4 to 9 integer). A wire
     /// has none.
     pub trigger: u8,
     /// (`set_triggers`) the lane width of an integer trigger, 2^lane bits (3 to 6)
@@ -968,7 +968,7 @@ impl TagGenome {
                 birth_lag: if birth_lags() && !p.wire { p.birth_lag.min(4) } else { 0 },
                 elig: if eligibility() && !p.wire { p.elig.min(4) } else { 0 },
                 rule: if rule_tables() && !p.wire { p.rule } else { 0 },
-                trigger: if triggers() && !p.wire { p.trigger.min(6) } else { 0 },
+                trigger: if triggers() && !p.wire { p.trigger.min(9) } else { 0 },
                 lane: p.lane.clamp(3, 6),
                 inhibit_quarters: if overlap_genes() { p.inhibit_quarters.clamp(1, 4) } else { 2 },
                 grip: if crate::program::neurocomp::prune() { p.grip.max(1) } else { 0 },
@@ -2146,7 +2146,7 @@ impl Evolvable for TagGenome {
                         55 if eligibility() => p.elig = step(p.elig, 0, 4),
                         // (a rule table) one bit of it flips (a population without one starts
                         // from the runtime's own rules)
-                        57 if triggers() => if rng.gen_bool(0.25) { p.lane = rng.gen_range(3..=6) } else { p.trigger = rng.gen_range(0..7) },
+                        57 if triggers() => if rng.gen_bool(0.25) { p.lane = rng.gen_range(3..=6) } else { p.trigger = rng.gen_range(0..10) },
                         56 if rule_tables() => p.rule = (if p.rule == 0 { crate::program::graph::RULE_SEED } else { p.rule }) ^ (1 << rng.gen_range(0..13)),
                         // (with hints) and so, half the time, does a pause
                         _ if shadow_hints() && p.hint.is_some() && rng.gen_bool(0.5) => {

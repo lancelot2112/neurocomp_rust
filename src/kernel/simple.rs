@@ -42,6 +42,10 @@ pub struct SimpleKernel {
     pub trigger: u8,
     /// (integer triggers) the lane width, 2^lane bits (3 to 6: 8, 16, 32 or 64)
     pub lane: u8,
+    /// (trigger 7, a learned value) its own number: it fires when its lane is within an eighth of
+    /// the lane's range of it, and each time it fires the number moves a quarter of the way toward
+    /// the value it saw; `u64::MAX` until it first fires, when it takes the value it sees
+    pub value: u64,
     /// its match code: a small code written into a match vector when it matches
     pub match_code: Option<BitVector>,
     /// the extra lines of its confirmed code: when what it predicted came true, it writes its
@@ -74,7 +78,7 @@ pub struct SimpleKernel {
 
 impl SimpleKernel {
     pub fn new(input_mask: BitVector, input_idx: usize, output_mask: BitVector, output_idx: usize, threshold: usize, op: KernelOp) -> Self {
-        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, fire_anti: false, held_hebb: false, trigger: 0, lane: 6, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, lost: false, room: None, tile_at: None }.counted()
+        Self { input_mask, input_idx, output_mask, output_idx, threshold, op, search: false, pattern: None, learn_held: true, learn_fire: true, fire_anti: false, held_hebb: false, trigger: 0, lane: 6, value: u64::MAX, match_code: None, confirm_mask: None, confirmed: 0, age: u8::MAX, tonic: 0, words: None, lines: 0, lost: false, room: None, tile_at: None }.counted()
     }
 
     /// A tile kernel: it reads bits `start .. start + bits` of its input (a tile, which may
@@ -125,6 +129,7 @@ impl SimpleKernel {
         k.held_hebb = self.held_hebb;
         k.trigger = self.trigger;
         k.lane = self.lane;
+        k.value = self.value;
         k
     }
 
@@ -223,6 +228,14 @@ impl SimpleKernel {
                 if count > hi { 0 } else { count }
             }
             3 => count.saturating_sub(self.outside(input)),
+            7 => match self.lane_value(input) {
+                Some((v, max)) => if self.value == u64::MAX || v.abs_diff(self.value) <= max / 8 { self.lines } else { 0 },
+                None => 0,
+            },
+            8 | 9 => match self.two_lanes(input) {
+                Some((a, b)) => if (self.trigger == 8 && a > b) || (self.trigger == 9 && a < b) { self.lines } else { 0 },
+                None => 0,
+            },
             4..=6 => match self.lane_value(input) {
                 Some((v, max)) => {
                     let c = (self.threshold as u128 * max as u128 / self.lines.max(1) as u128) as u64;
@@ -252,6 +265,24 @@ impl SimpleKernel {
         let shift = mw.trailing_zeros() / bits * bits;
         let max = if bits == 64 { u64::MAX } else { (1u64 << bits) - 1 };
         Some(((word >> shift) & max, max))
+    }
+
+    /// (triggers 8, 9) The values of the two lanes its mask spans in its first word: the one holding
+    /// its first line and the one holding its last; None if they are the same lane.
+    fn two_lanes(&self, input: &BitVector) -> Option<(u64, u64)> {
+        let m = self.input_mask.as_words();
+        let (j, mw) = m.iter().enumerate().find(|(_, w)| **w != 0)?;
+        let word = match &self.words {
+            Some(ws) => self.at(input, *ws.get(j)?),
+            None => input.as_words().get(self.input_idx + j).copied().unwrap_or(0),
+        };
+        let bits = 1u32 << self.lane.clamp(3, 5);
+        let (lo, hi) = (mw.trailing_zeros() / bits, (63 - mw.leading_zeros()) / bits);
+        if lo == hi {
+            return None;
+        }
+        let max = (1u64 << bits) - 1;
+        Some(((word >> (lo * bits)) & max, (word >> (hi * bits)) & max))
     }
 
     /// The lines on in its words that its mask does not hold (for the whole-tile trigger).
@@ -332,6 +363,7 @@ impl SimpleKernel {
             held_hebb: false,
             trigger: 0,
             lane: 6,
+            value: u64::MAX,
             lost: false,
             match_code: None,
             confirm_mask: None,
@@ -594,7 +626,7 @@ impl KernelTrait for SimpleKernel {
         let lost = !ctx.taken_out.is_empty() && self.output_taken(ctx);
         if lost || self.is_inhibited(ctx, &stats) {
             self.lost = lost;
-            if self.learn_held {
+            if self.learn_held && self.trigger < 4 {
                 if self.pattern.is_some() {
                     self.move_pattern_line(ctx.input, !self.held_hebb, rng);
                 } else if self.held_hebb {
@@ -605,7 +637,15 @@ impl KernelTrait for SimpleKernel {
             }
             return false;
         }
-        if !self.learn_fire {
+        if self.trigger >= 4 {
+            // (integer triggers) the mask stays where it is (it names the lane); a learned value
+            // moves a quarter of the way toward what it saw
+            if self.trigger == 7 && self.learn_fire {
+                if let Some((v, _)) = self.lane_value(ctx.input) {
+                    self.value = if self.value == u64::MAX { v } else if v >= self.value { self.value + (v - self.value) / 4 } else { self.value - (self.value - v) / 4 };
+                }
+            }
+        } else if !self.learn_fire {
         } else if self.pattern.is_some() {
             self.move_pattern_line(ctx.input, self.fire_anti, rng);
         } else if self.fire_anti {
@@ -847,6 +887,40 @@ mod tests {
         let mut t = [0u64];
         k.mark_output(&mut t);
         assert_eq!(t[0], u64::MAX);
+    }
+
+    #[test]
+    fn a_learned_value_and_two_lanes_compared() {
+        let ctx_fire = |k: &mut SimpleKernel, w: u64| -> bool {
+            let input = BitVector::from_words(vec![w]);
+            let inhibit = BitVector::new(64, Some(0));
+            let mut out = BitVector::new(64, Some(0));
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(3);
+            k.try_fire(&KernelContext { input: &input, inhibit: &inhibit, temperature: 0, heat: 0, inhibit_quarters: 2, taken_out: &[], phase: 0 }, &mut out, &mut rng)
+        };
+        // a learned value in the low byte: it takes the first value it sees, then fires near it
+        let mut k = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        k.lane = 3;
+        k.trigger = 7;
+        assert!(ctx_fire(&mut k, 100));
+        assert_eq!(k.value, 100);
+        assert!(ctx_fire(&mut k, 120));
+        assert_eq!(k.value, 105);
+        assert!(!ctx_fire(&mut k, 200));
+        assert_eq!(k.value, 105);
+        // two lanes: the mask spans bytes 0 and 1; 8 fires when byte 0 > byte 1, 9 when less
+        let mut t = SimpleKernel::new(BitVector::from_words(vec![0xFFFF]), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        t.lane = 3;
+        t.trigger = 8;
+        assert_eq!(t.agreement(&BitVector::from_words(vec![(10 << 8) | 20])), 16);
+        assert_eq!(t.agreement(&BitVector::from_words(vec![(20 << 8) | 10])), 0);
+        t.trigger = 9;
+        assert_eq!(t.agreement(&BitVector::from_words(vec![(20 << 8) | 10])), 16);
+        // a mask inside one lane compares nothing
+        let mut one = SimpleKernel::new(BitVector::from_words(vec![0xFF]), 0, BitVector::from_words(vec![1]), 0, 4, KernelOp::Or);
+        one.lane = 3;
+        one.trigger = 8;
+        assert_eq!(one.agreement(&BitVector::from_words(vec![200])), 0);
     }
 
     #[test]

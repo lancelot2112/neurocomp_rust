@@ -293,5 +293,7 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     Recall's distract and vary fell to a timer from any light. Trivial networks (empty, reflexes,
     tonic noise) scored 0 on every rung but the two built for them; the leaks were one level up,
     strategies a few kernels can build. For each rung, ask what the simplest circuit is that scores,
-    simulate it against the world's generator, and make the goal or the world beat it.
+    simulate it against the world's generator, and make the goal or the world beat it. Run 32, on the fixed
+    rungs, passed no prediction rung at all (run 31: five by rarity) and recall stalled on two (which
+    light, not that one came): the earlier passes had measured the shortcut.
 

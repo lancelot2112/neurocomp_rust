@@ -163,8 +163,9 @@
 //! so small networks pass the easy rungs and networks may grow on a rung that holds them up. The
 //! count of generations on a rung starts again at 0 when a run is resumed from a checkpoint.
 //!
-//! `ISL_RUNG_LOG=<file>`: each time an island passes a rung, its best genome is appended to the
-//! file (headed `island <name> generation <g> stage <s> passed <rung>`), so the network that passed
+//! `ISL_RUNG_LOG=<file>`: each time an island passes a rung, its elite (the `ISL_ELITE` genomes whose
+//! mean the goal was judged on, best first; before run 32 the best alone) is appended to the
+//! file (headed `island <name> generation <g> stage <s> passed <rung>`), so the networks that passed
 //! each rung is kept. Only a record: it changes nothing in the run.
 //!
 //! `ISL_HEAT=1`: heat inputs. A population may carry one (a channel or a port): each step every
@@ -1162,11 +1163,16 @@ fn main() {
         for (i, isl) in islands.iter().enumerate() {
             if r.stage[i] != was[i] {
                 println!("{g:>4}  {} moves to stage {} ({}): goal met", isl.name, r.stage[i], isl.stages[r.stage[i]].name);
-                // (`ISL_RUNG_LOG`) the best genome that passed, kept as it was when it passed
+                // (`ISL_RUNG_LOG`) the elite that passed (the goal is judged on its mean), best first,
+                // kept as it was when it passed
                 if let Ok(path) = std::env::var("ISL_RUNG_LOG") {
-                    if let (Ok(mut f), Some(best)) = (std::fs::OpenOptions::new().create(true).append(true).open(&path), r.ranked[i].first()) {
+                    if let (Ok(mut f), false) = (std::fs::OpenOptions::new().create(true).append(true).open(&path), r.ranked[i].is_empty()) {
                         use std::io::Write;
-                        let _ = write!(f, "island {} generation {g} stage {} passed {}\n{}", isl.name, r.stage[i], isl.stages[was[i]].name, best.to_text());
+                        let mut text = format!("island {} generation {g} stage {} passed {}\n", isl.name, r.stage[i], isl.stages[was[i]].name);
+                        for gm in r.ranked[i].iter().take(elite.max(1)) {
+                            text += &gm.to_text();
+                        }
+                        let _ = write!(f, "{text}");
                     }
                 }
                 was[i] = r.stage[i];

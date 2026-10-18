@@ -400,6 +400,9 @@ pub fn set_trace(f: Option<Box<dyn FnMut(&World, &RuntimeNetwork)>>) {
 
 /// `live_work` in a world set by a lesson.
 pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64, gap: usize, lesson: Lesson) -> (Vec<world::Event>, u64) {
+    // (`set_twins`) lifetimes in pairs: seeds 2k and 2k+1 live the same world (seed k), the second
+    // with its two lights' roles swapped and the maze's cue mirrored
+    let (seed, twin) = if twins() { (seed >> 1, seed & 1 == 1) } else { (seed, false) };
     let p = match physics {
         Physics::Fixed(p) => p,
         Physics::Varied => seed.wrapping_mul(0xA24B_AED4_963E_E407),
@@ -410,7 +413,8 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     let mut w = World::with_physics(p, seed, tokens);
     w.gap_max = gap;
     w.teacher_rate = lesson.teach;
-    w.delay = lesson.delay;
+    // (`set_vary_lag`) a delayed lifetime's delay drawn for the lifetime, 1 to the rung's
+    w.delay = if vary_lag() && lesson.delay > 1 && lesson.vary_delay == 0 { StdRng::seed_from_u64(seed ^ 0xDE1A_7A61).gen_range(1..=lesson.delay) } else { lesson.delay };
     w.vary_delay = lesson.vary_delay;
     w.distract = lesson.distract;
     w.two_lights = lesson.two_lights;
@@ -471,9 +475,11 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         }
         Task::Sequence(n) | Task::Reading(n) => {
             let mut r = StdRng::seed_from_u64(seed ^ 0x5E9);
+            // (`set_vary_period`) a cycle rung's period drawn for the lifetime, 1 to the rung's
+            let period = if vary_period() && lesson.period > 1 && lesson.period <= tokens { r.gen_range(1..=lesson.period) } else { lesson.period };
             // (a prediction lifetime: a cycle drawn for this lifetime, some tokens replaced by a
             // random other one, which the observer marks as breaking it)
-            let cycle: Vec<usize> = if fair_sequences() && lesson.period > 0 { fair_cycle(lesson.period, tokens, &mut r) } else { (0..lesson.period).map(|_| r.gen_range(0..tokens)).collect() };
+            let cycle: Vec<usize> = if fair_sequences() && period > 0 { fair_cycle(period, tokens, &mut r) } else { (0..period).map(|_| r.gen_range(0..tokens)).collect() };
             let mut odd = Vec::with_capacity(n);
             let mut last: Option<usize> = None;
             let toks: Vec<usize> = (0..n)
@@ -504,6 +510,16 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         Task::Feel(n) => w.feel(n),
     }
     let mut blk = 0usize;
+    // (`set_mixed_codes`) a mixed lifetime's lights the same kind of code as its glyphs
+    if mixed_codes() && one_word() > 0 && matches!(task, Task::Mixed(_)) {
+        w.one_word_lights(p, one_word());
+    }
+    // (`set_twins`) the second of a pair: the lights' roles swapped and the maze's cue mirrored,
+    // so a policy fixed to one light or one side scores the opposite on its twin
+    if twin {
+        w.swap_lights();
+        w.maze_mirror = !w.maze_mirror;
+    }
     let mut net = g.build(&w, seed ^ 0x5EED);
     let mut act = BitVector::new(world::ACT_BITS, Some(0));
     // energy (`Lesson::ration`): the store, below 0 the network rests
@@ -969,6 +985,49 @@ pub fn set_migrate(on: bool) {
 
 pub fn migrate() -> bool {
     MIGRATE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Step 2 of the learning plan (experiment 17), each off by default:
+/// - `set_twins`: lifetimes in pairs (seeds 2k, 2k+1) in one world, the second with its lights'
+///   roles swapped and the maze's cue mirrored, so a fixed policy nets 0 over a pair;
+/// - `set_vary_lag`: a delayed lifetime's delay drawn from 1 to the rung's;
+/// - `set_vary_period`: a cycle rung's period drawn from 1 to the rung's;
+/// - `set_mixed_codes`: a mixed lifetime's lights drawn as one-word codes, as its glyphs are.
+static TWINS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static VARY_LAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static VARY_PERIOD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static MIXED_CODES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_twins(on: bool) {
+    TWINS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn twins() -> bool {
+    TWINS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_vary_lag(on: bool) {
+    VARY_LAG.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn vary_lag() -> bool {
+    VARY_LAG.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_vary_period(on: bool) {
+    VARY_PERIOD.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn vary_period() -> bool {
+    VARY_PERIOD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_mixed_codes(on: bool) {
+    MIXED_CODES.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn mixed_codes() -> bool {
+    MIXED_CODES.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The islands' best migrate into the generalist (`set_migrate_up`, with `set_frontier_ladders`):

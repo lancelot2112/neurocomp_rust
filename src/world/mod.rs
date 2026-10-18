@@ -724,6 +724,19 @@ impl World {
         if self.maze_fixed { *self.maze_first.get_or_insert(s) } else { s }
     }
 
+    /// The two lights' roles swapped (`evolve::set_twins`): the first light (the one that pays first,
+    /// the delayed cue) becomes the second, and the second the first.
+    pub fn swap_lights(&mut self) {
+        self.lights.swap(0, 1);
+    }
+
+    /// The two lights as one-word codes of `k` lines (`evolve::set_mixed_codes`), as a reading
+    /// lifetime's glyphs are, drawn from the world's own stream.
+    pub fn one_word_lights(&mut self, physics: u64, k: usize) {
+        let k = if k == 0 { ACTIVE } else { k.min(64) };
+        self.lights = one_word_codes(2, k, &mut StdRng::seed_from_u64(physics ^ 0x0E11));
+    }
+
     /// The two lights in one word (`evolve::set_same_word_lights`): the second light redrawn with
     /// the first's number of lines inside the first's word, so the two differ by their pattern,
     /// not by where they are.

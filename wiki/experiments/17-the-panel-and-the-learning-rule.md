@@ -555,3 +555,13 @@ few near 2 to 2.6 se are what chance gives; against the reader's 434 they are no
 battery scores are near 0, and where they are not (shapes on discrim, 83) frozen scores the same.
 This is the floor every claim of a general learner has to beat.
 
+**Step 2, in run 34**: what stayed the same from lifetime to lifetime drawn per lifetime. Twin worlds
+(`ISL_TWINS=1`): seeds 2k and 2k+1 live one world, the second with its two lights' roles swapped and
+the maze's cue mirrored, so a policy fixed to a light or a side scores the opposite on its twin.
+The delay (`ISL_VARY_LAG=1`) and the period (`ISL_VARY_PERIOD=1`) drawn from 1 to the rung's for each
+lifetime. Mixed lights as one-word codes (`ISL_MIXED_CODES=1`), as the glyphs are. Check: run 33's
+shapes elite, a fixed reaction scoring 83 on discriminate (83 frozen), scores -30 frozen over twin
+pairs (24 worlds): the reaction mostly cancels; not to exactly 0, since the network's state differs
+when the codes' roles swap. What each code means was already drawn per lifetime (lights, glyphs,
+cues); twins make a fixed answer to one of them pay nothing.
+

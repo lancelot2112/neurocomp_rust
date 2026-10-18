@@ -1,0 +1,20 @@
+resumed screen from C:/Users/lfaiv/AppData/Local/Temp/claude/C--Software-source-neurocomp/50a1926e-3ccc-5eab-a49d-7e2027a22782/scratchpad/scrdive/ck2.txt: 1 genomes, generation 0, stage 3 (two)
+islands: screen of 32, elite 8, 24 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 0 (2 plasmids an island), thrift true, reads counted true, channels held in place true, carrying cost 4 a token, plasmids of at most 6 populations (0: any), exclusion true, op choice true, ration 256 a step (0: no energy), food 8192 for 1024 points scored, fresh training worlds true, epigenetic marks true, exploration true, expecting zeros true, accidents true, port gates true, shadow explorers true, pauses drawn true, shadow hints true, edges on hints true, outputs read true, hint bands true, self writes true, loops closed true, heat inputs true, goals judged on the elite true, partial credit true, partial credit on remember true, partial credit on select true, fair prediction streams true, order cycles of varied shape true, echo and copy per token shown true, win-stay against the other light true, the clock drawn true, held-out worlds fresh at every check true, the maze cue mirrored per lifetime true, the shapes' lights in one word true, food from the world's strokes true, passed rungs kept true, inhibit inputs true, overlap genes true, size classes true, wiring cost 1 a bit of tag distance, populations compete for their destination true, pruning true, branches true, a fixed body true, the three-factor output rule true, triggers true, motions true, one-word codes of 8 lines
+screen climbs: glow-150 > glow > torch > two > row > square > full > grid > walls > maze > bigmaze > pick > crowd
+lesion map on 48 fresh worlds: each island's best genome scored on its subtasks, then with each population taken out; a loss is the subtask's mean less the lesioned mean, as a share of that rung's goal
+  screen (best genome, 14 populations); subtasks and their means: screen two:screen 334
+    #1064   C1->C3 xor                           0.00   (matters little)
+    #827    eye->hand nand wire                  0.00   (matters little)
+    #1092   eye->hand add:6 wire                 0.00   (matters little)
+    #1089   hand->C3 clear wire                  0.00   (matters little)
+    #1101   C1->C3 xor                           0.00   (matters little)
+    #1102   eye->hand nand wire                  0.21   top screen two:screen (100% of its loss)
+    #1103   eye->hand add:6 wire                 0.47   top screen two:screen (100% of its loss)
+    #1063   eye->hand add:5 wire                 0.02   (matters little)
+    #1098   eye->hand or wire                    0.03   (matters little)
+    #1099   hand->C3 clear wire                  0.00   (matters little)
+    #1085   eye->hand add:5 wire                 0.15   top screen two:screen (100% of its loss)
+    #1094   eye->hand add:5 wire                 0.15   top screen two:screen (100% of its loss)
+    #1087   eye->hand clear wire                 0.34   top screen two:screen (100% of its loss)
+    #1088   eye->hand add:5 wire                 0.29   top screen two:screen (100% of its loss)
+  screen: 6 of 14 populations matter (a loss of 5% of a goal or more in all); their mean share on their top subtask 1.00 (spread evenly over 1 subtasks it would be 1.00); populations by top subtask: screen two:screen 6

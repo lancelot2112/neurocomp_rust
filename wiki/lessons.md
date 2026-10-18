@@ -286,6 +286,10 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     rung log kept only the first-ranked genome, so its lag8 pass could not be found again. Score
     the whole population on fresh worlds (`ISL_SIGNAL`, then one genome at a time), lesion the one
     that scores (`ISL_LESION`), and trace it (`ISL_TRACE`); from run 32 the rung log keeps the elite.
+    The rung log wrote an island's elite one generation late, after the move, when it was already
+    scored on the next rung (run 33's `two` dump at 1031 held eight do-nothing genomes, all 0 on
+    `two`, that the thrift case ranked first on `row`); from runs 34 and 35 it keeps the generation
+    that passed. Before trusting a dumped passer, check that it reproduces its held-out score.
 
 55. **Score the cheapest strategy before trusting a rung (experiment 17).** Run 31's prediction
     passes were real on fresh worlds and still not prediction: breaks were mostly tokens the cycle

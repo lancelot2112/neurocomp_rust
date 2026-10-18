@@ -1,0 +1,40 @@
+resumed screen from C:/Users/lfaiv/AppData/Local/Temp/claude/C--Software-source-neurocomp/50a1926e-3ccc-5eab-a49d-7e2027a22782/scratchpad/scrdive/ck2.txt: 1 genomes, generation 0, stage 3 (two)
+islands: screen of 32, elite 8, 24 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 0 (2 plasmids an island), thrift true, reads counted true, channels held in place true, carrying cost 4 a token, plasmids of at most 6 populations (0: any), exclusion true, op choice true, ration 256 a step (0: no energy), food 8192 for 1024 points scored, fresh training worlds true, epigenetic marks true, exploration true, expecting zeros true, accidents true, port gates true, shadow explorers true, pauses drawn true, shadow hints true, edges on hints true, outputs read true, hint bands true, self writes true, loops closed true, heat inputs true, goals judged on the elite true, partial credit true, partial credit on remember true, partial credit on select true, fair prediction streams true, order cycles of varied shape true, echo and copy per token shown true, win-stay against the other light true, the clock drawn true, held-out worlds fresh at every check true, the maze cue mirrored per lifetime true, the shapes' lights in one word true, food from the world's strokes true, passed rungs kept true, inhibit inputs true, overlap genes true, size classes true, wiring cost 1 a bit of tag distance, populations compete for their destination true, pruning true, branches true, a fixed body true, the three-factor output rule true, triggers true, motions true, one-word codes of 8 lines
+screen climbs: glow-150 > glow > torch > two > row > square > full > grid > walls > maze > bigmaze > pick > crowd
+trace: screen rung two, one screen lifetime, world 60003
+step trial t cue pays tok odd click present | lines on per vector | kernels fired per population (id:fired)
+    1   -  - - - - . - .. | 23 0 16 42 0 37 0 | 0#1064:2 1#827:0 2#1092:0 3#1089:0 4#1101:4 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:0/2 chose:-
+      words 0: 1:020c817ac5b34062
+      words 2: 7:a00a085088184c30
+    2   -  - - - - . - .. | 23 0 27 36 0 48 210 | 0#1064:3 1#827:0 2#1092:0 3#1089:0 4#1101:4 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:0/2 chose:-
+      words 0: 1:020c817ac5b34062
+      words 2: 7:ba0a0d51a81c5e34
+    3   -  - - - - . 2 .. | 16 0 39 32 0 49 210 | 0#1064:2 1#827:0 2#1092:0 3#1089:0 4#1101:4 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:0/2 chose:1
+      words 0: 18:a62a8118001c000a
+      words 2: 7:ba8a1f77b95e5e75
+    4   -  - - - - . 2 .. | 32 0 39 24 0 48 0 | 0#1064:4 1#827:0 2#1092:0 3#1089:0 4#1101:3 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:- chose:-
+      words 0: 18:a62a8118001c000a 25:0007fff800000000
+      words 2: 7:ba8a1f77b95e5e75
+    5   -  - - - - . - .. | 0 0 39 30 0 49 0 | 0#1064:3 1#827:0 2#1092:0 3#1089:0 4#1101:1 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:- chose:-
+      words 0: 
+      words 2: 7:ba8a1f77b95e5e75
+    6   -  - - - - . - .. | 0 0 39 32 0 49 0 | 0#1064:4 1#827:0 2#1092:0 3#1089:0 4#1101:4 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:- chose:-
+      words 0: 
+      words 2: 7:ba8a1f77b95e5e75
+    7   -  - - - - . - .. | 24 0 40 28 0 50 0 | 0#1064:3 1#827:0 2#1092:0 3#1089:0 4#1101:1 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:1/2 chose:-
+      words 0: 0:0000010080934040 1:020c807a45a00022
+      words 2: 7:ba8a1f77b95e5ef5
+    8   -  - - - - . - .. | 24 0 40 36 0 48 166 | 0#1064:5 1#827:0 2#1092:0 3#1089:0 4#1101:3 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:1/2 chose:-
+      words 0: 0:0000010080934040 1:020c807a45a00022
+      words 2: 7:ba8a1f77b95e5ef5
+    9   -  - - - - . - .. | 24 0 40 28 0 49 166 | 0#1064:3 1#827:0 2#1092:0 3#1089:0 4#1101:4 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:1/2 chose:-
+      words 0: 0:0000010080934040 1:020c807a45a00022
+      words 2: 7:ba8a1f77b95e5ef5
+   10   -  - - - - . - .. | 24 0 40 32 0 49 166 | 0#1064:2 1#827:0 2#1092:0 3#1089:0 4#1101:4 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:1/2 chose:-
+      words 0: 0:0000010080934040 1:020c807a45a00022
+      words 2: 7:ba8a1f77b95e5ef5
+   11   -  - - - - . - .. | 24 0 40 36 0 50 166 | 0#1064:3 1#827:0 2#1092:0 3#1089:0 4#1101:2 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:1/2 chose:-
+      words 0: 0:0000010080934040 1:020c807a45a00022
+      words 2: 7:ba8a1f77b95e5ef5
+   12   -  - - - - . - .. | 24 0 40 34 0 49 166 | 0#1064:2 1#827:0 2#1092:0 3#1089:0 4#1101:3 5#1102:0 6#1103:0 7#1063:0 8#1098:0 9#1099:0 10#1085:0 11#1094:0 12#1087:0 13#1088:0 say:- task:- screen:1/2 chose:-
+      words 0: 0:0000010080934040 1:020c807a45a00022

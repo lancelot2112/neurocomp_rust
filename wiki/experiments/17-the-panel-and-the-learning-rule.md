@@ -693,3 +693,32 @@ worth cells - 1, its click less; half that). Test
 Events carry whether the cursor is on the target after the step's move, for the observer only
 (`Event::on_target`).
 
+## How run 33's screen passed two (`runs/checks/screen-dive/two-*`)
+
+Two: two cells, the target's glyph always shown, the cursor's mark always shown. The screen elite
+held out 265 at generation 1029 and 310 at 1030 (goal 300) and moved on to row. The rung log's
+`passed two` block (generation 1031) does not hold that elite: all eight of its genomes, two to
+seven populations each, score 0 on `two` on 48 fresh worlds, with run 33's binary and the current
+one alike. The log wrote the elite a generation late, when the island was already scored on `row`,
+where nothing scores and the thrift case puts the cheapest genomes first. The fix is in
+`examples/islands.rs` (runs 34 and 35): the dump is the previous generation's elite, the one that
+passed.
+
+The passer's line lives on: the screen island's current genomes (generation 1055, on `row`)
+score 172 to 334 on `two`. The best, 14 populations (`two-relative-g1055.txt`), held out 334 on
+48 fresh worlds. Lesioned, its score rests on eye-to-hand wires: `add:5` (losses 0.15, 0.15 and
+0.29 of the goal), `add:6` (0.47), `clear` (0.34) and `nand` (0.21). It is the torch passer's
+design again, widened: byte-lane arithmetic from the eye into the hand, read by the hand's decoder
+as a click only when enough lines are on. Traced (world 60003, 200 trials): **it never moves**.
+It clicks when glyph and cursor are in one cell (23 lines in one eye word) and never when they are
+apart (8 lines and 16), so 100 clicks, all on the target, in the half of the trials where the
+cursor starts on it. With the cursor starting off the target (`ISL_CURSOR_AWAY=1`) it scores
+-242. So two, like torch, was passed by the sitter reflex. The cursor-away and screen~ switches
+already in runs 34 and 35 are what turn the screen into a search task.
+
+| genome (48 fresh worlds) | two | two, cursor away |
+|---|---|---|
+| rung log's first `passed two` genome (2 populations) | 0 | -1024 |
+| the other seven in that block | 0 | |
+| the screen island's best at 1055 (14 populations) | 334 | -242 |
+

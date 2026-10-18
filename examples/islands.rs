@@ -1434,6 +1434,9 @@ fn main() {
         return;
     }
     let mut was = stages.clone();
+    // each island's elite as text a generation ago: a move is reported the generation after its
+    // pass (`stage` is what a generation was scored on), so the elite that passed is last one's
+    let mut last_elite: Vec<String> = vec![String::new(); islands.len()];
     // plasmids: those already in the populations (moved before a resume), then each one moved
     let plasmid_worlds: Vec<u64> = held.iter().copied().take(env("ISL_PLASMID_WORLDS", 16usize)).collect();
     let plasmid_max: usize = env("ISL_PLASMID_MAX", 0);
@@ -1649,19 +1652,20 @@ fn main() {
             if r.stage[i] != was[i] {
                 println!("{g:>4}  {} moves to stage {} ({}): goal met", isl.name, r.stage[i], isl.stages[r.stage[i]].name);
                 // (`ISL_RUNG_LOG`) the elite that passed (the goal is judged on its mean), best first,
-                // kept as it was when it passed
+                // kept as it was when it passed: last generation's (this one's was scored on the
+                // next rung)
                 if let Ok(path) = std::env::var("ISL_RUNG_LOG") {
-                    if let (Ok(mut f), false) = (std::fs::OpenOptions::new().create(true).append(true).open(&path), r.ranked[i].is_empty()) {
+                    if let (Ok(mut f), false) = (std::fs::OpenOptions::new().create(true).append(true).open(&path), last_elite[i].is_empty()) {
                         use std::io::Write;
-                        let mut text = format!("island {} generation {g} stage {} passed {}\n", isl.name, r.stage[i], isl.stages[was[i]].name);
-                        for gm in r.ranked[i].iter().take(elite.max(1)) {
-                            text += &gm.to_text();
-                        }
+                        let text = format!("island {} generation {} stage {} passed {}\n{}", isl.name, g.saturating_sub(1), r.stage[i], isl.stages[was[i]].name, last_elite[i]);
                         let _ = write!(f, "{text}");
                     }
                 }
                 was[i] = r.stage[i];
             }
+        }
+        for (i, rk) in r.ranked.iter().enumerate().take(last_elite.len()) {
+            last_elite[i] = rk.iter().take(elite.max(1)).map(|gm| gm.to_text()).collect();
         }
         if !r.moved.is_empty() {
             println!("{g:>4}  plasmids moved: {}", r.moved.iter().map(|(f, t, w)| format!("{}->{} ({} populations)", islands[*f].name, islands[*t].name, w.lines().filter(|l| l.contains("->")).count())).collect::<Vec<_>>().join(", "));

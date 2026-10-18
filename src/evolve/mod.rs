@@ -972,8 +972,9 @@ pub fn migrate() -> bool {
 }
 
 /// The islands' best migrate into the generalist (`set_migrate_up`, with `set_frontier_ladders`):
-/// every this many generations each island's best, and an island's best two whenever it passes a
-/// rung the generalist has not; 0 off (the default).
+/// every this many generations each island's best (`set_migrate_up_n` of them), and an island's
+/// best two whenever it passes a rung the generalist has not, beside the generalist's own children,
+/// up to `set_generalist_room` genomes; 0 off (the default).
 static MIGRATE_UP: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub fn set_migrate_up(every: usize) {
@@ -982,6 +983,28 @@ pub fn set_migrate_up(every: usize) {
 
 pub fn migrate_up() -> usize {
     MIGRATE_UP.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// (`set_migrate_up`) how many of each island's best go up at each periodic move (1 by default),
+/// and the most genomes the generalist holds with its migrants (its own size by default: then no
+/// room, so `set_generalist_room` gives it some).
+static MIGRATE_UP_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1);
+static GENERALIST_ROOM: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+pub fn set_migrate_up_n(n: usize) {
+    MIGRATE_UP_N.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn migrate_up_n() -> usize {
+    MIGRATE_UP_N.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_generalist_room(n: usize) {
+    GENERALIST_ROOM.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn generalist_room() -> usize {
+    GENERALIST_ROOM.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The voice one-word everywhere (`set_one_word_voice`, with `set_one_word`): its codes and the
@@ -1764,29 +1787,28 @@ pub fn evolve_islands<G: Evolvable>(
                 migrated.push((i, j, r, m));
             }
         }
-        // (`set_migrate_up`) the islands' best into the generalist: an island's best two when it
-        // passed a rung the generalist has not passed on its ladder, and every `migrate_up()`
-        // generations each island's best, in place of the generalist's last children (never its
-        // elite), so specialists bring their circuits to it to keep or lose under its cases
+        // (`set_migrate_up`) the islands' best into the generalist, beside its own children (not in
+        // their place): every `migrate_up()` generations each island's best `migrate_up_n()`, and
+        // an island's best two at least whenever it passed a rung the generalist has not passed on
+        // its ladder, up to `generalist_room()` genomes in all; they are scored with the rest, and
+        // breeding brings the generalist back to its own size, so a migrant that wins a place among
+        // its parents or its elite carries its circuits on
         let up = migrate_up();
         if up > 0 {
             for gi in (0..k).filter(|&i| !lad[i].is_empty()) {
-                let n = next[gi].len();
-                let room = n.saturating_sub(elite.max(1));
-                let mut slot = 0usize;
+                let room = generalist_room().max(next[gi].len());
                 for j in 0..k {
                     if j == gi || islands[j].frontier || ranked[j].is_empty() {
                         continue;
                     }
                     let passed = stage[j] != now[j] && lad[gi][j] <= now[j];
-                    let m = if passed { 2 } else if generation % up == 0 { 1 } else { 0 };
+                    let m = if generation % up == 0 { migrate_up_n().max(1) } else { 0 }.max(if passed { 2 } else { 0 });
                     let mut sent = 0;
                     for q in 0..m.min(ranked[j].len()) {
-                        if slot >= room {
+                        if next[gi].len() >= room {
                             break;
                         }
-                        next[gi][n - 1 - slot] = ranked[j][q].clone();
-                        slot += 1;
+                        next[gi].push(ranked[j][q].clone());
                         sent += 1;
                     }
                     if sent > 0 {

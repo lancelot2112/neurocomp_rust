@@ -1342,7 +1342,7 @@ heard (it beats the table, so at N = 2 copy can be won without reading), and its
 N and does not rise with lifetime length. The gap the panel named is confirmed: today's runtime
 and genomes learn no arbitrary glyph-to-token map in a lifetime, at any N.
 
-### The three-factor output rule (`EdgeSpec::elig`, gene `elig`, `ISL_ELIG`-able via `tags::set_eligibility`)
+### The three-factor output rule (`EdgeSpec::elig`, gene `elig`; `ISL_ELIG=1` in the islands: a new population has it one time in four, checked 1 or 2 steps after firing, and a property steps it 0 to 4)
 
 The panel's first mechanism: a kernel learns what it writes, and a wrong pairing dies. A kernel
 that fired `elig` steps ago (its own count of steps since firing: eligibility) is checked while

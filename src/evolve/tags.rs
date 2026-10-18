@@ -1479,6 +1479,11 @@ impl TagGenome {
         }
         // (with `set_inhibit_inputs`) an inhibit input one time in four, on a channel or (with
         // port gates) a port, a third each
+        // (with `set_eligibility`) the three-factor output rule one time in four, checked 1 or 2
+        // steps after firing
+        if eligibility() && rng.gen_range(0..4) == 0 {
+            p.elig = rng.gen_range(1..=2);
+        }
         // (with `set_branches`) a branch one time in four, on a channel or an output port, half each
         if branches() && rng.gen_range(0..4) == 0 {
             p.branch = Some(rng.r#gen());

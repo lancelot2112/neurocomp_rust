@@ -871,6 +871,22 @@ pub fn frontier_passed() -> bool {
     FRONTIER_PASSED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// The generalist on ladders of its own (`set_frontier_ladders`, the rung it starts on in each
+/// island's ladder; None off, the default): at the frontier it holds its own rung on each other
+/// island's ladder, scored on it in its world, and on one rung below it drawn at random, so it is
+/// still shown what it passed; it climbs each ladder as that island does (the goal on the elite's
+/// mean held for the rung's `hold` generations, then the held-out check). It replaces scoring on
+/// the other islands' current rungs (and `set_frontier_passed`).
+static FRONTIER_LADDERS: std::sync::Mutex<Option<Vec<usize>>> = std::sync::Mutex::new(None);
+
+pub fn set_frontier_ladders(start: Option<Vec<usize>>) {
+    *FRONTIER_LADDERS.lock().unwrap() = start;
+}
+
+pub fn frontier_ladders() -> Option<Vec<usize>> {
+    FRONTIER_LADDERS.lock().unwrap().clone()
+}
+
 /// Sparse one-word codes in every reading lifetime (`set_one_word`; a lesson's `one_word` sets
 /// it for one): `World::one_word` with this many lines a code, 0 off (the default).
 static ONE_WORD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -1189,6 +1205,14 @@ pub struct IslandGeneration<G> {
     /// generation, over all its probing: steps run, kernels held down by another population's
     /// claim, populations that let go of their destination
     pub contest: Vec<(u64, u64, u64)>,
+    /// (`set_frontier_ladders`) each island's own rung on each island's ladder this generation
+    /// (empty but at the frontier), the elite's training mean on it, how many generations in a
+    /// row its goal has held, and the held-out checks made: (island, ladder, elite's held-out
+    /// means, passed)
+    pub ladders: Vec<Vec<usize>>,
+    pub ladder_means: Vec<Vec<observe::ProbeRow>>,
+    pub ladder_met: Vec<Vec<usize>>,
+    pub ladder_checks: Vec<(usize, usize, observe::ProbeRow, bool)>,
 }
 
 /// Islands: each population evolves by lexicase on its own probes (`evolve_lexicase`'s breeding),
@@ -1243,7 +1267,17 @@ pub fn evolve_islands<G: Evolvable>(
     let mut stage: Vec<usize> = (0..k).map(|i| stages.get(i).copied().unwrap_or(0).min(islands[i].stages.len().saturating_sub(1))).collect();
     let mut met = vec![0usize; k];
     let mut on = vec![0usize; k];
+    // (`set_frontier_ladders`) the generalist's own rung on each ladder, and its goal's run
+    let mut lad: Vec<Vec<usize>> = (0..k).map(|i| match frontier_ladders() {
+        Some(s) if islands[i].frontier => (0..k).map(|j| s.get(j).copied().unwrap_or(0).min(islands[j].stages.len().saturating_sub(1))).collect(),
+        _ => Vec::new(),
+    }).collect();
+    let mut lmet: Vec<Vec<usize>> = lad.iter().map(|l| vec![0; l.len()]).collect();
     for generation in first..generations {
+        let lad_now = lad.clone();
+        let mut ladder_means: Vec<Vec<observe::ProbeRow>> = lad.iter().map(|l| vec![[0i32; observe::NPROBES]; l.len()]).collect();
+        let mut ladder_checks = Vec::new();
+        let mut ladder_met = lmet.clone();
         // (`fresh`: the training worlds are new every generation, the same for every genome in
         // it, so a population cannot fit a fixed set of worlds: their codes and sequences)
         let train: Vec<u64> = if fresh { seeds.iter().map(|s| s.wrapping_add((generation as u64 + 1).wrapping_mul(1_000_003))).collect() } else { seeds.to_vec() };
@@ -1260,7 +1294,55 @@ pub fn evolve_islands<G: Evolvable>(
         for (i, isl) in islands.iter().enumerate() {
             let _ = crate::program::neurocomp::take_contest();
             let st = &isl.stages[stage[i]];
-            let (scored, wanted) = if isl.frontier {
+            // (`set_frontier_ladders`) each ladder's own rung: (ladder, its rows' range)
+            let mut blocks: Vec<(usize, usize, usize)> = Vec::new();
+            let (scored, wanted) = if isl.frontier && !lad[i].is_empty() {
+                // on ladders of its own: each other island's ladder at its own rung, and one rung
+                // below it drawn at random, each in its own world, rows of their own
+                let genomes: Vec<G> = pops[i].drain(..).collect();
+                let mut wanted: Vec<usize> = Vec::new();
+                let mut rows = vec![Vec::new(); genomes.len()];
+                let mut works = vec![Vec::new(); genomes.len()];
+                let mut found: Vec<Vec<Note>> = vec![Vec::new(); genomes.len()];
+                for (j, other) in islands.iter().enumerate() {
+                    if j == i || other.frontier {
+                        continue;
+                    }
+                    let c = lad[i][j];
+                    let mut rungs = vec![c];
+                    if c > 0 {
+                        rungs.push(rng.gen_range(0..c));
+                    }
+                    for (n, &r) in rungs.iter().enumerate() {
+                        let os = &other.stages[r];
+                        for &p in &os.probes {
+                            if !wanted.contains(&p) {
+                                wanted.push(p);
+                            }
+                        }
+                        let a = rows.first().map_or(0, |x: &Vec<observe::ProbeRow>| x.len());
+                        for (g, s) in probe_all_in(genomes.clone(), trials, physics, seeds, gap, &os.probes, os.lesson).iter().enumerate() {
+                            for (kk, r) in s.probes.iter().enumerate() {
+                                let mut row = [0i32; observe::NPROBES];
+                                for &p in &os.probes {
+                                    row[p] = r[p];
+                                }
+                                rows[g].push(row);
+                                works[g].push(s.works[kk]);
+                            }
+                            found[g].extend(&s.notes);
+                        }
+                        if n == 0 {
+                            blocks.push((j, a, rows.first().map_or(0, |x| x.len())));
+                        }
+                    }
+                }
+                let scored: Vec<Probed<G>> = genomes.into_iter().enumerate().map(|(g, genome)| {
+                    let work = works[g].iter().sum::<u64>() / works[g].len().max(1) as u64;
+                    Probed { probes: rows[g].clone(), works: works[g].clone(), work, genome, notes: merge_notes(found[g].iter().copied()) }
+                }).collect();
+                (scored, wanted)
+            } else if isl.frontier {
                 // at the frontier: each other island's current stage, in its own world, for the
                 // probes no earlier island has given
                 let genomes: Vec<G> = pops[i].drain(..).collect();
@@ -1360,6 +1442,33 @@ pub fn evolve_islands<G: Evolvable>(
             let judged = if elite_pass() { probe_means(&order.iter().take(elite.max(1)).map(|&g| m[g]).collect::<Vec<_>>()) } else { mean };
             on[i] += 1;
             held.push(on[i]);
+            // (`set_frontier_ladders`) each ladder climbed as its island climbs it: the goal on the
+            // elite's mean over that rung's rows, held, then checked on the held-out worlds
+            for &(j, a, b) in &blocks {
+                let ost = &islands[j].stages[lad[i][j]];
+                let top: Vec<observe::ProbeRow> = order.iter().take(elite.max(1)).map(|&g| probe_means(&scored[g].probes[a..b])).collect();
+                let jm = probe_means(&top);
+                ladder_means[i][j] = jm;
+                if ost.goal.is_empty() || lad[i][j] + 1 >= islands[j].stages.len() {
+                    continue;
+                }
+                lmet[i][j] = if ost.goal.iter().all(|&(p, x)| jm[p] >= x) { lmet[i][j] + 1 } else { 0 };
+                ladder_met[i][j] = lmet[i][j];
+                if lmet[i][j] >= ost.hold.max(1) {
+                    let pass = held_out.is_empty() || {
+                        let tg: Vec<G> = order.iter().take(elite.max(1)).map(|&g| scored[g].genome.clone()).collect();
+                        let h = probe_all_in(tg, trials, physics, held_out, gap, &ost.probes, ost.lesson);
+                        let m = probe_means(&h.iter().map(|s| probe_means(&s.probes)).collect::<Vec<_>>());
+                        let pass = ost.goal.iter().all(|&(p, x)| m[p] >= x);
+                        ladder_checks.push((i, j, m, pass));
+                        pass
+                    };
+                    if pass {
+                        lad[i][j] += 1;
+                        lmet[i][j] = 0;
+                    }
+                }
+            }
             // the curriculum: the goal met for `hold` generations in a row moves the island on
             if !st.goal.is_empty() && stage[i] + 1 < isl.stages.len() {
                 met[i] = if st.goal.iter().all(|&(p, x)| judged[p] >= x) { met[i] + 1 } else { 0 };
@@ -1401,7 +1510,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks });
         last = ranked;
         pops = next;
     }

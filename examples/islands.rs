@@ -267,6 +267,13 @@
 //! island's ladder and score about 0 for every genome (run 8's best: babble 845, tell 293, the
 //! other nine 0-13), so lexicase found a gradient only in babble and tell.
 //!
+//! `ISL_FRONTIER_LADDERS=1` (with `ISL_FRONTIER=1`): the generalist climbs every ladder itself. It
+//! holds a rung of its own on each other island's ladder, is scored on it in that island's world
+//! and on one rung below it drawn at random (so what it passed stays in its selection), and moves
+//! up a ladder as that island would: the goal on its elite's mean for the rung's hold, then the
+//! held-out check. It replaces scoring on the other islands' current rungs (and
+//! `ISL_FRONTIER_PASSED`). Its rungs are kept in the checkpoint (`ladders a,b,...`).
+//!
 //! `ISL_FRESH=1`: the training worlds are new every generation (the same for every genome in
 //! it). With fixed training worlds a population can fit them: run 6's maze elite scored 476-658
 //! on its 12 training worlds and -69 to -177 on fresh ones, having wired the hand's codes those
@@ -711,6 +718,7 @@ fn main() {
     neurocomp::evolve::tags::set_triggers(env("ISL_TRIGGERS", 0u8) == 1);
     neurocomp::evolve::tags::set_motions(env("ISL_MOTIONS", 0u8) == 1);
     neurocomp::evolve::set_frontier_passed(env("ISL_FRONTIER_PASSED", 0u8) == 1);
+    let frontier_ladders = env("ISL_FRONTIER_LADDERS", 0u8) == 1;
     neurocomp::evolve::tags::set_birth_lags(env("ISL_BIRTH_LAG", 0u8) == 1);
     neurocomp::program::neurocomp::set_prune(env("ISL_COMPETE", 0u8) == 1 && env("ISL_PRUNE", 0u8) == 1);
     // (energy: a ration a step, and food in rations for each 1024 points scored; before any
@@ -878,6 +886,9 @@ fn main() {
     let mut start: Vec<Vec<TagGenome>> = vec![vec![naked.clone()]; islands.len()];
     let mut first = 0usize;
     let mut stages = vec![0usize; islands.len()];
+    // (`ISL_FRONTIER_LADDERS`) the generalist's own rung on each ladder: a checkpoint's
+    // `ladders a,b,...`, else the bottom of each
+    let mut ladders = vec![0usize; islands.len()];
     if let Some(path) = &resume {
         let text = std::fs::read_to_string(path).expect("checkpoint");
         for part in text.split("island ").skip(1) {
@@ -887,6 +898,9 @@ fn main() {
             let g: usize = h.nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
             // (and its stage, if it was climbing a ladder: `stage n`)
             let st: usize = h.nth(1).and_then(|x| x.parse().ok()).unwrap_or(0);
+            if let (Some("ladders"), Some(v)) = (h.next(), h.next()) {
+                ladders = v.split(',').map(|x| x.parse().unwrap_or(0)).collect();
+            }
             if let Some(i) = islands.iter().position(|isl| isl.name == name) {
                 start[i] = TagGenome::from_text(body).expect("checkpoint genomes");
                 first = first.max(g + 1);
@@ -1116,6 +1130,9 @@ fn main() {
         pending.borrow_mut().push((n, recipient.clone(), child.clone(), tokens, parents));
         (child, text)
     };
+    if frontier_ladders {
+        neurocomp::evolve::set_frontier_ladders(Some(ladders.clone()));
+    }
     evolve_islands(&islands, start, stages, first, pop, trials, Physics::Varied, &train, env("ISL_FRESH", 0u8) == 1, &held, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
         // the plasmids followed: how many of their island's genomes carry them (this generation's
         // new ones are in children, scored from the next)
@@ -1179,7 +1196,8 @@ fn main() {
         if (every > 0 && g % every == 0) || (ckpt > 0 && g % ckpt == 0) || g + 1 == gens {
             let mut ck = String::new();
             for (i, isl) in islands.iter().enumerate() {
-                ck += &format!("island {} generation {g} stage {}\n", isl.name, r.stage[i]);
+                let own = if r.ladders[i].is_empty() { String::new() } else { format!(" ladders {}", r.ladders[i].iter().map(|x| x.to_string()).collect::<Vec<_>>().join(",")) };
+                ck += &format!("island {} generation {g} stage {}{own}\n", isl.name, r.stage[i]);
                 for x in &r.ranked[i] {
                     ck += &x.to_text();
                 }
@@ -1194,7 +1212,17 @@ fn main() {
             }
             let g: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], r.means[i][p])).collect();
             Some(format!("{} {} {} (met {}/{})", isl.name, st.name, g.join(" "), r.met[i], st.hold.max(1)))
-        }).collect();
+        }).chain(islands.iter().enumerate().filter(|(i, _)| !r.ladders[*i].is_empty()).flat_map(|(i, isl)| {
+            // (`ISL_FRONTIER_LADDERS`) the generalist's own rung on each ladder
+            islands.iter().enumerate().filter(move |(j, o)| *j != i && !o.frontier).filter_map(move |(j, o)| {
+                let st = &o.stages[r.ladders[i][j]];
+                if st.goal.is_empty() {
+                    return None;
+                }
+                let g: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], r.ladder_means[i][j][p])).collect();
+                Some(format!("{}@{} {} {} (met {}/{})", isl.name, o.name, st.name, g.join(" "), r.ladder_met[i][j], st.hold.max(1)))
+            })
+        })).collect();
         let took = last.elapsed().as_secs_f64();
         last = std::time::Instant::now();
         println!("{g:>4}  {} {took:.0}s{}", clock(), if goals.is_empty() { String::new() } else { format!("  goals: {}", goals.join("; ")) });
@@ -1205,6 +1233,27 @@ fn main() {
                 let pass = st.goal.iter().all(|&(p, x)| m[p] >= x);
                 let g2: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], m[p])).collect();
                 println!("{g:>4}  {} held its goal on training; its elite held out: {} ({})", isl.name, g2.join(" "), if pass { "moves on" } else { "stays" });
+            }
+        }
+        // (`ISL_FRONTIER_LADDERS`) the generalist's checks on its own rungs, and its moves
+        for (i, j, m, pass) in &r.ladder_checks {
+            let (i, j) = (*i, *j);
+            let st = &islands[j].stages[r.ladders[i][j]];
+            let g2: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], m[p])).collect();
+            println!("{g:>4}  {} held its goal on {}'s {} on training; its elite held out: {} ({})", islands[i].name, islands[j].name, st.name, g2.join(" "), if *pass { "moves on" } else { "stays" });
+            if *pass {
+                let next = &islands[j].stages[r.ladders[i][j] + 1];
+                println!("{g:>4}  {} moves on {}'s ladder to stage {} ({}): goal met", islands[i].name, islands[j].name, r.ladders[i][j] + 1, next.name);
+                if let Ok(path) = std::env::var("ISL_RUNG_LOG") {
+                    if let (Ok(mut f), false) = (std::fs::OpenOptions::new().create(true).append(true).open(&path), r.ranked[i].is_empty()) {
+                        use std::io::Write;
+                        let mut text = format!("island {} generation {g} stage {} passed {}@{}\n", islands[i].name, r.stage[i], islands[j].name, st.name);
+                        for gm in r.ranked[i].iter().take(elite.max(1)) {
+                            text += &gm.to_text();
+                        }
+                        let _ = write!(f, "{text}");
+                    }
+                }
             }
         }
         // an island that met its stage's goal: it is scored on the next stage from this generation
@@ -1263,7 +1312,7 @@ fn main() {
                         if j == i || other.frontier {
                             continue;
                         }
-                        let os = &other.stages[r.stage[j]];
+                        let os = &other.stages[if r.ladders[i].is_empty() { r.stage[j] } else { r.ladders[i][j] }];
                         let new: Vec<usize> = os.probes.iter().copied().filter(|p| !shown.contains(p)).collect();
                         if new.is_empty() {
                             continue;

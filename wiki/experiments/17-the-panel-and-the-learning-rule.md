@@ -106,8 +106,8 @@ hints, not results. From now on a new mechanism is compared on 3 evolutionary se
    reading alone on pairs8 > pairs32 > pairs128, 200 generations, 3 seeds, three arms (no rule,
    the rule, the rule as a table). No arm with the rule passed pairs8. The one pass, without the
    rule, was an echo wire that the island's held-out check scored copy 340 to 548 on pairs8 and
-   pairs32. **Not a leak** (retracted): the genome that passed pairs8 (`runs/checks/evolved-reader/`)
-   reads. Its eye kernels are born on each glyph copying the move being made, the echo of the
+   pairs32. **Not a leak** (retracted): the genome that passed pairs8 (`runs/checks/evolved-reader/`;
+   the case written up in [experiment 18](18-an-evolved-reader.md)) reads. Its eye kernels are born on each glyph copying the move being made, the echo of the
    teacher naming it, and write by XOR, so the code cancels the echo on taught steps and is said
    alone on untaught ones. Against a lookup table made fair (silent after a taught step) it reaches
    957 of 990 at N = 8 and 912 of 1014 at N = 32 over 1600 trials, and 678 of 1020 at N = 128; the

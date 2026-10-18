@@ -1,0 +1,10 @@
+copy (goal 100; lookup a perfect table, blind the floor), mean of 24 worlds; body 1, one-word codes 8
+   N trials |  lookup  blind | networks
+   2    200 |     825    -60 | reader 703
+   2   1600 |     881    -11 | reader 860
+   8    200 |     966    -28 | reader 788
+   8   1600 |     990      0 | reader 957
+  32    200 |    1016      2 | reader 386
+  32   1600 |    1014      0 | reader 765
+ 128    200 |    1018      0 | reader 92
+ 128   1600 |    1020      0 | reader 431

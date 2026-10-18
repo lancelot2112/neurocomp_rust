@@ -1545,7 +1545,9 @@ fn main() {
         let goals: Vec<String> = islands.iter().enumerate().filter(|(_, isl)| isl.stages.len() > 1).filter_map(|(i, isl)| {
             let st = &isl.stages[r.stage[i]];
             if st.goal.is_empty() {
-                return None;
+                // (a ladder's last rung, which has no goal) its last probe's training mean, so the
+                // climb stays on the record
+                return st.probes.last().map(|&p| format!("{} {} {} {}/0 (last rung)", isl.name, st.name, PROBES[p], r.means[i][p]));
             }
             let g: Vec<String> = st.goal.iter().map(|&(p, x)| format!("{} {}/{x}", PROBES[p], r.means[i][p])).collect();
             Some(format!("{} {} {} (met {}/{})", isl.name, st.name, g.join(" "), r.met[i], st.hold.max(1)))

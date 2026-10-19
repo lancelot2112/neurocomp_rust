@@ -322,3 +322,10 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     first exception found: its lag5 passers (delays 5 to 10) score 572 to 585 learning and 195 to 205
     frozen.
 
+
+57. **Every way to fail must score differently from the others (experiment 17).** With stray clicks
+    charged and misses free, doing nothing was a refuge: run 37's recall best was empty for 120
+    generations. Charging misses in full (run 38) got switching and recall past respond at 77, not
+    112 and 147, but pinned recall and the screen at -1024, where doing nothing and clicking at
+    random scored alike and selection had no slope. Cost misses at a share of a wrong answer and
+    floor scores softly, so the worst failures are still ranked.

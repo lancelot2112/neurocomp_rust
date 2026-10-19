@@ -1169,3 +1169,24 @@ rungs whose stimuli tell the task and stopped at held; recall's flag2 score rose
 (-336 to -116). Learning clearly mattered in 19 of 320 battery pairs at 258 (run 36: 3 of 360).
 Run 38 (started 3:45 PM ET) adds the miss cost, selection by the tasks' performance contrasted and
 stacked rungs on switching, shapes and the maze.
+
+## Run 38's end (stopped at 112 for run 39)
+
+9 rung moves in 112 generations: reading to pairs8 (4, 28), selection cued to held (38, 49, 56,
+60), switching to tell and recall to flag2 (both 77), shapes to blur1 (102). The miss cost ended
+the refuge of doing nothing: switching and recall passed respond at 77 (run 37: 112 and 147).
+Selection under the performance contrast climbed cued to held in 22 generations and sits at about
+0 on held (-26 at 112), as in run 37. But the full miss cost saturates: recall's best was empty at
+-1024 on respond to generation 60, and on flag2 ran -1024 to -780; the screen sat at -1024 on
+glow-150. Doing nothing scores -1024 and so does clicking at random (stray cost plus misses, cut at
+-1024), so selection had nothing to tell apart there.
+
+## The miss cost scaled and a soft floor (`ISL_MISS_SCALE`, `ISL_SOFT_FLOOR`, run 39)
+
+`ISL_MISS_SCALE=<per 1024>` sets a miss's share of a wrong answer (`observe::missed`), 1024 as in
+run 38; at 512 doing nothing scores -512. `ISL_SOFT_FLOOR=1` replaces the cut at -1024 with
+`observe::floor`: scores from -512 up as they are, below it -512 - 512 x / (x + 512) for x below
+-512, so -1024 becomes -768, -2048 -896, and no score reaches -1024; the order of bad scores is
+kept. Test `misses_scaled_and_floored_softly_keep_bad_networks_apart`: a responder 1024 on respond,
+never acting -512 (and -512 on flag), clicking every step -991. Run 39 (started 4:58 PM ET) is run
+38 with both, at 512.

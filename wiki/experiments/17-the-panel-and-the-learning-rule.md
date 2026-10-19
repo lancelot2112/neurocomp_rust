@@ -1205,3 +1205,22 @@ half): (flag, flag~) holder (1024, 1020), every question (0, 256), latch (-910, 
 (-774, 155), random (-815, -616), never (-512, -512). So clicking at the question tone pays before
 the cue must be held, as surprise+ pays clicking after breaks before telling them apart. Run 40 is
 run 39 with it.
+
+## Partial credit on the other stuck rungs (`ISL_PARTIAL_MORE=1`, run 40)
+
+A survey of the probes for ones with no graded selection score found four. (1) The stacked feel
+rungs: `graded` mapped feel to feel~ (clicks 4 to 6 steps after a stroke at half, 7 to 9 at a
+quarter), but stacking (run 38) moved those rungs to feel-gap and feel-maze, which had none, so the
+feel rungs lost their partial credit; feel-gap~ and feel-maze~ (`observe::stroke_tiers`) restore
+feel~'s tiers. (2) copy (reading's pairs8, at about -20 since run 39's 33): copy~ as echo~ is to
+echo, lags 5 to 8 at half, per token shown. (3) tell (shapes' blur1): tell~, a click late in the
+trial (step 6 or 7) at half. Test `graded_feel_copy_and_tell_pay_late_answers_in_part`: clicking 5
+steps after a gap stroke scores -28 on feel-gap and 169 on feel-gap~; clicking light A at step 6,
+0 on tell and 512 on tell~; saying the token shown 6 steps ago, 15 on copy and 453 on copy~ (on
+time 861 and 874, random 10 and 6). (4) Selection's held: under the performance contrast
+`select_graded` returns the contrast score, so select~'s partial credit was bypassed. Measured
+(12 lifetimes, the cue felt 3 steps a block): a selector acting only while the cue is felt scores
+31, one holding it 20 steps 97, never 0, a holder 1021: nothing between doing nothing and holding
+through the block, which is why held sat at about 0 in runs 37 to 39. With `set_select_early`
+select~ is the contrast averaged with the same over each block's first two trials: felt only 181,
+held 20 steps 544, a holder 1008, blind -3. Run 40 has all four with flag~.

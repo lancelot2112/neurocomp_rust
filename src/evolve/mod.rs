@@ -821,7 +821,7 @@ pub fn partial() -> bool {
 
 /// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
 pub fn graded(p: usize) -> usize {
-    if partial() { match p { 7 => 15, 9 if partial_surprise() => 31, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, 32 if partial_flag() => 35, _ => p } } else { p }
+    if partial() { match p { 7 => 15, 9 if partial_surprise() => 31, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, 32 if partial_flag() => 35, 33 if partial_more() => 36, 34 if partial_more() => 37, 6 if partial_more() => 38, 1 if partial_more() => 39, _ => p } } else { p }
 }
 
 /// Surprise shaped from clicking at all (`set_partial_surprise`, with `set_partial`): selection uses
@@ -835,6 +835,19 @@ pub fn set_partial_surprise(on: bool) {
 
 pub fn partial_surprise() -> bool {
     PARTIAL_SURPRISE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Partial credit on the stacked feel rungs, copy and tell too (`set_partial_more`, with
+/// `set_partial`): selection uses feel-gap~, feel-maze~ (`feel_graded`'s tiers), copy~ (lags 5 to
+/// 8 at half, per token shown) and tell~ (a late click at half). Off by default.
+static PARTIAL_MORE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_partial_more(on: bool) {
+    PARTIAL_MORE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial_more() -> bool {
+    PARTIAL_MORE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Partial credit on cues and questions too (`set_partial_flag`, with `set_partial`): selection uses

@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~", "feel-gap~", "feel-maze~", "copy~", "tell~"];
 /// How many probes there are.
-pub const NPROBES: usize = 36;
+pub const NPROBES: usize = 40;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -200,7 +200,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0, feel_in_gaps_graded(reversal), feel_in_maze_graded(maze_events), copy_graded(sequence), tell_graded(reversal)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -291,6 +291,89 @@ pub fn feel_in_maze(events: &[Event]) -> i32 {
         return 0;
     }
     (after_c * 1024 / after - other_c * 1024 / other) as i32
+}
+
+/// Clicks after a stroke in tiers, as `feel_graded` scores them: steps 1 to 3 after the last stroke
+/// that counts (`counts`) in full, 4 to 6 at half, 7 to 9 at a quarter, each against the click rate
+/// at the steps `baseline` admits with no stroke of any kind in the 9 before.
+fn stroke_tiers(ev: &[&Event], counts: impl Fn(&Event) -> bool, baseline: impl Fn(&Event) -> bool) -> i32 {
+    let mut n = [0i64; 4];
+    let mut c = [0i64; 4];
+    let (mut since, mut since_any) = (usize::MAX, usize::MAX);
+    for t in 0..ev.len() {
+        if t > 0 && counts(ev[t - 1]) {
+            since = 1;
+        } else if since != usize::MAX {
+            since += 1;
+        }
+        if t > 0 && ev[t - 1].stroked {
+            since_any = 1;
+        } else if since_any != usize::MAX {
+            since_any += 1;
+        }
+        let b = match since {
+            1..=3 => 0,
+            4..=6 => 1,
+            7..=9 => 2,
+            _ if since_any > 9 && baseline(ev[t]) => 3,
+            _ => continue,
+        };
+        n[b] += 1;
+        c[b] += (ev[t].moved == Some(CLICK)) as i64;
+    }
+    if n[3] == 0 || n[0] == 0 {
+        return 0;
+    }
+    let other = c[3] * 1024 / n[3];
+    let rate = |b: usize| if n[b] == 0 { other } else { c[b] * 1024 / n[b] };
+    ((rate(0) - other) + (rate(1) - other) / 2 + (rate(2) - other) / 4) as i32
+}
+
+/// Feeling in the lights world with partial credit (`evolve::set_partial_more`): `feel_in_gaps` in
+/// `feel_graded`'s tiers, a late click after a gap stroke counting half or a quarter.
+pub fn feel_in_gaps_graded(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_))).collect();
+    stroke_tiers(&ev, |e| e.stroked && e.trial.is_none(), |e| e.trial.is_none())
+}
+
+/// Feeling in the maze with partial credit (`evolve::set_partial_more`): `feel_in_maze` in
+/// `feel_graded`'s tiers.
+pub fn feel_in_maze_graded(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Maze).collect();
+    stroke_tiers(&ev, |e| e.free_stroke, |_| true)
+}
+
+/// Copy with partial credit (`evolve::set_partial_more`): as `echo_graded` is to echo, copy's
+/// matches with lags 5 to 8 at half (against 13 to 16), per untaught token shown rather than per
+/// token said, so a late reader scores something and a network saying few tokens is not scored
+/// on a handful. Saying nothing or at random scores about 0.
+pub fn copy_graded(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Sequence).collect();
+    let far = 16;
+    let shown = ev.iter().skip(far).filter(|e| !e.taught && e.shown.is_some()).count() as i64;
+    if shown == 0 {
+        return 0;
+    }
+    let hits = |lags: std::ops::RangeInclusive<usize>| -> i64 {
+        lags.map(|l| (far..ev.len()).filter(|&t| !ev[t - l].taught && says(ev[t], ev[t - l].shown)).count() as i64).sum()
+    };
+    ((2 * (hits(1..=4) - hits(9..=12)) + hits(5..=8) - hits(13..=16)) * 512 / shown) as i32
+}
+
+/// Tell with partial credit (`evolve::set_partial_more`): as tell, a trial clicked in its window
+/// (steps 3 to 5) counting in full and one clicked only late (6 or 7) at half, the difference
+/// between the two lights in the second half signed by the first's.
+pub fn tell_graded(events: &[Event]) -> i32 {
+    let tr = trials(events, (3, 5), (6, 7));
+    let half = tr.len() / 2;
+    let credit = |x: &Trial| if x.3 { 2 } else if x.4 { 1 } else { 0 };
+    let mean = |part: &[Trial], light: bool| -> i64 {
+        let v: Vec<&Trial> = part.iter().filter(|x| x.1 == light).collect();
+        if v.is_empty() { 0 } else { v.iter().map(|x| credit(x)).sum::<i64>() * 512 / v.len() as i64 }
+    };
+    let diff = |part: &[Trial]| mean(part, true) - mean(part, false);
+    let first = diff(&tr[..half]);
+    if first == 0 { 0 } else { (diff(&tr[half..]) * first.signum()) as i32 }
 }
 
 /// Feeling in the lights world (stacked rungs, `World::gap_strokes`): clicks in the three steps
@@ -408,6 +491,26 @@ pub fn set_select_contrast(mode: u8) {
 
 pub fn select_contrast_on() -> bool {
     SELECT_CONTRAST.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+/// Selection's partial credit by how long the task is held (`set_select_early`, with selection by
+/// contrast): select~ is the contrast score over the whole lifetime averaged with the same over each
+/// block's first two trials, so a network that holds the task cue a while, not yet through the
+/// block, scores part. In run 39 a selector acting only while the cue is felt (its first 3 steps)
+/// scored 31 on the performance contrast, never acting 0, and held sat at about 0. Off by default.
+static SELECT_EARLY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_select_early(on: bool) {
+    SELECT_EARLY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn select_early() -> bool {
+    SELECT_EARLY.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The events of each block's first two trials (each block's trials are numbered from 0).
+pub fn early_trials(events: &[Event]) -> Vec<Event> {
+    events.iter().filter(|e| e.trial.is_some_and(|t| t.0 < 2)).cloned().collect()
 }
 
 /// The selection score in use under `set_select_contrast` (1 the rates', 2 the performance's).
@@ -928,6 +1031,9 @@ pub fn behaviour(events: &[&[Event]]) -> [i32; 8] {
 /// `select` gives it 0, so a gradient leads to responding before it is gated by the task.
 pub fn select_graded(events: &[Event]) -> i32 {
     if select_contrast_on() {
+        if select_early() {
+            return (contrast_score(events) + contrast_score(&early_trials(events))) / 2;
+        }
         return contrast_score(events);
     }
     let (respond, babbled, voice, clicks) = select_parts(events);
@@ -1923,6 +2029,52 @@ mod tests {
     }
 
     #[test]
+    fn graded_feel_copy_and_tell_pay_late_answers_in_part() {
+        // feel-gap~: clicking 5 steps after a gap stroke scores on feel-gap~ but not feel-gap;
+        // tell~: clicking light A at step 6 (late) scores on tell~ but not tell
+        let lights = |late_feel: bool, seed: u64| -> (i32, i32, i32, i32) {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 6;
+            w.gap_strokes = true;
+            w.conditioning(Conditioning::Reversal, 60);
+            let light_a = w.lights[0].as_words().to_vec();
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let (mut since_stroke, mut since_a) = (usize::MAX, usize::MAX);
+            while !w.done() {
+                if channel(&senses, AFFECT).count_ones() > 0 { since_stroke = 0 } else { since_stroke = since_stroke.saturating_add(1) }
+                if channel(&senses, EYE).as_words() == light_a.as_slice() { if since_a > 8 { since_a = 0 } else { since_a += 1 } } else { since_a = since_a.saturating_add(1) }
+                let click = if late_feel { since_stroke == 4 } else { since_a == 3 };
+                let a = w.act(None, click.then_some(CLICK));
+                senses = w.step(&a);
+            }
+            let row = probes(&w.events, 60, &[], &[], &[], &[], &[]);
+            (row[33], row[36], row[1], row[39])
+        };
+        let mean = |late_feel: bool| { let v: Vec<_> = (0..10).map(|s| lights(late_feel, 120 + s)).collect(); let m = |f: fn(&(i32, i32, i32, i32)) -> i32| v.iter().map(f).sum::<i32>() / 10; (m(|x| x.0), m(|x| x.1), m(|x| x.2), m(|x| x.3)) };
+        let (feel_late, tell_late) = (mean(true), mean(false));
+        eprintln!("late feel (feel-gap, feel-gap~, tell, tell~) {feel_late:?}; late tell {tell_late:?}");
+        assert!(feel_late.0.abs() < 80 && feel_late.1 > 150, "{feel_late:?}");
+        assert!(tell_late.2.abs() < 80 && tell_late.3 > 250, "{tell_late:?}");
+        // copy~: saying the token shown 6 steps ago scores on copy~, not on copy; random speech 0
+        let seq = |say: &dyn Fn(&[usize], usize) -> Option<usize>| -> (i32, i32) {
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(4);
+            let toks: Vec<usize> = (0..400).map(|_| rand::Rng::gen_range(&mut rng, 0..8)).collect();
+            let mut w = World::new(6, 8);
+            w.sequence(&toks);
+            let mut t = 0;
+            while !w.done() {
+                let a = w.act(say(&toks, t), None);
+                w.step(&a);
+                t += 1;
+            }
+            (copy(&w.events), copy_graded(&w.events))
+        };
+        let (on_time, late, random) = (seq(&|toks, t| if t >= 2 { Some(toks[t - 2]) } else { None }), seq(&|toks, t| if t >= 6 { Some(toks[t - 6]) } else { None }), seq(&|_, t| Some((t * 5 + 3) % 8)));
+        eprintln!("(copy, copy~): on time {on_time:?}, late reader {late:?}, random {random:?}");
+        assert!(on_time.1 > 800 && late.0 < 100 && late.1 > 200 && random.1.abs() < 100, "{on_time:?} {late:?} {random:?}");
+    }
+
+    #[test]
     fn misses_cost_so_doing_nothing_is_no_refuge() {
         // with the miss cost, a network that never acts scores -1024 on respond, flag and the
         // maze; a responder keeps its score
@@ -1995,7 +2147,7 @@ mod tests {
         let (sel, blind) = (mean(0), mean(1));
         // the performance contrast: the selector, the blind one, and a timid selector that clicks
         // at one light in ten in respond blocks and says a token one step in twenty in babble blocks
-        let perf = |kind: u8| -> i32 {
+        let perf = |kind: u8| -> (i32, i32) {
             (0..12u64).map(|s| {
                 let seed = 950 + s;
                 let mut w = World::new(seed, 2);
@@ -2004,6 +2156,7 @@ mod tests {
                 let mut senses = BitVector::new(SENSE_BITS, Some(0));
                 let cues: Vec<Vec<u64>> = (0..3).map(|k| w.cues[k % w.cues.len()].as_words().to_vec()).collect();
                 let mut held: Option<usize> = None;
+                let mut since = usize::MAX;
                 for b in 0..10 {
                     let task = if b < 2 { b } else { rand::Rng::gen_range(&mut rng, 0..2) };
                     w.task = Some(task);
@@ -2014,11 +2167,16 @@ mod tests {
                     w.conditioning(Conditioning::Reversal, 20);
                     while !w.done() {
                         let touch = channel(&senses, TOUCH).as_words().to_vec();
-                        if let Some(f) = cues.iter().position(|c| *c == touch) {
+                        let felt = cues.iter().position(|c| *c == touch);
+                        if let Some(f) = felt {
                             held = Some(f);
                         }
                         let seen = channel(&senses, EYE).count_ones() > 0;
                         let token = rand::Rng::gen_range(&mut rng, 0..2);
+                        // (3: a selector acting only while the cue is felt; 4: never acting; 5: a
+                        // selector holding the cue 20 steps)
+                        since = if felt.is_some() { 0 } else { since.saturating_add(1) };
+                        let (kind, held) = match kind { 3 => (0, felt), 4 => (9, None), 5 => (0, held.filter(|_| since < 20)), k => (k, held) };
                         let (say, hand) = match (kind, held) {
                             (0, Some(0)) => (None, seen.then_some(CLICK)),
                             (0, Some(1)) => (Some(token), None),
@@ -2031,11 +2189,18 @@ mod tests {
                         senses = w.step(&a);
                     }
                 }
-                (select_performance(&w.events), select_contrast(&w.events))
-            }).fold((0, 0), |a, x| (a.0 + x.0, a.1 + x.1)).0 / 12
+                let early = early_trials(&w.events);
+                (select_performance(&w.events), (select_performance(&w.events) + select_performance(&early)) / 2)
+            }).fold((0, 0), |a, x| (a.0 + x.0, a.1 + x.1))
         };
-        let (p_sel, p_blind, p_timid) = (perf(0), perf(1), perf(2));
-        eprintln!("select / contrast: selector {sel:?}, task-blind clicker and speaker {blind:?}; performance contrast: selector {p_sel}, blind {p_blind}, timid {p_timid}");
+        let perf_both = perf;
+        let perf = |kind: u8| perf_both(kind).0 / 12;
+        let early = |kind: u8| perf_both(kind).1 / 12;
+        let (p_sel, p_blind, p_timid, p_felt, p_never) = (perf(0), perf(1), perf(2), perf(3), perf(4));
+        eprintln!("select / contrast: selector {sel:?}, task-blind clicker and speaker {blind:?}; performance contrast: selector {p_sel}, blind {p_blind}, timid {p_timid}, acting only while the cue is felt {p_felt}, never {p_never}");
+        let (e_sel, e_felt, e_short, e_never, e_blind) = (early(0), early(3), early(5), early(4), early(1));
+        eprintln!("with the first two trials (select~ by early): selector {e_sel}, felt only {e_felt}, held 20 steps {e_short}, never {e_never}, blind {e_blind}; held 20 steps on the contrast alone {}", perf(5));
+        assert!(e_sel > 700 && e_short > perf(5) + 100 && e_short < e_sel && e_blind.abs() < 150, "{e_sel} {e_short} {e_blind}");
         assert!(p_sel > 700 && p_blind.abs() < 150 && p_timid < 200, "{p_sel} {p_blind} {p_timid}");
         assert!(sel.1 > 800 && blind.1.abs() < 150, "{sel:?} {blind:?}");
         assert!(blind.0 > 500, "the old score passed it: {blind:?}");

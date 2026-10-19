@@ -1690,6 +1690,11 @@ pub struct IslandGeneration<G> {
     /// (`set_novel_migrate`) species founders sent this generation: (novelty island, to island, the
     /// probe it was useful on)
     pub novel_sent: Vec<(usize, usize, usize)>,
+    /// (`set_novelty`) the founders of this generation's new species, as `new_species`, with their
+    /// behaviour; and all species and the archive of behaviours, for a checkpoint to keep
+    pub founders: Vec<(G, [i64; 8])>,
+    pub species_all: Vec<(G, [i64; 8], usize)>,
+    pub archive: Vec<[i64; 8]>,
 }
 
 /// Islands: each population evolves by lexicase on its own probes (`evolve_lexicase`'s breeding),
@@ -1723,6 +1728,7 @@ pub fn evolve_islands<G: Evolvable>(
     every: usize,
     plasmids: usize,
     transfer: impl Fn(&G, &G, &mut StdRng) -> (G, String),
+    novelty_start: (Vec<(G, [i64; 8], usize)>, Vec<[i64; 8]>),
     mut report: impl FnMut(usize, &IslandGeneration<G>),
 ) -> Vec<Vec<G>> {
     let k = islands.len();
@@ -1752,8 +1758,8 @@ pub fn evolve_islands<G: Evolvable>(
     let mut lmet: Vec<Vec<usize>> = lad.iter().map(|l| vec![0; l.len()]).collect();
     // (`set_novelty`) the novelty island's archive of behaviours and its species (a founder genome,
     // its behaviour, the probe it was useful on)
-    let mut archive: Vec<[i64; 8]> = Vec::new();
-    let mut species: Vec<(G, [i64; 8], usize)> = Vec::new();
+    // (a resumed run's, if its checkpoint kept them)
+    let (mut species, mut archive): (Vec<(G, [i64; 8], usize)>, Vec<[i64; 8]>) = novelty_start;
     for generation in first..generations {
         let lad_now = lad.clone();
         let mut ladder_means: Vec<Vec<observe::ProbeRow>> = lad.iter().map(|l| vec![[0i32; observe::NPROBES]; l.len()]).collect();
@@ -1763,6 +1769,7 @@ pub fn evolve_islands<G: Evolvable>(
         let mut new_species: Vec<(usize, usize, i32)> = Vec::new();
         // (`set_novel_migrate`) their founders: (island, the probe, the genome)
         let mut founders: Vec<(usize, usize, G)> = Vec::new();
+        let mut founder_behs: Vec<[i64; 8]> = Vec::new();
         // (`set_migrate`) the generalist's passes on its own ladders this generation
         let mut passes: Vec<(usize, usize, usize)> = Vec::new();
         // (`fresh`: the training worlds are new every generation, the same for every genome in
@@ -1967,6 +1974,7 @@ pub fn evolve_islands<G: Evolvable>(
                             species.push((scored[g].genome.clone(), behs[g], p));
                             new_species.push((i, p, m[p]));
                             founders.push((i, p, scored[g].genome.clone()));
+                            founder_behs.push(behs[g]);
                         }
                     }
                 }
@@ -2124,7 +2132,7 @@ pub fn evolve_islands<G: Evolvable>(
                 }
             }
         }
-        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks, migrated, new_species, species: species.len(), novel_sent });
+        report(generation, &IslandGeneration { stage: now, held, met: met_now, rechecked, ranked: ranked.clone(), means, work, moved, contest, ladders: lad_now, ladder_means, ladder_met, ladder_checks, migrated, new_species, species: species.len(), novel_sent, founders: founders.iter().zip(&founder_behs).map(|(f, b)| (f.2.clone(), *b)).collect(), species_all: species.clone(), archive: archive.clone() });
         last = ranked;
         pops = next;
     }

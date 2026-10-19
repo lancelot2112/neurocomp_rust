@@ -297,6 +297,10 @@
 //! archive; no goals. A novel genome useful on some probe (a mean of 200 or more, babble aside)
 //! founds a species: its founder is kept and the island grows by four genomes, up to the max. With
 //! `ISL_MIGRATE_UP` its most novel genomes join the generalist.
+//! `ISL_SPECIES_LOG=<file>`: each species' founder appended when it is founded (`species n island
+//! novelty generation g useful <probe> score x behaviour <8 numbers>`, then its genome), a library
+//! of useful, behaviourally new genomes across runs. The novelty island's species and archive are
+//! also kept beside each checkpoint in `<checkpoint>.novelty`, and a resume reads them back.
 //! `ISL_NOVEL_MIGRATE=1`: each new species' founder is also copied into every island whose current
 //! rung is scored on the probe it was useful on (run 34's surprise species, a cycle1 detector scoring
 //! 669, never reached the prediction island stuck below cycle1).
@@ -1235,6 +1239,31 @@ fn main() {
             }
         }
     }
+    // (`ISL_NOVELTY`) the novelty island's species and archive, kept beside a checkpoint in
+    // `<checkpoint>.novelty`: `archive` lines of 8 numbers, and `species <probe> <8 numbers>` each
+    // followed by its founder's genome
+    let mut novelty_start: (Vec<(TagGenome, [i64; 8], usize)>, Vec<[i64; 8]>) = (Vec::new(), Vec::new());
+    if let Some(text) = resume.as_ref().and_then(|p| std::fs::read_to_string(format!("{p}.novelty")).ok()) {
+        let nums = |w: &[&str]| -> Option<[i64; 8]> { let v: Vec<i64> = w.iter().filter_map(|x| x.parse().ok()).collect(); v.try_into().ok() };
+        for part in text.split("\nspecies ").map(|x| x.trim_start_matches("species ")) {
+            let (head, body) = part.split_once('\n').unwrap_or((part, ""));
+            if head.starts_with("archive") {
+                for l in part.lines() {
+                    let w: Vec<&str> = l.split_whitespace().collect();
+                    if w.first() == Some(&"archive") {
+                        if let Some(b) = nums(&w[1..]) { novelty_start.1.push(b) }
+                    }
+                }
+                continue;
+            }
+            let w: Vec<&str> = head.split_whitespace().collect();
+            if let (Some(p), Some(b), Ok(g)) = (w.first().and_then(|x| x.parse::<usize>().ok()), nums(w.get(1..).unwrap_or(&[])), TagGenome::from_text(body)) {
+                if let Some(g) = g.into_iter().next() { novelty_start.0.push((g, b, p)) }
+            }
+        }
+        println!("resumed the novelty island's {} species and {} archived behaviours", novelty_start.0.len(), novelty_start.1.len());
+    }
+    let species_log = std::env::var("ISL_SPECIES_LOG").ok();
     println!("islands: {} of {pop}, elite {elite}, {lives} worlds, {held_n} held out, {trials} trials, gaps 0-{gap}, exchange every {every} ({plasmids} plasmids an island), thrift {thrift}, reads counted {}, channels held in place {}, carrying cost {} a token, plasmids of at most {} populations (0: any), exclusion {}, op choice {}, ration {} a step (0: no energy), food {} for 1024 points scored, fresh training worlds {}, epigenetic marks {}, exploration {}{}",
         islands.iter().map(|i| i.name.as_str()).collect::<Vec<_>>().join(", "), neurocomp::program::neurocomp::count_reads(), neurocomp::program::neurocomp::in_place(), neurocomp::evolve::carry(), env("ISL_PLASMID_MAX", 0usize), env("ISL_EXCLUDE", 0u8) == 1, neurocomp::kernel::class::op_choice(), neurocomp::evolve::energy().0, neurocomp::evolve::energy().1, env("ISL_FRESH", 0u8) == 1, neurocomp::evolve::epigenetics(), neurocomp::program::neurocomp::explore(), format!("{}{}{}", if neurocomp::evolve::tags::zeros() { ", expecting zeros true" } else { "" }, if neurocomp::evolve::tags::accident() { ", accidents true" } else { "" }, if neurocomp::evolve::tags::port_gates() { ", port gates true" } else { "" }) + if neurocomp::program::neurocomp::shadow() { ", shadow explorers true" } else { "" } + if neurocomp::evolve::tags::pause_draws() { ", pauses drawn true" } else { "" } + if neurocomp::evolve::tags::shadow_hints() { ", shadow hints true" } else { "" } + if neurocomp::evolve::tags::hint_use() { ", edges on hints true" } else { "" } + if neurocomp::evolve::tags::read_outputs() { ", outputs read true" } else { "" } + if neurocomp::evolve::tags::hint_band() { ", hint bands true" } else { "" } + if neurocomp::evolve::tags::self_writes() { ", self writes true" } else { "" } + if neurocomp::evolve::tags::close_loops() { ", loops closed true" } else { "" } + if neurocomp::evolve::tags::heat_inputs() { ", heat inputs true" } else { "" } + if neurocomp::evolve::carry_energy() { ", carrying paid as energy true" } else { "" } + if neurocomp::evolve::elite_pass() { ", goals judged on the elite true" } else { "" } + if neurocomp::evolve::partial() { ", partial credit true" } else { "" } + if neurocomp::evolve::partial_remember() { ", partial credit on remember true" } else { "" } + if neurocomp::evolve::partial_select() { ", partial credit on select true" } else { "" } + if neurocomp::evolve::partial_screen() { ", partial credit on the screen true" } else { "" } + if neurocomp::evolve::partial_surprise() { ", surprise shaped from clicking at all true" } else { "" } + if neurocomp::evolve::fair_sequences() { ", fair prediction streams true" } else { "" } + if neurocomp::evolve::varied_orders() { ", order cycles of varied shape true" } else { "" } + if neurocomp::world::observe::fair_said() { ", echo and copy per token shown true" } else { "" } + if neurocomp::world::observe::fair_win_stay() { ", win-stay against the other light true" } else { "" } + if neurocomp::program::neurocomp::clock_drawn() { ", the clock drawn true" } else { "" } + if neurocomp::evolve::fresh_held() { ", held-out worlds fresh at every check true" } else { "" } + if neurocomp::evolve::one_word_voice() { ", the voice one-word everywhere true" } else { "" } + if neurocomp::evolve::migrate() { ", the generalist's passes migrate true" } else { "" } + if neurocomp::evolve::novel_migrate() { ", novelty's species sent to the islands true" } else { "" } + if neurocomp::evolve::twins() { ", twin worlds true" } else { "" } + if neurocomp::evolve::cursor_away() { ", the cursor starts off the target true" } else { "" } + if neurocomp::evolve::tags::branches_many() { ", more branches true" } else { "" } + if neurocomp::kernel::class::long_shifts() { ", long shifts true" } else { "" } + if neurocomp::evolve::vary_lag() { ", the delay drawn per lifetime true" } else { "" } + if neurocomp::evolve::vary_period() { ", the period drawn per lifetime true" } else { "" } + if neurocomp::evolve::vary_up() { ", drawn from the rung's up true" } else { "" } + if neurocomp::evolve::mixed_codes() { ", mixed lights as one-word codes true" } else { "" } + &if neurocomp::evolve::migrate_up() > 0 { format!(", the islands' best {} into the generalist every {} (room {})", neurocomp::evolve::migrate_up_n(), neurocomp::evolve::migrate_up(), neurocomp::evolve::generalist_room()) } else { String::new() } + if neurocomp::evolve::maze_mirror() { ", the maze cue mirrored per lifetime true" } else { "" } + if neurocomp::evolve::same_word_lights() { ", the shapes' lights in one word true" } else { "" } + if neurocomp::evolve::food_from_world() { ", food from the world's strokes true" } else { "" } + if neurocomp::evolve::keep_rungs() { ", passed rungs kept true" } else { "" } + if neurocomp::evolve::tags::inhibit_inputs() { ", inhibit inputs true" } else { "" } + if neurocomp::evolve::tags::overlap_genes() { ", overlap genes true" } else { "" } + if neurocomp::evolve::size_classes() { ", size classes true" } else { "" } + &if neurocomp::evolve::thrift_relax() > 0 { format!(", thrift relaxed while stuck {}", neurocomp::evolve::thrift_relax()) } else { String::new() } + &if neurocomp::evolve::wire_cost() > 0 { format!(", wiring cost {} a bit of tag distance", neurocomp::evolve::wire_cost()) } else { String::new() } + if neurocomp::program::neurocomp::write_compete() { ", populations compete for their destination true" } else { "" } + if neurocomp::program::neurocomp::prune() { ", pruning true" } else { "" } + if neurocomp::evolve::tags::branches() { ", branches true" } else { "" } + if neurocomp::evolve::muscle() { ", the muscle's response true" } else { "" } + if neurocomp::evolve::tags::birth_lags() { ", birth lags true" } else { "" } + if neurocomp::evolve::sentences() { ", sentences true" } else { "" } + if neurocomp::evolve::body() != 0 { ", a fixed body true" } else { "" } + if neurocomp::evolve::tags::eligibility() { ", the three-factor output rule true" } else { "" } + if neurocomp::evolve::tags::rule_tables() { ", rule tables true" } else { "" } + if neurocomp::evolve::tags::triggers() { ", triggers true" } else { "" } + if neurocomp::evolve::tags::motions() { ", motions true" } else { "" } + if neurocomp::evolve::frontier_passed() { ", the generalist on passed rungs too true" } else { "" } + &if neurocomp::evolve::one_word() > 0 { format!(", one-word codes of {} lines", neurocomp::evolve::one_word()) } else { String::new() });
     let names: String = PROBES.iter().map(|p| format!("{:>7}", &p[..p.len().min(6)])).collect();
@@ -1525,7 +1554,7 @@ fn main() {
     if frontier_ladders {
         neurocomp::evolve::set_frontier_ladders(Some(ladders.clone()));
     }
-    evolve_islands(&islands, start, stages, first, pop, trials, Physics::Varied, &train, env("ISL_FRESH", 0u8) == 1, &held, gap, elite, gens, seed, thrift, every, plasmids, transfer, |g, r| {
+    evolve_islands(&islands, start, stages, first, pop, trials, Physics::Varied, &train, env("ISL_FRESH", 0u8) == 1, &held, gap, elite, gens, seed, thrift, every, plasmids, transfer, novelty_start, |g, r| {
         // the plasmids followed: how many of their island's genomes carry them (this generation's
         // new ones are in children, scored from the next)
         for m in followed.iter_mut().filter(|m| m.alive && m.at < g) {
@@ -1595,6 +1624,20 @@ fn main() {
                 }
             }
             let _ = std::fs::write(&ck_path, ck);
+            // (`ISL_NOVELTY`) the novelty island's species and archive beside it
+            if !r.species_all.is_empty() || !r.archive.is_empty() {
+                let mut nv = String::new();
+                for b in &r.archive {
+                    nv += &format!("archive {}
+", b.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "));
+                }
+                for (gm, b, p) in &r.species_all {
+                    nv += &format!("species {p} {}
+", b.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "));
+                    nv += &gm.to_text();
+                }
+                let _ = std::fs::write(format!("{ck_path}.novelty"), nv);
+            }
         }
         // every generation, one line: each climbing island's goal probes against their goals
         let goals: Vec<String> = islands.iter().enumerate().filter(|(_, isl)| isl.stages.len() > 1).filter_map(|(i, isl)| {
@@ -1634,6 +1677,15 @@ fn main() {
         let first = r.species + 1 - r.new_species.len().min(r.species + 1);
         for (k, &(i, p, x)) in r.new_species.iter().enumerate() {
             println!("{g:>4}  {} founds species {} (useful on {}: {x})", islands[i].name, first + k, PROBES[p]);
+            // (`ISL_SPECIES_LOG`) each founder as founded: a library of useful, behaviourally new
+            // genomes across runs
+            if let (Some(path), Some((gm, b))) = (&species_log, r.founders.get(k)) {
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                    use std::io::Write;
+                    let _ = write!(f, "species {} island {} generation {g} useful {} score {x} behaviour {}
+{}", first + k, islands[i].name, PROBES[p], b.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "), gm.to_text());
+                }
+            }
         }
         // (`ISL_NOVEL_MIGRATE`) their founders sent to the islands whose rung is scored on that probe
         for &(i, j, p) in &r.novel_sent {

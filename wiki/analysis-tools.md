@@ -37,3 +37,10 @@ whole word as a number), `+0` for two-mask kernels that expect zeros too. The sa
 checkpoint, nothing evolving: `ISL_OPS_REPORT=1 ISL_RESUME=runs/islandsN/checkpoint.txt` with the
 run's settings. Runs before 32 log only the written ops.
 
+**The species log and the novelty side file** (from run 36's build). `ISL_SPECIES_LOG=<file>`
+appends each novelty species' founder as it is founded: `species n island novelty generation g
+useful <probe> score x behaviour <8 numbers>`, then its genome, so useful, behaviourally new
+genomes are kept across runs (a library to seed a later run from, as that run's one change). Each
+checkpoint now has `<checkpoint>.novelty` beside it, the novelty island's species and archive, and
+a resume reads it back, so species and their numbering survive a restart (before, a resumed run
+started with none: run 34 resumed numbered its species from 1 again).

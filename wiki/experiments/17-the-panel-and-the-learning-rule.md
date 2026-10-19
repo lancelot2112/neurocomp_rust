@@ -1044,3 +1044,33 @@ Test (run 36's settings, switching and recall, 12 generations from naked): 17 ex
 populations reading ports kept (recall: ear 11, eye 2, self 2; switching: self 2), none without it.
 It grows inputs, not gates: a gate's use cannot be judged locally, so reward gating is not built
 by it.
+
+## Continuous worlds for the other ladders (built, in no run yet)
+
+Each behind its own switch, off by default (recall's is `ISL_RECALL_FLAG`, run 37):
+
+- `ISL_WRONG_SIGNAL=1`: a wrong click is felt the step after, as the stroke follows a right one:
+  every other line of the affect channel's first word, after a click on a light that does not pay,
+  a click with no light to answer (in a trial's gaps or outside its window), a click after a
+  question with no cue or away from any question, a turn to the maze's wrong side, a click off the
+  screen's target. The network gets both outcomes, not a stroke or silence.
+- `ISL_STRAY_COST=1`: switching's and shapes' respond, discriminate and reverse less the clicks
+  made away from any light's window, per trial (`observe::stray_rate`). Test: a responder keeps
+  1024 on respond, a constant clicker -1024.
+- `ISL_SELECT_CONTRAST=1`: select and select~ as the contrast between tasks
+  (`observe::select_contrast`): clicks in respond blocks against babble blocks and the voice in
+  babble blocks against respond blocks, each (a - b)/(a + b), averaged (with still blocks, acting
+  elsewhere against acting there, a third). Test (held, 12 lifetimes): a selector 1021 (old score
+  1022); run 36's passer's strategy, clicking at every light and speaking now and then everywhere,
+  11 (old score 569).
+- `ISL_SCREEN_STREAM=1`: a click does not end the trial; a hit (or the time running out) moves the
+  target to another free cell and the distractors with it, the walls and the cursor stay, and a
+  miss goes on (screen and screen~ now at least -1024). Test (4 x 1, cursor off the target, 20
+  targets): a searcher 20 hits, 699; a constant clicker no hit, 459 wrong signals, -1024.
+- `ISL_MAZE_STREAM=1`: maze trials one after another with no gap. The lighter of the two maze
+  plans: a continuous foraging world, with food appearing at places the cue tells, is not built.
+
+The conditioning world (switching, shapes) was already a stream of lights at random gaps with the
+light as the prompt; what it lacked was the wrong signal and the stray cost. Smoke test with all of
+them, recall's and the attractant on (switching, recall, maze, screen, selection, 6 generations): no
+errors.

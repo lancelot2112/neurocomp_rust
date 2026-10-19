@@ -493,6 +493,9 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     // (`set_cursor_away`) on every screen rung but the dark ones (glow), the cursor starts off the
     // target
     w.screen_away = cursor_away() && !lesson.screen_dark;
+    w.wrong_signal = wrong_signal();
+    w.screen_stream = screen_stream();
+    w.maze_stream = maze_stream();
     match task {
         Task::Conditioning(kind, trials) => {
             w.reversal_period = (trials / 4).max(1);
@@ -1183,6 +1186,37 @@ pub fn set_novelty_ortho(on: bool) {
 
 pub fn novelty_ortho() -> bool {
     NOVELTY_ORTHO.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Continuous worlds (each off by default): a wrong click felt (`set_wrong_signal`,
+/// `World::wrong_signal`), the screen going on after a hit (`set_screen_stream`,
+/// `World::screen_stream`), and maze trials one after another (`set_maze_stream`).
+static WRONG_SIGNAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SCREEN_STREAM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static MAZE_STREAM: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_wrong_signal(on: bool) {
+    WRONG_SIGNAL.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn wrong_signal() -> bool {
+    WRONG_SIGNAL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_screen_stream(on: bool) {
+    SCREEN_STREAM.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn screen_stream() -> bool {
+    SCREEN_STREAM.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_maze_stream(on: bool) {
+    MAZE_STREAM.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn maze_stream() -> bool {
+    MAZE_STREAM.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The cursor off the target at a screen trial's start (`set_cursor_away`, `World::screen_away`), on

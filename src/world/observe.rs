@@ -183,6 +183,9 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
         })
         .collect();
     let reverse = if late.is_empty() { 0 } else { late.iter().sum::<i32>() / late.len() as i32 };
+    // (`set_stray_cost`) clicks away from any light's window, per trial, taken off
+    let stray = if stray_cost() { stray_rate(reversal) } else { 0 };
+    let (respond, discriminate, reverse) = ((respond - stray).max(-1024), (discriminate - stray).max(-1024), (reverse - stray).max(-1024));
     // (the window marked by the world: steps 5-7 for a delay up to 5, as always)
     let td = trials_in_window(delayed);
     let remember = rate(&td, |x| x.1, |x| x.3) - rate(&td, |x| !x.1, |x| x.3);
@@ -234,6 +237,65 @@ pub fn set_fair_said(on: bool) {
 
 pub fn fair_said() -> bool {
     FAIR_SAID.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Stray clicks cost (`set_stray_cost`): in the conditioning world (switching's and shapes'
+/// ladders), the share of clicks made away from any light's window, per trial, is taken off
+/// respond, discriminate and reverse: a light is a prompt, and clicking without one is a wrong
+/// answer. Off by default.
+static STRAY_COST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_stray_cost(on: bool) {
+    STRAY_COST.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn stray_cost() -> bool {
+    STRAY_COST.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Clicks in a conditioning lifetime made away from any light's window (steps 3 to 5 of a
+/// trial), per trial, in parts per 1024 (`set_stray_cost`).
+pub fn stray_rate(events: &[Event]) -> i32 {
+    let tr = trials(events, (3, 5), (7, 9));
+    if tr.is_empty() {
+        return 0;
+    }
+    let n = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_)) && e.moved == Some(CLICK) && !e.trial.is_some_and(|t| (3..=5).contains(&t.1))).count();
+    (n * 1024 / tr.len()) as i32
+}
+
+/// Selection by contrast (`set_select_contrast`): select and select~ are `select_contrast`. Off by
+/// default.
+static SELECT_CONTRAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_select_contrast(on: bool) {
+    SELECT_CONTRAST.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn select_contrast_on() -> bool {
+    SELECT_CONTRAST.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Selection as the contrast between tasks (`set_select_contrast`): the click rate in respond
+/// blocks against babble blocks and the voice rate in babble blocks against respond blocks, each
+/// as (a - b) / (a + b), averaged; with still blocks, also acting elsewhere against acting there
+/// (a third). A network that does the same whatever the task scores 0, one that clicks only in
+/// respond blocks and speaks only in babble blocks 1024. Run 36's selection passed held by
+/// clicking at every light and speaking now and then in every block (select 722).
+pub fn select_contrast(events: &[Event]) -> i32 {
+    let rate = |task: usize, act: &dyn Fn(&Event) -> bool| -> Option<i64> {
+        let v: Vec<&Event> = events.iter().filter(|e| e.task == Some(task)).collect();
+        (!v.is_empty()).then(|| v.iter().filter(|e| act(e)).count() as i64 * 1024 / v.len() as i64)
+    };
+    let click = |e: &Event| e.moved == Some(CLICK);
+    let voice = |e: &Event| e.said.is_some() || !e.sentence.is_empty();
+    let rel = |a: i64, b: i64| if a + b == 0 { 0 } else { (a - b) * 1024 / (a + b) };
+    let (Some(cr), Some(cb), Some(vr), Some(vb)) = (rate(0, &click), rate(1, &click), rate(0, &voice), rate(1, &voice)) else { return 0 };
+    let two = (rel(cr, cb) + rel(vb, vr)) / 2;
+    match (rate(2, &click), rate(2, &voice)) {
+        (Some(cs), Some(vs)) => ((2 * two + rel((cr + cb + vr + vb) / 2, cs + vs)) / 3) as i32,
+        _ => two as i32,
+    }
 }
 
 /// Win-stay from a lifetime's trials: after a click on a light, the click rate on that light's next
@@ -572,6 +634,9 @@ pub fn feel_graded(events: &[Event]) -> i32 {
 /// one that does both all the time scores far below 0; one that does only one task about half.
 /// (Set by `evolve::probe_scores_in` from a mixed lifetime: `probes` leaves it 0.)
 pub fn select(events: &[Event]) -> i32 {
+    if select_contrast_on() {
+        return select_contrast(events);
+    }
     let (respond, babbled, voice, clicks) = select_parts(events);
     match still(events) {
         // (three tasks) the still blocks too: neither click nor voice there
@@ -643,6 +708,9 @@ pub fn behaviour(events: &[&[Event]]) -> [i32; 8] {
 /// then scores above babbling alone ((1024 + 1024) / 2 - 1024 / 4 = 768 against about 500), where
 /// `select` gives it 0, so a gradient leads to responding before it is gated by the task.
 pub fn select_graded(events: &[Event]) -> i32 {
+    if select_contrast_on() {
+        return select_contrast(events);
+    }
     let (respond, babbled, voice, clicks) = select_parts(events);
     match still(events) {
         Some(s) => (respond + babbled + s) / 3 - (voice + clicks) / 4,
@@ -752,7 +820,8 @@ pub fn screen(events: &[Event]) -> i32 {
     if trials.is_empty() {
         return 0;
     }
-    ((hits * cells - clicks) * 1024 / (trials.len() as i64 * (cells - 1))) as i32
+    // (at least -1024: with the screen going on, `World::screen_stream`, clicks are not one a trial)
+    ((hits * cells - clicks) * 1024 / (trials.len() as i64 * (cells - 1))).max(-1024) as i32
 }
 
 /// The screen with partial credit (`evolve::set_partial_screen`): as `screen`, and a trial in which
@@ -786,7 +855,7 @@ pub fn screen_graded(events: &[Event]) -> i32 {
     }
     let reached = trials.values().filter(|r| r.0 && !r.1).count() as i64;
     // (a hit is worth cells - 1 here: its click less; a trial that only reached the target, half that)
-    (((hits * cells - clicks) * 1024 + reached * (cells - 1) * 512) / (trials.len() as i64 * (cells - 1))) as i32
+    ((((hits * cells - clicks) * 1024 + reached * (cells - 1) * 512) / (trials.len() as i64 * (cells - 1))).max(-1024)) as i32
 }
 
 /// Sequence: steps where a next token was due, and those where the program said it on the
@@ -1530,6 +1599,102 @@ mod tests {
         let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
         let (selector, both, silent) = (mean(0), mean(1), mean(2));
         assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
+    }
+
+    #[test]
+    fn contrast_scores_task_blind_acting_zero_and_selection_full() {
+        // the same-stimulus mixed lifetime (held): a selector clicks at lights in respond blocks
+        // and speaks in babble blocks, holding the cue; run 36's passer clicked at every light and
+        // spoke now and then everywhere
+        let run = |kind: u8, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let cues: Vec<Vec<u64>> = (0..3).map(|k| w.cues[k % w.cues.len()].as_words().to_vec()).collect();
+            let mut held: Option<usize> = None;
+            for b in 0..10 {
+                let task = if b < 2 { b } else { rand::Rng::gen_range(&mut rng, 0..2) };
+                w.task = Some(task);
+                w.task_cue = Some(task);
+                w.task_cue_left = Some(3);
+                w.no_pay = task != 0;
+                w.reversal_period = 20;
+                w.conditioning(Conditioning::Reversal, 20);
+                while !w.done() {
+                    let touch = channel(&senses, TOUCH).as_words().to_vec();
+                    if let Some(f) = cues.iter().position(|c| *c == touch) {
+                        held = Some(f);
+                    }
+                    let seen = channel(&senses, EYE).count_ones() > 0;
+                    let token = rand::Rng::gen_range(&mut rng, 0..2);
+                    let (say, hand) = match kind {
+                        0 => match held { Some(0) => (None, seen.then_some(CLICK)), Some(1) => (Some(token), None), _ => (None, None) },
+                        _ => (rand::Rng::gen_ratio(&mut rng, 1, 5).then_some(token), seen.then_some(CLICK)),
+                    };
+                    let a = w.act(say, hand);
+                    senses = w.step(&a);
+                }
+            }
+            (select(&w.events), select_contrast(&w.events))
+        };
+        let mean = |k: u8| { let v: Vec<(i32, i32)> = (0..12).map(|s| run(k, 950 + s)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 12, v.iter().map(|x| x.1).sum::<i32>() / 12) };
+        let (sel, blind) = (mean(0), mean(1));
+        eprintln!("select / contrast: selector {sel:?}, task-blind clicker and speaker {blind:?}");
+        assert!(sel.1 > 800 && blind.1.abs() < 150, "{sel:?} {blind:?}");
+        assert!(blind.0 > 500, "the old score passed it: {blind:?}");
+    }
+
+    #[test]
+    fn stray_clicks_cost_on_the_conditioning_rungs() {
+        // reversal trials: a responder clicks at a light's window, a constant clicker every step
+        // (respond less `stray_rate`, as `set_stray_cost` takes it; the switch itself is global)
+        let run = |every: bool, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            w.conditioning(Conditioning::Reversal, 40);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let seen = channel(&senses, EYE).count_ones() > 0;
+                let a = w.act(None, (every || seen).then_some(CLICK));
+                senses = w.step(&a);
+            }
+            (probes(&w.events, 40, &[], &[], &[], &[], &[])[0] - stray_rate(&w.events)).max(-1024)
+        };
+        let (resp, every) = ((0..8).map(|s| run(false, 30 + s)).sum::<i32>() / 8, (0..8).map(|s| run(true, 30 + s)).sum::<i32>() / 8);
+        eprintln!("respond with stray cost: responder {resp}, constant clicker {every}");
+        assert!(resp > 500 && every < -500, "{resp} {every}");
+    }
+
+    #[test]
+    fn the_screen_goes_on_and_a_miss_is_felt() {
+        // a searcher moves at random until the target is under the cursor, then clicks; a sitter
+        // clicks at whatever it sees; with the stream a hit moves the target, a miss is felt
+        let run = |search: bool, seed: u64| -> (i32, usize, usize) {
+            let mut w = World::new(seed, 2);
+            w.screen_stream = true;
+            w.wrong_signal = true;
+            w.screen_away = true;
+            w.screen_w = 4;
+            w.screen_h = 1;
+            w.screen(20);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut wrongs = 0;
+            while !w.done() {
+                let on = w.events.last().is_some_and(|e| e.on_target);
+                let hand = if search { if on { Some(CLICK) } else { Some([LEFT, RIGHT][rand::Rng::gen_range(&mut rng, 0..2)]) } } else { Some(CLICK) };
+                let a = w.act(None, hand);
+                let senses = w.step(&a);
+                wrongs += (channel(&senses, AFFECT).as_words()[0] == 0xAAAA_AAAA_AAAA_AAAA) as usize;
+            }
+            let hits = w.events.iter().filter(|e| e.chose == Some(true)).count();
+            (screen(&w.events), hits, wrongs)
+        };
+        let s = run(true, 5);
+        let c = run(false, 5);
+        eprintln!("screen stream: searcher {s:?}, constant clicker {c:?} (score, hits, wrong signals)");
+        assert!(s.1 >= 15 && s.0 > 0, "{s:?}");
+        assert!(c.0 < 0 && c.2 > 10, "{c:?}");
     }
 
     #[test]

@@ -375,6 +375,17 @@ pub struct World {
     /// (`evolve::set_cursor_away`) the cursor never starts a trial on the target, so clicking at
     /// what is seen hits only after a move
     pub screen_away: bool,
+    /// (`evolve::set_wrong_signal`) a wrong click is felt: the step after a click on a light that
+    /// does not pay, a click with no light to answer, a click after a question with no cue, a turn
+    /// to the maze's wrong side or a click off the screen's target, the affect channel holds the
+    /// wrong code (every other line of its first word), as the stroke follows a right one
+    pub wrong_signal: bool,
+    wrong_next: bool,
+    /// (`evolve::set_screen_stream`) the screen goes on: a hit moves the target to another cell
+    /// and the cursor stays; a miss does not end the trial
+    pub screen_stream: bool,
+    /// (`evolve::set_maze_stream`) one maze trial after another, no gap between
+    pub maze_stream: bool,
     /// programs built for this world keep each declared channel in one frame, held in place
     /// from step to step (only clearing writes take lines away, and a write is seen by the edges
     /// after it in the same step); default: the process's (`neurocomp::set_in_place`)
@@ -658,6 +669,10 @@ impl World {
             screen_torch: false,
             screen_dark: false,
             screen_away: false,
+            wrong_signal: false,
+            wrong_next: false,
+            screen_stream: false,
+            maze_stream: false,
             in_place: crate::program::neurocomp::in_place(),
             count_reads: crate::program::neurocomp::count_reads(),
             explore: crate::program::neurocomp::explore(),
@@ -792,7 +807,7 @@ impl World {
         if left <= 1 {
             return Scene::Idle;
         }
-        let g = if self.gap_max > 0 { self.rng.gen_range(0..=self.gap_max) } else { 0 };
+        let g = if self.gap_max > 0 && !self.maze_stream { self.rng.gen_range(0..=self.gap_max) } else { 0 };
         if g > 0 {
             Scene::MazeGap(left - 1, g)
         } else {
@@ -905,6 +920,23 @@ impl World {
         }
     }
 
+    /// (`screen_stream`) the target moves: to another free cell, not under the cursor, the
+    /// distractors to others; the walls and the cursor stay.
+    fn screen_move(&mut self, tr: &mut ScreenTrial) {
+        let (_, cells) = self.screen_shape();
+        let mut free: Vec<usize> = (0..cells).filter(|&c| tr.walls >> c & 1 == 0 && c != tr.cursor).collect();
+        if free.is_empty() {
+            return;
+        }
+        free.shuffle(&mut self.rng);
+        let lit = tr.glyph.iter().filter(|g| g.is_some()).count().max(1);
+        tr.glyph = [None; 32];
+        for (k, &c) in free.iter().take(lit).enumerate() {
+            tr.glyph[c] = Some(k);
+        }
+        tr.target = free[0];
+    }
+
     /// The scene after a screen trial: a gap of 0 to `gap_max` steps, then the next trial.
     fn after_screen(&mut self, left: usize) -> Scene {
         if left <= 1 {
@@ -953,6 +985,8 @@ impl World {
         }
         // a stroke owed from the step before
         let mut stroke = std::mem::take(&mut self.stroke_next);
+        // (`wrong_signal`) a wrong click the step before
+        let wrong = std::mem::take(&mut self.wrong_next);
         let scene = std::mem::replace(&mut self.scene, Scene::Idle);
         self.scene = match scene {
             Scene::Idle => Scene::Idle,
@@ -1019,6 +1053,9 @@ impl World {
                             self.stroke_next = true;
                             stroked = true;
                         }
+                        if self.wrong_signal && click && !(cue && ev.window) {
+                            self.wrong_next = true;
+                        }
                     }
                     Conditioning::Reversal => {
                         if (2..=4).contains(&t) {
@@ -1031,6 +1068,9 @@ impl World {
                         if click && (3..=5).contains(&t) && !stroked && pays && !self.no_pay {
                             self.stroke_next = true;
                             stroked = true;
+                        }
+                        if self.wrong_signal && click && !((3..=5).contains(&t) && pays && !self.no_pay) {
+                            self.wrong_next = true;
                         }
                     }
                 }
@@ -1054,6 +1094,9 @@ impl World {
             }
             Scene::Gap(kind, left, g) => {
                 ev.scene = SceneKind::Conditioning(kind);
+                if self.wrong_signal && moved == Some(CLICK) {
+                    self.wrong_next = true;
+                }
                 if g > 1 {
                     Scene::Gap(kind, left, g - 1)
                 } else {
@@ -1096,6 +1139,8 @@ impl World {
                     ev.chose = Some(right == side);
                     if right == side {
                         self.stroke_next = true;
+                    } else if self.wrong_signal {
+                        self.wrong_next = true;
                     }
                     done = true;
                 }
@@ -1137,11 +1182,21 @@ impl World {
                         ev.chose = Some(tr.cursor == tr.target);
                         if tr.cursor == tr.target {
                             self.stroke_next = true;
+                        } else if self.wrong_signal {
+                            self.wrong_next = true;
                         }
                         done = true;
                     }
                 }
-                if done || t + 1 >= 4 * (w + cells / w) + 4 {
+                let timeout = t + 1 >= 4 * (w + cells / w) + 4;
+                let hit = done && ev.chose == Some(true);
+                // (`screen_stream`) a miss goes on; a hit or the time running out moves the target
+                let moves_on = self.screen_stream && (hit || timeout) && left > 1;
+                if moves_on {
+                    self.screen_move(&mut tr);
+                }
+                let ends = if self.screen_stream { (hit || timeout) && left <= 1 } else { done || timeout };
+                if ends {
                     self.after_screen(left)
                 } else {
                     // each cell's lines (a pattern folded to the cell's width), at its place
@@ -1171,13 +1226,16 @@ impl World {
                         place(tr.cursor, self.cursor_mark);
                     }
                     put(&mut senses, EYE, &BitVector::from_words(eye));
-                    Scene::Screen(left, t + 1, tr)
+                    if moves_on { Scene::Screen(left - 1, 1, tr) } else { Scene::Screen(left, t + 1, tr) }
                 }
             }
             Scene::Flag(mut s) => {
                 ev.scene = SceneKind::Flag;
                 // the window after a question: a click there after a cue is stroked, once
                 ev.window = self.flag_window > 0;
+                if self.wrong_signal && moved == Some(CLICK) && !(self.flag_window > 0 && self.flag_armed) {
+                    self.wrong_next = true;
+                }
                 if self.flag_window > 0 {
                     if moved == Some(CLICK) && self.flag_armed && !self.flag_paid {
                         self.stroke_next = true;
@@ -1249,6 +1307,11 @@ impl World {
                 }
             }
         };
+        if wrong && !stroke {
+            let mut v = vec![0u64; CH_BITS / 64];
+            v[0] = 0xAAAA_AAAA_AAAA_AAAA;
+            put(&mut senses, AFFECT, &BitVector::from_words(v));
+        }
         if stroke {
             // a slow stroke: a run of neighbouring receptors on the skin's map
             // (inside one word of the skin's map)

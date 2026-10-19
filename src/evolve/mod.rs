@@ -771,7 +771,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (del, w2) = if want(&[4]) { live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), physics, seed ^ 0xDE1A, gap, lesson) } else { (vec![], 0) };
     let (seq, w3) = if want(&[6, 7, 8, 15]) { live_lesson(g, Task::Reading(trials), physics, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..lesson }) } else { (vec![], 0) };
     let (pat, w4) = if want(&[9, 16]) { live_lesson(g, Task::Sequence(trials), physics, seed ^ 0x9ED, 0, lesson) } else { (vec![], 0) };
-    let (maz, w5) = if want(&[10, 12]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
+    let (maz, w5) = if want(&[10, 12, 34]) { live_lesson(g, Task::Maze(trials), physics, seed ^ 0x3A2E, gap, lesson) } else { (vec![], 0) };
     let (scr, w6) = if want(&[11]) { live_lesson(g, Task::Screen(trials), physics, seed ^ 0x5C2E, gap, lesson) } else { (vec![], 0) };
     let blocks = (trials / lesson.mixed_block.max(1)).max(2);
     let (mix, w7) = if want(&[13, 20]) { live_lesson(g, Task::Mixed(blocks), physics, seed ^ 0x313C, gap, lesson) } else { (vec![], 0) };

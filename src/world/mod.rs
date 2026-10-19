@@ -117,6 +117,8 @@ pub struct Event {
     pub echoed: bool,
     /// a stroke was felt this step
     pub stroked: bool,
+    /// (stacked rungs, `World::gap_strokes`) the stroke came at random, earned by nothing
+    pub free_stroke: bool,
     /// someone is there
     pub present: bool,
     /// reading: a teacher said the shown token aloud this step
@@ -973,7 +975,7 @@ impl World {
         let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
         let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, free_stroke: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if self.sentence {
@@ -1110,6 +1112,7 @@ impl World {
                 // (`gap_strokes`) a stroke at random, felt this step
                 if self.gap_strokes && self.rng.gen_ratio(1, 8) {
                     stroke = true;
+                    ev.free_stroke = true;
                     self.gap_stroke_age = 0;
                 }
                 if g > 1 {
@@ -1160,6 +1163,13 @@ impl World {
                     done = true;
                 }
                 ev.maze = Some((self.maze_total - left, pos, side));
+                // (`gap_strokes`, the maze stacked) a stroke at random while it waits, never on the
+                // step a choice is made nor a trial's first (where an earned stroke lands)
+                if self.gap_strokes && t >= 1 && !done && self.rng.gen_ratio(1, 8) {
+                    stroke = true;
+                    ev.free_stroke = true;
+                    self.gap_stroke_age = 0;
+                }
                 if done || t + 1 >= self.maze_len + 6 {
                     self.after_maze(left)
                 } else {

@@ -377,7 +377,9 @@
 //! `ISL_STACKED=1` (with `ISL_FEEL`): stacked rungs on switching and shapes: the feel rungs in their
 //! own lights world (strokes at random in the gaps between trials, scored by feel-gap beside the
 //! lights' probes), every later rung keeping them, the maze-world repeat rung gone (win-stay is its
-//! lights-world form), so each rung's world holds the rungs before it.
+//! lights-world form), so each rung's world holds the rungs before it; and on the maze: its feel
+//! rungs in the junction-only maze its learn rung uses, strokes at random while it waits (never on
+//! a choice's step), scored by feel-maze, kept by every later maze rung.
 //! `ISL_FEEL_GOAL=<score>` (300): the feel rung's goal. No network can reach 300 on average: in
 //! feel nothing says which hand code is the click, and moving at random after a stroke scores
 //! about 204 (`examples/feelcheck.rs`); 160 is passed by that. Under `ISL_BODY` the hand's codes are
@@ -1200,7 +1202,22 @@ fn main() {
     // after keeps the strokes and feel-gap, and the maze-world repeat rung goes, win-stay being its
     // lights-world form: each rung's world holds the rungs before it)
     if env("ISL_STACKED", 0u8) == 1 {
-        let (feel, gapf) = (probe_named("feel"), probe_named("feel-gap"));
+        let (feel, gapf, mazef) = (probe_named("feel"), probe_named("feel-gap"), probe_named("feel-maze"));
+        // (the maze: its feel rungs in the junction-only maze its learn rung uses, strokes at
+        // random while it waits, scored by feel-maze; every later rung keeps them)
+        for isl in islands.iter_mut().filter(|i| i.name == "maze") {
+            if let Some(k) = isl.stages.iter().position(|s| s.name == "feel") {
+                for st in isl.stages.iter_mut().skip(k) {
+                    st.lesson.gap_strokes = true;
+                    st.probes = st.probes.iter().copied().filter(|&p| p != feel).chain([mazef]).collect();
+                    for g in st.goal.iter_mut() {
+                        if g.0 == feel {
+                            g.0 = mazef;
+                        }
+                    }
+                }
+            }
+        }
         for isl in islands.iter_mut().filter(|i| i.name == "switching" || i.name == "shapes") {
             isl.stages.retain(|s| s.name != "repeat");
             if let Some(k) = isl.stages.iter().position(|s| s.name == "feel") {

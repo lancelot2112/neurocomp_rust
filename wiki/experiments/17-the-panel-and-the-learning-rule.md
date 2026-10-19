@@ -1151,5 +1151,11 @@ is an answer, not a stray (no stray cost, no wrong signal). Test
 light A and once after each stroke keeps tell at 1024 and scores 366 on feel-gap (each of the three
 steps after a stroke counts, as in feel); light A alone 1024 and 0; clicking every step 0 and 0.
 Run 37's switching population, on feel-300 in the old world, scores about 0 on the stacked feel
-(-2 to 6): it keeps its tell and starts the stroke part from nothing. The maze's ladder is not
-stacked yet.
+(-2 to 6): it keeps its tell and starts the stroke part from nothing. The maze is stacked too: its feel rungs in the junction-only maze its learn rung uses
+(every step at the junction, where a click does nothing), strokes at random while it waits (one
+step in eight, never on the step a choice is made nor a trial's first, where an earned stroke
+lands; marked `Event::free_stroke`), scored by feel-maze (`observe::feel_in_maze`); every later
+maze rung keeps them. Test `feeling_in_the_maze_pays_a_stroke_follower_and_keeps_the_turn` (10
+lifetimes): turning to the cue's side and clicking after strokes 1004 on maze and 380 on
+feel-maze; turning alone 1024 and 0. Run 37's maze population (feel-300 passed in the old world)
+scores up to 96 on the stacked feel (mean 10): some of the old skill carries over.

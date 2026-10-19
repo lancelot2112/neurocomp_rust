@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze"];
 /// How many probes there are.
-pub const NPROBES: usize = 34;
+pub const NPROBES: usize = 35;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -206,7 +206,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -272,6 +272,31 @@ pub fn stray_rate(events: &[Event]) -> i32 {
     // (a click within three steps of a stroke answers it: `World::gap_strokes`)
     let n = events.iter().enumerate().filter(|(i, e)| matches!(e.scene, SceneKind::Conditioning(_)) && e.moved == Some(CLICK) && !e.trial.is_some_and(|t| (3..=5).contains(&t.1)) && !(i.saturating_sub(3)..*i).any(|u| events[u].stroked)).count();
     (n * 1024 / tr.len()) as i32
+}
+
+/// Feeling in the maze (stacked rungs, `World::gap_strokes`): clicks in the three steps after a
+/// stroke that came at random while the program waited, against clicks at the other maze steps not
+/// near a stroke, in parts per 1024. A click at the junction does nothing there, so the maze's own
+/// task (the turn) goes on beside it.
+pub fn feel_in_maze(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Maze).collect();
+    let (mut after, mut after_c, mut other, mut other_c) = (0i64, 0i64, 0i64, 0i64);
+    for t in 0..ev.len() {
+        let near_free = (t.saturating_sub(3)..t).any(|u| ev[u].free_stroke);
+        let near_any = (t.saturating_sub(3)..t).any(|u| ev[u].stroked);
+        let click = (ev[t].moved == Some(CLICK)) as i64;
+        if near_free {
+            after += 1;
+            after_c += click;
+        } else if !near_any {
+            other += 1;
+            other_c += click;
+        }
+    }
+    if after == 0 || other == 0 {
+        return 0;
+    }
+    (after_c * 1024 / after - other_c * 1024 / other) as i32
 }
 
 /// Feeling in the lights world (stacked rungs, `World::gap_strokes`): clicks in the three steps
@@ -1738,6 +1763,34 @@ mod tests {
         eprintln!("(tell, feel-gap): light A and strokes {both:?}, light A alone {tell_only:?}, every step {every:?}");
         // (one click a stroke: feel-gap counts each of the three steps after it, as feel does)
         assert!(both.0 > 900 && both.1 > 300 && tell_only.1.abs() < 80 && every.1.abs() < 80, "{both:?} {tell_only:?} {every:?}");
+    }
+
+    #[test]
+    fn feeling_in_the_maze_pays_a_stroke_follower_and_keeps_the_turn() {
+        // the junction-only maze with free strokes: a network that turns to the cue's side and
+        // clicks after a stroke keeps its maze score and scores on feel-maze; turning alone 0 there
+        let run = |click_after: bool, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 2);
+            w.gap_strokes = true;
+            w.maze_len = 0;
+            w.maze(80);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let mut waited = 0;
+            while !w.done() {
+                let stroked = channel(&senses, AFFECT).count_ones() > 0;
+                let side = w.events.last().and_then(|e| e.maze).map(|m| m.2).unwrap_or(false);
+                waited += 1;
+                // (an oracle for the side: the test checks the observer, not a policy)
+                let hand = if click_after && stroked { Some(CLICK) } else if waited % 3 == 0 { Some(if side { RIGHT } else { LEFT }) } else { None };
+                let a = w.act(None, hand);
+                senses = w.step(&a);
+            }
+            (maze(&w.events), feel_in_maze(&w.events))
+        };
+        let mean = |c: bool| { let v: Vec<(i32, i32)> = (0..10).map(|s| run(c, 90 + s)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 10, v.iter().map(|x| x.1).sum::<i32>() / 10) };
+        let (both, turn_only) = (mean(true), mean(false));
+        eprintln!("(maze, feel-maze): turn and click after strokes {both:?}, turn alone {turn_only:?}");
+        assert!(both.0 > 600 && turn_only.0 > 600 && both.1 > 250 && turn_only.1.abs() < 60, "{both:?} {turn_only:?}");
     }
 
     #[test]

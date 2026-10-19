@@ -95,6 +95,8 @@ pub enum SceneKind {
     Feel,
     /// cues and questions (`World::flag`)
     Flag,
+    /// predict or evade, two agents (`World::duel`)
+    Duel,
 }
 
 /// A record of one step, for the observer (never sent to the program).
@@ -144,6 +146,9 @@ pub struct Event {
     /// (`World::flag`) a question asked this step, and whether a cue came since the last question
     /// (the observer's mark; the program only hears the tone)
     pub question: Option<bool>,
+    /// (`World::duel`) the round, this agent the evader (else the predictor), its move LEFT, the
+    /// partner's move LEFT
+    pub duel: Option<(usize, bool, bool, bool)>,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -253,6 +258,8 @@ enum Scene {
     /// cues and questions: what each step still to come shows (0 nothing, 1 the cue, 2 a
     /// question after no cue, 3 a question after a cue, 4 the other light)
     Flag(std::collections::VecDeque<u8>),
+    /// predict or evade: rounds left
+    Duel(usize),
 }
 
 /// The world.
@@ -391,6 +398,11 @@ pub struct World {
     /// (`Lesson::gap_strokes`, stacked rungs) the lights world with strokes at random in the gaps
     /// between trials, one step in eight: clicking soon after one is a right answer, not a stray
     pub gap_strokes: bool,
+    /// (`duel`) the other agent's move this step, set by the harness before the step
+    pub partner_move: Option<usize>,
+    duel_turn: usize,
+    duel_first_evader: bool,
+    duel_round: usize,
     /// steps since the last stroke in a gap (255: none near)
     gap_stroke_age: u8,
     /// programs built for this world keep each declared channel in one frame, held in place
@@ -678,6 +690,10 @@ impl World {
             screen_away: false,
             wrong_signal: false,
             wrong_next: false,
+            partner_move: None,
+            duel_turn: 32,
+            duel_first_evader: false,
+            duel_round: 0,
             screen_stream: false,
             maze_stream: false,
             gap_strokes: false,
@@ -714,6 +730,32 @@ impl World {
     }
 
     /// The scene is over (a new one may begin).
+    /// Predict or evade, against another agent (`partner_move`, set by the harness before each
+    /// step from the other agent's act): each step a round, each agent's move read as LEFT or not;
+    /// the predictor wins a round when the two match, the evader when they differ. The roles flip
+    /// every `turn` rounds, this agent starting as the evader if `first_evader`, so each agent
+    /// plays both. The winner is stroked (felt the step after), the loser feels the wrong signal
+    /// (with `wrong_signal`); the eye shows the partner's last move as it feels its own, and the
+    /// ear the role of the round to come (a tone each). No answer is given: what the partner will
+    /// do next is the partner's.
+    pub fn duel(&mut self, rounds: usize, turn: usize, first_evader: bool) {
+        self.present = false;
+        self.duel_turn = turn.max(1);
+        self.duel_first_evader = first_evader;
+        self.duel_round = 0;
+        self.scene = Scene::Duel(rounds.max(1));
+    }
+
+    /// (`duel`) this agent the evader in round `r`.
+    pub fn duel_evader(&self, r: usize) -> bool {
+        ((r / self.duel_turn.max(1)) % 2 == 1) != self.duel_first_evader
+    }
+
+    /// The hand's move an act makes in this world's body.
+    pub fn move_of(&self, act: &BitVector) -> Option<usize> {
+        self.hand.articulate(&channel(act, HAND))
+    }
+
     pub fn done(&self) -> bool {
         matches!(self.scene, Scene::Idle)
     }
@@ -975,7 +1017,7 @@ impl World {
         let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
         let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, free_stroke: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, free_stroke: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None, duel: None };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if self.sentence {
@@ -1283,6 +1325,25 @@ impl World {
                     _ => {}
                 }
                 if s.is_empty() { Scene::Idle } else { Scene::Flag(s) }
+            }
+            Scene::Duel(left) => {
+                ev.scene = SceneKind::Duel;
+                let r = self.duel_round;
+                let evader = self.duel_evader(r);
+                let (mine, theirs) = (moved == Some(LEFT), self.partner_move == Some(LEFT));
+                let won = if evader { mine != theirs } else { mine == theirs };
+                if won {
+                    self.stroke_next = true;
+                } else if self.wrong_signal {
+                    self.wrong_next = true;
+                }
+                ev.duel = Some((r, evader, mine, theirs));
+                if let Some(m) = self.partner_move {
+                    put(&mut senses, EYE, &self.felt[m].clone());
+                }
+                put(&mut senses, EAR, &self.tones[self.duel_evader(r + 1) as usize].clone());
+                self.duel_round += 1;
+                if left > 1 { Scene::Duel(left - 1) } else { Scene::Idle }
             }
             Scene::Feel(left) => {
                 ev.scene = SceneKind::Feel;

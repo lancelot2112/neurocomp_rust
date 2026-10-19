@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~", "feel-gap~", "feel-maze~", "copy~", "tell~"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~", "feel-gap~", "feel-maze~", "copy~", "tell~", "duel", "duel-bench"];
 /// How many probes there are.
-pub const NPROBES: usize = 40;
+pub const NPROBES: usize = 42;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -200,7 +200,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0, feel_in_gaps_graded(reversal), feel_in_maze_graded(maze_events), copy_graded(sequence), tell_graded(reversal)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0, feel_in_gaps_graded(reversal), feel_in_maze_graded(maze_events), copy_graded(sequence), tell_graded(reversal), 0, 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -840,6 +840,26 @@ pub fn flag(events: &[Event]) -> i32 {
         score -= missed((armed - armed_hit) * 1024 / armed);
     }
     floor(score)
+}
+
+/// Predict or evade (`World::duel`): in each role, rounds won less rounds lost, per round, in parts
+/// per 1024, the two roles averaged. Against a partner it cannot read or fool, about 0; one that
+/// learns the partner's pattern as predictor and the partner's rule as evader, toward 1024.
+pub fn duel(events: &[Event]) -> i32 {
+    let mut n = [0i64; 2];
+    let mut won = [0i64; 2];
+    for (_, evader, mine, theirs) in events.iter().filter_map(|e| e.duel) {
+        let k = evader as usize;
+        n[k] += 1;
+        won[k] += (if evader { mine != theirs } else { mine == theirs }) as i64;
+    }
+    let role = |k: usize| (2 * won[k] - n[k]) * 1024 / n[k].max(1);
+    match (n[0] > 0, n[1] > 0) {
+        (true, true) => ((role(0) + role(1)) / 2) as i32,
+        (true, false) => role(0) as i32,
+        (false, true) => role(1) as i32,
+        _ => 0,
+    }
 }
 
 /// Cues and questions with partial credit (`evolve::set_partial_flag`): each question answered in
@@ -2072,6 +2092,56 @@ mod tests {
         let (on_time, late, random) = (seq(&|toks, t| if t >= 2 { Some(toks[t - 2]) } else { None }), seq(&|toks, t| if t >= 6 { Some(toks[t - 6]) } else { None }), seq(&|_, t| Some((t * 5 + 3) % 8)));
         eprintln!("(copy, copy~): on time {on_time:?}, late reader {late:?}, random {random:?}");
         assert!(on_time.1 > 800 && late.0 < 100 && late.1 > 200 && random.1.abs() < 100, "{on_time:?} {late:?} {random:?}");
+    }
+
+    #[test]
+    fn the_duel_pays_reading_the_partner_in_both_roles() {
+        // two worlds linked as the harness links them; policies see only their own senses (the eye
+        // shows the partner's last move, the ear the coming role)
+        type Policy = fn(bool, &[bool], &[bool]) -> bool;
+        let run = |a: Policy, b: Policy, seed: u64| -> (i32, i32, usize, usize, usize) {
+            let (mut wa, mut wb) = (World::new(seed, 2), World::new(seed ^ 1, 2));
+            wa.duel(128, 16, false);
+            wb.duel(128, 16, true);
+            let (mut ha, mut hb): (Vec<bool>, Vec<bool>) = (Vec::new(), Vec::new());
+            let (mut aa, mut ab) = (wa.act(None, None), wb.act(None, None));
+            let mut seen_ok = 0;
+            while !wa.done() {
+                let (ma, mb) = (wa.move_of(&aa), wb.move_of(&ab));
+                wa.partner_move = mb;
+                wb.partner_move = ma;
+                let (sa, sb) = (wa.step(&aa), wb.step(&ab));
+                ha.push(ma == Some(LEFT));
+                hb.push(mb == Some(LEFT));
+                // the eye holds the partner's move as it was felt
+                seen_ok += (channel(&sa, EYE).count_ones() > 0 && mb.is_some()) as usize;
+                let (ea, eb) = (wa.duel_evader(ha.len()), wb.duel_evader(hb.len()));
+                let (la, lb) = (a(ea, &ha, &hb), b(eb, &hb, &ha));
+                aa = wa.act(None, Some(if la { LEFT } else { RIGHT }));
+                ab = wb.act(None, Some(if lb { LEFT } else { RIGHT }));
+            }
+            let evader_rounds = wa.events.iter().filter(|e| e.duel.is_some_and(|d| d.1)).count();
+            let strokes = wa.events.iter().filter(|e| e.stroked).count();
+            (duel(&wa.events), duel(&wb.events), evader_rounds, strokes, seen_ok)
+        };
+        // a reader: as predictor, what the partner did two rounds ago if it alternates, else its
+        // last; as evader, the opposite of what a copier of its own last move would guess
+        let reader: Policy = |evader, own, other| {
+            if evader {
+                !own.last().copied().unwrap_or(false)
+            } else {
+                let n = other.len();
+                if n >= 2 && other[n - 1] != other[n - 2] { other[n - 2] } else { other.last().copied().unwrap_or(false) }
+            }
+        };
+        let copier: Policy = |evader, own, other| if evader { own.len() % 2 == 0 } else { other.last().copied().unwrap_or(false) };
+        let constant: Policy = |_, _, _| false;
+        let (r_vs_c, c_vs_r, evader_rounds, strokes, seen) = run(reader, copier, 5);
+        let (k_vs_k, _, _, _, _) = run(constant, constant, 5);
+        let (r_vs_k, _, _, _, _) = run(reader, constant, 5);
+        eprintln!("duel: reader {r_vs_c} against an alternating copier {c_vs_r}; constant against constant {k_vs_k}; reader against constant {r_vs_k}; evader rounds {evader_rounds} of 128, strokes {strokes}, eye showing the partner {seen}");
+        // half the rounds in each role; zero-sum; reading wins both roles against fixed rules
+        assert!(evader_rounds == 64 && r_vs_c > 800 && c_vs_r < -800 && k_vs_k == 0 && r_vs_k > 400 && seen > 100 && strokes > 100, "{r_vs_c} {c_vs_r} {k_vs_k} {r_vs_k} {seen}");
     }
 
     #[test]

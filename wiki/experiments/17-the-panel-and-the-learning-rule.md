@@ -1234,3 +1234,14 @@ and random clicking below it, so the floor no longer hid the difference; but rec
 at 204) and the screen (-512) kept best genomes that do nothing, and selection sat at about 0 on
 held: no score paid anything between doing nothing and the full answer. Run 40 (started 7:29 PM ET)
 adds flag~ and the other graded scores.
+
+## Other agents as the world: predict or evade (`ISL_DUEL=1`, run 41)
+
+See `wiki/other-agents.md`. A duel island whose world is other agents: each step a round, the
+predictor winning when the two agents' moves (LEFT or not) match, the evader when they differ, the
+roles flipping every `turn` rounds so each agent learns both. Partners: this generation's duel
+elite, its hall of fame and the other islands' best. A fixed yardstick, `duel-bench`, four rules
+no fixed policy beats, carries each rung's goal (duel64 to duel8, 100 to 400). Tests: a reader
+scores 912 against an alternating copier (-912), a constant against a constant 0, a reader against
+a constant 512; a network doing nothing -300 on the yardstick. Smoke test (3 generations,
+population 8): the duel island's best at -297 on duel64.

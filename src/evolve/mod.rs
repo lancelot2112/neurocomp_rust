@@ -275,6 +275,8 @@ pub struct Lesson {
     pub flag_gap: usize,
     /// (stacked rungs) strokes at random in the lights world's gaps (`World::gap_strokes`)
     pub gap_strokes: bool,
+    /// (predict or evade, `World::duel`) rounds between the roles' flips
+    pub duel_turn: usize,
     /// (delayed conditioning) a tone as the window opens (`World::go_tone`)
     pub go_tone: bool,
     pub blur: u32,
@@ -371,7 +373,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, flag_gap: 2, gap_strokes: false, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, flag_gap: 2, duel_turn: 32, gap_strokes: false, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -624,6 +626,122 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
     (w.events, net.work)
 }
 
+/// (predict or evade, `World::duel`) another agent: anything that builds a network in a world.
+pub type Partner = std::sync::Arc<dyn Fn(&World, u64) -> RuntimeNetwork + Send + Sync>;
+
+/// The partners the duel's lifetimes meet this generation (`set_duel_partners`): the duel
+/// island's elite, its hall of fame and the other islands' best, set by `evolve_islands`.
+static DUEL_PARTNERS: std::sync::RwLock<Vec<Partner>> = std::sync::RwLock::new(Vec::new());
+
+pub fn set_duel_partners(v: Vec<Partner>) {
+    *DUEL_PARTNERS.write().unwrap() = v;
+}
+
+/// A genome as a partner.
+pub fn partner_of<G: Evolvable + 'static>(g: &G) -> Partner {
+    let g = g.clone();
+    std::sync::Arc::new(move |w: &World, s: u64| g.build(w, s))
+}
+
+/// The partner a lifetime of seed `seed` meets (every genome meets the same one on a seed).
+fn duel_partner(seed: u64) -> Option<Partner> {
+    let v = DUEL_PARTNERS.read().unwrap();
+    (!v.is_empty()).then(|| v[(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 33) as usize % v.len()].clone())
+}
+
+/// Who the duel's other agent is: a network, or (the yardstick, `duel-bench`) a fixed rule.
+pub enum Opponent {
+    Net(Partner),
+    Script(u8),
+}
+
+/// The yardstick's rules (moves as LEFT or not): 0 never LEFT in either role; 1 alternating as
+/// evader, copying the other's last move as predictor; 2 LEFT, LEFT, other as evader, the
+/// opposite of the other's last as predictor; 3 always LEFT as evader, the other's majority of its
+/// last three as predictor. No single fixed policy beats them all: a predictor must find which
+/// rule it faces, an evader what the predictor copies.
+fn scripted(kind: u8, evader: bool, own: &[bool], other: &[bool]) -> bool {
+    let last = other.last().copied().unwrap_or(false);
+    match (kind, evader) {
+        (0, _) => false,
+        (1, true) => own.len() % 2 == 0,
+        (1, false) => last,
+        (2, true) => own.len() % 3 != 2,
+        (2, false) => !last,
+        (3, true) => true,
+        _ => other.iter().rev().take(3).filter(|&&x| x).count() >= 2,
+    }
+}
+
+/// A duel lifetime (`World::duel`): the genome's network and the opponent, each in its own world
+/// of the same physics, each seeing the other's last move; `rounds` rounds, the roles flipping
+/// every `lesson.duel_turn`. Returns the genome's world's events and its work.
+pub fn live_duel<G: Evolvable>(g: &G, opp: &Opponent, physics: Physics, seed: u64, lesson: &Lesson, rounds: usize) -> (Vec<world::Event>, u64) {
+    let p = match physics {
+        Physics::Fixed(p) => p,
+        Physics::Varied => seed.wrapping_mul(0xA24B_AED4_963E_E407),
+    };
+    let make = |s: u64| {
+        let mut w = World::with_physics(p, s, 8);
+        if body() != 0 {
+            w.fix_body(body());
+        }
+        if one_word() > 0 && one_word_voice() {
+            w.one_word_voice(p, one_word());
+        }
+        w.wrong_signal = wrong_signal();
+        w
+    };
+    let first = seed & 2 != 0;
+    let (mut wa, mut wb) = (make(seed), make(seed ^ 0xB0B));
+    wa.duel(rounds, lesson.duel_turn, first);
+    wb.duel(rounds, lesson.duel_turn, !first);
+    let mut na = g.build(&wa, seed ^ 0x5EED);
+    let mut nb = match opp {
+        Opponent::Net(f) => Some(f(&wb, seed ^ 0xB5EED)),
+        Opponent::Script(_) => None,
+    };
+    let (mut aa, mut ab) = (BitVector::new(world::ACT_BITS, Some(0)), BitVector::new(world::ACT_BITS, Some(0)));
+    let (mut ha, mut hb): (Vec<bool>, Vec<bool>) = (Vec::new(), Vec::new());
+    while !wa.done() {
+        let (ma, mb) = (wa.move_of(&aa), wb.move_of(&ab));
+        wa.partner_move = mb;
+        wb.partner_move = ma;
+        let (sa, sb) = (wa.step(&aa), wb.step(&ab));
+        ha.push(ma == Some(world::LEFT));
+        hb.push(mb == Some(world::LEFT));
+        na.tick(AdvanceMode::Clear, 0);
+        na.write_input(&sa, 0);
+        aa = na.read_output().clone();
+        ab = match (&mut nb, opp) {
+            (Some(n), _) => {
+                n.tick(AdvanceMode::Clear, 0);
+                n.write_input(&sb, 0);
+                n.read_output().clone()
+            }
+            (None, Opponent::Script(k)) => {
+                let left = scripted(*k, wb.duel_evader(hb.len()), &hb, &ha);
+                wb.act(None, Some(if left { world::LEFT } else { world::RIGHT }))
+            }
+            _ => BitVector::new(world::ACT_BITS, Some(0)),
+        };
+    }
+    NOTES.with(|n| if let Some(v) = n.borrow_mut().as_mut() { v.extend(na.notes()) });
+    (wa.events, na.work)
+}
+
+/// The duel's yardstick (`duel-bench`): the mean duel score against each of `scripted`'s rules.
+pub fn duel_bench<G: Evolvable>(g: &G, physics: Physics, seed: u64, lesson: &Lesson, rounds: usize) -> (i32, u64, usize) {
+    let (mut sum, mut work, mut steps) = (0i64, 0u64, 0usize);
+    for k in 0..4u8 {
+        let (ev, w) = live_duel(g, &Opponent::Script(k), physics, seed ^ (k as u64 + 1).wrapping_mul(0x9E37), lesson, rounds);
+        sum += observe::duel(&ev) as i64;
+        work += w;
+        steps += ev.len();
+    }
+    ((sum / 4) as i32, work / 4, steps)
+}
+
 /// Fitness: the observer's discrimination (parts per 1024: click rate on paying trials minus on
 /// the others), the mean over `seeds` world seeds. A lifetime (or, scoring the worst phase, a
 /// phase) with no click counts 0, like clicking without telling the lights apart; a genome that
@@ -779,7 +897,18 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (fel, w8) = if want(&[14, 17]) { live_lesson(g, Task::Feel(trials * 5), physics, seed ^ 0xFEE1, gap, lesson) } else { (vec![], 0) };
     // (cues and questions, `World::flag`) about four steps a trial
     let (flg, w9) = if want(&[32]) { live_lesson(g, Task::Flag(trials * 4), physics, seed ^ 0xF1A6, gap, lesson) } else { (vec![], 0) };
-    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len() + flg.len()).max(1) as u64;
+    // (predict or evade) against this generation's partner for the seed, and the yardstick
+    let rounds = (trials * 4).max(4 * lesson.duel_turn);
+    let (duel_ev, w10) = if wanted.contains(&40) {
+        match duel_partner(seed) {
+            Some(f) => live_duel(g, &Opponent::Net(f), physics, seed ^ 0xD0E1, &lesson, rounds),
+            None => live_duel(g, &Opponent::Script((seed % 4) as u8), physics, seed ^ 0xD0E1, &lesson, rounds),
+        }
+    } else {
+        (vec![], 0)
+    };
+    let (bench, w11, bench_steps) = if wanted.contains(&41) { duel_bench(g, physics, seed ^ 0xBE4C, &lesson, rounds) } else { (0, 0, 0) };
+    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len() + flg.len() + duel_ev.len() + bench_steps).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
     row[13] = observe::select(&mix);
     row[19] = observe::select_graded(&mix);
@@ -793,12 +922,14 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     row[17] = observe::feel_graded(&fel);
     row[32] = observe::flag(&flg);
     row[35] = observe::flag_graded(&flg);
+    row[40] = observe::duel(&duel_ev);
+    row[41] = bench;
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) && !wanted.iter().any(|&w| graded(w) == p && w != p) {
             *x = 0;
         }
     }
-    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9) / steps)
+    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9 + w10 + w11 * 4) / steps)
 }
 
 /// All the probes.
@@ -1802,7 +1933,7 @@ pub struct IslandGeneration<G> {
 /// on the `held_out` worlds (none: no check), so a population fitted to its training worlds does
 /// not climb (and with `fresh` the training worlds are new each generation, so there is no fixed
 /// set to fit); until it does, it is checked again each generation the training goal holds.
-pub fn evolve_islands<G: Evolvable>(
+pub fn evolve_islands<G: Evolvable + 'static>(
     islands: &[Island],
     start: Vec<Vec<G>>,
     stages: Vec<usize>,
@@ -1840,6 +1971,8 @@ pub fn evolve_islands<G: Evolvable>(
         .collect();
     assert_eq!(pops.len(), k, "one starting population an island");
     let mut last: Vec<Vec<G>> = pops.clone();
+    // (predict or evade) the duel island's hall of fame
+    let mut duel_hall: Vec<G> = Vec::new();
     let mut stage: Vec<usize> = (0..k).map(|i| stages.get(i).copied().unwrap_or(0).min(islands[i].stages.len().saturating_sub(1))).collect();
     let mut met = vec![0usize; k];
     let mut on = vec![0usize; k];
@@ -1874,6 +2007,29 @@ pub fn evolve_islands<G: Evolvable>(
         // (`set_fresh_held`) this generation's held-out worlds: new ones at every check
         let held_now: Vec<u64> = if fresh_held() { (0..held_out.len() as u64).map(|i| (1u64 << 40) + generation as u64 * 4096 + i).collect() } else { held_out.to_vec() };
         let held_out = &held_now[..];
+        // (predict or evade) this generation's partners: the duel island's elite as it was, its
+        // hall of fame (its best every 10 generations, the last 16) and the other islands' best
+        if let Some(di) = islands.iter().position(|x| x.name == "duel") {
+            let src = if last[di].is_empty() { &pops[di] } else { &last[di] };
+            if generation % 10 == 0 {
+                if let Some(b) = src.first() {
+                    duel_hall.push(b.clone());
+                    if duel_hall.len() > 16 {
+                        duel_hall.remove(0);
+                    }
+                }
+            }
+            let mut pool: Vec<Partner> = src.iter().take(elite.clamp(1, 4)).map(partner_of).collect();
+            pool.extend(duel_hall.iter().map(partner_of));
+            for (j, l) in last.iter().enumerate() {
+                if j != di && !islands[j].is_novelty() {
+                    if let Some(b) = l.first() {
+                        pool.push(partner_of(b));
+                    }
+                }
+            }
+            set_duel_partners(pool);
+        }
         let now = stage.clone();
         let mut held = Vec::with_capacity(k);
         let mut met_now = Vec::with_capacity(k);
@@ -2338,6 +2494,18 @@ mod tests {
         let a: Vec<_> = live(&g, t, Physics::Varied, 1).iter().map(|e| e.moved).collect();
         let b: Vec<_> = live(&g, t, Physics::Varied, 1).iter().map(|e| e.moved).collect();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn the_duel_yardstick_scores_doing_nothing_below_zero() {
+        // a network that does nothing never moves LEFT: it wins as predictor against rule 0 and
+        // loses most else; with no pool set, the duel probe meets a fixed rule too
+        let g = Genome { code: vec![] };
+        let lesson = Lesson { duel_turn: 16, ..Lesson::default() };
+        let (bench, _, steps) = duel_bench(&g, Physics::Varied, 7, &lesson, 128);
+        let (row, _) = probe_scores_in(&g, 32, Physics::Varied, 7, 0, &[40, 41], lesson);
+        eprintln!("duel-bench of a network doing nothing {bench} over {steps} steps; probes duel {} bench {}", row[40], row[41]);
+        assert!(bench < -100 && steps == 4 * 128 && row[41] < -100, "{bench} {steps} {}", row[41]);
     }
 
     #[test]

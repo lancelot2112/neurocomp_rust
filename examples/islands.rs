@@ -324,6 +324,11 @@
 //! (lags 5 to 8 at half, per token shown) and tell~ (a click late in the trial at half); and with
 //! selection by contrast, select~ averaged with each block's first two trials
 //! (`observe::set_select_early`), so holding the task a while scores part.
+//! `ISL_DUEL=1`: a duel island, predict or evade against other agents (`World::duel`): each step a
+//! round, the predictor winning when the two agents' moves match, the evader when they differ,
+//! the roles flipping every `turn` rounds so each agent learns both; partners this generation's
+//! duel elite, its hall of fame and the other islands' best; selected on the duel and on a
+//! yardstick of four fixed rules (`duel-bench`), each rung's goal on the yardstick.
 //! `ISL_SOFT_FLOOR=1`: scores below -512 squeezed toward -1024 and never reaching it, so networks
 //! that do nothing and ones that click at random stay apart instead of both pinned at -1024.
 //! `ISL_ATTRACT=1` (with `ISL_EXPLORE` and `ISL_EPI`): an input port no population reads counts the
@@ -811,6 +816,7 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "distract" => stage.lesson.distract = v == "1",
                 "two" => stage.lesson.two_lights = v == "1",
                 "fgap" => stage.lesson.flag_gap = v.parse().expect("fgap"),
+                "turn" => stage.lesson.duel_turn = v.parse().expect("turn"),
                 "go" => stage.lesson.go_tone = v == "1",
                 "period" => stage.lesson.period = v.parse().expect("period"),
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
@@ -882,6 +888,15 @@ const SWITCHING_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100;
 /// between events grow (to 2, 4, 8 and 16 steps), then the other light comes in the gaps (no
 /// cue), then which light is the cue is drawn each lifetime. On the old rungs nothing said when
 /// the window opened, and a latch clicking from the cue to the trial's end passed lag16.
+/// (`ISL_DUEL=1`) predict or evade against other agents, the roles flipping every `turn` rounds:
+/// selected on the duel against this generation's partners and on the yardstick of fixed rules,
+/// each rung's goal on the yardstick, the turns shortening; the last rung open-ended.
+const DUEL_LADDER: &str = "duel64 probes=duel+duel-bench turn=64 goal=duel-bench@100; \
+    duel32 probes=duel+duel-bench turn=32 goal=duel-bench@200; \
+    duel16 probes=duel+duel-bench turn=16 goal=duel-bench@300; \
+    duel8 probes=duel+duel-bench turn=8 goal=duel-bench@400; \
+    open probes=duel+duel-bench turn=8";
+
 const RECALL_FLAG_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
     flag2 probes=flag fgap=2 goal=flag@300; \
     flag4 probes=flag fgap=4 goal=flag@300; \
@@ -1176,6 +1191,10 @@ fn main() {
         }
         islands.push(Island { name: "selection".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![13], lesson, goal: vec![], hold: 0 }] });
     }
+    // (`ISL_DUEL=1`: predict or evade, an island whose world is other agents)
+    if env("ISL_DUEL", 0u8) == 1 {
+        islands.push(Island { name: "duel".into(), frontier: false, stages: vec![Stage { name: "open".into(), probes: vec![40, 41], lesson: Lesson::default(), goal: vec![], hold: 0 }] });
+    }
     // (`ISL_LADDERS=1`: the default ladders; `ISL_LADDER_<island>`: one's own)
     let ladders = env("ISL_LADDERS", 0u8) == 1;
     for isl in islands.iter_mut() {
@@ -1190,6 +1209,7 @@ fn main() {
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 "maze" => isl.stages = ladder(MAZE_LADDER),
                 "screen" => isl.stages = ladder(SCREEN_LADDER),
+                "duel" => isl.stages = ladder(DUEL_LADDER),
                 "selection" => {
                     let base = if env("ISL_SELECT_MORE", 0u8) == 1 { SELECTION_MORE } else { SELECTION_LADDER };
                     isl.stages = ladder(&if env("ISL_SELECT_STEP", 0u8) == 1 { format!("{SELECT_STEP} {base}") } else { base.to_string() })

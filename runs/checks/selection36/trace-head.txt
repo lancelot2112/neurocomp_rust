@@ -1,0 +1,60 @@
+resumed selection from C:/Users/lfaiv/AppData/Local/Temp/claude/C--Software-source-neurocomp/50a1926e-3ccc-5eab-a49d-7e2027a22782/scratchpad/sel36/held.txt: 8 genomes, generation 0, stage 4 (held)
+islands: selection of 32, elite 8, 24 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 0 (2 plasmids an island), thrift true, reads counted true, channels held in place true, carrying cost 4 a token, plasmids of at most 6 populations (0: any), exclusion true, op choice true, ration 256 a step (0: no energy), food 8192 for 1024 points scored, fresh training worlds true, epigenetic marks true, exploration true, expecting zeros true, accidents true, port gates true, shadow explorers true, pauses drawn true, shadow hints true, edges on hints true, outputs read true, hint bands true, self writes true, loops closed true, heat inputs true, goals judged on the elite true, partial credit true, partial credit on remember true, partial credit on select true, partial credit on the screen true, surprise shaped from clicking at all true, fair prediction streams true, order cycles of varied shape true, echo and copy per token shown true, win-stay against the other light true, the clock drawn true, held-out worlds fresh at every check true, the voice one-word everywhere true, the generalist's passes migrate true, novelty's species sent to the islands true, orthogonal species true, twin worlds true, the cursor starts off the target true, more branches true, long shifts true, the delay drawn per lifetime true, the period drawn per lifetime true, drawn from the rung's up true, mixed lights as one-word codes true, the islands' best 4 into the generalist every 1 (room 64), the maze cue mirrored per lifetime true, the shapes' lights in one word true, food from the world's strokes true, passed rungs kept true, inhibit inputs true, overlap genes true, size classes true, wiring cost 1 a bit of tag distance, populations compete for their destination true, pruning true, branches true, a fixed body true, the three-factor output rule true, triggers true, new populations' triggers drawn true, motions true, one-word codes of 8 lines
+selection climbs: mixclick > cued > uncued > short > held > three
+trace: selection rung held, one mixed lifetime, world 60003
+step trial t cue pays tok odd click present | lines on per vector | kernels fired per population (id:fired)
+    1   0  0 A $ - . - on | 16 0 0 0 0 0 0 0 37 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 23:a482520180480491
+    2   0  1 A $ - . - on | 16 0 0 0 0 0 0 0 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 23:a482520180480491
+    3   0  2 A $ - . - on | 24 0 0 0 0 0 0 0 45 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 0:4e30000200400000 23:a482520180480491
+    4   0  3 A $ - . - on | 8 0 53 105 0 0 57 43 44 407 | 0#550:5 1#513:5 2#549:5 3#547:0 4#548:0 5#571:5 6#572:0 7#517:4 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:5 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 0:4e30000200400000
+    5   0  4 A $ - . 2 on | 32 0 53 105 0 0 57 43 51 455 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:1 task:1 screen:- chose:-
+      words 0: 0:4e30000200400000 8:4810000044108080 18:a62a8118001c000a
+    6   0  5 A $ - . - on | 8 0 53 105 0 0 57 43 51 463 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:0 task:1 screen:- chose:-
+      words 0: 8:2042010008060010
+    7   0  6 A $ - . - on | 8 0 53 105 0 0 57 43 52 8 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:0 task:1 screen:- chose:-
+      words 0: 8:2042010008060010
+    8   0  7 A $ - . - on | 0 0 53 105 0 0 57 43 43 8 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+    9   0  8 A $ - . - on | 0 0 53 105 0 0 57 43 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   10   0  9 A $ - . - on | 0 0 53 105 0 0 57 43 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   11   -  - - - - . - on | 0 0 53 105 0 0 57 43 45 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   12   -  - - - - . - on | 0 0 53 105 0 0 57 43 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   13   -  - - - - . - on | 0 0 53 105 0 0 57 43 45 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   14   -  - - - - . - on | 0 0 53 105 0 0 57 43 45 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   15   1  0 b . - . - on | 0 0 53 105 0 0 57 43 46 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   16   1  1 b . - . - on | 0 0 53 105 0 0 57 43 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   17   1  2 b . - . - on | 8 0 53 105 0 0 57 43 45 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 0:0500480051400000
+   18   1  3 b . - . - on | 8 0 8 26 0 0 12 12 45 406 | 0#550:5 1#513:5 2#549:5 3#547:0 4#548:0 5#571:5 6#572:0 7#517:4 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:5 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 0:0500480051400000
+   19   1  4 b . - . 2 on | 32 0 8 26 0 0 12 12 52 500 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:1 task:1 screen:- chose:-
+      words 0: 0:0500480051400000 8:4810000044108080 18:a62a8118001c000a
+   20   1  5 b . - . - on | 8 0 8 26 0 0 12 12 51 508 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:0 task:1 screen:- chose:-
+      words 0: 8:2042010008060010
+   21   1  6 b . - . - on | 8 0 8 26 0 0 12 12 52 8 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:0 task:1 screen:- chose:-
+      words 0: 8:2042010008060010
+   22   1  7 b . - . - on | 0 0 8 26 0 0 12 12 46 8 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   23   1  8 b . - . - on | 0 0 8 26 0 0 12 12 47 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   24   1  9 b . - . - on | 0 0 8 26 0 0 12 12 43 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   25   -  - - - - . - on | 0 0 8 26 0 0 12 12 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   26   -  - - - - . - on | 0 0 8 26 0 0 12 12 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   27   -  - - - - . - on | 0 0 8 26 0 0 12 12 45 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-
+      words 0: 
+   28   2  0 b . - . - on | 0 0 8 26 0 0 12 12 44 0 | 0#550:0 1#513:0 2#549:0 3#547:0 4#548:0 5#571:0 6#572:0 7#517:0 8#557:0 10#558:0 11#565:0 12#559:0 13#560:0 14#566:0 15#561:0 16#567:0 17#568:0 18#569:0 say:- task:1 screen:- chose:-

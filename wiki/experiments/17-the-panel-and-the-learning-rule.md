@@ -974,3 +974,25 @@ worlds (the other five 0; goal 150):
 and the first evolved network whose score rests on learning in the lifetime: frozen (no mask moves,
 births, copies or output moves) it keeps about a third on its own rung and a fifth on the longer
 delays. Every passer checked before (run 35's maze feel and learn included) scored the same frozen.
+
+## Run 36's selection: four rungs in five generations, by acting on neither task (`runs/checks/selection36/`)
+
+Run 36's selection passed cued (503), uncued (506), short (507) and held (508). The passers are
+real on fresh worlds and need no learning (held, 48 worlds: 718 to 756 learning, 717 to 752
+frozen; goal 600). Traced (held, world 60003), the passer does the same thing in both tasks:
+
+| block | cue | steps | clicks | speaks |
+|---|---|---|---|---|
+| respond | shown | 81 | 4% | 19% |
+| respond | gone | 436 | 8% | 22% |
+| babble | shown | 303 | 8% | 22% |
+| babble | gone | 1,709 | 7% | 23% |
+
+select = (respond + babbled) / 2 less the voice rate in respond blocks and the click rate in babble
+blocks. A network that clicks at every light (respond 1024: clicks on paying trials against
+others) and speaks now and then everywhere (babble 1024: each token said once in all the babble
+blocks) pays only its sparse rates, 22% and 8%: 1024 - 221 - 81 = 722. The rung tests had a timing
+reflex speaking at every step (voice cost 1024, under 300); speaking sparsely is the leak. A fix
+to try: score selection on the contrast between tasks, the voice in babble blocks less in respond
+blocks and the clicks at paying lights in respond blocks less at the same lights in babble blocks,
+so a network blind to the task scores 0.

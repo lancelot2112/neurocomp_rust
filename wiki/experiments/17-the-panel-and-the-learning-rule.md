@@ -1045,7 +1045,7 @@ populations reading ports kept (recall: ear 11, eye 2, self 2; switching: self 2
 It grows inputs, not gates: a gate's use cannot be judged locally, so reward gating is not built
 by it.
 
-## Continuous worlds for the other ladders (built, in no run yet)
+## Continuous worlds for the other ladders (run 37)
 
 Each behind its own switch, off by default (recall's is `ISL_RECALL_FLAG`, run 37):
 

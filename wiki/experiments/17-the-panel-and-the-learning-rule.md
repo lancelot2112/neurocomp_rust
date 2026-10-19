@@ -1159,3 +1159,13 @@ maze rung keeps them. Test `feeling_in_the_maze_pays_a_stroke_follower_and_keeps
 lifetimes): turning to the cue's side and clicking after strokes 1004 on maze and 380 on
 feel-maze; turning alone 1024 and 0. Run 37's maze population (feel-300 passed in the old world)
 scores up to 96 on the stacked feel (mean 10): some of the old skill carries over.
+
+## Run 37's end (stopped at 331 for run 38)
+
+18 rung moves in 331 generations: reading to pairs8, switching to feel-300, shapes to blur1, maze
+to feel, recall to flag2, selection to held, none after 235. Stray clicks charged with misses free
+made doing nothing a refuge early (recall's best empty for 120 generations); selection passed the
+rungs whose stimuli tell the task and stopped at held; recall's flag2 score rose steadily
+(-336 to -116). Learning clearly mattered in 19 of 320 battery pairs at 258 (run 36: 3 of 360).
+Run 38 (started 3:45 PM ET) adds the miss cost, selection by the tasks' performance contrasted and
+stacked rungs on switching, shapes and the maze.

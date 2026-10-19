@@ -2062,6 +2062,25 @@ fn take_notes_with(g: &mut TagGenome, notes: &[super::Note], hints: bool) {
         }
         let Some(at) = g.tokens.iter().position(|t| matches!(t, Token::Pop(p) if p.id == id)) else { continue };
         let Token::Pop(parent) = &g.tokens[at] else { continue };
+        // (`set_attract`) a trial from an unread input port into the population's destination:
+        // kept as a population reading that port
+        if (8..=12).contains(&kind) {
+            if parent.to_port {
+                continue;
+            }
+            let port = [EYE, EAR, TOUCH, AFFECT, SELF][(kind - 8) as usize];
+            if g.pops().any(|p| p.explored && p.from_port && !p.from_output && p.from == port && p.to == parent.to) {
+                continue;
+            }
+            let q = Pop {
+                id: g.next_id, from: port, from_port: true, from_output: false, to: parent.to, to_port: false, wire: false, op: KernelOp::Xor, count: 0,
+                grow: true, cover: true, replicate: parent.replicate.max(3), gate: None, pause: None, repeat: false, mark: 128, explored: true,
+                ..parent.clone()
+            };
+            g.next_id += 1;
+            g.tokens.insert(at + 1, Token::Pop(q));
+            continue;
+        }
         if parent.to_port || (kind == 1 && parent.from_port) {
             continue;
         }

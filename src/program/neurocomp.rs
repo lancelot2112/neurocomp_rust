@@ -36,6 +36,24 @@ pub fn set_explore(on: bool) {
     EXPLORE.store(on, Ordering::Relaxed);
 }
 
+/// The attractant (`set_attract`): each input port (eye, ear, touch, affect, the self channel)
+/// that no population reads counts the steps its lines changed, a `u8`; when it reaches a
+/// population's own threshold (2^(its accident gene - 10), 4 to 256 steps) that population, the
+/// one whose threshold is lowest (ties in genome order), grows a trial connection from the port
+/// into its own destination, as exploration's trials are grown, and the count starts again; a
+/// trial whose predictions come true is kept by the genome (`tags::take_notes`, kinds 8 to 12).
+/// An unread input that keeps changing asks for a connection, as a growth cone follows a
+/// chemical. Off by default.
+static ATTRACT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_attract(on: bool) {
+    ATTRACT.store(on, Ordering::Relaxed);
+}
+
+pub fn attract() -> bool {
+    ATTRACT.load(Ordering::Relaxed)
+}
+
 pub fn explore() -> bool {
     EXPLORE.load(Ordering::Relaxed)
 }
@@ -219,6 +237,9 @@ pub struct RuntimeNetwork {
     /// source is a port. The trial's kernels are born and replicate by the usual rules, and each
     /// of their predictions that comes true is counted (`confirms`), for the genome to keep it
     pub explore: bool,
+    /// (`set_attract`) each input port's attractant: steps its lines changed while unread (eye,
+    /// ear, touch, affect, the self channel)
+    pub attracted: [u8; 5],
     /// (with `explore`) explorers are shadow predictors (`set_shadow`)
     pub shadow: bool,
     /// (with `shadow`) shadows start only by accident, at each population's own rate, not when
@@ -479,7 +500,7 @@ impl RuntimeNetwork {
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -554,7 +575,7 @@ impl RuntimeNetwork {
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: if clock_drawn() { (seed ^ 0xC10C_C10C_C10C_C10C).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) } else { 0 } }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: if clock_drawn() { (seed ^ 0xC10C_C10C_C10C_C10C).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) } else { 0 } }
     }
 
     /// Advance histories and process all edges once.
@@ -1337,6 +1358,102 @@ impl RuntimeNetwork {
         if self.explore {
             self.grow_trials();
         }
+        if attract() {
+            self.grow_attracted();
+        }
+    }
+
+    /// The attractant (`set_attract`): each unread input port whose lines changed this step
+    /// counts it; at the lowest threshold of the populations that may answer, that population
+    /// grows a trial connection from the port into its destination.
+    fn grow_attracted(&mut self) {
+        let cw = crate::world::CH_BITS / 64;
+        let ports: [(usize, Option<(usize, usize)>); 5] = [
+            (0, Some((crate::world::EYE * cw, cw))),
+            (0, Some((crate::world::EAR * cw, cw))),
+            (0, Some((crate::world::TOUCH * cw, cw))),
+            (0, Some((crate::world::AFFECT * cw, cw))),
+            (self.self_node.unwrap_or(usize::MAX), None),
+        ];
+        let internal = |i: usize, s: &Self| i != 0 && i != s.output && Some(i) != s.self_node;
+        for (j, &(node, window)) in ports.iter().enumerate() {
+            if node >= self.nodes.len() || self.live[node] {
+                continue;
+            }
+            // read by any population (all of the senses, or the port's own words)?
+            let read = self.edges.iter().any(|e| e.src.idx == node && match (e.window, window) {
+                (None, _) | (_, None) => true,
+                (Some((o, l)), Some((po, pl))) => o < po + pl && po < o + l,
+            });
+            if read {
+                self.attracted[j] = 0;
+                continue;
+            }
+            let now = view(&self.nodes[node], false, 0, 1, window);
+            let before = view(&self.nodes[node], false, 1, 1, window);
+            if now.as_words() != before.as_words() {
+                self.attracted[j] = self.attracted[j].saturating_add(1);
+            }
+            // the population that answers: a genome's own, of kernels, on a channel, not grown
+            // yet this lifetime, with the lowest threshold
+            let answer = (0..self.edges.len()).filter(|&i| {
+                let e = &self.edges[i];
+                e.explorer == 0 && !e.spawned && e.kind == EdgeKind::Kernels && internal(e.dst, self) && e.spec.accident > 0
+            }).min_by_key(|&i| (self.edges[i].spec.accident, i));
+            let Some(i) = answer else { continue };
+            let threshold = 1u32 << (self.edges[i].spec.accident as u32).saturating_sub(10).min(8);
+            if (self.attracted[j] as u32) < threshold {
+                continue;
+            }
+            self.attracted[j] = 0;
+            let eg = &self.edges[i];
+            let mut spec = eg.spec.clone();
+            spec.op = KernelOp::Xor;
+            spec.replicate = spec.replicate.max(3);
+            spec.cap = spec.cap.max(16);
+            spec.gate = None;
+            spec.pause = None;
+            spec.repeat = false;
+            spec.dst_len = 0;
+            spec.dst_word = 0;
+            let rng = StdRng::seed_from_u64((spec.salt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.steps ^ 0xA77A);
+            let trial = RuntimeEdgeGroup {
+                src: RuntimeEdgeTarget { idx: node, read_back: 1, span: 1 },
+                dst: eg.dst,
+                group: KernelGroup::from_classes(vec![KernelClass::with_kernels(vec![])]),
+                kind: EdgeKind::Kernels,
+                op: KernelOp::Xor,
+                rotate: 0,
+                grow: true,
+                inhibit: eg.inhibit,
+                gate: None,
+                new_code: false,
+                wide: eg.wide,
+                window,
+                dst_word: 0,
+                repeat: false,
+                repeat_lag: 1,
+                spec,
+                rng,
+                can_grow: true,
+                into_act: false,
+                confirms: 0,
+                explorer: 8 + j as u8,
+                spawned: true,
+                silent: false,
+                scratch: BitVector::new(64, Some(0)),
+                share: 0, grip: None, detached: false, dying: Vec::new(),
+                teach_fired: Vec::new(),
+                teach_src: None,
+                targets: Vec::new(),
+                target_at: 0,
+                on_target: 0,
+                score: 0,
+                scores: Vec::new(),
+            };
+            self.edges[i].spawned = true;
+            self.edges.push(trial);
+        }
     }
 
     /// Exploration: each population of kernels (a genome's own) whose kernels have all gone
@@ -1472,9 +1589,11 @@ impl RuntimeNetwork {
 
     /// What this lifetime found, for the genome: per population (by id, its `salt`), the
     /// predictions that came true, and each trial connection grown from it (kind 1: back into
-    /// its source, 2: on its destination) with its own.
+    /// its source, 2: on its destination; 8 to 12: from an unread input port, `set_attract`) with
+    /// its own.
     pub fn notes(&self) -> Vec<(u32, u32, u8)> {
-        let mut out: Vec<(u32, u32, u8)> = self.edges.iter().filter(|e| e.explorer < 3 && (e.confirms > 0 || e.explorer > 0)).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect();
+        // (`set_attract`: kinds 8 to 12, a trial grown from an unread port, eye to the self channel)
+        let mut out: Vec<(u32, u32, u8)> = self.edges.iter().filter(|e| (e.explorer < 3 || (8..=12).contains(&e.explorer)) && (e.confirms > 0 || e.explorer > 0)).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect();
         // a shadow's targets, each with its best score (the one it is on included)
         for e in self.edges.iter().filter(|e| e.explorer == 3) {
             let mut sc = e.scores.clone();

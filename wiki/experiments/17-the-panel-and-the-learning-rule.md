@@ -1026,3 +1026,21 @@ question 0, a latch clicking from the cue to the question -1024, clicking 3 step
 and -646 on flag8 (icc 0.93). The ladder: respond, flag2, flag4, flag8, flag16 (the gaps' limit),
 fdistract (the other light in half the gaps), ftwo (which light is the cue drawn per lifetime,
 learned from the strokes); goals 300.
+
+## The attractant: unread changing inputs ask for a connection (`ISL_ATTRACT=1`, run 37)
+
+In run 36 practically no population's learning was gated on the affect port (0% in every island
+but prediction's 1%), so nothing in a network treats a stroke as a reward. A gate is aimed at
+random; the affect port is one of six ports and ports one target in three. The attractant
+(`program::neurocomp::set_attract`): each input port (eye, ear, touch, affect, the self channel)
+that no population reads counts, in a `u8`, the steps its lines changed; when the count reaches a
+population's own threshold (2^(its accident gene - 10), 4 to 256), the population with the lowest
+threshold grows a trial connection from the port into its destination, a predicting (XOR) trial
+as exploration grows, and the count starts again. A trial whose predictions come true KEEP times
+over the generation is kept as an explored population reading that port (`take_notes`, kinds 8
+to 12). Like a growth cone following a chemical, nothing in it says what the input means.
+
+Test (run 36's settings, switching and recall, 12 generations from naked): 17 explored
+populations reading ports kept (recall: ear 11, eye 2, self 2; switching: self 2), none without it.
+It grows inputs, not gates: a gate's use cannot be judged locally, so reward gating is not built
+by it.

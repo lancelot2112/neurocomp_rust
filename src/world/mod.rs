@@ -93,6 +93,8 @@ pub enum SceneKind {
     Maze,
     Screen,
     Feel,
+    /// cues and questions (`World::flag`)
+    Flag,
 }
 
 /// A record of one step, for the observer (never sent to the program).
@@ -137,6 +139,9 @@ pub struct Event {
     pub task: Option<usize>,
     /// (a screen step) the cursor on the target after this step's move, for the observer alone
     pub on_target: bool,
+    /// (`World::flag`) a question asked this step, and whether a cue came since the last question
+    /// (the observer's mark; the program only hears the tone)
+    pub question: Option<bool>,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -243,6 +248,9 @@ enum Scene {
     ScreenGap(usize, usize),
     /// feeling: steps left; a stroke comes now and then, whatever the program does
     Feel(usize),
+    /// cues and questions: what each step still to come shows (0 nothing, 1 the cue, 2 a
+    /// question after no cue, 3 a question after a cue, 4 the other light)
+    Flag(std::collections::VecDeque<u8>),
 }
 
 /// The world.
@@ -310,6 +318,12 @@ pub struct World {
     distract_at: Option<usize>,
     scene: Scene,
     stroke_next: bool,
+    /// (`flag`) which light is the cue, and the window after the last question: steps left in it,
+    /// whether a cue came before that question, and whether a click there was stroked
+    flag_cue: usize,
+    flag_window: usize,
+    flag_armed: bool,
+    flag_paid: bool,
     /// serial reversal: shapes, not fixed lights. Each trial shows a fresh exemplar of its light:
     /// each line moved, with chance `blur` in 8, to another place in its word, and the whole
     /// pattern rotated by 0 to `shift` lines across the eye (0 and 0, the default: the light as is)
@@ -617,6 +631,10 @@ impl World {
             distract_at: None,
             scene: Scene::Idle,
             stroke_next: false,
+            flag_cue: 0,
+            flag_window: 0,
+            flag_armed: false,
+            flag_paid: false,
             blur: 0,
             shift: 0,
             exemplar: None,
@@ -798,6 +816,43 @@ impl World {
         self.scene = Scene::Feel(steps);
     }
 
+    /// Cues and questions: about `steps` steps of a stream with no trials. A question (a tone on
+    /// the ear) comes now and then; before about half of them a cue (a light on the eye) came since
+    /// the question before, once or twice. A click in the three steps after a question that had a
+    /// cue since the last one is stroked; nothing else is. Quiet gaps of 1 to `gap` steps between
+    /// any two events, so how long a cue must be held is drawn, and the question says when to
+    /// answer. With `distract`, the other light comes in half the gaps (it is no cue); with
+    /// `two`, which light is the cue is drawn for the lifetime (learned from the strokes).
+    pub fn flag(&mut self, steps: usize, gap: usize, distract: bool, two: bool) {
+        self.present = false;
+        let gap = gap.max(1);
+        self.flag_cue = if two { self.rng.gen_range(0..2) } else { 0 };
+        let mut s: std::collections::VecDeque<u8> = std::collections::VecDeque::new();
+        let mut quiet = |s: &mut std::collections::VecDeque<u8>, rng: &mut StdRng| {
+            let g = rng.gen_range(1..=gap);
+            let d = (distract || two) && rng.gen_bool(0.5);
+            let at = rng.gen_range(0..g);
+            for k in 0..g {
+                s.push_back(if d && k == at { 4 } else { 0 });
+            }
+        };
+        while s.len() < steps {
+            let armed = self.rng.gen_bool(0.5);
+            if armed {
+                let cues = if self.rng.gen_ratio(1, 4) { 2 } else { 1 };
+                for _ in 0..cues {
+                    quiet(&mut s, &mut self.rng);
+                    s.push_back(1);
+                }
+            }
+            quiet(&mut s, &mut self.rng);
+            s.push_back(if armed { 3 } else { 2 });
+        }
+        quiet(&mut s, &mut self.rng);
+        self.flag_window = 0;
+        self.scene = Scene::Flag(s);
+    }
+
     pub fn screen(&mut self, trials: usize) {
         self.present = false;
         self.screen_total = trials;
@@ -879,7 +934,7 @@ impl World {
         let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
         let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if self.sentence {
@@ -1118,6 +1173,33 @@ impl World {
                     put(&mut senses, EYE, &BitVector::from_words(eye));
                     Scene::Screen(left, t + 1, tr)
                 }
+            }
+            Scene::Flag(mut s) => {
+                ev.scene = SceneKind::Flag;
+                // the window after a question: a click there after a cue is stroked, once
+                ev.window = self.flag_window > 0;
+                if self.flag_window > 0 {
+                    if moved == Some(CLICK) && self.flag_armed && !self.flag_paid {
+                        self.stroke_next = true;
+                        self.flag_paid = true;
+                    }
+                    self.flag_window -= 1;
+                }
+                let what = s.pop_front().unwrap_or(0);
+                let other = if self.flag_cue == 0 { 1 } else { 0 };
+                match what {
+                    1 => put(&mut senses, EYE, &self.lights[self.flag_cue].clone()),
+                    4 => put(&mut senses, EYE, &self.lights[other].clone()),
+                    2 | 3 => {
+                        put(&mut senses, EAR, &self.tones[0].clone());
+                        ev.question = Some(what == 3);
+                        self.flag_window = 3;
+                        self.flag_armed = what == 3;
+                        self.flag_paid = false;
+                    }
+                    _ => {}
+                }
+                if s.is_empty() { Scene::Idle } else { Scene::Flag(s) }
             }
             Scene::Feel(left) => {
                 ev.scene = SceneKind::Feel;

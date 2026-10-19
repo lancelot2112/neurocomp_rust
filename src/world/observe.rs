@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag"];
 /// How many probes there are.
-pub const NPROBES: usize = 32;
+pub const NPROBES: usize = 33;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -194,7 +194,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -463,6 +463,40 @@ pub fn surprise_shaped(events: &[Event]) -> i32 {
     let hit = odd_c * 512 / odd;
     let fa = kept_c * 512 / kept;
     (hit / 4 + (hit - fa) * 3 / 4) as i32
+}
+
+/// Cues and questions (`World::flag`): clicking in the three steps after a question that had a cue
+/// since the last one, against after one that had none, less every click anywhere else counted as
+/// a wrong answer: 1024 x (answered after a cue / such questions - answered after none / such
+/// questions - stray clicks / questions). Holding a bit from the cue and reading and clearing it at
+/// the question scores 1024; clicking at every question 0; a latch clicking from the cue to the
+/// question, or clicking at random, below 0.
+pub fn flag(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Flag).collect();
+    let mut in_window = vec![false; ev.len()];
+    let (mut armed, mut armed_hit, mut plain, mut plain_hit) = (0i64, 0i64, 0i64, 0i64);
+    for (t, e) in ev.iter().enumerate() {
+        if let Some(a) = e.question {
+            let w = t + 1..(t + 4).min(ev.len());
+            let hit = w.clone().any(|u| ev[u].moved == Some(CLICK));
+            for u in w {
+                in_window[u] = true;
+            }
+            if a {
+                armed += 1;
+                armed_hit += hit as i64;
+            } else {
+                plain += 1;
+                plain_hit += hit as i64;
+            }
+        }
+    }
+    if armed == 0 || plain == 0 {
+        return 0;
+    }
+    let stray = ev.iter().enumerate().filter(|(t, e)| !in_window[*t] && e.moved == Some(CLICK)).count() as i64;
+    let score = armed_hit * 1024 / armed - plain_hit * 1024 / plain - stray * 1024 / (armed + plain);
+    score.max(-1024) as i32
 }
 
 /// Remember with partial credit (`evolve::set_partial_remember`): a cue trial clicked in its window
@@ -1496,6 +1530,46 @@ mod tests {
         let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
         let (selector, both, silent) = (mean(0), mean(1), mean(2));
         assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
+    }
+
+    #[test]
+    fn flag_pays_a_bit_held_from_the_cue_to_the_question() {
+        // strategies on the senses: a holder (set at the cue, answer and clear at the question),
+        // a clicker at every question, a latch (from the cue, every step, to the question), a
+        // fixed-delay clicker (3 steps after a cue), clicking at random, never
+        let run = |kind: u8, seed: u64, gap: usize| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.flag(600, gap, false, false);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let (mut held, mut since) = (false, usize::MAX);
+            while !matches!(w.scene, Scene::Idle) {
+                let seen = channel(&senses, EYE).count_ones() > 0;
+                let heard = channel(&senses, EAR).count_ones() > 0;
+                if seen {
+                    since = 0;
+                } else if since < usize::MAX {
+                    since += 1;
+                }
+                let click = match kind {
+                    0 => { let c = heard && held; if seen { held = true } if heard { held = false } c }
+                    1 => heard,
+                    2 => { if seen { held = true } let c = held; if heard { held = false } c }
+                    3 => since == 3,
+                    4 => rand::Rng::gen_ratio(&mut rng, 1, 6),
+                    _ => false,
+                };
+                let a = w.act(None, click.then_some(CLICK));
+                senses = w.step(&a);
+            }
+            flag(&w.events)
+        };
+        let mean = |k: u8, gap: usize| (0..12u64).map(|s| run(k, 700 + s, gap)).sum::<i32>() / 12;
+        let m: Vec<i32> = (0..6).map(|k| mean(k, 8)).collect();
+        eprintln!("flag (gaps to 8): holder {}, every question {}, latch {}, fixed delay {}, random {}, never {}", m[0], m[1], m[2], m[3], m[4], m[5]);
+        assert!(m[0] > 900, "{m:?}");
+        assert!(m[1].abs() < 60 && m[5] == 0, "{m:?}");
+        assert!(m[2] < 0 && m[3] < 200 && m[4] < 0, "{m:?}");
     }
 
     #[test]

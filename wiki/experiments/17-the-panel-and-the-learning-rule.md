@@ -1006,3 +1006,23 @@ trials, and on the lag rungs a click before the window costs nothing (only vary 
 on an early click), so a latch scores 1024 at any delay. It holds one bit for the trial in its
 activity, which is memory, but not recall timed to a delay; the lag5 learners (272) were another
 lineage. A fix: an early click spends the trial on every recall rung.
+
+## Recall as cues and questions (`ISL_RECALL_FLAG=1`, run 37)
+
+On the lag rungs nothing in the world said when the answer window opened, only the trial's timing;
+with the delay drawn per lifetime a network could learn it only from when strokes came, so
+evolution found shorter memories (run 34) and a latch (run 36). The new world (`World::flag`) has
+no trials: a cue (a light on the eye) now and then, and a question (a tone on the ear) now and
+then. Click in the three steps after a question if a cue came since the last question; not after
+two questions with no cue between; nowhere else. Before about half the questions a cue came once
+or twice; quiet gaps of 1 to `fgap` steps between any two events, so how long the cue is held is
+drawn, and the question says when to answer. A correct click is stroked.
+
+`flag` = 1024 x (answered after a cue / such questions - answered after none / such questions -
+stray clicks / questions). Test `flag_pays_a_bit_held_from_the_cue_to_the_question` (gaps to 8, 12
+lifetimes): holder (set at the cue, answer and clear at the question) 1024, clicking at every
+question 0, a latch clicking from the cue to the question -1024, clicking 3 steps after any cue
+-249, at random -946, never 0. Run 36's recall population (the latch lineage) scores -480 on flag2
+and -646 on flag8 (icc 0.93). The ladder: respond, flag2, flag4, flag8, flag16 (the gaps' limit),
+fdistract (the other light in half the gaps), ftwo (which light is the cue drawn per lifetime,
+learned from the strokes); goals 300.

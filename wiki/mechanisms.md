@@ -96,6 +96,15 @@ the task. Removing the self-NOR wire costs 2.3 goals.
 
 Files: `runs/checks/selection-dive/` (genomes, lesion maps, a trace excerpt); experiment 17.
 
+### The trial latch: one bit held for a whole trial (run 36, recall, generation 530)
+
+The cue sets a state that keeps the hand clicking every step until the trial ends, and the trial's
+end resets it; on a trial without the cue it never sets. It holds which kind of trial this is in
+activity alone (the same score with learning frozen) and is blind to the delay, so it scored 1024
+on lag16 (delays 16 to 32) one generation after lag8. It is a memory of one bit, set and reset by
+events, not recall timed to a delay: the remember probe counted a click in the window on cue trials
+against no-cue trials and charged nothing for clicking early. `runs/checks/recall36/`, experiment 17.
+
 ### The phase-reset oscillator: an onset detector (run 34, novelty island, generation 85)
 
 A NOR wire from a channel into itself makes it alternate every step; kernels reading the eye write

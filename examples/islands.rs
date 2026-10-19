@@ -780,6 +780,7 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "vary" => stage.lesson.vary_delay = v.parse().expect("vary"),
                 "distract" => stage.lesson.distract = v == "1",
                 "two" => stage.lesson.two_lights = v == "1",
+                "fgap" => stage.lesson.flag_gap = v.parse().expect("fgap"),
                 "go" => stage.lesson.go_tone = v == "1",
                 "period" => stage.lesson.period = v.parse().expect("period"),
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
@@ -844,6 +845,21 @@ const SWITCHING_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100;
 /// Recall's ladder: click at a light (respond, as switching starts: a population that never
 /// clicks at a light scores 0 on every lag, and one that does passes lag1 already), then after a
 /// light gone 1 step before the window, then 2, then 3 (the plain task), then 4.
+/// Recall as cues and questions (`ISL_RECALL_FLAG=1`, `World::flag`): a stream with no trials, a
+/// cue (a light) now and then and a question (a tone) now and then; click at a question if a cue
+/// came since the last question, not if two questions came with no cue between, nowhere else. The
+/// question says when to answer, so how long the cue is held is all a delay asks: the quiet gaps
+/// between events grow (to 2, 4, 8 and 16 steps), then the other light comes in the gaps (no
+/// cue), then which light is the cue is drawn each lifetime. On the old rungs nothing said when
+/// the window opened, and a latch clicking from the cue to the trial's end passed lag16.
+const RECALL_FLAG_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
+    flag2 probes=flag fgap=2 goal=flag@300; \
+    flag4 probes=flag fgap=4 goal=flag@300; \
+    flag8 probes=flag fgap=8 goal=flag@300; \
+    flag16 probes=flag fgap=16 goal=flag@300; \
+    fdistract probes=flag fgap=8 distract=1 goal=flag@300; \
+    ftwo probes=flag fgap=8 two=1";
+
 const RECALL_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
     lag1 probes=respond+remember delay=1 goal=remember@150; \
     lag2 probes=respond+remember delay=2 goal=remember@150; \
@@ -1127,7 +1143,7 @@ fn main() {
             match isl.name.as_str() {
                 "reading" => isl.stages = ladder(READING_LADDER),
                 "switching" => isl.stages = ladder(SWITCHING_LADDER),
-                "recall" => isl.stages = ladder(if env("ISL_RECALL_LONG", 0u8) == 1 && env("ISL_RECALL_FAIR", 0u8) == 1 { RECALL_FAIR_LADDER } else if env("ISL_RECALL_LONG", 0u8) == 1 { RECALL_LONG_LADDER } else { RECALL_LADDER }),
+                "recall" => isl.stages = ladder(if env("ISL_RECALL_FLAG", 0u8) == 1 { RECALL_FLAG_LADDER } else if env("ISL_RECALL_LONG", 0u8) == 1 && env("ISL_RECALL_FAIR", 0u8) == 1 { RECALL_FAIR_LADDER } else if env("ISL_RECALL_LONG", 0u8) == 1 { RECALL_LONG_LADDER } else { RECALL_LADDER }),
                 "prediction" => isl.stages = ladder(PREDICTION_LADDER),
                 "shapes" => isl.stages = ladder(SHAPES_LADDER),
                 "maze" => isl.stages = ladder(MAZE_LADDER),

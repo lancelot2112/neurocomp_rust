@@ -208,6 +208,8 @@ pub enum Task {
     Reading(usize),
     /// a T-maze of this many trials (`World::maze`)
     Maze(usize),
+    /// cues and questions for about this many steps (`World::flag`)
+    Flag(usize),
     /// a screen of this many trials (`World::screen`)
     Screen(usize),
     /// task selection: this many blocks, alternating a conditioning block (a light to click, no
@@ -269,6 +271,8 @@ pub struct Lesson {
     pub vary_delay: usize,
     pub distract: bool,
     pub two_lights: bool,
+    /// (cues and questions, `World::flag`) the longest quiet gap between two events
+    pub flag_gap: usize,
     /// (delayed conditioning) a tone as the window opens (`World::go_tone`)
     pub go_tone: bool,
     pub blur: u32,
@@ -365,7 +369,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, flag_gap: 2, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -521,6 +525,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         Task::Screen(n) => w.screen(n),
         Task::Mixed(_) => mixed_block(&mut w, 0, &lesson, tokens, seed),
         Task::Feel(n) => w.feel(n),
+        Task::Flag(n) => w.flag(n, lesson.flag_gap, lesson.distract, lesson.two_lights),
     }
     let mut blk = 0usize;
     // (`set_mixed_codes`) a mixed lifetime's lights the same kind of code as its glyphs
@@ -578,6 +583,11 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
                     Task::Feel(_) => {
                         let mut r = [0; observe::NPROBES];
                         r[14] = observe::feel(b);
+                        r
+                    }
+                    Task::Flag(_) => {
+                        let mut r = [0; observe::NPROBES];
+                        r[32] = observe::flag(b);
                         r
                     }
                 };
@@ -760,7 +770,9 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let blocks = (trials / lesson.mixed_block.max(1)).max(2);
     let (mix, w7) = if want(&[13, 20]) { live_lesson(g, Task::Mixed(blocks), physics, seed ^ 0x313C, gap, lesson) } else { (vec![], 0) };
     let (fel, w8) = if want(&[14, 17]) { live_lesson(g, Task::Feel(trials * 5), physics, seed ^ 0xFEE1, gap, lesson) } else { (vec![], 0) };
-    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len()).max(1) as u64;
+    // (cues and questions, `World::flag`) about four steps a trial
+    let (flg, w9) = if want(&[32]) { live_lesson(g, Task::Flag(trials * 4), physics, seed ^ 0xF1A6, gap, lesson) } else { (vec![], 0) };
+    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len() + flg.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
     row[13] = observe::select(&mix);
     row[19] = observe::select_graded(&mix);
@@ -772,12 +784,13 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     }
     row[14] = observe::feel(&fel);
     row[17] = observe::feel_graded(&fel);
+    row[32] = observe::flag(&flg);
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) && !wanted.iter().any(|&w| graded(w) == p && w != p) {
             *x = 0;
         }
     }
-    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8) / steps)
+    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9) / steps)
 }
 
 /// All the probes.

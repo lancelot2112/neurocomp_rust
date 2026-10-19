@@ -1116,3 +1116,22 @@ blocks less in babble blocks, and the voice rate in babble blocks less in respon
 with still blocks a third for acting less there than elsewhere. Test (held, 12 lifetimes): a
 selector 1021, the task-blind strategy 4, a timid selector (one light in ten clicked, a token one
 step in twenty) 165, where the rates' contrast gives it nearly full credit.
+
+## Has quality gone up with the continuous worlds? (run 36 at 828 against run 37 at 258)
+
+Rungs: run 37 had 18 moves by generation 258, run 36 20 and run 35 25 by the same point, on rungs
+made harder to fake. The learning battery (`runs/checks/learn-battery/`; each run's own world,
+24 fresh worlds, each island's best 4): genome-task pairs whose score clearly rests on learning
+(on less frozen above 50 and above twice its standard error):
+
+| | pairs | largest gap |
+|---|---|---|
+| run 36 (828) | 3 of 360 | 87 (se 21) |
+| run 37 (258) | 19 of 320 | 276 (se 145) |
+
+At this threshold about 7 of 320 would pass by chance, so run 37's 19 is a modest signal and run
+36's 3 is none: learning starts to matter in run 37 (switching's discrim and swap1, shapes' paying,
+maze's symbol, screen's pick), most in the recall, novelty and generalist genomes. The task scores
+themselves stay low (the best full score on any battery task 136), and run 37's scores are not on
+run 36's scale (stray clicks and misses cost differently). A plausible cause is the wrong signal: a
+learner now feels both outcomes.

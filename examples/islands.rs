@@ -139,7 +139,8 @@
 //! `ISL_SIGNAL=n` (with `ISL_RESUME`): measure only. Each island's resumed genomes are scored on n
 //! fresh worlds on their rung's goal probe and on the rung below, and the spread between genomes
 //! is set against the noise across worlds (icc, split-half r, epsilon). Nothing evolves.
-//! `ISL_SIGNAL_EACH=1`: on the resumed rung only, and each genome's mean printed.
+//! `ISL_SIGNAL_EACH=1`: on the resumed rung only, and each genome's mean printed. `ISL_SIGNAL_PROBE=<name>`: that
+//! probe scored in the rung's world instead of its goal's (a graded one: `surprise+`, `screen~`).
 //! `ISL_FROZEN=1` (measure only): every lifetime with learning frozen (no mask moves, births,
 //! copies, output moves or exploration), to set a score against the same network learning.
 //!
@@ -1293,7 +1294,9 @@ fn main() {
             for k in ks {
                 let st = &isl.stages[k];
                 let Some(&(p, goal)) = st.goal.first() else { continue };
-                let scored = probe_all_in(start[i].clone(), trials, Physics::Varied, &worlds, gap, &st.probes, st.lesson.clone());
+                // (`ISL_SIGNAL_PROBE=<name>`) another probe scored in the rung's world instead
+                let p = std::env::var("ISL_SIGNAL_PROBE").ok().and_then(|n| PROBES.iter().position(|x| *x == n)).unwrap_or(p);
+                let scored = probe_all_in(start[i].clone(), trials, Physics::Varied, &worlds, gap, &if st.probes.contains(&p) { st.probes.clone() } else { [st.probes.clone(), vec![p]].concat() }, st.lesson.clone());
                 let v: Vec<Vec<f64>> = scored.iter().map(|s| s.probes.iter().map(|r| r[p] as f64).collect()).collect();
                 let means: Vec<f64> = v.iter().map(|w| w.iter().sum::<f64>() / w.len() as f64).collect();
                 let within = v.iter().map(|w| sd(w).powi(2)).sum::<f64>() / v.len() as f64;

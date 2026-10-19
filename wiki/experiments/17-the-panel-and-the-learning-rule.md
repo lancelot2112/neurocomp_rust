@@ -889,3 +889,23 @@ Both are real on fresh worlds and neither needs plasticity: feel is the click af
 learn, though the side that pays changes between lifetimes, keeps its score frozen, so it holds
 which move was stroked in its activity (a win-stay of memory, not of weights). Adaptation within a
 lifetime, but not the learning the battery looks for.
+
+## Is anything using the graded credit? (run 35 at 60)
+
+Selection's lexicase cases use the graded probe in place of the plain one (`graded`), so prediction
+is selected on surprise+ and screen on screen~; the log's tables show only a rung's own probes, so
+they do not show it. The populations at generation 60, 24 fresh worlds (`ISL_SIGNAL_PROBE`, new: a
+probe other than the rung's goal):
+
+| island, rung | probe | mean | best | icc |
+|---|---|---|---|---|
+| prediction, cycle1-100 | surprise (the goal) | -6 | 38 | 0.03 |
+| | surprise+ (selected on) | 118 | 214 | 0.27 |
+| | b-click-seq (clicks in token streams) | 151 | 263 | |
+| screen, torch | screen (the goal) | -50 | 0 | 0.23 |
+| | screen~ (selected on) | 281 | 483 | 0.30 |
+
+Both credits are in use and give selection a gradient the goals do not: prediction's networks now
+click in the token stream (about 15% of steps), which surprise alone never paid, but their clicks
+do not yet follow the breaks; screen's networks move the cursor onto the target in many trials
+(screen~ 281) and do not yet click on it there (screen below 0: their clicks miss).

@@ -1,6 +1,7 @@
 //! Each island's best network from checkpoints or rung logs, as rows of a graph (CSV on stdout):
 //! its bit vectors, its populations with their ops, and their modulatory inputs (gates, pauses,
-//! heat and inhibit inputs). Each block of a file (`island <name> generation <g> stage <s> ...`)
+//! heat and inhibit inputs), and their branches (`branch`: the population's id, the vector it reads,
+//! the branch's target, its op and trigger). Each block of a file (`island <name> generation <g> stage <s> ...`)
 //! is one snapshot; a checkpoint's first genome in a block is its island's best, as is a rung log's
 //! (`ISL_RUNG_LOG`). `cargo run --release --example netdump -- <file> <run> [<file> <run> ...]`.
 use neurocomp::evolve::tags::TagGenome;
@@ -26,14 +27,23 @@ fn main() {
             let Some(best) = genomes.first() else { continue };
             let (nodes, edges, mods) = best.wiring();
             let pre = format!("{run},{island},{generation},{rung},{snapshot}");
-            for (name, bits, hold) in nodes {
-                println!("{pre},vector,,{name},,{},{bits}", if hold { "holds" } else { "" });
+            for (name, bits, hold) in &nodes {
+                println!("{pre},vector,,{name},,{},{bits}", if *hold { "holds" } else { "" });
             }
             for (id, from, to, op, wire) in edges {
                 println!("{pre},edge,{id},{from},{to},{}{},", op, if wire { " wire" } else { "" });
             }
             for (id, kind, from, on) in mods {
                 println!("{pre},mod,{id},{from},{id},{}{},", kind, if on { "" } else { " (while off)" });
+            }
+            let (bnodes, branches) = best.branch_wiring();
+            for (name, bits, hold) in bnodes {
+                if !nodes.iter().any(|n| n.0 == name) {
+                    println!("{pre},vector,,{name},,{},{bits}", if hold { "holds" } else { "" });
+                }
+            }
+            for (id, from, to, label) in branches {
+                println!("{pre},branch,{id},{from},{to},\"{}\",", label.replace('"', "'"));
             }
         }
     }

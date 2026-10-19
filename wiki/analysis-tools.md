@@ -44,3 +44,9 @@ genomes are kept across runs (a library to seed a later run from, as that run's 
 checkpoint now has `<checkpoint>.novelty` beside it, the novelty island's species and archive, and
 a resume reads it back, so species and their numbering survive a restart (before, a resumed run
 started with none: run 34 resumed numbered its species from 1 again).
+
+**Branches in the diagrams.** `examples/netdump` writes each population's branches as rows of their
+own (`kind` branch: the population's id, the vector it reads, the branch's target, its op and, for
+a more-branch, its rotation and trigger), and the dashboard draws them as dotted arrows coloured by
+op. Before, branches were never exported: the export asked the run's branch switch, which netdump
+never sets. A block is labelled `passed <rung>` only when the file's name contains `rungs`.

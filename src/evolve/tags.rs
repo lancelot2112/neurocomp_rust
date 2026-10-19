@@ -917,15 +917,45 @@ impl TagGenome {
             if !p.wire {
                 if let Some((t, w)) = p.heat { m(if w { "warm" } else { "cool" }, t, p.heat_at, true, &mut nodes) }
                 if let Some(t) = p.inhibitor { m("inhibit", t, p.inhibitor_at, true, &mut nodes) }
-                if let Some(t) = p.branch.filter(|_| branches()) {
-                    if let Some(g) = ch.gate_place(t, if p.branch_at == 2 { 2 } else { 0 }) {
-                        seen(ch.name(g), g.len * 64, false, &mut nodes);
-                        edges.push((p.id, ch.name(a), ch.name(g), format!("{} branch", p.op.text()), false));
-                    }
-                }
             }
         }
         (nodes, edges, mods)
+    }
+
+    /// Each population's branches as a graph (`set_branches`, `set_branches_many`): its id, the
+    /// vector it reads, the branch's target, how it writes (the population's op for its one
+    /// branch; a more-branch's own op and rotation) and its trigger, if any. A wire has none. With
+    /// the vectors they reach that `wiring` does not name.
+    pub fn branch_wiring(&self) -> (Vec<(String, usize, bool)>, Vec<(u32, String, String, String)>) {
+        let ch = Channels::of(&self.tokens);
+        let mut nodes: Vec<(String, usize, bool)> = Vec::new();
+        let mut out = Vec::new();
+        for p in self.pops() {
+            if p.wire {
+                continue;
+            }
+            let (Some(a), Some(_)) = (ch.from(p), ch.to(p)) else { continue };
+            let mut add = |g: Place, label: String, nodes: &mut Vec<(String, usize, bool)>| {
+                let name = ch.name(g);
+                if !nodes.iter().any(|n| n.0 == name) {
+                    nodes.push((name.clone(), g.len * 64, false));
+                }
+                out.push((p.id, ch.name(a), name, label));
+            };
+            if let Some(t) = p.branch {
+                if let Some(g) = ch.gate_place(t, if p.branch_at == 2 { 2 } else { 0 }) {
+                    add(g, p.op.text(), &mut nodes);
+                }
+            }
+            for b in &p.more {
+                if let Some(g) = ch.gate_place(b.to, if b.at == 2 { 2 } else { 0 }) {
+                    let rot = if b.rot > 0 { format!(", rotated {}", b.rot) } else { String::new() };
+                    let gate = b.gate.and_then(|(t, on)| ch.gate_place(t, b.gate_at).map(|q| format!(", while {} {}", ch.name(q), if on { "had lines" } else { "had none" }))).unwrap_or_default();
+                    add(g, format!("{}{rot}{gate}", b.op.text()), &mut nodes);
+                }
+            }
+        }
+        (nodes, out)
     }
 
     pub fn describe(&self) -> String {

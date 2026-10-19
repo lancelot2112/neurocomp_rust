@@ -1086,3 +1086,13 @@ a latch; selection passed four rungs blind to the task; prediction passed cycle1
 switching reached feel. Run 37 (started 12:12 PM ET) answers the leaks: recall as cues and
 questions, selection by contrast, stray clicks charged, wrong clicks felt, the screen and the maze
 continuous, and unread inputs attracting trials.
+
+**Misses cost (`ISL_MISS_COST=1`).** In run 37's first 120 generations recall's best network was
+empty and it, like switching (until 112), sat below respond: with stray clicks charged, a network
+that clicks at random scores below 0 and one that does nothing scores 0, and the thrift case
+prefers it. With the miss cost a prompt that called for an act and got none is a wrong answer too:
+respond, discriminate and reverse less the share of paying lights not clicked, remember and flag
+less the cued trials or questions not answered, maze less the trials with no choice, the screen
+less the trials with no hit, selection by contrast -1024 for never acting. Test
+`misses_cost_so_doing_nothing_is_no_refuge`: a responder keeps 1024 on respond; never acting
+scores -1024 on respond and on flag.

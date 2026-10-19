@@ -186,9 +186,18 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // (`set_stray_cost`) clicks away from any light's window, per trial, taken off
     let stray = if stray_cost() { stray_rate(reversal) } else { 0 };
     let (respond, discriminate, reverse) = ((respond - stray).max(-1024), (discriminate - stray).max(-1024), (reverse - stray).max(-1024));
+    // (`set_miss_cost`) the lights that called for a click and got none
+    let (respond, discriminate, reverse) = if miss_cost() && !tr.is_empty() {
+        let miss_all = 1024 - rate(&tr, all, |x| x.3);
+        let miss_pay = 1024 - rate(&tr, |x| x.2, |x| x.3);
+        ((respond - miss_all).max(-1024), (discriminate - miss_pay).max(-1024), (reverse - miss_pay).max(-1024))
+    } else {
+        (respond, discriminate, reverse)
+    };
     // (the window marked by the world: steps 5-7 for a delay up to 5, as always)
     let td = trials_in_window(delayed);
     let remember = rate(&td, |x| x.1, |x| x.3) - rate(&td, |x| !x.1, |x| x.3);
+    let remember = if miss_cost() && !td.is_empty() { (remember - (1024 - rate(&td, |x| x.1, |x| x.3))).max(-1024) } else { remember };
     // win-stay: each click (in the response window) on a light is stroked if the trial paid;
     // the next trial showing the same light is clicked or not
     // (a lifetime with no stroked click to compare against an unstroked one scores 0: with no
@@ -264,6 +273,31 @@ pub fn stray_rate(events: &[Event]) -> i32 {
     (n * 1024 / tr.len()) as i32
 }
 
+/// Misses cost (`set_miss_cost`): a prompt that called for an act and got none counts as a wrong
+/// answer, so doing nothing scores -1024, not 0: respond, discriminate and reverse less the share of
+/// paying lights not clicked, remember and flag less the cued trials or questions not answered,
+/// maze less the trials with no choice, the screen less the trials with no hit, selection by
+/// contrast -1024 for never clicking nor speaking. Off by default.
+static MISS_COST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+thread_local! {
+    /// (tests) the switch for this thread only
+    static MISS_COST_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn set_miss_cost(on: bool) {
+    MISS_COST.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn miss_cost() -> bool {
+    MISS_COST_HERE.with(|c| c.get()).unwrap_or_else(|| MISS_COST.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// (tests) `set_miss_cost` for this thread only.
+pub fn set_miss_cost_here(on: Option<bool>) {
+    MISS_COST_HERE.with(|c| c.set(on));
+}
+
 /// Selection by contrast (`set_select_contrast`): select and select~ are `select_contrast`. Off by
 /// default.
 static SELECT_CONTRAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -291,6 +325,10 @@ pub fn select_contrast(events: &[Event]) -> i32 {
     let voice = |e: &Event| e.said.is_some() || !e.sentence.is_empty();
     let rel = |a: i64, b: i64| if a + b == 0 { 0 } else { (a - b) * 1024 / (a + b) };
     let (Some(cr), Some(cb), Some(vr), Some(vb)) = (rate(0, &click), rate(1, &click), rate(0, &voice), rate(1, &voice)) else { return 0 };
+    // (`set_miss_cost`) never clicking nor speaking
+    if miss_cost() && cr + cb + vr + vb == 0 {
+        return -1024;
+    }
     let two = (rel(cr, cb) + rel(vb, vr)) / 2;
     match (rate(2, &click), rate(2, &voice)) {
         (Some(cs), Some(vs)) => ((2 * two + rel((cr + cb + vr + vb) / 2, cs + vs)) / 3) as i32,
@@ -557,7 +595,11 @@ pub fn flag(events: &[Event]) -> i32 {
         return 0;
     }
     let stray = ev.iter().enumerate().filter(|(t, e)| !in_window[*t] && e.moved == Some(CLICK)).count() as i64;
-    let score = armed_hit * 1024 / armed - plain_hit * 1024 / plain - stray * 1024 / (armed + plain);
+    let mut score = armed_hit * 1024 / armed - plain_hit * 1024 / plain - stray * 1024 / (armed + plain);
+    // (`set_miss_cost`) cued questions not answered
+    if miss_cost() {
+        score -= (armed - armed_hit) * 1024 / armed;
+    }
     score.max(-1024) as i32
 }
 
@@ -795,7 +837,9 @@ pub fn maze(events: &[Event]) -> i32 {
         Some(false) => (r, w + 1),
         None => (r, w),
     });
-    ((right - wrong) * 1024 / trials) as i32
+    // (`set_miss_cost`) a trial with no choice counts as a wrong one
+    let none = if miss_cost() { (trials - right - wrong).max(0) } else { 0 };
+    ((right - wrong - none) * 1024 / trials).max(-1024) as i32
 }
 
 /// The screen: clicks on the target above chance, per trial, in parts per 1024: (hits x cells -
@@ -821,7 +865,10 @@ pub fn screen(events: &[Event]) -> i32 {
         return 0;
     }
     // (at least -1024: with the screen going on, `World::screen_stream`, clicks are not one a trial)
-    ((hits * cells - clicks) * 1024 / (trials.len() as i64 * (cells - 1))).max(-1024) as i32
+    let n = trials.len() as i64;
+    // (`set_miss_cost`) a trial with no hit counts against
+    let miss = if miss_cost() { (n - hits.min(n)) * 1024 / n } else { 0 };
+    ((hits * cells - clicks) * 1024 / (n * (cells - 1)) - miss).max(-1024) as i32
 }
 
 /// The screen with partial credit (`evolve::set_partial_screen`): as `screen`, and a trial in which
@@ -1599,6 +1646,38 @@ mod tests {
         let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
         let (selector, both, silent) = (mean(0), mean(1), mean(2));
         assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
+    }
+
+    #[test]
+    fn misses_cost_so_doing_nothing_is_no_refuge() {
+        // with the miss cost, a network that never acts scores -1024 on respond, flag and the
+        // maze; a responder keeps its score
+        set_miss_cost_here(Some(true));
+        let cond = |act: bool, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            w.conditioning(Conditioning::Reversal, 40);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let seen = channel(&senses, EYE).count_ones() > 0;
+                let a = w.act(None, (act && seen).then_some(CLICK));
+                senses = w.step(&a);
+            }
+            probes(&w.events, 40, &[], &[], &[], &[], &[])[0]
+        };
+        let fl = |seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.flag(400, 4, false, false);
+            let senses_none = w.act(None, None);
+            while !matches!(w.scene, Scene::Idle) {
+                w.step(&senses_none);
+            }
+            flag(&w.events)
+        };
+        let (resp, idle, flag_idle) = (cond(true, 3), cond(false, 3), fl(3));
+        set_miss_cost_here(None);
+        eprintln!("miss cost: responder {resp}, never acting {idle}, flag never acting {flag_idle}");
+        assert!(resp > 900 && idle == -1024 && flag_idle == -1024, "{resp} {idle} {flag_idle}");
     }
 
     #[test]

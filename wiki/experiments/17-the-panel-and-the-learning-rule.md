@@ -1190,3 +1190,18 @@ run 38; at 512 doing nothing scores -512. `ISL_SOFT_FLOOR=1` replaces the cut at
 kept. Test `misses_scaled_and_floored_softly_keep_bad_networks_apart`: a responder 1024 on respond,
 never acting -512 (and -512 on flag), clicking every step -991. Run 39 (started 4:58 PM ET) is run
 38 with both, at 512.
+
+## Partial credit on cues and questions (`ISL_PARTIAL_FLAG=1`, flag~, run 40)
+
+Under the halved miss cost run 39's recall passed respond at 85 and sat at -512 on flag2 (best
+genome empty), the score for doing nothing: the soft floor ranked random clicking below it, but
+nothing between doing nothing and holding the cue paid. flag~ (`observe::flag_graded`, probe 35),
+used in selection while the goal stays on flag: a question answered in its three steps counts in
+full, one answered in the three steps after that at half (not a stray); three quarters of the score
+for answering cued questions more than plain ones, a quarter for answering cued ones at all; less
+strays and the cued questions' missing credit at the miss cost. Test
+`flag_graded_pays_answering_at_all_then_answering_the_cued` (12 lifetimes, gaps to 8, miss cost at
+half): (flag, flag~) holder (1024, 1020), every question (0, 256), latch (-910, -885), late holder
+(-774, 155), random (-815, -616), never (-512, -512). So clicking at the question tone pays before
+the cue must be held, as surprise+ pays clicking after breaks before telling them apart. Run 40 is
+run 39 with it.

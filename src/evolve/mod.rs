@@ -594,6 +594,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
                     Task::Flag(_) => {
                         let mut r = [0; observe::NPROBES];
                         r[32] = observe::flag(b);
+                        r[35] = observe::flag_graded(b);
                         r
                     }
                 };
@@ -791,6 +792,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     row[14] = observe::feel(&fel);
     row[17] = observe::feel_graded(&fel);
     row[32] = observe::flag(&flg);
+    row[35] = observe::flag_graded(&flg);
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) && !wanted.iter().any(|&w| graded(w) == p && w != p) {
             *x = 0;
@@ -819,7 +821,7 @@ pub fn partial() -> bool {
 
 /// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
 pub fn graded(p: usize) -> usize {
-    if partial() { match p { 7 => 15, 9 if partial_surprise() => 31, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, _ => p } } else { p }
+    if partial() { match p { 7 => 15, 9 if partial_surprise() => 31, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, 32 if partial_flag() => 35, _ => p } } else { p }
 }
 
 /// Surprise shaped from clicking at all (`set_partial_surprise`, with `set_partial`): selection uses
@@ -833,6 +835,18 @@ pub fn set_partial_surprise(on: bool) {
 
 pub fn partial_surprise() -> bool {
     PARTIAL_SURPRISE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Partial credit on cues and questions too (`set_partial_flag`, with `set_partial`): selection uses
+/// `observe::flag_graded`, a late answer counting half and answering at all a quarter. Off by default.
+static PARTIAL_FLAG: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_partial_flag(on: bool) {
+    PARTIAL_FLAG.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial_flag() -> bool {
+    PARTIAL_FLAG.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Partial credit on the screen too (`set_partial_screen`, with `set_partial`): selection uses

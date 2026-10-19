@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~"];
 /// How many probes there are.
-pub const NPROBES: usize = 35;
+pub const NPROBES: usize = 36;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -200,7 +200,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events)]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -735,6 +735,47 @@ pub fn flag(events: &[Event]) -> i32 {
     // (`set_miss_cost`) cued questions not answered
     if miss_cost() {
         score -= missed((armed - armed_hit) * 1024 / armed);
+    }
+    floor(score)
+}
+
+/// Cues and questions with partial credit (`evolve::set_partial_flag`): each question answered in
+/// the three steps after it counts in full, one answered only in the three steps after that at half
+/// (a late answer, not a stray); a quarter of the score for answering cued questions at all, three
+/// quarters for answering cued ones more than the others, less stray
+/// clicks and (`set_miss_cost`) the cued questions' missing credit. Never acting scores what a miss
+/// costs (0 without it), clicking at every question 256 above that, a holder 1024; as surprise+
+/// does for breaks, it pays noticing the question before telling the two kinds apart.
+pub fn flag_graded(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Flag).collect();
+    let mut answer_window = vec![false; ev.len()];
+    // (credit in halves: 2 an answer in time, 1 a late one)
+    let (mut armed, mut armed_credit, mut plain, mut plain_credit) = (0i64, 0i64, 0i64, 0i64);
+    for (t, e) in ev.iter().enumerate() {
+        if let Some(a) = e.question {
+            let near = (t + 1..(t + 4).min(ev.len())).any(|u| ev[u].moved == Some(CLICK));
+            let late = (t + 4..(t + 7).min(ev.len())).any(|u| ev[u].moved == Some(CLICK));
+            for u in t + 1..(t + 7).min(ev.len()) {
+                answer_window[u] = true;
+            }
+            let credit = if near { 2 } else if late { 1 } else { 0 };
+            if a {
+                armed += 1;
+                armed_credit += credit;
+            } else {
+                plain += 1;
+                plain_credit += credit;
+            }
+        }
+    }
+    if armed == 0 || plain == 0 {
+        return 0;
+    }
+    let stray = ev.iter().enumerate().filter(|(t, e)| !answer_window[*t] && e.moved == Some(CLICK)).count() as i64;
+    let (a, p) = (armed_credit * 512 / armed, plain_credit * 512 / plain);
+    let mut score = (a - p) * 3 / 4 + a / 4 - stray * 1024 / (armed + plain);
+    if miss_cost() {
+        score -= missed(1024 - a);
     }
     floor(score)
 }
@@ -2090,6 +2131,52 @@ mod tests {
         assert!(m[0] > 900, "{m:?}");
         assert!(m[1].abs() < 60 && m[5] == 0, "{m:?}");
         assert!(m[2] < 0 && m[3] < 200 && m[4] < 0, "{m:?}");
+    }
+
+    #[test]
+    fn flag_graded_pays_answering_at_all_then_answering_the_cued() {
+        // the strategies of `flag_pays_a_bit_held_from_the_cue_to_the_question`, and a late holder
+        // (answering 4 steps after the question), on flag~ with the miss cost at half
+        set_miss_cost_here(Some(true));
+        set_miss_here(Some((512, true)));
+        let run = |kind: u8, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 2);
+            w.flag(600, 8, false, false);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            let (mut held, mut due) = (false, usize::MAX);
+            while !matches!(w.scene, Scene::Idle) {
+                let seen = channel(&senses, EYE).count_ones() > 0;
+                let heard = channel(&senses, EAR).count_ones() > 0;
+                let click = match kind {
+                    0 => { let c = heard && held; if seen { held = true } if heard { held = false } c }
+                    1 => heard,
+                    2 => { if seen { held = true } let c = held; if heard { held = false } c }
+                    3 => {
+                        // late: the holder's answer three steps later
+                        if seen { held = true }
+                        if heard { if held { due = 3 } held = false }
+                        let c = due == 0;
+                        due = due.wrapping_sub(1);
+                        c
+                    }
+                    4 => rand::Rng::gen_ratio(&mut rng, 1, 6),
+                    _ => false,
+                };
+                let a = w.act(None, click.then_some(CLICK));
+                senses = w.step(&a);
+            }
+            (flag(&w.events), flag_graded(&w.events))
+        };
+        let mean = |k: u8| { let v: Vec<(i32, i32)> = (0..12u64).map(|s| run(k, 700 + s)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 12, v.iter().map(|x| x.1).sum::<i32>() / 12) };
+        let m: Vec<(i32, i32)> = (0..6).map(mean).collect();
+        set_miss_here(None);
+        set_miss_cost_here(None);
+        eprintln!("(flag, flag~): holder {:?}, every question {:?}, latch {:?}, late holder {:?}, random {:?}, never {:?}", m[0], m[1], m[2], m[3], m[4], m[5]);
+        // never -512; every question and a late holder above it, below the holder
+        assert!(m[0].1 > 900 && m[5].1 == -512, "{m:?}");
+        assert!(m[1].1 > m[5].1 + 150 && m[3].1 > m[5].1 + 300 && m[3].1 < m[0].1, "{m:?}");
+        assert!(m[2].1 < m[1].1 && m[4].1 < m[1].1, "{m:?}");
     }
 
     #[test]

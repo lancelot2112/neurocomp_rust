@@ -1135,3 +1135,21 @@ maze's symbol, screen's pick), most in the recall, novelty and generalist genome
 themselves stay low (the best full score on any battery task 136), and run 37's scores are not on
 run 36's scale (stray clicks and misses cost differently). A plausible cause is the wrong signal: a
 learner now feels both outcomes.
+
+## Stacked rungs: each rung's world holds the rungs before it (`ISL_STACKED=1`, run 38)
+
+Switching's tell is scored in the lights world and its feel rungs in a world of strokes with no
+lights, and its repeat rung in a maze of no length; shapes' ladder the same. A tell-passer starts
+feel at 0, and the climb chart drops there. Kept rungs give it partial credit in selection, but the
+skills are learned side by side, not built on each other. Stacked: the feel rungs move into the
+lights world itself, strokes at random in the gaps between trials (one step in eight), scored by
+feel-gap (`observe::feel_in_gaps`: clicks in the three steps after a gap stroke against clicks at
+other gap steps) beside respond and tell in the same lifetime; every later rung keeps the strokes
+and feel-gap; the repeat rung goes (win-stay is its lights-world form). A click after a gap stroke
+is an answer, not a stray (no stray cost, no wrong signal). Test
+`feeling_in_the_lights_world_pays_a_stroke_follower_and_keeps_tell` (10 lifetimes): clicking at
+light A and once after each stroke keeps tell at 1024 and scores 366 on feel-gap (each of the three
+steps after a stroke counts, as in feel); light A alone 1024 and 0; clicking every step 0 and 0.
+Run 37's switching population, on feel-300 in the old world, scores about 0 on the stacked feel
+(-2 to 6): it keeps its tell and starts the stroke part from nothing. The maze's ladder is not
+stacked yet.

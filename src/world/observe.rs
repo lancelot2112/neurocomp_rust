@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap"];
 /// How many probes there are.
-pub const NPROBES: usize = 33;
+pub const NPROBES: usize = 34;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -206,7 +206,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal)]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -269,8 +269,34 @@ pub fn stray_rate(events: &[Event]) -> i32 {
     if tr.is_empty() {
         return 0;
     }
-    let n = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_)) && e.moved == Some(CLICK) && !e.trial.is_some_and(|t| (3..=5).contains(&t.1))).count();
+    // (a click within three steps of a stroke answers it: `World::gap_strokes`)
+    let n = events.iter().enumerate().filter(|(i, e)| matches!(e.scene, SceneKind::Conditioning(_)) && e.moved == Some(CLICK) && !e.trial.is_some_and(|t| (3..=5).contains(&t.1)) && !(i.saturating_sub(3)..*i).any(|u| events[u].stroked)).count();
     (n * 1024 / tr.len()) as i32
+}
+
+/// Feeling in the lights world (stacked rungs, `World::gap_strokes`): clicks in the three steps
+/// after a stroke that came in a gap between trials, against clicks at the other gap steps, in
+/// parts per 1024, as `feel` is in its own world. The lights' trials go on around it, so a network
+/// keeps telling lights apart while it learns to notice the stroke.
+pub fn feel_in_gaps(events: &[Event]) -> i32 {
+    let ev: Vec<&Event> = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_))).collect();
+    let gap = |e: &Event| e.trial.is_none();
+    let (mut after, mut after_c, mut other, mut other_c) = (0i64, 0i64, 0i64, 0i64);
+    for t in 0..ev.len() {
+        let near = (t.saturating_sub(3)..t).any(|u| ev[u].stroked && gap(ev[u]));
+        let click = (ev[t].moved == Some(CLICK)) as i64;
+        if near {
+            after += 1;
+            after_c += click;
+        } else if gap(ev[t]) {
+            other += 1;
+            other_c += click;
+        }
+    }
+    if after == 0 || other == 0 {
+        return 0;
+    }
+    (after_c * 1024 / after - other_c * 1024 / other) as i32
 }
 
 /// Misses cost (`set_miss_cost`): a prompt that called for an act and got none counts as a wrong
@@ -1683,6 +1709,35 @@ mod tests {
         let mean = |kind: u8| (0..12u64).map(|s| run(kind, 400 + s)).sum::<i32>() / 12;
         let (selector, both, silent) = (mean(0), mean(1), mean(2));
         assert!(selector > 600 && both < 0 && silent == 0, "selector {selector}, both {both}, silent {silent}");
+    }
+
+    #[test]
+    fn feeling_in_the_lights_world_pays_a_stroke_follower_and_keeps_tell() {
+        // the lights world with strokes in the gaps: a network that clicks at light A and after
+        // any stroke keeps its tell and scores on feel-gap; one that clicks at light A alone scores
+        // 0 on feel-gap; one that clicks every step scores 0 on both
+        let run = |kind: u8, seed: u64| -> (i32, i32) {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 6;
+            w.gap_strokes = true;
+            w.conditioning(Conditioning::Reversal, 60);
+            let light_a = w.lights[0].as_words().to_vec();
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let a_seen = channel(&senses, EYE).as_words() == light_a.as_slice();
+                let stroked = channel(&senses, AFFECT).count_ones() > 0;
+                let click = match kind { 0 => a_seen || stroked, 1 => a_seen, _ => true };
+                let a = w.act(None, click.then_some(CLICK));
+                senses = w.step(&a);
+            }
+            let row = probes(&w.events, 60, &[], &[], &[], &[], &[]);
+            (row[1], row[33])
+        };
+        let mean = |k: u8| { let v: Vec<(i32, i32)> = (0..10).map(|s| run(k, 70 + s)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 10, v.iter().map(|x| x.1).sum::<i32>() / 10) };
+        let (both, tell_only, every) = (mean(0), mean(1), mean(2));
+        eprintln!("(tell, feel-gap): light A and strokes {both:?}, light A alone {tell_only:?}, every step {every:?}");
+        // (one click a stroke: feel-gap counts each of the three steps after it, as feel does)
+        assert!(both.0 > 900 && both.1 > 300 && tell_only.1.abs() < 80 && every.1.abs() < 80, "{both:?} {tell_only:?} {every:?}");
     }
 
     #[test]

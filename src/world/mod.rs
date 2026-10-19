@@ -386,6 +386,11 @@ pub struct World {
     pub screen_stream: bool,
     /// (`evolve::set_maze_stream`) one maze trial after another, no gap between
     pub maze_stream: bool,
+    /// (`Lesson::gap_strokes`, stacked rungs) the lights world with strokes at random in the gaps
+    /// between trials, one step in eight: clicking soon after one is a right answer, not a stray
+    pub gap_strokes: bool,
+    /// steps since the last stroke in a gap (255: none near)
+    gap_stroke_age: u8,
     /// programs built for this world keep each declared channel in one frame, held in place
     /// from step to step (only clearing writes take lines away, and a write is seen by the edges
     /// after it in the same step); default: the process's (`neurocomp::set_in_place`)
@@ -673,6 +678,8 @@ impl World {
             wrong_next: false,
             screen_stream: false,
             maze_stream: false,
+            gap_strokes: false,
+            gap_stroke_age: 255,
             in_place: crate::program::neurocomp::in_place(),
             count_reads: crate::program::neurocomp::count_reads(),
             explore: crate::program::neurocomp::explore(),
@@ -987,6 +994,9 @@ impl World {
         let mut stroke = std::mem::take(&mut self.stroke_next);
         // (`wrong_signal`) a wrong click the step before
         let wrong = std::mem::take(&mut self.wrong_next);
+        // (`gap_strokes`) a click within three steps of a stroke in a gap answers it
+        self.gap_stroke_age = self.gap_stroke_age.saturating_add(1);
+        let answers_stroke = self.gap_stroke_age <= 3;
         let scene = std::mem::replace(&mut self.scene, Scene::Idle);
         self.scene = match scene {
             Scene::Idle => Scene::Idle,
@@ -1069,7 +1079,7 @@ impl World {
                             self.stroke_next = true;
                             stroked = true;
                         }
-                        if self.wrong_signal && click && !((3..=5).contains(&t) && pays && !self.no_pay) {
+                        if self.wrong_signal && click && !answers_stroke && !((3..=5).contains(&t) && pays && !self.no_pay) {
                             self.wrong_next = true;
                         }
                     }
@@ -1094,8 +1104,13 @@ impl World {
             }
             Scene::Gap(kind, left, g) => {
                 ev.scene = SceneKind::Conditioning(kind);
-                if self.wrong_signal && moved == Some(CLICK) {
+                if self.wrong_signal && moved == Some(CLICK) && !answers_stroke {
                     self.wrong_next = true;
+                }
+                // (`gap_strokes`) a stroke at random, felt this step
+                if self.gap_strokes && self.rng.gen_ratio(1, 8) {
+                    stroke = true;
+                    self.gap_stroke_age = 0;
                 }
                 if g > 1 {
                     Scene::Gap(kind, left, g - 1)

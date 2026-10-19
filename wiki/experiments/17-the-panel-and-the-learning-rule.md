@@ -909,3 +909,13 @@ Both credits are in use and give selection a gradient the goals do not: predicti
 click in the token stream (about 15% of steps), which surprise alone never paid, but their clicks
 do not yet follow the breaks; screen's networks move the cursor onto the target in many trials
 (screen~ 281) and do not yet click on it there (screen below 0: their clicks miss).
+
+## Which triggers are used (run 35 at 60)
+
+Run 35's 3,454 kernel populations: at-least 85%, at-most 9%, int-learned 2%, lanes< 2%, int>=
+under 1%; band, tile, int<=, int~ and lanes> none. Only maze (at-most 36%) and switching (lanes<
+20%) use another widely; a new population always started at at-least, so the others came from
+mutation alone. Lesioned (each island's best, 24 fresh worlds), every population that matters uses
+at-least or is a wire, but for switching's two lanes< populations (voice to act, NOR; losses 0.37
+and 0.43 of its goal). `ISL_TRIGGER_DRAW=1` (run 36) draws a new population's trigger among all
+ten, and its lane width, so the others are tried as often as the default.

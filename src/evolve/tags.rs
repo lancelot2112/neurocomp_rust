@@ -592,6 +592,20 @@ pub fn triggers() -> bool {
     TRIGGERS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// New populations' triggers drawn (`set_trigger_draw`, with `set_triggers`): a new population's
+/// kernels match by any of the ten triggers, drawn evenly, and an integer trigger's lane width is
+/// drawn too, instead of every new population starting at least-its-threshold (run 35: 85% of kernel
+/// populations kept the default; the others only came from mutation). Off by default.
+static TRIGGER_DRAW: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_trigger_draw(on: bool) {
+    TRIGGER_DRAW.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn trigger_draw() -> bool {
+    TRIGGER_DRAW.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Rule tables (`Pop::rule`, `EdgeSpec::rule`): a population's learning rule as a gene, a table of
 /// what each event (firing, held down, eligible and right, eligible and wrong) moves on the input
 /// or the output. A new population starts with the runtime's own rules (`RULE_SEED`), so nothing
@@ -1727,6 +1741,11 @@ impl TagGenome {
         // (with `set_branches_many`) one more branch one time in four
         if branches_many() && rng.gen_range(0..4) == 0 {
             p.more.push(Branch::random(rng));
+        }
+        // (with `set_trigger_draw`) its trigger drawn among all ten, and the lane width
+        if triggers() && trigger_draw() {
+            p.trigger = rng.gen_range(0..10);
+            p.lane = rng.gen_range(3..=6);
         }
         if inhibit_inputs() && rng.gen_range(0..4) == 0 {
             p.inhibitor = Some(rng.r#gen());

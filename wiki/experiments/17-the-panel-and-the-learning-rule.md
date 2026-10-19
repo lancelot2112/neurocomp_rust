@@ -919,3 +919,26 @@ mutation alone. Lesioned (each island's best, 24 fresh worlds), every population
 at-least or is a wire, but for switching's two lanes< populations (voice to act, NOR; losses 0.37
 and 0.43 of its goal). `ISL_TRIGGER_DRAW=1` (run 36) draws a new population's trigger among all
 ten, and its lane width, so the others are tried as often as the default.
+
+## Are branches used? A branch that carries recall's respond (run 35, `runs/checks/branch-dive/`)
+
+Most of run 35's populations carry a branch (generation 95: 72% in switching, 82% in recall, 86%
+in prediction, 58% in selection), and many of the populations that matter in the islands' best
+genomes are branched. A lesion takes a population and its branch together, so recall's best
+genome (generation 65, 28 populations, 17 branched) was scored with branches taken out instead,
+48 fresh worlds:
+
+| recall's best | respond (goal 100) | lag3 (goal 150) |
+|---|---|---|
+| as evolved | 483 | 106 |
+| no branches at all | -207 | 117 |
+| #51 without its branch | 24 | |
+| each of the other 16 without its branch | 436 to 491 | |
+
+One branch carries respond. Population #51 reads the voice (its own output port, a frame ago) with
+five two-mask kernels, runs only while the eye had lines a frame ago (a pause on the eye), and
+writes CLEAR into a channel of its own; its branch, on the hand, ORs the same kernels' outputs
+there. So the click at a light is a collateral: a cell reading what the voice said, allowed to
+run only while something is seen, whose second axon drives the hand. Without the branch the cell
+still runs and the hand stays still. On lag3 the branches matter little (106 as evolved, 117
+without). The dashboard's network diagrams do not draw branches yet.

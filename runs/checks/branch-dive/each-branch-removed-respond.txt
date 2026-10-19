@@ -1,0 +1,2 @@
+  recall     respond  respond (goal 100), 18 genomes: mean 453, best 491; between 108.3; within 304.1; noise 43.9; icc 0.10; split-half r 0.99; epsilon 0.0
+    each genome: 483 24 436 483 483 437 491 483 483 483 475 483 483 483 489 483 490 483

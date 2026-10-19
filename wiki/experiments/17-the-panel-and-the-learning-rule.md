@@ -1096,3 +1096,16 @@ less the cued trials or questions not answered, maze less the trials with no cho
 less the trials with no hit, selection by contrast -1024 for never acting. Test
 `misses_cost_so_doing_nothing_is_no_refuge`: a responder keeps 1024 on respond; never acting
 scores -1024 on respond and on flag.
+
+## Run 37's selection under the contrast score (`runs/checks/selection37/`)
+
+Cued from 27 to 232 (population mean -16 to 323, mostly 30 to 200), then uncued (233) and short
+(234) in one generation each (held out 643, 651, 601); on held from 235 the population sits at
+about 0 (-15 to 15). The short passers, 48 fresh worlds: 638 to 723 on short, -16 to 19 on held. On
+cued, uncued and short the tasks' stimuli differ (lights for respond, glyphs for babble), so
+reacting to the stimulus passes; on held they are the same, and the contrast gives a task-blind
+network 0, as built. But a trace (short, world 60003) shows the weakness: contrast 814 with the
+old respond part at 30. It clicked a few times in respond blocks and never in babble blocks, and
+(a - b)/(a + b) of click rates gives that full credit. A fix: contrast task performance, respond
+measured on paying lights in respond blocks against babble blocks, the voice in babble blocks
+against respond blocks, so a few clicks score little.

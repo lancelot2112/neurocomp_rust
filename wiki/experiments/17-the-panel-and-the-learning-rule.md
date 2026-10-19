@@ -872,3 +872,20 @@ about 25 seconds to 98, as the novelty island grew: 39 species, from generation 
 founded for respond (200 to 897), some for remember (239 to 626) and one each for tell and
 surprise. Run 35 (started 7:37 PM ET) adds more branches, long shifts, the cycle3-100 step, shaped
 surprise, novelty's species sent to the islands and the delay and period drawn from the rung's up.
+
+## Run 35's maze: feel and learn passed, by activity, not plasticity
+
+Run 35's maze passed feel-300 (27), feel at its raised goal of 500 (47; the first island to) and
+learn (57; repeat what was stroked, the cue's side mirrored in half the lifetimes, so a wired turn
+scores about 0). Rescored on 48 fresh worlds, with learning on and frozen (`ISL_FROZEN=1`, new:
+no mask moves, births, copies, output moves or exploration in any lifetime; measure only):
+
+| passer | learning on | learning frozen | goal |
+|---|---|---|---|
+| feel | mean 548, best 596 | 521, best 577 | 500 |
+| learn | mean 351, best 478 | 361, best 516 | 300 |
+
+Both are real on fresh worlds and neither needs plasticity: feel is the click after a stroke, and
+learn, though the side that pays changes between lifetimes, keeps its score frozen, so it holds
+which move was stroked in its activity (a win-stay of memory, not of weights). Adaptation within a
+lifetime, but not the learning the battery looks for.

@@ -140,6 +140,8 @@
 //! fresh worlds on their rung's goal probe and on the rung below, and the spread between genomes
 //! is set against the noise across worlds (icc, split-half r, epsilon). Nothing evolves.
 //! `ISL_SIGNAL_EACH=1`: on the resumed rung only, and each genome's mean printed.
+//! `ISL_FROZEN=1` (measure only): every lifetime with learning frozen (no mask moves, births,
+//! copies, output moves or exploration), to set a score against the same network learning.
 //!
 //! `ISL_ELITE_PASS=1`: a rung's goal is checked on the elite's mean on the training worlds (its
 //! best `ISL_ELITE` genomes), not the whole population's, before the elite's held-out check. The
@@ -1016,6 +1018,9 @@ fn main() {
     neurocomp::evolve::set_vary_lag(env("ISL_VARY_LAG", 0u8) == 1);
     neurocomp::evolve::set_vary_period(env("ISL_VARY_PERIOD", 0u8) == 1);
     neurocomp::evolve::set_vary_up(env("ISL_VARY_UP", 0u8) == 1);
+    // (`ISL_FROZEN=1`, measure only, with `ISL_SIGNAL` or `ISL_LESION`: every lifetime with learning
+    // frozen, `program::neurocomp::set_frozen`; never in a run)
+    neurocomp::program::neurocomp::set_frozen(env("ISL_FROZEN", 0u8) == 1);
     neurocomp::evolve::set_mixed_codes(env("ISL_MIXED_CODES", 0u8) == 1);
     neurocomp::evolve::set_migrate_up(env("ISL_MIGRATE_UP", 0usize));
     neurocomp::evolve::set_migrate_up_n(env("ISL_MIGRATE_UP_N", 1usize));

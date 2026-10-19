@@ -996,3 +996,13 @@ reflex speaking at every step (voice cost 1024, under 300); speaking sparsely is
 to try: score selection on the contrast between tasks, the voice in babble blocks less in respond
 blocks and the clicks at paying lights in respond blocks less at the same lights in babble blocks,
 so a network blind to the task scores 0.
+
+Then recall passed lag8 (529) and lag16 (530, delays 16 to 32) in two generations. The lag16
+passers score 1024 on 48 fresh worlds with the delay drawn or fixed at 16, and the same frozen.
+Traced (world 60003): on a cue trial it clicks from the second step after the cue to the trial's
+end, 26 steps running; on a no-cue trial never. A latch: set by the cue, reset by the trial's end,
+blind to the delay. The remember probe counts a click in the window on cue trials against no-cue
+trials, and on the lag rungs a click before the window costs nothing (only vary spends the trial
+on an early click), so a latch scores 1024 at any delay. It holds one bit for the trial in its
+activity, which is memory, but not recall timed to a delay; the lag5 learners (272) were another
+lineage. A fix: an early click spends the trial on every recall rung.

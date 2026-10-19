@@ -1,0 +1,70 @@
+resumed recall from C:/Users/lfaiv/AppData/Local/Temp/claude/C--Software-source-neurocomp/50a1926e-3ccc-5eab-a49d-7e2027a22782/scratchpad/rec36/p-lag16.txt: 8 genomes, generation 0, stage 7 (lag16)
+islands: recall of 32, elite 8, 24 worlds, 48 held out, 200 trials, gaps 0-6, exchange every 0 (2 plasmids an island), thrift true, reads counted true, channels held in place true, carrying cost 4 a token, plasmids of at most 6 populations (0: any), exclusion true, op choice true, ration 256 a step (0: no energy), food 8192 for 1024 points scored, fresh training worlds true, epigenetic marks true, exploration true, expecting zeros true, accidents true, port gates true, shadow explorers true, pauses drawn true, shadow hints true, edges on hints true, outputs read true, hint bands true, self writes true, loops closed true, heat inputs true, goals judged on the elite true, partial credit true, partial credit on remember true, partial credit on select true, partial credit on the screen true, surprise shaped from clicking at all true, fair prediction streams true, order cycles of varied shape true, echo and copy per token shown true, win-stay against the other light true, the clock drawn true, held-out worlds fresh at every check true, the voice one-word everywhere true, the generalist's passes migrate true, novelty's species sent to the islands true, orthogonal species true, twin worlds true, the cursor starts off the target true, more branches true, long shifts true, the delay drawn per lifetime true, the period drawn per lifetime true, drawn from the rung's up true, mixed lights as one-word codes true, the islands' best 4 into the generalist every 1 (room 64), the maze cue mirrored per lifetime true, the shapes' lights in one word true, food from the world's strokes true, passed rungs kept true, inhibit inputs true, overlap genes true, size classes true, wiring cost 1 a bit of tag distance, populations compete for their destination true, pruning true, branches true, a fixed body true, the three-factor output rule true, triggers true, new populations' triggers drawn true, motions true, one-word codes of 8 lines
+recall climbs: respond > lag1 > lag2 > lag3 > lag4 > lag5 > lag8 > lag16 > two > distract > vary
+trace: recall rung lag16, one delayed-conditioning lifetime, world 60003
+step trial t cue pays tok odd click present | lines on per vector | kernels fired per population (id:fired)
+    1   0  0 b . - . - on | 0 39 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    2   0  1 b . - . - on | 0 45 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    3   0  2 b . - . - on | 0 45 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    4   0  3 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    5   0  4 b . - . - on | 0 45 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    6   0  5 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    7   0  6 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    8   0  7 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+    9   0  8 b . - . - on | 0 45 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   10   0  9 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   11   0 10 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   12   0 11 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   13   0 12 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   14   0 13 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   15   0 14 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   16   0 15 b . - . - on | 0 48 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   17   0 16 b . - . - on | 0 45 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   18   0 17 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   19   0 18 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   20   0 19 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   21   0 20 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   22   0 21 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   23   0 22 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   24   0 23 b . - . - on | 0 48 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   25   0 24 b . - . - on | 0 46 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   26   0 25 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   27   0 26 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   28   0 27 b . - . - on | 0 48 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   29   0 28 b . - . - on | 0 47 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   30   0 29 b . - . - on | 0 48 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   31   -  - - - - . - on | 0 48 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 
+   32   1  0 A $ - . - on | 16 49 0 | 0#685:0 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-
+      words 0: 1:2601c0400c504234
+   33   1  1 A $ - . - on | 0 44 16 | 0#685:6 1#695:0 2#688:0 3#692:0 say:- task:- screen:- chose:-

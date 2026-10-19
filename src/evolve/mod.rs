@@ -1156,6 +1156,22 @@ pub fn novelty_max() -> usize {
     NOVELTY_MAX.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Orthogonal species (`set_novelty_ortho`): a novel genome founds a species only if it is useful
+/// (`NOVELTY_USEFUL`) on two probes or more in a combination no species has (not a subset of any
+/// species' useful probes), or on one probe no species is useful on: it applies to more than one
+/// thing, or does what nothing else does. A species keeps every probe it was useful on, and its
+/// founder is sent (`set_novel_migrate`) to every island scored on any of them. Run 35's novelty
+/// island founded 64 species, nearly all on respond alone. Off by default.
+static NOVELTY_ORTHO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_novelty_ortho(on: bool) {
+    NOVELTY_ORTHO.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn novelty_ortho() -> bool {
+    NOVELTY_ORTHO.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The cursor off the target at a screen trial's start (`set_cursor_away`, `World::screen_away`), on
 /// the rungs that are not dark. Off by default.
 static CURSOR_AWAY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -1760,6 +1776,8 @@ pub fn evolve_islands<G: Evolvable>(
     // its behaviour, the probe it was useful on)
     // (a resumed run's, if its checkpoint kept them)
     let (mut species, mut archive): (Vec<(G, [i64; 8], usize)>, Vec<[i64; 8]>) = novelty_start;
+    // each species' useful probes as a bit set (a resumed one: the probe it was founded on)
+    let mut masks: Vec<u32> = species.iter().map(|s| 1u32 << s.2.min(31)).collect();
     for generation in first..generations {
         let lad_now = lad.clone();
         let mut ladder_means: Vec<Vec<observe::ProbeRow>> = lad.iter().map(|l| vec![[0i32; observe::NPROBES]; l.len()]).collect();
@@ -1768,7 +1786,7 @@ pub fn evolve_islands<G: Evolvable>(
         // (`set_novelty`) species founded this generation: (island, the probe, its score)
         let mut new_species: Vec<(usize, usize, i32)> = Vec::new();
         // (`set_novel_migrate`) their founders: (island, the probe, the genome)
-        let mut founders: Vec<(usize, usize, G)> = Vec::new();
+        let mut founders: Vec<(usize, u32, G)> = Vec::new();
         let mut founder_behs: Vec<[i64; 8]> = Vec::new();
         // (`set_migrate`) the generalist's passes on its own ladders this generation
         let mut passes: Vec<(usize, usize, usize)> = Vec::new();
@@ -1966,14 +1984,19 @@ pub fn evolve_islands<G: Evolvable>(
                 }
                 // species: a novel genome useful on some probe (its mean at least
                 // `NOVELTY_USEFUL`, babble aside) and unlike every species so far founds one
+                // (`set_novelty_ortho`: and useful on a combination of probes no species has, or on
+                // a probe no species is useful on)
                 for &g in by.iter().take(4) {
                     let m = probe_means(&scored[g].probes);
                     let useful = ALL_PROBES.iter().copied().filter(|&p| p != 8).max_by_key(|&p| m[p]);
                     if let Some(p) = useful.filter(|&p| m[p] >= NOVELTY_USEFUL) {
-                        if species.iter().all(|s| dist(&s.1, &behs[g]) >= NOVELTY_APART) && species.len() < 64 {
+                        let mask: u32 = ALL_PROBES.iter().copied().filter(|&q| q != 8 && m[q] >= NOVELTY_USEFUL).fold(0, |a, q| a | 1 << q);
+                        let ortho = !novelty_ortho() || if mask.count_ones() >= 2 { masks.iter().all(|&s| mask & !s != 0) } else { masks.iter().all(|&s| s & mask == 0) };
+                        if ortho && species.iter().all(|s| dist(&s.1, &behs[g]) >= NOVELTY_APART) && species.len() < 64 {
                             species.push((scored[g].genome.clone(), behs[g], p));
+                            masks.push(mask);
                             new_species.push((i, p, m[p]));
-                            founders.push((i, p, scored[g].genome.clone()));
+                            founders.push((i, if novelty_ortho() { mask } else { 1 << p }, scored[g].genome.clone()));
                             founder_behs.push(behs[g]);
                         }
                     }
@@ -2072,10 +2095,12 @@ pub fn evolve_islands<G: Evolvable>(
         let mut novel_sent = Vec::new();
         if novel_migrate() {
             let mut placed = vec![0usize; k];
-            for (i, p, g) in &founders {
+            for (i, mask, g) in &founders {
                 for j in 0..k {
                     let isl = &islands[j];
-                    if j == *i || isl.frontier || isl.is_novelty() || next[j].is_empty() || !isl.stages[stage[j]].probes.contains(p) {
+                    // the first of its useful probes the island's rung is scored on
+                    let Some(p) = isl.stages[stage[j]].probes.iter().find(|&&q| q < 32 && mask >> q & 1 == 1) else { continue };
+                    if j == *i || isl.frontier || isl.is_novelty() || next[j].is_empty() {
                         continue;
                     }
                     let taken = migrated.iter().filter(|m: &&(usize, usize, usize, usize)| m.1 == j).map(|m| m.3).sum::<usize>() + placed[j];

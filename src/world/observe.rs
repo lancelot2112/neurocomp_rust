@@ -298,16 +298,53 @@ pub fn set_miss_cost_here(on: Option<bool>) {
     MISS_COST_HERE.with(|c| c.set(on));
 }
 
-/// Selection by contrast (`set_select_contrast`): select and select~ are `select_contrast`. Off by
+/// Selection by contrast (`set_select_contrast`): 1, select and select~ are `select_contrast` (the
+/// rates' contrast); 2, `select_performance` (the tasks' performance contrasted). 0 off, the
 /// default.
-static SELECT_CONTRAST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SELECT_CONTRAST: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
-pub fn set_select_contrast(on: bool) {
-    SELECT_CONTRAST.store(on, std::sync::atomic::Ordering::Relaxed);
+pub fn set_select_contrast(mode: u8) {
+    SELECT_CONTRAST.store(mode, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn select_contrast_on() -> bool {
-    SELECT_CONTRAST.load(std::sync::atomic::Ordering::Relaxed)
+    SELECT_CONTRAST.load(std::sync::atomic::Ordering::Relaxed) > 0
+}
+
+/// The selection score in use under `set_select_contrast` (1 the rates', 2 the performance's).
+fn contrast_score(events: &[Event]) -> i32 {
+    if SELECT_CONTRAST.load(std::sync::atomic::Ordering::Relaxed) == 2 { select_performance(events) } else { select_contrast(events) }
+}
+
+/// Selection as the tasks' performance contrasted (`set_select_contrast(2)`): responding (paying
+/// lights clicked in their window, less clicks in the control window after) in respond blocks less
+/// the same in babble blocks, and the voice rate in babble blocks less in respond blocks, averaged;
+/// with still blocks, a third for not acting there (what is done elsewhere less what is done
+/// there). Unlike the rates' contrast, a few clicks score little: run 37's short passer scored 814 on
+/// the rates' contrast with respond at 30. A network blind to the task scores 0, a selector 1024.
+pub fn select_performance(events: &[Event]) -> i32 {
+    let of = |task: usize| -> Vec<Event> { events.iter().filter(|e| e.task == Some(task)).cloned().collect() };
+    let (resp, bab) = (of(0), of(1));
+    if resp.is_empty() || bab.is_empty() {
+        return 0;
+    }
+    let respond = |ev: &[Event]| -> i64 {
+        let tr = trials(ev, (3, 5), (7, 9));
+        if tr.is_empty() { 0 } else { (rate(&tr, |_| true, |x| x.3) - rate(&tr, |_| true, |x| x.4)) as i64 }
+    };
+    let voice = |ev: &[Event]| -> i64 { ev.iter().filter(|e| e.said.is_some() || !e.sentence.is_empty()).count() as i64 * 1024 / ev.len() as i64 };
+    let acts = |ev: &[Event]| -> i64 { ev.iter().filter(|e| e.moved == Some(CLICK) || e.said.is_some() || !e.sentence.is_empty()).count() as i64 * 1024 / ev.len() as i64 };
+    if miss_cost() && acts(&resp) + acts(&bab) == 0 {
+        return -1024;
+    }
+    let two = ((respond(&resp) - respond(&bab)) + (voice(&bab) - voice(&resp))) / 2;
+    let still = of(2);
+    if still.is_empty() {
+        return two as i32;
+    }
+    let here = acts(&still);
+    let elsewhere = (respond(&resp).max(0) + voice(&bab)) / 2;
+    ((2 * two + (elsewhere - here)) / 3) as i32
 }
 
 /// Selection as the contrast between tasks (`set_select_contrast`): the click rate in respond
@@ -677,7 +714,7 @@ pub fn feel_graded(events: &[Event]) -> i32 {
 /// (Set by `evolve::probe_scores_in` from a mixed lifetime: `probes` leaves it 0.)
 pub fn select(events: &[Event]) -> i32 {
     if select_contrast_on() {
-        return select_contrast(events);
+        return contrast_score(events);
     }
     let (respond, babbled, voice, clicks) = select_parts(events);
     match still(events) {
@@ -751,7 +788,7 @@ pub fn behaviour(events: &[&[Event]]) -> [i32; 8] {
 /// `select` gives it 0, so a gradient leads to responding before it is gated by the task.
 pub fn select_graded(events: &[Event]) -> i32 {
     if select_contrast_on() {
-        return select_contrast(events);
+        return contrast_score(events);
     }
     let (respond, babbled, voice, clicks) = select_parts(events);
     match still(events) {
@@ -1719,7 +1756,50 @@ mod tests {
         };
         let mean = |k: u8| { let v: Vec<(i32, i32)> = (0..12).map(|s| run(k, 950 + s)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 12, v.iter().map(|x| x.1).sum::<i32>() / 12) };
         let (sel, blind) = (mean(0), mean(1));
-        eprintln!("select / contrast: selector {sel:?}, task-blind clicker and speaker {blind:?}");
+        // the performance contrast: the selector, the blind one, and a timid selector that clicks
+        // at one light in ten in respond blocks and says a token one step in twenty in babble blocks
+        let perf = |kind: u8| -> i32 {
+            (0..12u64).map(|s| {
+                let seed = 950 + s;
+                let mut w = World::new(seed, 2);
+                w.gap_max = 4;
+                let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+                let mut senses = BitVector::new(SENSE_BITS, Some(0));
+                let cues: Vec<Vec<u64>> = (0..3).map(|k| w.cues[k % w.cues.len()].as_words().to_vec()).collect();
+                let mut held: Option<usize> = None;
+                for b in 0..10 {
+                    let task = if b < 2 { b } else { rand::Rng::gen_range(&mut rng, 0..2) };
+                    w.task = Some(task);
+                    w.task_cue = Some(task);
+                    w.task_cue_left = Some(3);
+                    w.no_pay = task != 0;
+                    w.reversal_period = 20;
+                    w.conditioning(Conditioning::Reversal, 20);
+                    while !w.done() {
+                        let touch = channel(&senses, TOUCH).as_words().to_vec();
+                        if let Some(f) = cues.iter().position(|c| *c == touch) {
+                            held = Some(f);
+                        }
+                        let seen = channel(&senses, EYE).count_ones() > 0;
+                        let token = rand::Rng::gen_range(&mut rng, 0..2);
+                        let (say, hand) = match (kind, held) {
+                            (0, Some(0)) => (None, seen.then_some(CLICK)),
+                            (0, Some(1)) => (Some(token), None),
+                            (1, _) => (rand::Rng::gen_ratio(&mut rng, 1, 5).then_some(token), seen.then_some(CLICK)),
+                            (2, Some(0)) => (None, (seen && rand::Rng::gen_ratio(&mut rng, 1, 10)).then_some(CLICK)),
+                            (2, Some(1)) => (rand::Rng::gen_ratio(&mut rng, 1, 20).then_some(token), None),
+                            _ => (None, None),
+                        };
+                        let a = w.act(say, hand);
+                        senses = w.step(&a);
+                    }
+                }
+                (select_performance(&w.events), select_contrast(&w.events))
+            }).fold((0, 0), |a, x| (a.0 + x.0, a.1 + x.1)).0 / 12
+        };
+        let (p_sel, p_blind, p_timid) = (perf(0), perf(1), perf(2));
+        eprintln!("select / contrast: selector {sel:?}, task-blind clicker and speaker {blind:?}; performance contrast: selector {p_sel}, blind {p_blind}, timid {p_timid}");
+        assert!(p_sel > 700 && p_blind.abs() < 150 && p_timid < 200, "{p_sel} {p_blind} {p_timid}");
         assert!(sel.1 > 800 && blind.1.abs() < 150, "{sel:?} {blind:?}");
         assert!(blind.0 > 500, "the old score passed it: {blind:?}");
     }

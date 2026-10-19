@@ -311,7 +311,8 @@
 //! click off the screen's target), the affect channel holding every other line of its first word;
 //! `ISL_STRAY_COST=1`, switching's and shapes' respond, discriminate and reverse charged for clicks
 //! away from a light's window; `ISL_SELECT_CONTRAST=1`, selection scored on the contrast between
-//! tasks (`observe::select_contrast`); `ISL_SCREEN_STREAM=1`, a hit moves the target and the
+//! tasks (`observe::select_contrast`; `=2`, the tasks' performance contrasted, `select_performance`,
+//! so a few clicks score little); `ISL_SCREEN_STREAM=1`, a hit moves the target and the
 //! cursor stays, a miss does not end the trial; `ISL_MAZE_STREAM=1`, maze trials with no gap.
 //! `ISL_MISS_COST=1`: a prompt that called for an act and got none counts as a wrong answer, so doing
 //! nothing scores -1024 (respond, discriminate, reverse, remember, flag, maze, screen, select by contrast).
@@ -1051,7 +1052,7 @@ fn main() {
     neurocomp::evolve::set_screen_stream(env("ISL_SCREEN_STREAM", 0u8) == 1);
     neurocomp::evolve::set_maze_stream(env("ISL_MAZE_STREAM", 0u8) == 1);
     neurocomp::world::observe::set_stray_cost(env("ISL_STRAY_COST", 0u8) == 1);
-    neurocomp::world::observe::set_select_contrast(env("ISL_SELECT_CONTRAST", 0u8) == 1);
+    neurocomp::world::observe::set_select_contrast(env("ISL_SELECT_CONTRAST", 0u8));
     neurocomp::world::observe::set_miss_cost(env("ISL_MISS_COST", 0u8) == 1);
     neurocomp::evolve::set_twins(env("ISL_TWINS", 0u8) == 1);
     neurocomp::evolve::set_cursor_away(env("ISL_CURSOR_AWAY", 0u8) == 1);

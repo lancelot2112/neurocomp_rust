@@ -1109,3 +1109,10 @@ old respond part at 30. It clicked a few times in respond blocks and never in ba
 (a - b)/(a + b) of click rates gives that full credit. A fix: contrast task performance, respond
 measured on paying lights in respond blocks against babble blocks, the voice in babble blocks
 against respond blocks, so a few clicks score little.
+
+**The performance contrast (`ISL_SELECT_CONTRAST=2`, run 38).** `observe::select_performance`:
+responding (paying lights clicked in their window, less clicks in the control window) in respond
+blocks less in babble blocks, and the voice rate in babble blocks less in respond blocks, averaged;
+with still blocks a third for acting less there than elsewhere. Test (held, 12 lifetimes): a
+selector 1021, the task-blind strategy 4, a timid selector (one light in ten clicked, a token one
+step in twenty) 165, where the rates' contrast gives it nearly full credit.

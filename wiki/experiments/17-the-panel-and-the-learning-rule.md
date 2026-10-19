@@ -1074,3 +1074,15 @@ The conditioning world (switching, shapes) was already a stream of lights at ran
 light as the prompt; what it lacked was the wrong signal and the stray cost. Smoke test with all of
 them, recall's and the attractant on (switching, recall, maze, screen, selection, 6 generations): no
 errors.
+
+## Run 36's end (stopped at 828 for run 37)
+
+35 rung moves in 828 generations. The drawn triggers took hold at once: by 50 most islands read
+mostly by lanes compared (reading 74% lanes>, prediction 91%, shapes 85% lanes<), learned integers
+(recall, screen, the generalist) or int>= (selection), against 85% at-least in run 35. The novelty
+island founded 9 species, each useful on a probe or combination no other had, and generations held
+near 50 seconds (run 35: 223). Recall's lag5 passers needed learning; its lag8 and lag16 passes were
+a latch; selection passed four rungs blind to the task; prediction passed cycle1-100 at 602;
+switching reached feel. Run 37 (started 12:12 PM ET) answers the leaks: recall as cues and
+questions, selection by contrast, stray clicks charged, wrong clicks felt, the screen and the maze
+continuous, and unread inputs attracting trials.

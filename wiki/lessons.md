@@ -316,5 +316,7 @@ The durable lessons from the earlier branch (`ccr-8d772201-st7vqw`, research wik
     about as much as for being better. Most rungs can be passed without learning in the lifetime,
     because what they ask stays the same from one lifetime to the next. Learning is selected when
     the world varies between lifetimes and stays predictable within one; measure it by what it
-    buys in the lifetime (late minus early, learning off against on), on tasks never selected on.
+    buys in the lifetime (late minus early, learning off against on), on tasks never selected on. Run 36's recall is the
+    first exception found: its lag5 passers (delays 5 to 10) score 572 to 585 learning and 195 to 205
+    frozen.
 

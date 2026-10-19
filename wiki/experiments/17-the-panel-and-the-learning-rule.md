@@ -956,3 +956,21 @@ respond rests on one). The novelty island founded 64 species, nearly all useful 
 grew to its cap of 128, and generations slowed from 68 seconds (39) to 223 (175). Run 36 (started
 12:26 AM ET) caps it at 32, founds species only for new combinations of useful probes or for a
 probe none covers, draws new populations' triggers and keeps a species log.
+
+## Run 36's recall: a long memory that needs learning (`runs/checks/recall36/`)
+
+Run 36's recall passed lag4 at 262 and lag5 at 272, under delays drawn from the rung's up to twice
+it. Three of the eight genomes the rung log kept for lag5 (77 populations each) score, on 48 fresh
+worlds (the other five 0; goal 150):
+
+| | learning on | learning frozen |
+|---|---|---|
+| lag5, delay fixed at 5 | 731 to 777 | |
+| lag5, delay drawn 5 to 10 | 572 to 585 | 195 to 205 |
+| lag8, delay fixed at 8 | 485 to 519 | |
+| lag8, delay drawn 8 to 16 | 321 to 336 | 55 to 66 |
+
+(the lag4 passers: 820 to 869 at 4, 538 to 560 drawn 4 to 8). A real memory, past its own rung,
+and the first evolved network whose score rests on learning in the lifetime: frozen (no mask moves,
+births, copies or output moves) it keeps about a third on its own rung and a fifth on the longer
+delays. Every passer checked before (run 35's maze feel and learn included) scored the same frozen.

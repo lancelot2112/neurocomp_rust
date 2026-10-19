@@ -1224,3 +1224,13 @@ time 861 and 874, random 10 and 6). (4) Selection's held: under the performance 
 through the block, which is why held sat at about 0 in runs 37 to 39. With `set_select_early`
 select~ is the contrast averaged with the same over each block's first two trials: felt only 181,
 held 20 steps 544, a holder 1008, blind -3. Run 40 has all four with flag~.
+
+## Run 39's end (stopped at 204 for run 40)
+
+10 rung moves in 204 generations, none after 100: reading to pairs8 (4, 33), selection cued to held
+(24, 98, 99, 100), shapes to blur1 (51), recall to flag2 (85), switching to tell and feel-300 (99,
+100; run 38 never passed tell). With misses at half and the soft floor, doing nothing scored -512
+and random clicking below it, so the floor no longer hid the difference; but recall on flag2 (-539
+at 204) and the screen (-512) kept best genomes that do nothing, and selection sat at about 0 on
+held: no score paid anything between doing nothing and the full answer. Run 40 (started 7:29 PM ET)
+adds flag~ and the other graded scores.

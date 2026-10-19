@@ -185,19 +185,13 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     let reverse = if late.is_empty() { 0 } else { late.iter().sum::<i32>() / late.len() as i32 };
     // (`set_stray_cost`) clicks away from any light's window, per trial, taken off
     let stray = if stray_cost() { stray_rate(reversal) } else { 0 };
-    let (respond, discriminate, reverse) = ((respond - stray).max(-1024), (discriminate - stray).max(-1024), (reverse - stray).max(-1024));
-    // (`set_miss_cost`) the lights that called for a click and got none
-    let (respond, discriminate, reverse) = if miss_cost() && !tr.is_empty() {
-        let miss_all = 1024 - rate(&tr, all, |x| x.3);
-        let miss_pay = 1024 - rate(&tr, |x| x.2, |x| x.3);
-        ((respond - miss_all).max(-1024), (discriminate - miss_pay).max(-1024), (reverse - miss_pay).max(-1024))
-    } else {
-        (respond, discriminate, reverse)
-    };
+    // (`set_miss_cost`) the lights that called for a click and got none, scaled (`set_miss_scale`)
+    let (miss_all, miss_pay) = if miss_cost() && !tr.is_empty() { (missed(1024 - rate(&tr, all, |x| x.3) as i64) as i32, missed(1024 - rate(&tr, |x| x.2, |x| x.3) as i64) as i32) } else { (0, 0) };
+    let (respond, discriminate, reverse) = (floor((respond - stray - miss_all) as i64), floor((discriminate - stray - miss_pay) as i64), floor((reverse - stray - miss_pay) as i64));
     // (the window marked by the world: steps 5-7 for a delay up to 5, as always)
     let td = trials_in_window(delayed);
     let remember = rate(&td, |x| x.1, |x| x.3) - rate(&td, |x| !x.1, |x| x.3);
-    let remember = if miss_cost() && !td.is_empty() { (remember - (1024 - rate(&td, |x| x.1, |x| x.3))).max(-1024) } else { remember };
+    let remember = if miss_cost() && !td.is_empty() { floor(remember as i64 - missed(1024 - rate(&td, |x| x.1, |x| x.3) as i64)) } else { remember };
     // win-stay: each click (in the response window) on a light is stroked if the trial paid;
     // the next trial showing the same light is clicked or not
     // (a lifetime with no stroked click to compare against an unstroked one scores 0: with no
@@ -349,6 +343,60 @@ pub fn set_miss_cost_here(on: Option<bool>) {
     MISS_COST_HERE.with(|c| c.set(on));
 }
 
+/// The miss cost's scale (`set_miss_scale`), in parts per 1024 of a wrong answer: 1024, the
+/// default, a miss as dear as a wrong click; 512 half that, so doing nothing scores -512.
+static MISS_SCALE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(1024);
+
+/// A soft floor (`set_soft_floor`): scores below -512 are squeezed toward -1024 and never reach
+/// it, so a network that misses everything and one that also clicks at random stay apart instead
+/// of both pinned at -1024. Off by default (scores cut at -1024).
+static SOFT_FLOOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+thread_local! {
+    /// (tests) the scale and the soft floor for this thread only
+    static MISS_HERE: std::cell::Cell<Option<(i64, bool)>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn set_miss_scale(per_1024: i64) {
+    MISS_SCALE.store(per_1024, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn set_soft_floor(on: bool) {
+    SOFT_FLOOR.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn miss_scale() -> i64 {
+    MISS_HERE.with(|c| c.get()).map_or_else(|| MISS_SCALE.load(std::sync::atomic::Ordering::Relaxed), |m| m.0)
+}
+
+pub fn soft_floor() -> bool {
+    MISS_HERE.with(|c| c.get()).map_or_else(|| SOFT_FLOOR.load(std::sync::atomic::Ordering::Relaxed), |m| m.1)
+}
+
+/// (tests) `set_miss_scale` and `set_soft_floor` for this thread only.
+pub fn set_miss_here(m: Option<(i64, bool)>) {
+    MISS_HERE.with(|c| c.set(m));
+}
+
+/// A miss's share (parts per 1024 of the prompts) at the miss cost's scale.
+fn missed(share: i64) -> i64 {
+    share * miss_scale() / 1024
+}
+
+/// A score's floor: cut at -1024, or with `set_soft_floor`, -512 and above as it is and below it
+/// squeezed, -512 - 512 x / (x + 512) for x below -512, so the order of bad scores is kept: -1024
+/// becomes -768, -2048 -896, and none reaches -1024.
+pub fn floor(score: i64) -> i32 {
+    if !soft_floor() {
+        return score.max(-1024) as i32;
+    }
+    if score >= -512 {
+        return score as i32;
+    }
+    let x = -512 - score;
+    (-512 - 512 * x / (x + 512)) as i32
+}
+
 /// Selection by contrast (`set_select_contrast`): 1, select and select~ are `select_contrast` (the
 /// rates' contrast); 2, `select_performance` (the tasks' performance contrasted). 0 off, the
 /// default.
@@ -386,7 +434,7 @@ pub fn select_performance(events: &[Event]) -> i32 {
     let voice = |ev: &[Event]| -> i64 { ev.iter().filter(|e| e.said.is_some() || !e.sentence.is_empty()).count() as i64 * 1024 / ev.len() as i64 };
     let acts = |ev: &[Event]| -> i64 { ev.iter().filter(|e| e.moved == Some(CLICK) || e.said.is_some() || !e.sentence.is_empty()).count() as i64 * 1024 / ev.len() as i64 };
     if miss_cost() && acts(&resp) + acts(&bab) == 0 {
-        return -1024;
+        return floor(-missed(1024));
     }
     let two = ((respond(&resp) - respond(&bab)) + (voice(&bab) - voice(&resp))) / 2;
     let still = of(2);
@@ -415,7 +463,7 @@ pub fn select_contrast(events: &[Event]) -> i32 {
     let (Some(cr), Some(cb), Some(vr), Some(vb)) = (rate(0, &click), rate(1, &click), rate(0, &voice), rate(1, &voice)) else { return 0 };
     // (`set_miss_cost`) never clicking nor speaking
     if miss_cost() && cr + cb + vr + vb == 0 {
-        return -1024;
+        return floor(-missed(1024));
     }
     let two = (rel(cr, cb) + rel(vb, vr)) / 2;
     match (rate(2, &click), rate(2, &voice)) {
@@ -686,9 +734,9 @@ pub fn flag(events: &[Event]) -> i32 {
     let mut score = armed_hit * 1024 / armed - plain_hit * 1024 / plain - stray * 1024 / (armed + plain);
     // (`set_miss_cost`) cued questions not answered
     if miss_cost() {
-        score -= (armed - armed_hit) * 1024 / armed;
+        score -= missed((armed - armed_hit) * 1024 / armed);
     }
-    score.max(-1024) as i32
+    floor(score)
 }
 
 /// Remember with partial credit (`evolve::set_partial_remember`): a cue trial clicked in its window
@@ -926,8 +974,8 @@ pub fn maze(events: &[Event]) -> i32 {
         None => (r, w),
     });
     // (`set_miss_cost`) a trial with no choice counts as a wrong one
-    let none = if miss_cost() { (trials - right - wrong).max(0) } else { 0 };
-    ((right - wrong - none) * 1024 / trials).max(-1024) as i32
+    let none = if miss_cost() { missed((trials - right - wrong).max(0) * 1024 / trials) } else { 0 };
+    floor((right - wrong) * 1024 / trials - none)
 }
 
 /// The screen: clicks on the target above chance, per trial, in parts per 1024: (hits x cells -
@@ -955,8 +1003,8 @@ pub fn screen(events: &[Event]) -> i32 {
     // (at least -1024: with the screen going on, `World::screen_stream`, clicks are not one a trial)
     let n = trials.len() as i64;
     // (`set_miss_cost`) a trial with no hit counts against
-    let miss = if miss_cost() { (n - hits.min(n)) * 1024 / n } else { 0 };
-    ((hits * cells - clicks) * 1024 / (n * (cells - 1)) - miss).max(-1024) as i32
+    let miss = if miss_cost() { missed((n - hits.min(n)) * 1024 / n) } else { 0 };
+    floor((hits * cells - clicks) * 1024 / (n * (cells - 1)) - miss)
 }
 
 /// The screen with partial credit (`evolve::set_partial_screen`): as `screen`, and a trial in which
@@ -990,7 +1038,7 @@ pub fn screen_graded(events: &[Event]) -> i32 {
     }
     let reached = trials.values().filter(|r| r.0 && !r.1).count() as i64;
     // (a hit is worth cells - 1 here: its click less; a trial that only reached the target, half that)
-    ((((hits * cells - clicks) * 1024 + reached * (cells - 1) * 512) / (trials.len() as i64 * (cells - 1))).max(-1024)) as i32
+    floor(((hits * cells - clicks) * 1024 + reached * (cells - 1) * 512) / (trials.len() as i64 * (cells - 1)))
 }
 
 /// Sequence: steps where a next token was due, and those where the program said it on the
@@ -1791,6 +1839,46 @@ mod tests {
         let (both, turn_only) = (mean(true), mean(false));
         eprintln!("(maze, feel-maze): turn and click after strokes {both:?}, turn alone {turn_only:?}");
         assert!(both.0 > 600 && turn_only.0 > 600 && both.1 > 250 && turn_only.1.abs() < 60, "{both:?} {turn_only:?}");
+    }
+
+    #[test]
+    fn misses_scaled_and_floored_softly_keep_bad_networks_apart() {
+        // at half the cost with the soft floor, a network that never acts, one that clicks every
+        // step and a responder all score apart: none pinned at the floor
+        set_miss_cost_here(Some(true));
+        set_miss_here(Some((512, true)));
+        let cond = |kind: u8, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 4;
+            w.conditioning(Conditioning::Reversal, 40);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let seen = channel(&senses, EYE).count_ones() > 0;
+                let click = match kind { 0 => seen, 1 => false, _ => true };
+                let a = w.act(None, click.then_some(CLICK));
+                senses = w.step(&a);
+            }
+            let raw = probes(&w.events, 40, &[], &[], &[], &[], &[])[0] as i64 - stray_rate(&w.events) as i64;
+            floor(raw)
+        };
+        let fl = |seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.flag(400, 4, false, false);
+            let none = w.act(None, None);
+            while !matches!(w.scene, Scene::Idle) {
+                w.step(&none);
+            }
+            flag(&w.events)
+        };
+        let (resp, idle, every, flag_idle) = (cond(0, 3), cond(1, 3), cond(2, 3), fl(3));
+        set_miss_here(None);
+        set_miss_cost_here(None);
+        eprintln!("miss cost at half, soft floor: responder {resp}, never acting {idle}, every step {every}, flag never acting {flag_idle}");
+        assert!(resp > 900 && idle == -512 && flag_idle == -512 && every > -1024 && every < -512, "{resp} {idle} {every} {flag_idle}");
+        set_miss_here(Some((1024, true)));
+        let squeezed = (floor(-1024), floor(-2048), floor(-100_000));
+        set_miss_here(None);
+        assert!(squeezed.0 == -768 && squeezed.1 == -896 && squeezed.2 > -1024 && squeezed.2 < squeezed.1, "{squeezed:?}");
     }
 
     #[test]

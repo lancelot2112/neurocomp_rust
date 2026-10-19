@@ -942,3 +942,17 @@ there. So the click at a light is a collateral: a cell reading what the voice sa
 run only while something is seen, whose second axon drives the hand. Without the branch the cell
 still runs and the hand stays still. On lag3 the branches matter little (106 as evolved, 117
 without). The dashboard's network diagrams do not draw branches yet.
+
+## Run 35's end (stopped at 175 for run 36)
+
+25 rung moves in 175 generations, none after 137. Maze passed feel-300 (27), feel at its raised
+goal of 500 (47, the first island to) and learn (57; real on fresh worlds, the same with learning
+frozen), screen glow-150 and glow (56, 57), recall lag1 to lag3 (17 to 137) with the delay drawn
+from the rung's up, so its passes cannot be shorter memories, switching respond and tell (17, 106),
+reading babble and echo2q (8, 107), shapes clean (104), selection mixclick (19). Prediction passed
+nothing: surprise+ made its networks click (b-click-seq 151) but not on the breaks. Long shifts
+were in the five most written ops of six islands by 100; branches carry real work (recall's
+respond rests on one). The novelty island founded 64 species, nearly all useful on respond alone,
+grew to its cap of 128, and generations slowed from 68 seconds (39) to 223 (175). Run 36 (started
+12:26 AM ET) caps it at 32, founds species only for new combinations of useful probes or for a
+probe none covers, draws new populations' triggers and keeps a species log.

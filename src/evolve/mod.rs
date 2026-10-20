@@ -652,24 +652,35 @@ fn duel_partner(seed: u64) -> Option<Partner> {
 /// Who the duel's other agent is: a network, or (the yardstick, `duel-bench`) a fixed rule.
 pub enum Opponent {
     Net(Partner),
-    Script(u8),
+    Script(u64),
 }
 
-/// The yardstick's rules (moves as LEFT or not): 0 never LEFT in either role; 1 alternating as
-/// evader, copying the other's last move as predictor; 2 LEFT, LEFT, other as evader, the
-/// opposite of the other's last as predictor; 3 always LEFT as evader, the other's majority of its
-/// last three as predictor. No single fixed policy beats them all: a predictor must find which
-/// rule it faces, an evader what the predictor copies.
-fn scripted(kind: u8, evader: bool, own: &[bool], other: &[bool]) -> bool {
-    let last = other.last().copied().unwrap_or(false);
-    match (kind, evader) {
-        (0, _) => false,
-        (1, true) => own.len() % 2 == 0,
-        (1, false) => last,
-        (2, true) => own.len() % 3 != 2,
-        (2, false) => !last,
-        (3, true) => true,
-        _ => other.iter().rev().take(3).filter(|&&x| x).count() >= 2,
+/// The yardstick's rules, one drawn per lifetime from `rule` (moves as LEFT or not): as evader,
+/// half the draws a pattern of period 2 to 5 with its moves drawn, half the predictor's last move
+/// or its move two rounds ago, or their opposites; as predictor, the other's last move, its move
+/// two rounds ago or its majority of three, or their opposites. Each rule is as likely as its
+/// opposite, so fixed policies score little over them (`no_fixed_policy_beats_the_duel_yardstick`)
+/// and a high yardstick needs finding, in the lifetime, which rule is faced. (Run 41's first yardstick, four fixed rules, was passed to 200 by a
+/// wired reaction: copy the last move as predictor, alternate as evader.)
+fn scripted(rule: u64, evader: bool, own: &[bool], other: &[bool]) -> bool {
+    let n = other.len();
+    let back = |k: usize| if n >= k { other[n - k] } else { false };
+    let flip = rule >> 20 & 1 == 1;
+    if evader {
+        // half the draws a pattern of period 2 to 5, half a reaction to the predictor's moves
+        if rule >> 16 & 1 == 0 {
+            let p = 2 + (rule & 3) as usize;
+            (rule >> 2 >> (own.len() % p)) & 1 == 1
+        } else {
+            (if rule >> 17 & 1 == 0 { back(1) } else { back(2) }) != flip
+        }
+    } else {
+        let majority = other.iter().rev().take(3).filter(|&&x| x).count() >= 2;
+        (match (rule >> 8) % 3 {
+            0 => back(1),
+            1 => back(2),
+            _ => majority,
+        }) != flip
     }
 }
 
@@ -730,11 +741,13 @@ pub fn live_duel<G: Evolvable>(g: &G, opp: &Opponent, physics: Physics, seed: u6
     (wa.events, na.work)
 }
 
-/// The duel's yardstick (`duel-bench`): the mean duel score against each of `scripted`'s rules.
+/// The duel's yardstick (`duel-bench`): the mean duel score against four of `scripted`'s rules,
+/// drawn from the seed.
 pub fn duel_bench<G: Evolvable>(g: &G, physics: Physics, seed: u64, lesson: &Lesson, rounds: usize) -> (i32, u64, usize) {
     let (mut sum, mut work, mut steps) = (0i64, 0u64, 0usize);
-    for k in 0..4u8 {
-        let (ev, w) = live_duel(g, &Opponent::Script(k), physics, seed ^ (k as u64 + 1).wrapping_mul(0x9E37), lesson, rounds);
+    for k in 0..4u64 {
+        let rule = (seed ^ (k + 1).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7;
+        let (ev, w) = live_duel(g, &Opponent::Script(rule), physics, seed ^ (k + 1).wrapping_mul(0x9E37), lesson, rounds);
         sum += observe::duel(&ev) as i64;
         work += w;
         steps += ev.len();
@@ -902,7 +915,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (duel_ev, w10) = if wanted.contains(&40) {
         match duel_partner(seed) {
             Some(f) => live_duel(g, &Opponent::Net(f), physics, seed ^ 0xD0E1, &lesson, rounds),
-            None => live_duel(g, &Opponent::Script((seed % 4) as u8), physics, seed ^ 0xD0E1, &lesson, rounds),
+            None => live_duel(g, &Opponent::Script(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7), physics, seed ^ 0xD0E1, &lesson, rounds),
         }
     } else {
         (vec![], 0)
@@ -2497,15 +2510,82 @@ mod tests {
     }
 
     #[test]
-    fn the_duel_yardstick_scores_doing_nothing_below_zero() {
-        // a network that does nothing never moves LEFT: it wins as predictor against rule 0 and
-        // loses most else; with no pool set, the duel probe meets a fixed rule too
+    fn no_fixed_policy_beats_the_duel_yardstick() {
+        // focal policies against the drawn rules, as the harness links two worlds: every fixed
+        // policy about 0 over many rules; a reader (as predictor the lag 1 to 4 that has matched
+        // the partner best so far; as evader the opposite of the guess of the copying rule that has
+        // matched the partner's guesses best) well above
+        type Policy = fn(bool, &[bool], &[bool], &[bool]) -> bool;
+        let score = |pol: Policy, rule: u64| -> i32 {
+            let (mut wa, mut wb) = (World::new(rule, 2), World::new(rule ^ 1, 2));
+            wa.duel(128, 16, rule & 1 == 1);
+            wb.duel(128, 16, rule & 1 == 0);
+            let (mut ha, mut hb, mut roles): (Vec<bool>, Vec<bool>, Vec<bool>) = (Vec::new(), Vec::new(), Vec::new());
+            let (mut aa, mut ab) = (wa.act(None, None), wb.act(None, None));
+            while !wa.done() {
+                let (ma, mb) = (wa.move_of(&aa), wb.move_of(&ab));
+                wa.partner_move = mb;
+                wb.partner_move = ma;
+                roles.push(wa.duel_evader(ha.len()));
+                wa.step(&aa);
+                wb.step(&ab);
+                ha.push(ma == Some(world::LEFT));
+                hb.push(mb == Some(world::LEFT));
+                let la = pol(wa.duel_evader(ha.len()), &ha, &hb, &roles);
+                let lb = scripted(rule, wb.duel_evader(hb.len()), &hb, &ha);
+                aa = wa.act(None, Some(if la { world::LEFT } else { world::RIGHT }));
+                ab = wb.act(None, Some(if lb { world::LEFT } else { world::RIGHT }));
+            }
+            observe::duel(&wa.events)
+        };
+        let mean = |pol: Policy| (0..96u64).map(|k| score(pol, k.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7)).sum::<i32>() / 96;
+        let fixed: [(&str, Policy); 12] = [
+            ("copy lag 2", |ev, own, other, _| if ev { own.len() % 2 == 0 } else { other.len() >= 2 && other[other.len() - 2] }),
+            ("copy lag 3", |ev, own, other, _| if ev { own.len() % 2 == 0 } else { other.len() >= 3 && other[other.len() - 3] }),
+            ("copy lag 4", |ev, own, other, _| if ev { own.len() % 2 == 0 } else { other.len() >= 4 && other[other.len() - 4] }),
+            ("copy lag 12", |ev, own, other, _| if ev { own.len() % 3 == 0 } else { other.len() >= 12 && other[other.len() - 12] }),
+            ("anti own last as predictor", |ev, own, _, _| if ev { own.len() % 2 == 0 } else { !own.last().copied().unwrap_or(false) }),
+            ("copy own last", |_, own, _, _| own.last().copied().unwrap_or(false)),
+            ("never", |_, _, _, _| false),
+            ("always", |_, _, _, _| true),
+            ("alternate", |_, own, _, _| own.len() % 2 == 0),
+            ("copy last, alternate", |ev, own, other, _| if ev { own.len() % 2 == 0 } else { other.last().copied().unwrap_or(false) }),
+            ("LLR", |_, own, _, _| own.len() % 3 != 2),
+            ("anti last, copy own", |ev, own, other, _| if ev { own.last().copied().unwrap_or(false) } else { !other.last().copied().unwrap_or(false) }),
+        ];
+        let reader: Policy = |evader, own, other, roles| {
+            let n = other.len();
+            if !evader {
+                // the partner's next move as a lag of its own moves (1 to 5) or of mine (1 or 2),
+                // or their opposites: the one that has fitted best so far
+                let cands: Vec<(bool, usize, bool)> = (1..=5).flat_map(|l| [(true, l, false), (true, l, true)]).chain((1..=2).flat_map(|l| [(false, l, false), (false, l, true)])).collect();
+                let at = |c: &(bool, usize, bool), t: usize| -> Option<bool> { let src = if c.0 { other } else { own }; (t >= c.1).then(|| src[t - c.1] != c.2) };
+                let best = cands.iter().max_by_key(|c| (0..n).filter(|&t| !roles[t] && at(c, t) == Some(other[t])).count()).unwrap();
+                at(best, n).unwrap_or(false)
+            } else {
+                // the partner predicts my moves: which copying rule fits its past guesses
+                let guess = |r: u64, t: usize| scripted((r % 3) << 8 | (r / 3) << 20, false, &[], &own[..t]);
+                let r = (0..6u64).max_by_key(|&r| (0..n).filter(|&t| roles[t] && guess(r, t) == other[t]).count()).unwrap();
+                !guess(r, n)
+            }
+        };
+        let scores: Vec<(&str, i32)> = fixed.iter().map(|(name, p)| (*name, mean(*p))).collect();
+        let r = mean(reader);
+        eprintln!("duel yardstick: fixed {scores:?}; reader {r}");
+        assert!(scores.iter().all(|s| s.1.abs() < 150) && r > 500, "{scores:?} {r}");
+    }
+
+    #[test]
+    fn the_duel_yardstick_scores_doing_nothing_about_zero() {
+        // a network that does nothing never moves LEFT: about 0 over many seeds (each seed's four
+        // rules vary widely); with no pool set, the duel probe meets a drawn rule too
         let g = Genome { code: vec![] };
         let lesson = Lesson { duel_turn: 16, ..Lesson::default() };
-        let (bench, _, steps) = duel_bench(&g, Physics::Varied, 7, &lesson, 128);
+        let runs: Vec<(i32, u64, usize)> = (0..16u64).map(|s| duel_bench(&g, Physics::Varied, 7 + s, &lesson, 128)).collect();
+        let bench = runs.iter().map(|x| x.0).sum::<i32>() / 16;
         let (row, _) = probe_scores_in(&g, 32, Physics::Varied, 7, 0, &[40, 41], lesson);
-        eprintln!("duel-bench of a network doing nothing {bench} over {steps} steps; probes duel {} bench {}", row[40], row[41]);
-        assert!(bench < -100 && steps == 4 * 128 && row[41] < -100, "{bench} {steps} {}", row[41]);
+        eprintln!("duel-bench of a network doing nothing {bench} (16 seeds); probes duel {} bench {}", row[40], row[41]);
+        assert!(bench.abs() < 150 && runs[0].2 == 4 * 128, "{bench} {}", row[41]);
     }
 
     #[test]

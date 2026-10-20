@@ -890,11 +890,12 @@ const SWITCHING_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100;
 /// the window opened, and a latch clicking from the cue to the trial's end passed lag16.
 /// (`ISL_DUEL=1`) predict or evade against other agents, the roles flipping every `turn` rounds:
 /// selected on the duel against this generation's partners and on the yardstick of fixed rules,
-/// each rung's goal on the yardstick, the turns shortening; the last rung open-ended.
-const DUEL_LADDER: &str = "duel64 probes=duel+duel-bench turn=64 goal=duel-bench@100; \
-    duel32 probes=duel+duel-bench turn=32 goal=duel-bench@200; \
-    duel16 probes=duel+duel-bench turn=16 goal=duel-bench@300; \
-    duel8 probes=duel+duel-bench turn=8 goal=duel-bench@400; \
+/// each rung's goal on the yardstick, the turns shortening; the last rung open-ended. (Every fixed
+/// policy measured scores within 100 of 0 on the yardstick, a reader of the partner 918.)
+const DUEL_LADDER: &str = "duel64 probes=duel+duel-bench turn=64 goal=duel-bench@200; \
+    duel32 probes=duel+duel-bench turn=32 goal=duel-bench@350; \
+    duel16 probes=duel+duel-bench turn=16 goal=duel-bench@500; \
+    duel8 probes=duel+duel-bench turn=8 goal=duel-bench@650; \
     open probes=duel+duel-bench turn=8";
 
 const RECALL_FLAG_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \

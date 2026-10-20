@@ -40,20 +40,24 @@ was, its hall of fame (its best every 10 generations, the last 16) and every oth
 (they do not know the game; they are the world's easy and odd partners). Each lifetime seed meets
 one partner, the same for every genome in the generation, so genomes are compared fairly.
 
-The yardstick (`duel-bench`, `evolve::duel_bench`): the mean duel score against four fixed rules,
-each playing both roles: never LEFT; alternating as evader and copying the other's last as
-predictor; LEFT, LEFT, other as evader and the opposite of the other's last as predictor; always
-LEFT as evader and the other's majority of three as predictor. No fixed policy beats them all, so a
-high yardstick needs finding, within the lifetime, which rule is faced. A network doing nothing
-scores -300.
+The yardstick (`duel-bench`, `evolve::duel_bench`): the mean duel score against four rules drawn
+per lifetime (`evolve::scripted`), each playing both roles. As evader, half the draws a pattern of
+period 2 to 5 with its moves drawn, half a reaction to the predictor (its last move or the one
+before, or their opposites); as predictor, the other's last move, the one before or its majority
+of three, or their opposites. Each rule is as likely as its opposite. The first yardstick, four
+fixed rules, leaked: a wired reaction (copy the partner's last move as predictor, alternate as
+evader) scored about 213, and run 41's first start passed duel64 and duel32 by generation 6. On the
+drawn rules every fixed policy measured scores within 100 of 0 (never 16, always -17, alternate 14,
+copy lag 2 to 12 46 to 84, copy last and alternate -53), a reader of the partner 918
+(`no_fixed_policy_beats_the_duel_yardstick`, 96 rules).
 
 The ladder (`DUEL_LADDER`): duel64, duel32, duel16 and duel8, the turn shortening and the
-yardstick's goal rising (100, 200, 300, 400), then an open rung. Selection uses the duel against
+yardstick's goal rising (200, 350, 500, 650), then an open rung. Selection uses the duel against
 this generation's partners and the yardstick; each goal is on the yardstick, on held-out worlds.
 
 Tests: `the_duel_pays_reading_the_partner_in_both_roles` (a reader 912 against an alternating
 copier, which scores -912; constant against constant 0; a reader against a constant 512; half the
-rounds in each role), `the_duel_yardstick_scores_doing_nothing_below_zero` (-300).
+rounds in each role), `the_duel_yardstick_scores_doing_nothing_about_zero`.
 
 ## What can go wrong, and what is in place
 

@@ -1253,4 +1253,7 @@ run 39: 24 to 100), switching respond, tell and feel-300 (56, 65; run 39: 99, 10
 (76; run 39: 85). With partial credit everywhere stuck, the early rungs came sooner; at 93 recall
 on flag2 (-625), selection on held (-3), switching on feel-300 (0) and the screen (-512) had not
 yet moved: too short to judge the graded scores there. Run 41 (started 8:17 PM ET) adds the duel
-island.
+island. The first yardstick (four fixed rules) leaked: a wired copy-last and alternate scored about 213
+and run 41's first start passed duel64 and duel32 by generation 6; it was stopped and restarted
+with rules drawn per lifetime, each as likely as its opposite, on which every fixed policy measured
+scores within 100 of 0 and a reader 918, and goals 200, 350, 500 and 650.

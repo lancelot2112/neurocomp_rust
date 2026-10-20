@@ -874,6 +874,11 @@ impl World {
         self.type_line.clear();
     }
 
+    /// A typing lifetime (the keyboard in use).
+    pub fn typing_now(&self) -> bool {
+        matches!(self.scene, Scene::Typing(..) | Scene::TypingGap(..))
+    }
+
     /// The voice channel that types key `k`, as an act.
     pub fn key_act(&self, k: usize) -> BitVector {
         let mut a = BitVector::new(ACT_BITS, Some(0));

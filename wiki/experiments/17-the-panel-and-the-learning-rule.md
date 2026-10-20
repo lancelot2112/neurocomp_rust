@@ -1413,3 +1413,23 @@ its mean reach over 12 times 256 (up to 0). Writing 5 of the right key's 12 line
 right one 1024). Run 44's genomes still scored -256 with it: they write nothing near the keyboard. Reach then
 counted the other lines in the key's word at the code's share (12/52 each), so lines written at
 random net about 0 and any write leaning to the code's lines counts.
+
+## Unwritten outputs attract trials (`ISL_ATTRACT_OUT=1`), and keys among the body's codes
+
+Why no genome typed: populations writing the act are born with kernels whose outputs are the
+body's codes (the voice's tokens, the hand's moves: `tags::start_kernels`), and the keyboard's keys
+were not among them, so nothing could write a key but by chance. Now, in a typing lifetime, the
+keys are among those codes. Checked on run 44's checkpoint at 53 (key4, 8 worlds): genomes from
+switching, the generalist, recall, the maze, selection and novelty, which never typed, type keys
+(type~ up to 80; nothing scores -256); the typing island's own, which write nothing to the voice,
+stay at -256. The output side's attractant, at the user's call (an unused muscle asks for a nerve):
+each word of the act that holds a body code counts the steps nothing wrote into it; at a
+population's own threshold (as the input attractant's, 2^(accident - 10)) that population grows a
+trial reading its own source and writing that word, its newborn kernels writing the body's codes
+there; the genome keeps it (`take_notes`, kind 13 voice, 14 hand) if the word then held a code the
+body made (with the muscle's response, what was done). Test
+`an_unwritten_word_of_the_act_attracts_a_trial_that_types_and_is_kept`: a population from the eye
+into a channel, in a typing lifetime: the trial grows into the keyboard's first word, types 50
+keys, is confirmed 185 times, and joins the genome as a population from the eye into the voice.
+Run 44 restarted with both and typing's reaching credit (its first start's log in
+`runs/checks/typing44/`).

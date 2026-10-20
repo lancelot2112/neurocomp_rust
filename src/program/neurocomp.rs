@@ -54,6 +54,34 @@ pub fn attract() -> bool {
     ATTRACT.load(Ordering::Relaxed)
 }
 
+/// The attractant on the output side (`set_attract_out`): each word of the act that holds a body
+/// code (a move, a token, a key) counts the steps nothing wrote into it, a `u8`; when the count
+/// reaches a population's own threshold (as `set_attract`'s, the lowest answering), that
+/// population grows a trial population reading its own source and writing that word, whose
+/// newborn kernels write the body's codes there (a babble into the unused part of the body); a
+/// trial is kept by the genome (`tags::take_notes`, kinds 13 voice, 14 hand) if, in the lifetime,
+/// its word of the act held a code the body made (with the muscle's response, what was done). An
+/// unused muscle asks for a nerve. Off by default.
+static ATTRACT_OUT: AtomicBool = AtomicBool::new(false);
+
+pub fn set_attract_out(on: bool) {
+    ATTRACT_OUT.store(on, Ordering::Relaxed);
+}
+
+thread_local! {
+    /// (tests) `set_attract_out` for this thread only
+    static ATTRACT_OUT_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn attract_out() -> bool {
+    ATTRACT_OUT_HERE.with(|c| c.get()).unwrap_or_else(|| ATTRACT_OUT.load(Ordering::Relaxed))
+}
+
+/// (tests) `set_attract_out` for this thread only.
+pub fn set_attract_out_here(on: Option<bool>) {
+    ATTRACT_OUT_HERE.with(|c| c.set(on));
+}
+
 pub fn explore() -> bool {
     EXPLORE.load(Ordering::Relaxed)
 }
@@ -265,6 +293,11 @@ pub struct RuntimeNetwork {
     /// (`set_attract`) each input port's attractant: steps its lines changed while unread (eye,
     /// ear, touch, affect, the self channel)
     pub attracted: [u8; 5],
+    /// (`set_attract_out`) each output word's attractant: steps nothing wrote into it
+    pub attracted_out: Vec<u8>,
+    /// the body's codes in the act (a word and its lines), for what writes the act to be born
+    /// with (set by the genome's build)
+    pub motor: Vec<(usize, u64)>,
     /// (with `explore`) explorers are shadow predictors (`set_shadow`)
     pub shadow: bool,
     /// (with `shadow`) shadows start only by accident, at each population's own rate, not when
@@ -411,6 +444,8 @@ pub struct RuntimeEdgeGroup {
     /// a trial connection grown by exploration (0: a genome's own; 1: back into the stuck
     /// population's source; 2: on its destination), its `spec.salt` the stuck population's
     pub explorer: u8,
+    /// (`set_attract_out`) an output trial: the word of the act it writes
+    pub out_word: Option<(usize, u64)>,
     /// it has grown its trial connection this lifetime
     pub spawned: bool,
     /// a shadow: it fires into `scratch`, not its destination (it writes nothing into the network)
@@ -515,6 +550,7 @@ impl RuntimeNetwork {
                 on_target: 0,
                 score: 0,
                 scores: Vec::new(),
+                out_word: None,
             });
         }
 
@@ -525,7 +561,7 @@ impl RuntimeNetwork {
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], attracted_out: Vec::new(), motor: Vec::new(), shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -594,17 +630,30 @@ impl RuntimeNetwork {
                 on_target: 0,
                 score: 0,
                 scores: Vec::new(),
+                out_word: None,
             });
         }
         let noise = g.node_indices().map(|n| g.node_weight(n).unwrap().noise).collect();
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: if clock_drawn() { (seed ^ 0xC10C_C10C_C10C_C10C).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) } else { 0 } }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], attracted_out: Vec::new(), motor: Vec::new(), shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: if clock_drawn() { (seed ^ 0xC10C_C10C_C10C_C10C).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) } else { 0 } }
     }
 
     /// Advance histories and process all edges once.
     pub fn tick(&mut self, mode: AdvanceMode, adj_temperature: i16) {
+        // (`set_attract_out`) an output trial is confirmed when its word of the act holds a code
+        // (with the muscle's response, one the body made last step)
+        if attract_out() {
+            let out = self.nodes[self.output].current().as_words().to_vec();
+            for e in self.edges.iter_mut() {
+                if let Some((w, _)) = e.out_word {
+                    if out.get(w).is_some_and(|&x| x != 0) {
+                        e.confirms = e.confirms.saturating_add(1);
+                    }
+                }
+            }
+        }
         // (`set_frozen`, measurement only) no learning in the lifetime: kernels keep their masks and
         // outputs, and nothing is born, copied or explored
         let one = FROZEN_POP_HERE.with(|c| c.get());
@@ -924,7 +973,7 @@ impl RuntimeNetwork {
         self.last_work = work;
         self.last_ran = paused.iter().zip(&seen).filter(|(p, _)| !**p).count() as u64;
         self.steps += 1;
-        let Self { nodes, edges, live, .. } = self;
+        let Self { nodes, edges, live, motor, .. } = self;
         // After the tick: cancelling kernels learn their outputs, and growing edges give birth
         // where their destination was left uncovered (a paused edge does not learn)
         for (i, eg) in edges.iter_mut().enumerate() {
@@ -1249,6 +1298,11 @@ impl RuntimeNetwork {
                         continue;
                     }
                     (ones(prev.as_words()[dw]), dw)
+                } else if let Some((w, _)) = eg.out_word {
+                    // (`set_attract_out`) a body code in its word
+                    let codes: Vec<u64> = motor.iter().filter(|m| m.0 == w).map(|m| m.1).collect();
+                    let Some(&c) = codes.choose(rng) else { continue };
+                    (ones(c), w)
                 } else if eg.into_act {
                     // into a port of the act: the move being made now (the busiest word of the
                     // port), copied onto what is seen: a reflex from this input to that move; or
@@ -1302,6 +1356,11 @@ impl RuntimeNetwork {
                     continue;
                 }
                 (ones(prev.as_words()[dw]), dw)
+            } else if let Some((w, _)) = eg.out_word {
+                // (`set_attract_out`) a body code in its word
+                let codes: Vec<u64> = motor.iter().filter(|m| m.0 == w).map(|m| m.1).collect();
+                let Some(&c) = codes.choose(rng) else { continue };
+                (ones(c), w)
             } else if eg.new_code {
                 // (not into the act: a random code there is no move)
                 if eg.into_act || (dest.count_ones() as usize) >= sp.out_min as usize {
@@ -1388,6 +1447,9 @@ impl RuntimeNetwork {
         }
         if attract() {
             self.grow_attracted();
+        }
+        if attract_out() && !frozen() {
+            self.grow_attracted_out();
         }
     }
 
@@ -1478,6 +1540,86 @@ impl RuntimeNetwork {
                 on_target: 0,
                 score: 0,
                 scores: Vec::new(),
+                out_word: None,
+            };
+            self.edges[i].spawned = true;
+            self.edges.push(trial);
+        }
+    }
+
+    /// The attractant on the output side (`set_attract_out`): each word of the act holding a body
+    /// code that nothing wrote this step counts it; at the lowest threshold of the populations that
+    /// may answer, that population grows a trial reading its own source and writing that word.
+    fn grow_attracted_out(&mut self) {
+        let out = self.nodes[self.output].current().as_words().to_vec();
+        if self.attracted_out.len() != out.len() {
+            self.attracted_out = vec![0; out.len()];
+        }
+        let half = out.len() / 2;
+        for w in 0..out.len() {
+            if !self.motor.iter().any(|m| m.0 == w) {
+                continue;
+            }
+            if out[w] != 0 || self.edges.iter().any(|e| e.out_word.is_some_and(|o| o.0 == w)) {
+                self.attracted_out[w] = 0;
+                continue;
+            }
+            self.attracted_out[w] = self.attracted_out[w].saturating_add(1);
+            let answer = (0..self.edges.len()).filter(|&i| {
+                let e = &self.edges[i];
+                e.explorer == 0 && !e.spawned && e.kind == EdgeKind::Kernels && e.spec.accident > 0
+            }).min_by_key(|&i| (self.edges[i].spec.accident, i));
+            let Some(i) = answer else { continue };
+            let threshold = 1u32 << (self.edges[i].spec.accident as u32).saturating_sub(10).min(8);
+            if (self.attracted_out[w] as u32) < threshold {
+                continue;
+            }
+            self.attracted_out[w] = 0;
+            let eg = &self.edges[i];
+            let mut spec = eg.spec.clone();
+            spec.op = KernelOp::Or;
+            spec.replicate = spec.replicate.max(3);
+            spec.cap = spec.cap.max(16);
+            spec.gate = None;
+            spec.pause = None;
+            spec.repeat = false;
+            spec.dst_word = w;
+            spec.dst_len = 1;
+            let rng = StdRng::seed_from_u64((spec.salt as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15) ^ self.steps ^ 0x0A77);
+            let trial = RuntimeEdgeGroup {
+                src: RuntimeEdgeTarget { idx: eg.src.idx, read_back: eg.src.read_back, span: eg.src.span },
+                dst: self.output,
+                group: KernelGroup::from_classes(vec![KernelClass::with_kernels(vec![])]),
+                kind: EdgeKind::Kernels,
+                op: KernelOp::Or,
+                rotate: 0,
+                grow: true,
+                inhibit: eg.inhibit,
+                gate: None,
+                new_code: false,
+                wide: eg.wide,
+                window: eg.window,
+                dst_word: w,
+                repeat: false,
+                repeat_lag: 1,
+                spec,
+                rng,
+                can_grow: true,
+                into_act: false,
+                confirms: 0,
+                explorer: if w < half { 13 } else { 14 },
+                spawned: true,
+                silent: false,
+                scratch: BitVector::new(64, Some(0)),
+                share: 0, grip: None, detached: false, dying: Vec::new(),
+                teach_fired: Vec::new(),
+                teach_src: None,
+                targets: Vec::new(),
+                target_at: 0,
+                on_target: 0,
+                score: 0,
+                scores: Vec::new(),
+                out_word: Some((w, 0)),
             };
             self.edges[i].spawned = true;
             self.edges.push(trial);
@@ -1560,6 +1702,7 @@ impl RuntimeNetwork {
                     on_target: 0,
                     score: 0,
                     scores: Vec::new(),
+                    out_word: None,
                 }));
                 continue;
             }
@@ -1607,6 +1750,7 @@ impl RuntimeNetwork {
                 on_target: 0,
                 score: 0,
                 scores: Vec::new(),
+                out_word: None,
             }));
         }
         for (i, trial) in grown {
@@ -1621,7 +1765,7 @@ impl RuntimeNetwork {
     /// its own.
     pub fn notes(&self) -> Vec<(u32, u32, u8)> {
         // (`set_attract`: kinds 8 to 12, a trial grown from an unread port, eye to the self channel)
-        let mut out: Vec<(u32, u32, u8)> = self.edges.iter().filter(|e| (e.explorer < 3 || (8..=12).contains(&e.explorer)) && (e.confirms > 0 || e.explorer > 0)).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect();
+        let mut out: Vec<(u32, u32, u8)> = self.edges.iter().filter(|e| (e.explorer < 3 || (8..=14).contains(&e.explorer)) && (e.confirms > 0 || e.explorer > 0)).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect();
         // a shadow's targets, each with its best score (the one it is on included)
         for e in self.edges.iter().filter(|e| e.explorer == 3) {
             let mut sc = e.scores.clone();

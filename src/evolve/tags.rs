@@ -2062,6 +2062,22 @@ fn take_notes_with(g: &mut TagGenome, notes: &[super::Note], hints: bool) {
         }
         let Some(at) = g.tokens.iter().position(|t| matches!(t, Token::Pop(p) if p.id == id)) else { continue };
         let Token::Pop(parent) = &g.tokens[at] else { continue };
+        // (`set_attract_out`) a trial into an unwritten word of the act: kept as a population
+        // reading what the parent reads, writing the voice (13) or the hand (14)
+        if kind == 13 || kind == 14 {
+            let port = if kind == 13 { VOICE } else { HAND };
+            if g.pops().any(|p| p.explored && p.to_port && p.to == port && p.from == parent.from && p.from_port == parent.from_port) {
+                continue;
+            }
+            let q = Pop {
+                id: g.next_id, to: port, to_port: true, wire: false, op: KernelOp::Or, count: 0,
+                grow: true, cover: true, replicate: parent.replicate.max(3), gate: None, pause: None, repeat: false, mark: 128, explored: true,
+                ..parent.clone()
+            };
+            g.next_id += 1;
+            g.tokens.insert(at + 1, Token::Pop(q));
+            continue;
+        }
         // (`set_attract`) a trial from an unread input port into the population's destination:
         // kept as a population reading that port
         if (8..=12).contains(&kind) {
@@ -2102,12 +2118,16 @@ impl Evolvable for TagGenome {
     fn build(&self, w: &World, seed: u64) -> RuntimeNetwork {
         let g = self.graph();
         let body = w.body();
+        // (a typing lifetime) the keyboard's keys among what writes the act is born with
+        let keys: Vec<BitVector> = if w.typing_now() { (0..world::KEYS).map(|k| w.key_act(k)).collect() } else { Vec::new() };
         let primitives: Vec<BitVector> = (0..body.voice.len())
             .map(|i| w.act(Some(i), None))
             .chain((0..body.hand.len()).map(|i| w.act(None, Some(i))))
+            .chain(keys)
             .collect();
         let mut net = RuntimeNetwork::from_graph_held(&g, world::SENSE_BITS, world::ACT_BITS, seed, w.in_place, |e: &EdgeInfo| start_kernels(e, &primitives));
         net.count_reads = w.count_reads;
+        net.motor = primitives.iter().flat_map(|p| p.as_words().iter().enumerate().filter(|(_, x)| **x != 0).map(|(i, x)| (i, *x)).collect::<Vec<_>>()).collect();
         net.explore = w.explore;
         net.shadow = w.shadow;
         net.shadow_random = shadow_hints();
@@ -2868,6 +2888,44 @@ mod tests {
         let fed = |food: u64| live_lesson(&g, read, Physics::Varied, 1, 0, Lesson { ration: 4, food, ..Lesson::default() }).1;
         let (hungry, eating) = (fed(0), fed(4 * 256));
         assert!(eating > 2 * hungry, "eating {eating}, hungry {hungry}");
+    }
+
+    #[test]
+    fn an_unwritten_word_of_the_act_attracts_a_trial_that_types_and_is_kept() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        // a population from the eye into a channel, accident-prone (a threshold of 2^(12-10) = 4
+        // steps), in a typing lifetime with the muscle's response: the keyboard's words go
+        // unwritten, a trial grows into one, its kernels write keys, and the act shows them
+        crate::program::neurocomp::set_attract_out_here(Some(true));
+        let c = 0x3C;
+        let p = Pop { count: 2, cover: true, from_port: true, accident: 12, ..Pop::new(1, EYE, c) };
+        let g = TagGenome { tokens: vec![Token::Channel { tag: c, width: 0, hold: false }, Token::Pop(p)], next_id: 2 };
+        let mut w = World::new(3, 2);
+        w.type_len = 1;
+        w.type_keys = 4;
+        w.typing(60);
+        let mut net = g.build(&w, 3);
+        let before = net.edges.len();
+        let mut act = BitVector::new(world::ACT_BITS, Some(0));
+        let mut typed = 0;
+        while !w.done() {
+            let senses = w.step(&act);
+            typed += w.events.last().is_some_and(|e| e.key.is_some()) as usize;
+            net.set_output(&w.act_done());
+            net.tick(AdvanceMode::Clear, 0);
+            net.write_input(&senses, 0);
+            act = net.read_output().clone();
+        }
+        crate::program::neurocomp::set_attract_out_here(None);
+        let trials: Vec<(usize, u32)> = net.edges.iter().filter_map(|e| e.out_word.map(|o| (o.0, e.confirms))).collect();
+        let notes = net.notes();
+        eprintln!("edges {before} -> {}, output trials (word, confirmed) {trials:?}, keys typed {typed}, notes {:?}", net.edges.len(), notes.iter().filter(|n| n.2 == 13 || n.2 == 14).collect::<Vec<_>>());
+        assert!(!trials.is_empty() && typed > 0, "{trials:?} {typed}");
+        // a confirmed trial joins the genome as a population from the eye into the voice
+        let mut h = g.clone();
+        take_notes(&mut h, &notes);
+        let kept: Vec<&Pop> = h.pops().filter(|p| p.explored && p.to_port).collect();
+        assert!(notes.iter().any(|n| n.2 == 13 && n.1 >= KEEP) == !kept.is_empty(), "{kept:?}");
     }
 
     #[test]

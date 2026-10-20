@@ -43,6 +43,64 @@ pub const TOUCH: usize = 2;
 pub const AFFECT: usize = 3;
 pub const SENSE_CHANNELS: usize = 4;
 
+/// A port of the body: a channel of the senses the network reads, or of the act it writes, with
+/// its name and the genome's tag for it (`evolve::tags`: a population's `from` or `to` picks the
+/// nearest port). The body is the lists below; everything that reaches the body (the ports a
+/// genome names, the attractants' ports, the shadow predictors' targets, the codes what writes the
+/// act is born with, the muscle's response, the graphs' labels) reads them, so a new sense or
+/// output is one entry here.
+#[derive(Clone, Copy, Debug)]
+pub struct Port {
+    pub name: &'static str,
+    pub channel: usize,
+    pub tag: u8,
+}
+
+/// The senses' ports, in their order.
+pub const SENSE_PORTS: [Port; SENSE_CHANNELS] = [
+    Port { name: "eye", channel: EYE, tag: 0x07 },
+    Port { name: "ear", channel: EAR, tag: 0x38 },
+    Port { name: "touch", channel: TOUCH, tag: 0xC1 },
+    Port { name: "affect", channel: AFFECT, tag: 0xE0 },
+];
+
+/// The act's ports, in their order.
+pub const ACT_PORTS: [Port; ACT_CHANNELS] = [Port { name: "voice", channel: VOICE, tag: 0x1F }, Port { name: "hand", channel: HAND, tag: 0xF8 }];
+
+/// What moves the body: each writes codes into a port of the act that the world reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Organ {
+    /// tokens said (`Effector`, the voice)
+    Voice,
+    /// moves made (`Effector`, the hand)
+    Hand,
+    /// keys typed (`Keyboard`, in the voice's words 1 to 7; in use in typing lifetimes)
+    Keyboard,
+}
+
+/// The body's organs, in the order their codes are listed (`World::body_codes`).
+pub const ORGANS: [Organ; 3] = [Organ::Voice, Organ::Hand, Organ::Keyboard];
+
+/// The kinds a lifetime's finds are noted under (`RuntimeNetwork::notes`, `tags::take_notes`), from
+/// the ports: a trial grown from sense port `j` by the attractant (and the self channel after the
+/// senses), one grown into act port `j` by the output attractant, and a shadow predictor's targets
+/// (sense ports, the self channel, act ports). Kinds 16 on are shadows' and 32 on channels'.
+pub const fn attract_in_kind(j: usize) -> u8 {
+    8 + j as u8
+}
+pub const fn attract_out_kind(j: usize) -> u8 {
+    8 + SENSE_CHANNELS as u8 + 1 + j as u8
+}
+pub const fn shadow_sense_kind(j: usize) -> u8 {
+    17 + j as u8
+}
+pub const SHADOW_SELF_KIND: u8 = 17 + SENSE_CHANNELS as u8;
+pub const fn shadow_act_kind(j: usize) -> u8 {
+    17 + SENSE_CHANNELS as u8 + 2 + j as u8
+}
+// (a port too many would make the kinds collide: renumber them then)
+const _: () = assert!(attract_out_kind(ACT_CHANNELS) <= 16 && shadow_act_kind(ACT_CHANNELS) <= 32);
+
 /// Act channels, in order in the act vector.
 pub const VOICE: usize = 0;
 pub const HAND: usize = 1;
@@ -886,15 +944,60 @@ impl World {
         a
     }
 
-    /// What the body did on the last step, as an act (the muscle's response): the code of the
-    /// token said or the key typed, and of the move made.
+    /// What the body did on the last step, as an act (the muscle's response): each organ's code
+    /// for what it did.
     pub fn act_done(&self) -> BitVector {
-        let Some(e) = self.events.last() else { return BitVector::new(ACT_BITS, Some(0)) };
-        let mut a = self.act(e.said.filter(|_| e.key.is_none()), e.moved);
-        if let Some(k) = e.key {
-            put(&mut a, VOICE, &self.keys.code(k).clone());
+        let mut a = BitVector::new(ACT_BITS, Some(0));
+        let Some(e) = self.events.last() else { return a };
+        for o in ORGANS {
+            if let Some(i) = self.organ_done(o, e) {
+                for (d, s) in a.as_words_mut().iter_mut().zip(self.organ_code(o, i).as_words()) {
+                    *d |= s;
+                }
+            }
         }
         a
+    }
+
+    /// Whether an organ is in use in this lifetime (the keyboard in typing lifetimes).
+    pub fn organ_active(&self, o: Organ) -> bool {
+        match o {
+            Organ::Voice | Organ::Hand => true,
+            Organ::Keyboard => self.typing_now(),
+        }
+    }
+
+    /// How many codes an organ has.
+    pub fn organ_len(&self, o: Organ) -> usize {
+        match o {
+            Organ::Voice => self.voice.len(),
+            Organ::Hand => self.hand.len(),
+            Organ::Keyboard => KEYS,
+        }
+    }
+
+    /// An organ's code `i` as an act.
+    pub fn organ_code(&self, o: Organ, i: usize) -> BitVector {
+        match o {
+            Organ::Voice => self.act(Some(i), None),
+            Organ::Hand => self.act(None, Some(i)),
+            Organ::Keyboard => self.key_act(i),
+        }
+    }
+
+    /// What an organ did on a step, by the step's event.
+    pub fn organ_done(&self, o: Organ, e: &Event) -> Option<usize> {
+        match o {
+            Organ::Voice => e.said.filter(|_| e.key.is_none()),
+            Organ::Hand => e.moved,
+            Organ::Keyboard => e.key,
+        }
+    }
+
+    /// Every code of every organ in use, as acts, in the organs' order: what a population writing
+    /// the act can be born with.
+    pub fn body_codes(&self) -> Vec<BitVector> {
+        ORGANS.iter().filter(|&&o| self.organ_active(o)).flat_map(|&o| (0..self.organ_len(o)).map(move |i| self.organ_code(o, i))).collect()
     }
 
     /// (`duel`) this agent the evader in round `r`.

@@ -1701,6 +1701,32 @@ fn main() {
     // `learn_battery`, on n fresh worlds, then it stops)
     // (`ISL_DUEL_PROBE=n`, with `ISL_RESUME`: nothing evolves; what the duel island's genomes do,
     // see `duel_probe`)
+    // (`ISL_FINGERPRINT=n`, with `ISL_RESUME`: nothing evolves; each island's first `ISL_LEARN_TOP`
+    // genomes scored on every probe in every kind of lifetime on n fixed worlds, their rows, work,
+    // finds and wiring hashed: a refactor that keeps behaviour keeps every hash)
+    let fingerprint: u64 = env("ISL_FINGERPRINT", 0);
+    if fingerprint > 0 {
+        use std::hash::{Hash, Hasher};
+        let worlds: Vec<u64> = (70_000..70_000 + fingerprint).collect();
+        let all: Vec<usize> = (0..neurocomp::world::observe::NPROBES).collect();
+        let mut total = std::collections::hash_map::DefaultHasher::new();
+        for (i, isl) in islands.iter().enumerate() {
+            let st = &isl.stages[stages[i]];
+            for (k, g) in start[i].iter().take(env("ISL_LEARN_TOP", 1usize).max(1)).enumerate() {
+                let probed = probe_all_in(vec![g.clone()], trials, Physics::Varied, &worlds, gap, &all, st.lesson.clone());
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for p in &probed {
+                    format!("{:?} {:?} {:?}", p.probes, p.works, p.notes).hash(&mut h);
+                }
+                format!("{:?}", g.wiring()).hash(&mut h);
+                let v = h.finish();
+                v.hash(&mut total);
+                println!("fingerprint {} #{k}: {v:016x}", isl.name);
+            }
+        }
+        println!("fingerprint all: {:016x}", total.finish());
+        return;
+    }
     let dprobe: u64 = env("ISL_DUEL_PROBE", 0);
     if dprobe > 0 {
         duel_probe(&islands, &start, dprobe, env("ISL_LEARN_TOP", 1usize), &stages, trials);

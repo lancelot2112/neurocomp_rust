@@ -292,7 +292,7 @@ pub struct RuntimeNetwork {
     pub explore: bool,
     /// (`set_attract`) each input port's attractant: steps its lines changed while unread (eye,
     /// ear, touch, affect, the self channel)
-    pub attracted: [u8; 5],
+    pub attracted: [u8; crate::world::SENSE_CHANNELS + 1],
     /// (`set_attract_out`) each output word's attractant: steps nothing wrote into it
     pub attracted_out: Vec<u8>,
     /// the body's codes in the act (a word and its lines), for what writes the act to be born
@@ -561,7 +561,7 @@ impl RuntimeNetwork {
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
         let self_node = g.node_indices().find(|n| g.node_weight(*n).unwrap().name.as_deref() == Some("self")).map(|n| n.index());
         let live = vec![false; g.node_count()];
-        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], attracted_out: Vec::new(), motor: Vec::new(), shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: 0 }
+        Self { nodes, edges, node_rngs, output, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; crate::world::SENSE_CHANNELS + 1], attracted_out: Vec::new(), motor: Vec::new(), shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: 0 }
     }
 
     /// Build from a graph with the input and output nodes resized (to a world's senses and
@@ -637,7 +637,7 @@ impl RuntimeNetwork {
         let node_rngs = (0..g.node_count()).map(|i| StdRng::seed_from_u64(seed ^ (i as u64 + 1).wrapping_mul(0xD1B5_4A32_D192_ED03))).collect();
         let hold = g.node_indices().map(|n| g.node_weight(n).unwrap().hold).collect();
         let motion = g.node_indices().map(|n| { let w = g.node_weight(n).unwrap(); (w.conveyor, w.wave) }).collect();
-        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; 5], attracted_out: Vec::new(), motor: Vec::new(), shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: if clock_drawn() { (seed ^ 0xC10C_C10C_C10C_C10C).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) } else { 0 } }
+        Self { nodes, edges, node_rngs, output: last, noise, hold, motion, live, count_reads: false, explore: false, attracted: [0; crate::world::SENSE_CHANNELS + 1], attracted_out: Vec::new(), motor: Vec::new(), shadow: false, shadow_random: false, work: 0, self_node, last_work: 0, last_ran: 0, steps: 0, clock_from: if clock_drawn() { (seed ^ 0xC10C_C10C_C10C_C10C).wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(29) ^ seed.wrapping_mul(0xBF58_476D_1CE4_E5B9) } else { 0 } }
     }
 
     /// Advance histories and process all edges once.
@@ -1458,13 +1458,8 @@ impl RuntimeNetwork {
     /// grows a trial connection from the port into its destination.
     fn grow_attracted(&mut self) {
         let cw = crate::world::CH_BITS / 64;
-        let ports: [(usize, Option<(usize, usize)>); 5] = [
-            (0, Some((crate::world::EYE * cw, cw))),
-            (0, Some((crate::world::EAR * cw, cw))),
-            (0, Some((crate::world::TOUCH * cw, cw))),
-            (0, Some((crate::world::AFFECT * cw, cw))),
-            (self.self_node.unwrap_or(usize::MAX), None),
-        ];
+        // the senses' ports, then the self channel
+        let ports: Vec<(usize, Option<(usize, usize)>)> = crate::world::SENSE_PORTS.iter().map(|p| (0, Some((p.channel * cw, cw)))).chain([(self.self_node.unwrap_or(usize::MAX), None)]).collect();
         let internal = |i: usize, s: &Self| i != 0 && i != s.output && Some(i) != s.self_node;
         for (j, &(node, window)) in ports.iter().enumerate() {
             if node >= self.nodes.len() || self.live[node] {
@@ -1528,7 +1523,7 @@ impl RuntimeNetwork {
                 can_grow: true,
                 into_act: false,
                 confirms: 0,
-                explorer: 8 + j as u8,
+                explorer: crate::world::attract_in_kind(j),
                 spawned: true,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
@@ -1555,7 +1550,7 @@ impl RuntimeNetwork {
         if self.attracted_out.len() != out.len() {
             self.attracted_out = vec![0; out.len()];
         }
-        let half = out.len() / 2;
+        let cw = crate::world::CH_BITS / 64;
         for w in 0..out.len() {
             if !self.motor.iter().any(|m| m.0 == w) {
                 continue;
@@ -1607,7 +1602,7 @@ impl RuntimeNetwork {
                 can_grow: true,
                 into_act: false,
                 confirms: 0,
-                explorer: if w < half { 13 } else { 14 },
+                explorer: crate::world::attract_out_kind(crate::world::ACT_PORTS.iter().position(|p| p.channel == w / cw).unwrap_or(crate::world::ACT_CHANNELS - 1)),
                 spawned: true,
                 silent: false,
                 scratch: BitVector::new(64, Some(0)),
@@ -1765,7 +1760,8 @@ impl RuntimeNetwork {
     /// its own.
     pub fn notes(&self) -> Vec<(u32, u32, u8)> {
         // (`set_attract`: kinds 8 to 12, a trial grown from an unread port, eye to the self channel)
-        let mut out: Vec<(u32, u32, u8)> = self.edges.iter().filter(|e| (e.explorer < 3 || (8..=14).contains(&e.explorer)) && (e.confirms > 0 || e.explorer > 0)).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect();
+        let attracted = crate::world::attract_in_kind(0)..crate::world::attract_out_kind(crate::world::ACT_CHANNELS);
+        let mut out: Vec<(u32, u32, u8)> = self.edges.iter().filter(|e| (e.explorer < 3 || attracted.contains(&e.explorer)) && (e.confirms > 0 || e.explorer > 0)).map(|e| (e.spec.salt, e.confirms, e.explorer)).collect();
         // a shadow's targets, each with its best score (the one it is on included)
         for e in self.edges.iter().filter(|e| e.explorer == 3) {
             let mut sc = e.scores.clone();
@@ -1788,14 +1784,14 @@ impl RuntimeNetwork {
     pub fn targets(&self, src: usize, window: Option<(usize, usize)>, salt: u32) -> Vec<(usize, Option<(usize, usize)>, u8)> {
         let cw = crate::world::CH_BITS / 64;
         let mut t: Vec<(usize, Option<(usize, usize)>, u8)> = Vec::new();
-        for (j, s) in [crate::world::EYE, crate::world::EAR, crate::world::TOUCH, crate::world::AFFECT].into_iter().enumerate() {
-            t.push((0, Some((s * cw, cw)), 17 + j as u8));
+        for (j, p) in crate::world::SENSE_PORTS.iter().enumerate() {
+            t.push((0, Some((p.channel * cw, cw)), crate::world::shadow_sense_kind(j)));
         }
         if let Some(sn) = self.self_node {
-            t.push((sn, None, 21));
+            t.push((sn, None, crate::world::SHADOW_SELF_KIND));
         }
-        for (j, s) in [crate::world::VOICE, crate::world::HAND].into_iter().enumerate() {
-            t.push((self.output, Some((s * cw, cw)), 23 + j as u8));
+        for (j, p) in crate::world::ACT_PORTS.iter().enumerate() {
+            t.push((self.output, Some((p.channel * cw, cw)), crate::world::shadow_act_kind(j)));
         }
         for node in 1..self.nodes.len() {
             if node != self.output && Some(node) != self.self_node && node - 1 < 200 {

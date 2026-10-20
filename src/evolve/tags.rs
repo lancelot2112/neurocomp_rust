@@ -57,16 +57,34 @@ pub const SELF_BITS: usize = 256;
 /// Input ports: where a population reading from outside (`from_port`) can read, each with its own
 /// tag in a tag space of its own (a population's `from` tag picks the nearest): all the senses,
 /// one sense channel, or the self channel.
-pub const EYE: u8 = 0x07;
-pub const EAR: u8 = 0x38;
-pub const TOUCH: u8 = 0xC1;
-pub const AFFECT: u8 = 0xE0;
-const INPUTS: [(u8, &str); 6] = [(SENSES, "S"), (EYE, "eye"), (EAR, "ear"), (TOUCH, "touch"), (AFFECT, "affect"), (SELF, "M")];
-/// Output ports: where a population writing outward (`to_port`) can write: the whole act, the
-/// voice or the hand.
-pub const VOICE: u8 = 0x1F;
-pub const HAND: u8 = 0xF8;
-const OUTPUTS: [(u8, &str); 3] = [(ACT, "A"), (VOICE, "voice"), (HAND, "hand")];
+/// (The tags of the body's ports, `world::SENSE_PORTS` and `world::ACT_PORTS`.)
+pub const EYE: u8 = world::SENSE_PORTS[0].tag;
+pub const EAR: u8 = world::SENSE_PORTS[1].tag;
+pub const TOUCH: u8 = world::SENSE_PORTS[2].tag;
+pub const AFFECT: u8 = world::SENSE_PORTS[3].tag;
+const INPUTS: [(u8, &str); world::SENSE_CHANNELS + 2] = {
+    let mut v = [(SENSES, "S"); world::SENSE_CHANNELS + 2];
+    let mut j = 0;
+    while j < world::SENSE_CHANNELS {
+        v[j + 1] = (world::SENSE_PORTS[j].tag, world::SENSE_PORTS[j].name);
+        j += 1;
+    }
+    v[world::SENSE_CHANNELS + 1] = (SELF, "M");
+    v
+};
+/// Output ports: where a population writing outward (`to_port`) can write: the whole act, or one
+/// of the act's ports (the voice, the hand).
+pub const VOICE: u8 = world::ACT_PORTS[0].tag;
+pub const HAND: u8 = world::ACT_PORTS[1].tag;
+const OUTPUTS: [(u8, &str); world::ACT_CHANNELS + 1] = {
+    let mut v = [(ACT, "A"); world::ACT_CHANNELS + 1];
+    let mut j = 0;
+    while j < world::ACT_CHANNELS {
+        v[j + 1] = (world::ACT_PORTS[j].tag, world::ACT_PORTS[j].name);
+        j += 1;
+    }
+    v
+};
 
 /// Where an endpoint lands: a node, its first word and how many words (a port may be part of a
 /// node, as the eye is part of the senses).
@@ -771,11 +789,10 @@ impl Channels {
         let k = (0..INPUTS.len()).min_by_key(|&i| ((INPUTS[i].0 ^ tag).count_ones(), i)).unwrap();
         match k {
             0 => self.whole(0),
-            5 => self.whole(self.self_index()),
+            k if k == INPUTS.len() - 1 => self.whole(self.self_index()),
             c => {
                 let ch = world::CH_BITS / 64;
-                let sense = [world::EYE, world::EAR, world::TOUCH, world::AFFECT][c - 1];
-                Place { node: 0, off: sense * ch, len: ch, whole: false }
+                Place { node: 0, off: world::SENSE_PORTS[c - 1].channel * ch, len: ch, whole: false }
             }
         }
     }
@@ -787,8 +804,7 @@ impl Channels {
         let ch = world::CH_BITS / 64;
         match k {
             0 => self.whole(a),
-            1 => Place { node: a, off: world::VOICE * ch, len: ch, whole: false },
-            _ => Place { node: a, off: world::HAND * ch, len: ch, whole: false },
+            c => Place { node: a, off: world::ACT_PORTS[c - 1].channel * ch, len: ch, whole: false },
         }
     }
 
@@ -826,12 +842,14 @@ impl Channels {
         let ch = world::CH_BITS / 64;
         if at.node == 0 {
             if at.whole { return (SENSES, 1) }
-            return ([EYE, EAR, TOUCH, AFFECT][(at.off / ch).min(3)], 1);
+            let p = world::SENSE_PORTS.iter().find(|p| p.channel == at.off / ch).unwrap_or(&world::SENSE_PORTS[world::SENSE_CHANNELS - 1]);
+            return (p.tag, 1);
         }
         if at.node == self.self_index() { return (SELF, 1) }
         if at.node == self.act_index() {
             if at.whole { return (ACT, 2) }
-            return (if at.off == world::VOICE * ch { VOICE } else { HAND }, 2);
+            let p = world::ACT_PORTS.iter().find(|p| p.channel * ch == at.off).unwrap_or(&world::ACT_PORTS[world::ACT_CHANNELS - 1]);
+            return (p.tag, 2);
         }
         (self.list[at.node].0, 0)
     }
@@ -841,12 +859,13 @@ impl Channels {
         if at.node == 0 {
             if at.whole { return "S".into() }
             let ch = world::CH_BITS / 64;
-            return ["eye", "ear", "touch", "affect"][at.off / ch].into();
+            return world::SENSE_PORTS.iter().find(|p| p.channel == at.off / ch).map_or("S", |p| p.name).into();
         }
         if at.node == self.self_index() { return "M".into() }
         if at.node == self.act_index() {
             if at.whole { return "A".into() }
-            return if at.off == world::VOICE * world::CH_BITS / 64 { "voice".into() } else { "hand".into() };
+            let ch = world::CH_BITS / 64;
+            return world::ACT_PORTS.iter().find(|p| p.channel * ch == at.off).unwrap_or(&world::ACT_PORTS[world::ACT_CHANNELS - 1]).name.into();
         }
         format!("C{}", at.node)
     }
@@ -1955,14 +1974,14 @@ pub fn start_kernels(e: &EdgeInfo, primitives: &[BitVector]) -> KernelGroup {
 /// port), and its width in words (as a channel width: 2^width words).
 fn target_of(g: &TagGenome, kind: u8) -> Option<(u8, u8, u8)> {
     let cw = (world::CH_BITS / 64).trailing_zeros() as u8;
+    if let Some(j) = (0..world::SENSE_CHANNELS).find(|&j| world::shadow_sense_kind(j) == kind) {
+        return Some((world::SENSE_PORTS[j].tag, 1, cw));
+    }
+    if let Some(j) = (0..world::ACT_CHANNELS).find(|&j| world::shadow_act_kind(j) == kind) {
+        return Some((world::ACT_PORTS[j].tag, 2, cw));
+    }
     match kind {
-        17 => Some((EYE, 1, cw)),
-        18 => Some((EAR, 1, cw)),
-        19 => Some((TOUCH, 1, cw)),
-        20 => Some((AFFECT, 1, cw)),
-        21 => Some((SELF, 1, (SELF_BITS / 64).trailing_zeros() as u8)),
-        23 => Some((VOICE, 2, cw)),
-        24 => Some((HAND, 2, cw)),
+        k if k == world::SHADOW_SELF_KIND => Some((SELF, 1, (SELF_BITS / 64).trailing_zeros() as u8)),
         k if k >= 32 => {
             let ch = Channels::of(&g.tokens);
             let i = (k - 32) as usize + 1;
@@ -2064,8 +2083,8 @@ fn take_notes_with(g: &mut TagGenome, notes: &[super::Note], hints: bool) {
         let Token::Pop(parent) = &g.tokens[at] else { continue };
         // (`set_attract_out`) a trial into an unwritten word of the act: kept as a population
         // reading what the parent reads, writing the voice (13) or the hand (14)
-        if kind == 13 || kind == 14 {
-            let port = if kind == 13 { VOICE } else { HAND };
+        if let Some(j) = (0..world::ACT_CHANNELS).find(|&j| world::attract_out_kind(j) == kind) {
+            let port = world::ACT_PORTS[j].tag;
             if g.pops().any(|p| p.explored && p.to_port && p.to == port && p.from == parent.from && p.from_port == parent.from_port) {
                 continue;
             }
@@ -2080,11 +2099,12 @@ fn take_notes_with(g: &mut TagGenome, notes: &[super::Note], hints: bool) {
         }
         // (`set_attract`) a trial from an unread input port into the population's destination:
         // kept as a population reading that port
-        if (8..=12).contains(&kind) {
+        if (world::attract_in_kind(0)..=world::attract_in_kind(world::SENSE_CHANNELS)).contains(&kind) {
             if parent.to_port {
                 continue;
             }
-            let port = [EYE, EAR, TOUCH, AFFECT, SELF][(kind - 8) as usize];
+            let j = (kind - world::attract_in_kind(0)) as usize;
+            let port = if j < world::SENSE_CHANNELS { world::SENSE_PORTS[j].tag } else { SELF };
             if g.pops().any(|p| p.explored && p.from_port && !p.from_output && p.from == port && p.to == parent.to) {
                 continue;
             }
@@ -2117,14 +2137,8 @@ fn take_notes_with(g: &mut TagGenome, notes: &[super::Note], hints: bool) {
 impl Evolvable for TagGenome {
     fn build(&self, w: &World, seed: u64) -> RuntimeNetwork {
         let g = self.graph();
-        let body = w.body();
-        // (a typing lifetime) the keyboard's keys among what writes the act is born with
-        let keys: Vec<BitVector> = if w.typing_now() { (0..world::KEYS).map(|k| w.key_act(k)).collect() } else { Vec::new() };
-        let primitives: Vec<BitVector> = (0..body.voice.len())
-            .map(|i| w.act(Some(i), None))
-            .chain((0..body.hand.len()).map(|i| w.act(None, Some(i))))
-            .chain(keys)
-            .collect();
+        // every code of the body's organs in use (the keyboard's in typing lifetimes)
+        let primitives: Vec<BitVector> = w.body_codes();
         let mut net = RuntimeNetwork::from_graph_held(&g, world::SENSE_BITS, world::ACT_BITS, seed, w.in_place, |e: &EdgeInfo| start_kernels(e, &primitives));
         net.count_reads = w.count_reads;
         net.motor = primitives.iter().flat_map(|p| p.as_words().iter().enumerate().filter(|(_, x)| **x != 0).map(|(i, x)| (i, *x)).collect::<Vec<_>>()).collect();

@@ -1433,3 +1433,19 @@ into a channel, in a typing lifetime: the trial grows into the keyboard's first 
 keys, is confirmed 185 times, and joins the genome as a population from the eye into the voice.
 Run 44 restarted with both and typing's reaching credit (its first start's log in
 `runs/checks/typing44/`).
+
+## The body listed once (`world::SENSE_PORTS`, `ACT_PORTS`, `ORGANS`)
+
+At the user's suggestion, after the keyboard had to be added by hand in several places (and was
+missed in one: the codes what writes the act is born with): the body's ports (each sense channel
+and act channel, its name and its genome tag) and its organs (voice, hand, keyboard: each one's
+codes, when it is in use, and what it did on a step) are listed once in `world`; the genome's port
+tags and names (`tags::INPUTS`, `OUTPUTS`, built from them at compile time), the attractants' ports
+and kinds, the shadow predictors' targets, the kept trials' ports (`take_notes`), the codes
+populations writing the act are born with (`World::body_codes`) and the muscle's response
+(`World::act_done`) read them. The kinds of a lifetime's finds come from the lists
+(`attract_in_kind`, `attract_out_kind`, `shadow_sense_kind`, ...), with a compile-time check that
+a port too many does not collide. Behaviour unchanged: a fingerprint (`ISL_FINGERPRINT=3`, new:
+every probe in every kind of lifetime, work, finds and wiring hashed for each island's first two
+genomes) is identical before and after under run 44's settings on its checkpoint and run 33's on
+its (`runs/checks/body-registry/`).

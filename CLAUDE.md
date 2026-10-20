@@ -96,6 +96,10 @@ what it can build. We do not add special-purpose modules to get a task done.
 
 - Programs are tested in `src/world`. Only bit vectors cross: an act vector out, a senses
   vector in, each with fixed word-aligned channels.
+- **The body is listed once** (`src/world`: `SENSE_PORTS`, `ACT_PORTS`, `ORGANS`): the ports a
+  genome names, the attractants' ports, the shadows' targets, the codes what writes the act is born
+  with and the muscle's response all read these lists. A new sense or output is an entry there
+  (and its decoding in the world), not a change in each of those places.
 - The world gives no rewards. Fitness comes from `world::observe`, which reads the event log.
   Never feed the observer's scores, the scene or the phase into the program.
 - Keep the world honest: an act that does nothing is sensed as nothing.

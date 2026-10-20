@@ -1282,3 +1282,12 @@ nothing, a network calmed by learning but no better than idle gains nothing, and
 makes better than idle and than its frozen self does. Resumed from run 41's checkpoint at 141:
 shapes' best gains 274 held out, switching's 18, the generalist's population 29; generations took
 about 160 seconds beside run 41 (about doubling). Run 42 is run 41 with it.
+
+## Run 41's end (stopped at 172 for run 42)
+
+9 rung moves in 172 generations: reading to pairs8 (3, 108), selection cued to held (11 to 31),
+recall to flag2 (86), switching to tell and feel-300 (89, 96). The duel island stayed on duel64:
+its yardstick moved about 0 (13 at 172) and its best's held-out yardstick from 78 to 104 from
+generation 130 on, within what fixed policies score; its genomes learn nothing in the battery.
+Generations took 60 to 110 seconds with the duel. Run 42 (started 11:27 PM ET) adds the learning
+gain as a selection case.

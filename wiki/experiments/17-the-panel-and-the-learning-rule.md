@@ -1370,3 +1370,10 @@ a typist reading the eye's bytes 1024 and 1024 on word3; random keys 0 and -101 
 nothing and flooding the voice 0; on key4 a wrong key scores what nothing does and a right one 1024.
 Ladder (`TYPING_LADDER`): key4 (one letter of four), key26, enter, word2, word3, word5, word8. Run 45
 queued: run 44 with it.
+
+Typing's partial credit revised at the user's call (doing nothing should be worse than typing, to
+a point; too much and too little both cost): `type~` is three quarters letters (right +1, wrong
+-1/(letters - 1), over the word's length) and a quarter length (+1 at the word's length, 2 less for
+each word's length too many or too few, at least -1); a timed-out trial halves a score above 0 and
+keeps one below. For "cat": "xyz" 226, "xyzx" and "x" between that and nothing, "xyzxyz" -286,
+nothing -256; on one letter a wrong key 0 and nothing -256.

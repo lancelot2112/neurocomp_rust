@@ -859,12 +859,13 @@ pub fn typing(events: &[Event]) -> i32 {
     (posts.iter().filter(|p| p.2 && p.1 == p.0).count() * 1024 / posts.len()) as i32
 }
 
-/// Typing with partial credit: each trial, a quarter for typing anything, three quarters for the
-/// letters: right in place +1, a wrong letter -1/(letters - 1) (so keys at random net about 0), a
-/// place missing or one too many -1, over the longer of the word and the line; a trial that timed
-/// out counts half. On one letter, a wrong key scores what nothing scores (0) and the right one
-/// 1024, so typing at all is never worse than silence; letters at random from the word's letters
-/// average 256, the word 1024; a line too long costs its extra letters.
+/// Typing with partial credit: each trial, three quarters for the letters and a quarter for the
+/// line's length. Letters: right in place +1, a wrong letter -1/(letters - 1) (so letters at random
+/// net about 0), over the word's length. Length: +1 when the line is as long as the word, 2 less
+/// for each word's length of letters too many or too few, at least -1. A trial that timed out halves
+/// a score above 0 and keeps one below. Typing nothing scores -256, a wrong letter in a one-letter
+/// word 0, letters at random of the right length about 256, the word 1024; typing too much or too
+/// little costs in proportion.
 pub fn typing_graded(events: &[Event]) -> i32 {
     let posts: Vec<&(Vec<u8>, Vec<u8>, bool, u8)> = events.iter().filter_map(|e| e.posted.as_ref()).collect();
     if posts.is_empty() {
@@ -873,18 +874,15 @@ pub fn typing_graded(events: &[Event]) -> i32 {
     let sum: i64 = posts
         .iter()
         .map(|(word, line, by, letters)| {
-            if line.is_empty() {
-                return 0;
-            }
-            let n = word.len().max(line.len()) as i64;
+            let w = word.len().max(1) as i64;
             let a = (*letters as i64).max(2);
-            let both = word.len().min(line.len());
             let right = word.iter().zip(line).filter(|(x, y)| x == y).count() as i64;
-            let wrong = both as i64 - right;
-            let missing = n - both as i64;
-            let letters_part = (right * (a - 1) - wrong - missing * (a - 1)) * 1024 / (n * (a - 1));
-            let v = (3 * letters_part + 1024) / 4;
-            if *by { v } else { v / 2 }
+            let wrong = word.len().min(line.len()) as i64 - right;
+            let letters_part = (right * (a - 1) - wrong) * 1024 / (w * (a - 1));
+            let off = (line.len() as i64 - w).abs();
+            let length_part = (1024 - 2 * off * 1024 / w).max(-1024);
+            let v = (3 * letters_part + length_part) / 4;
+            if *by || v < 0 { v } else { v / 2 }
         })
         .sum();
     (sum / posts.len() as i64) as i32
@@ -2192,6 +2190,15 @@ mod tests {
         assert!(evader_rounds == 64 && r_vs_c > 800 && c_vs_r < -800 && k_vs_k == 0 && r_vs_k > 400 && seen > 100 && strokes > 100, "{r_vs_c} {c_vs_r} {k_vs_k} {r_vs_k} {seen}");
     }
 
+    /// A blank event (for tests that build an event log by hand).
+    fn w_event() -> Event {
+        let mut w = World::new(1, 2);
+        w.step(&w.act(None, None));
+        let mut e = w.events[0].clone();
+        e.posted = None;
+        e
+    }
+
     #[test]
     fn typing_pays_the_word_typed_and_reads_keys_robustly() {
         // a typist reading the eye's bytes types the word then Enter; one at random; one that does
@@ -2227,9 +2234,16 @@ mod tests {
         // key4 (one letter of four, posted when typed): any key at all pays a quarter
         let (typist4, random4, idle4) = (mean(0, 1, 4, false), mean(1, 1, 4, false), mean(2, 1, 4, false));
         eprintln!("(type, type~) on word3: typist {typist:?}, random keys {random:?}, nothing {idle:?}, flooding the voice {flood:?}; on key4: typist {typist4:?}, random {random4:?}, nothing {idle4:?}");
-        assert!(typist.0 > 900 && typist.1 > 900 && random.0 < 50 && random.1 < 0 && idle == (0, 0) && flood == (0, 0), "{typist:?} {random:?} {idle:?} {flood:?}");
-        // (a wrong key there scores what nothing does, a right one 1024: typing at all is never worse)
-        assert!(typist4.1 > 900 && random4.1 > idle4.1 && random4.1 < 200 && idle4 == (0, 0), "{typist4:?} {random4:?} {idle4:?}");
+        assert!(typist.0 > 900 && typist.1 > 900 && random.0 < 50 && random.1 < 0 && idle == (0, -256) && flood == (0, -256), "{typist:?} {random:?} {idle:?} {flood:?}");
+        // (doing nothing -256, a wrong key 0, the right one 1024: typing is better than not)
+        assert!(typist4.1 > 900 && random4.1 > 0 && random4.1 < 200 && idle4 == (0, -256), "{typist4:?} {random4:?} {idle4:?}");
+        // too long and too short both cost: a line of the right length of wrong letters beats one
+        // twice as long or empty
+        let ev = |line: &[u8]| vec![Event { posted: Some((b"cat".to_vec(), line.to_vec(), true, 26)), ..w_event() }];
+        let (right_len, over1, long, short, none) = (typing_graded(&ev(b"xyz")), typing_graded(&ev(b"xyzx")), typing_graded(&ev(b"xyzxyz")), typing_graded(&ev(b"x")), typing_graded(&ev(b"")));
+        eprintln!("type~ for cat: xyz {right_len}, xyzx {over1}, xyzxyz {long}, x {short}, nothing {none}");
+        // to a point: a letter too many or too few beats nothing; twice the word is as bad as nothing
+        assert!(right_len > over1 && over1 > none && right_len > short && short > none && (long - none).abs() < 64, "{right_len} {over1} {long} {short} {none}");
         // each key read back from its own code, with 3 of its 12 lines missing and 3 stray lines
         let w = World::new(1, 2);
         let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(5);

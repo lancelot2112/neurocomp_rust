@@ -1389,3 +1389,12 @@ below doing nothing) or hurts (the maze's turn -70 against 8). The learning lesi
 finds no population whose learning carries it: freezing any one of nine populations' learning raises
 feel-maze (to 247 to 419, a self-loop on the self channel, #301, most), so what helps is learning
 spread over the network and several populations' learning works against it.
+
+## Run 43's end (stopped at 223 for run 44)
+
+10 rung moves, all by 113: reading to pairs8 (5, 113), selection cued to held (26 to 75), switching
+to tell and recall to flag2 (32, 33; run 42: 66, 70), shapes to blur1 (72), the maze to feel (86).
+With development not counted, best genomes' gains held at 400 to 500 on switching and the
+generalist and 190 to 350 on reading; the maze's rose to 426 with its feel score and fell back. No
+rung after 113. Run 44 (started 4:11 PM ET) is run 43 with the muscle's response and the typing
+island together (the run that would have had the muscle's response alone was skipped).

@@ -1,0 +1,16 @@
+learning lesion of switching's best (57 populations) on 12 fresh worlds: each rung's score learning, frozen, and with each population's learning alone frozen; a population's share is what its learning buys over what all learning buys
+switching respond (respond): learning 1015, frozen -512, all learning buys 1527
+    #113   C1->C1 or                          its learning frozen    545   buys    470 (  31% of all)
+switching tell (tell): learning 0, frozen 0, all learning buys 0
+    #113   C1->C1 or                          its learning frozen    -72   buys     72 (   0% of all)
+switching discrim (discriminate): learning 2, frozen -512, all learning buys 514
+    #113   C1->C1 or                          its learning frozen   -120   buys    122 (  24% of all)
+    #298   M->C1 xor                          its learning frozen    -54   buys     56 (  11% of all)
+    #296   M->C1 xor                          its learning frozen    -54   buys     56 (  11% of all)
+switching winstay (win-stay): learning 0, frozen 0, all learning buys 0
+    #298   M->C1 xor                          its learning frozen    -14   buys     14 (   0% of all)
+    #296   M->C1 xor                          its learning frozen    -14   buys     14 (   0% of all)
+switching swap1 (reverse): learning -2, frozen -512, all learning buys 510
+    #113   C1->C1 or                          its learning frozen   -201   buys    200 (  39% of all)
+    #298   M->C1 xor                          its learning frozen    -74   buys     72 (  14% of all)
+    #296   M->C1 xor                          its learning frozen    -74   buys     72 (  14% of all)

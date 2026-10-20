@@ -1,0 +1,71 @@
+learning battery on 12 fresh worlds, 200 trials a lifetime: full (frozen), slope late-early (se), gap on-off (se)
+switching respond (respond):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0      1015 ( -512)   slope     41 (   4)   gap   1527 (   0)
+  switching#1      1015 ( -512)   slope     41 (   4)   gap   1527 (   0)
+  switching#2      1000 ( -512)   slope     45 (   5)   gap   1512 (  15)
+switching tell (tell):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  switching#0         0 (    0)   slope     21 (   9)   gap      0 (   0)
+  switching#1         0 (    0)   slope     21 (   9)   gap      0 (   0)
+  switching#2        -2 (    0)   slope     28 (  10)   gap     -2 (   2)
+reading babble (babble):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  switching#0      1024 (    0)   slope     85 (  58)   gap   1024 (   0)
+  switching#1      1024 (    0)   slope     85 (  58)   gap   1024 (   0)
+  switching#2       939 (    0)   slope      0 (   0)   gap    939 (  58)
+selection cued (select):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0       225 ( -339)   slope   -348 (  53)   gap    564 (  70)
+  switching#1       275 ( -339)   slope   -194 (  44)   gap    614 (  71)
+  switching#2       241 ( -165)   slope   -318 (  50)   gap    406 ( 103)
+switching discrim (discriminate):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0         2 ( -512)   slope     -2 (  17)   gap    514 (   4)
+  switching#1         2 ( -512)   slope     -2 (  17)   gap    514 (   4)
+  switching#2         2 ( -512)   slope     -2 (  17)   gap    514 (   4)
+switching winstay (win-stay):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  switching#0         0 (    0)   slope     -7 (   5)   gap      0 (   0)
+  switching#1         0 (    0)   slope     -7 (   5)   gap      0 (   0)
+  switching#2         0 (    0)   slope     -7 (   5)   gap      0 (   0)
+switching swap1 (reverse):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0        -2 ( -512)   slope    140 (  85)   gap    510 (   1)
+  switching#1        -2 ( -512)   slope    140 (  85)   gap    510 (   1)
+  switching#2        -2 ( -512)   slope    140 (  85)   gap    510 (   1)
+recall flag2 (flag):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0      -783 ( -479)   slope    -15 (   5)   gap   -304 (  87)
+  switching#1      -781 ( -479)   slope    -10 (   4)   gap   -302 (  87)
+  switching#2      -783 ( -471)   slope    -15 (   5)   gap   -312 (  30)
+reading pairs8 (copy):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  switching#0       -24 (   -8)   slope     63 (  47)   gap    -16 (  14)
+  switching#1       -62 (   -8)   slope    144 (  31)   gap    -54 (  12)
+  switching#2       -40 (   -8)   slope     79 (  28)   gap    -33 (   6)
+maze turn (maze):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0      -161 ( -503)   slope   -132 (  50)   gap    342 (  32)
+  switching#1       -72 ( -503)   slope    -71 (  72)   gap    431 (  15)
+  switching#2      -171 (   39)   slope     90 (  51)   gap   -210 (  51)
+maze symbol (maze):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0      -172 ( -503)   slope   -161 (  40)   gap    331 (  30)
+  switching#1       -84 ( -503)   slope   -108 (  66)   gap    419 (  21)
+  switching#2      -155 (   39)   slope    121 (  47)   gap   -194 (  48)
+screen pick (screen):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0      -867 ( -718)   slope     38 (   4)   gap   -149 (  60)
+  switching#1      -868 ( -718)   slope     38 (   4)   gap   -149 (  60)
+  switching#2      -867 ( -718)   slope     37 (   4)   gap   -149 (  66)
+shapes paying (discriminate):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  switching#0        -3 ( -512)   slope     43 (  21)   gap    509 (   4)
+  switching#1        -3 ( -512)   slope     43 (  21)   gap    509 (   4)
+  switching#2       -36 ( -512)   slope    -29 (  56)   gap    476 (  21)
+duel duel64 (duel-bench):
+  nothing           -99 (  -99)   slope      1 (   1)   gap      0 (   0)
+  switching#0      -126 (  -99)   slope    -13 (  14)   gap    -27 (  25)
+  switching#1      -129 (  -99)   slope    -29 (  18)   gap    -30 (  25)
+  switching#2      -124 (  -99)   slope     -7 (  10)   gap    -25 (  25)

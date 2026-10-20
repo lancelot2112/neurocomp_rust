@@ -340,6 +340,7 @@
 //! task whose frozen twin does exactly what doing nothing does gains nothing (development: learning
 //! that only grew a network unable to act frozen).
 //! `ISL_LEARN_TASKS=<rung>,<rung>` (with `ISL_LEARN_BATTERY`): only those of the battery's rungs.
+//! `ISL_LEARN_WHO=<island>` (with `ISL_LEARN_BATTERY`): only that island's genomes beside doing nothing.
 //! `ISL_LEARN_LESION=<island>` (with `ISL_LEARN_BATTERY`): a learning lesion of that island's best:
 //! on each of the battery's rungs, its score learning and frozen, then with each population's
 //! learning alone frozen (`program::neurocomp::set_frozen_pop_here`): what each one's learning buys,
@@ -810,7 +811,8 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
     // (island, rung, probe)
     // (recall's flag2 and the duel's duel64, `ISL_RECALL_FLAG` and `ISL_DUEL`, against the
     // yardstick's drawn rules)
-    let tasks: [(&str, &str, usize); 13] = [
+    let tasks: [(&str, &str, usize); 15] = [
+        ("switching", "respond", 0), ("switching", "tell", 1),
         ("reading", "babble", 8), ("selection", "cued", 13),
         ("switching", "discrim", 2), ("switching", "winstay", 5), ("switching", "swap1", 3),
         ("recall", "two", 4), ("recall", "flag2", 32), ("reading", "pairs8", 6), ("maze", "turn", 10), ("maze", "symbol", 10),
@@ -856,7 +858,9 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
     };
     let empty = TagGenome { tokens: vec![], next_id: 1 };
     let mut who: Vec<(String, &TagGenome)> = vec![("nothing".to_string(), &empty)];
-    for (i, isl) in islands.iter().enumerate() {
+    // (`ISL_LEARN_WHO=<island>`) only that island's genomes beside doing nothing
+    let only_who = std::env::var("ISL_LEARN_WHO").ok();
+    for (i, isl) in islands.iter().enumerate().filter(|(_, x)| only_who.as_ref().is_none_or(|w| *w == x.name)) {
         for (k, g) in start[i].iter().take(top.max(1)).enumerate() {
             who.push((format!("{}#{k}", isl.name), g));
         }

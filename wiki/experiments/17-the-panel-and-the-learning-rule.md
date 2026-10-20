@@ -1316,3 +1316,15 @@ learning lesion (`ISL_LEARN_LESION`, new: one population's learning frozen at a 
 loop, which learn together. `ISL_LEARN_GAIN=2` (`set_learn_gain_strict`): a task whose frozen twin
 scores exactly what doing nothing scores gains nothing, so development is not paid; run 43 queued
 with it. A gain chart is on the dashboard.
+
+## Switching's gain in run 42 is development (`runs/checks/switching42/`)
+
+Switching's best held a gain of 580 to 760 from generation 150. The battery on its top 3 at 205
+(12 worlds, `ISL_LEARN_WHO=switching`, with switching's respond and tell added): frozen, it scores
+exactly what doing nothing scores on every light task (respond, discrim, swap1, shapes' paying:
+-512; babble 0): it cannot act without growing in the lifetime. Learning, it responds to every light
+(respond 1015, rising late, +41) and tells none apart (discrim 2, tell 0, win-stay 0). The learning
+lesion finds no single population's learning carrying it (a self-loop on C1, #113, 31% of
+respond's; nothing else over 10 points): the gain is births spread over its 57 populations, a
+network that grows a responder each lifetime. That is what `ISL_LEARN_GAIN=2` (run 43) stops
+paying for: a task whose frozen twin does exactly nothing gains nothing.

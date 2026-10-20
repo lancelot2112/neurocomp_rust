@@ -1337,3 +1337,15 @@ selected, best genomes' gains rose to 580 to 760 on switching and the generalist
 reading, but switching's is development (above); selection's gain fell to about 10 once on held.
 Generations grew from about 20 seconds to 236 as networks grew and every lifetime was lived twice.
 Run 43 (started 7:53 AM ET) stops paying for development.
+
+## The act read back as what was done (`ISL_MUSCLE=1`, run 44)
+
+The act vector is 1024 bits, the voice's 512 then the hand's, but every code lies in one 64-bit
+word of its channel (the one-word voice's 8 lines in the voice's first word; each move's 16 lines in
+one word of the hand), and the readout counts only a code's own lines. Since outputs are read
+(run 29 on), what a population reading the act sees is what was written, every stray line with it.
+The muscle's response (`evolve::set_muscle`, built in experiment 16 and never used in an island run)
+replaces the act after each step with what the body did: the clean code of the move made and the
+token said, every other line cleared. Then the act read back is the action taken, and a population
+that wrote the act sees on its own lines whether it drove the body. `live_duel` now applies it to
+both agents. Run 44 queued: run 43 with it.

@@ -721,6 +721,15 @@ pub fn live_duel<G: Evolvable>(g: &G, opp: &Opponent, physics: Physics, seed: u6
         let (sa, sb) = (wa.step(&aa), wb.step(&ab));
         ha.push(ma == Some(world::LEFT));
         hb.push(mb == Some(world::LEFT));
+        // (the muscle's response) each act shows what its body did
+        if muscle() {
+            let (said, moved) = wa.events.last().map_or((None, None), |e| (e.said, e.moved));
+            na.set_output(&wa.act(said, moved));
+            if let Some(n) = nb.as_mut() {
+                let (said, moved) = wb.events.last().map_or((None, None), |e| (e.said, e.moved));
+                n.set_output(&wb.act(said, moved));
+            }
+        }
         na.tick(AdvanceMode::Clear, 0);
         na.write_input(&sa, 0);
         aa = na.read_output().clone();

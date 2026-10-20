@@ -96,6 +96,29 @@ the task. Removing the self-NOR wire costs 2.3 goals.
 
 Files: `runs/checks/selection-dive/` (genomes, lesion maps, a trace excerpt); experiment 17.
 
+### The sticky hand: a move carried from step to step (run 41, duel, generation 171)
+
+The duel island's best: 185 populations over 21 channels, the largest network a run has kept, but
+62 of them matter (taking one out costs at least a tenth of a goal) and the rest ride along (12 do
+better removed). Its core is a few wires that carry the act forward: two `sub:5` wires and an
+`lsl:32` wire from the act into itself (outputs read) and a `set` wire from the senses into the
+hand; each alone, taken out, costs 0.5 to 1.0 of a goal. So its next move is mostly its last: it
+repeats its own move 72% of the time, LEFT a third of the rounds. A NOR wire from the ear (the
+role tone) into the act, and the eye's view of the partner's move through two channels (C2, C5,
+most of its populations) into the hand, bend that habit by role and partner.
+
+Against the yardstick's drawn rules (`ISL_DUEL_PROBE=240`, 800 rounds a lifetime): a sticky move
+beats rules that copy or react to it straight and loses to their flipped versions (as predictor
+against an evader reacting to its last move 638, flipped -326; as evader against a copier of its
+last move -318, flipped 551), but loses less than it wins, through its partial imitation of the
+partner (its move is the partner's last 54% of the time as predictor), so it nets about 90 to 140
+on the yardstick against a goal of 200. Against patterns, about 0. It scores better in the second
+half of each turn than the first (against an evader reacting to its move two rounds back, 344 then
+602), and the same with learning frozen: it adapts in activity, not by learning. About half its
+populations write the voice, which the duel never scores but the ear hears: the voice is a loop
+through the body (46 populations paused on it), a scratch channel. `runs/checks/duel41/`,
+`wiki/other-agents.md`.
+
 ### The trial latch: one bit held for a whole trial (run 36, recall, generation 530)
 
 The cue sets a state that keeps the hand clicking every step until the trial ends, and the trial's

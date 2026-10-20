@@ -1291,3 +1291,13 @@ its yardstick moved about 0 (13 at 172) and its best's held-out yardstick from 7
 generation 130 on, within what fixed policies score; its genomes learn nothing in the battery.
 Generations took 60 to 110 seconds with the duel. Run 42 (started 11:27 PM ET) adds the learning
 gain as a selection case.
+
+## Run 41's duel genome: the sticky hand (`runs/checks/duel41/`)
+
+The duel island's best at 171, 185 populations: a lesion map (6 worlds) finds 62 that matter and
+a core of wires carrying the act forward (two `sub:5` and an `lsl:32` wire from the act into
+itself, a `set` wire from the senses into the hand); it repeats its own move 72% of the time. The
+duel probe (`ISL_DUEL_PROBE=240`, new: by role and kind of drawn rule, learning and frozen) shows it
+beating straight copying and reacting rules and losing less to their flipped versions, about 0
+against patterns, better late in each turn but the same frozen: it adapts in activity, not by
+learning. Saved in `wiki/mechanisms.md` as an evolved design.

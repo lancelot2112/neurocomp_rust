@@ -329,6 +329,9 @@
 //! the roles flipping every `turn` rounds so each agent learns both; partners this generation's
 //! duel elite, its hall of fame and the other islands' best; selected on the duel and on a
 //! yardstick of four fixed rules (`duel-bench`), each rung's goal on the yardstick.
+//! `ISL_DUEL_PROBE=n` (with `ISL_RESUME`; `ISL_LEARN_TOP`): measure only. What the duel island's
+//! genomes do against n of the yardstick's drawn rules, learning and frozen: by role and kind of rule
+//! faced, rounds won less lost in each half of a turn, and how their moves go (`duel_probe`).
 //! `ISL_LEARN_GAIN=1`: a selection case for what learning buys (`gain`, probe 42): each lifetime
 //! scored again with learning frozen for that genome (`program::neurocomp::set_frozen_here`), and
 //! each task probe's score learning, cut at what doing nothing scores (`observe::idle_score`), less
@@ -730,6 +733,70 @@ fn probe_named(n: &str) -> usize {
 /// births, copies, output moves or exploration; the gap: learning on less off). A reaction scores
 /// the same frozen and its slope is about 0; a learner gains late and loses frozen. Means with
 /// their standard errors.
+/// What a duel genome does (`ISL_DUEL_PROBE=n`, with `ISL_RESUME`): the duel island's first
+/// `ISL_LEARN_TOP` genomes as resumed, each against n of the yardstick's drawn rules on its current
+/// rung, learning and frozen. For each kind of rule faced (as predictor: the partner's pattern of
+/// period 2 to 5, or its reaction to the predictor's last move or the one before; as evader: the
+/// partner copying the evader's last move, the one before, or its majority of three, each straight
+/// or flipped), rounds won less lost per round in that role, in the first and the second half of
+/// each turn; and how the genome's moves go: LEFT, the same as its own last, the same as the
+/// partner's last.
+fn duel_probe(islands: &[Island], start: &[Vec<TagGenome>], n: u64, top: usize, stages: &[usize], trials: usize) {
+    use neurocomp::evolve::{live_duel, Opponent};
+    let Some(i) = islands.iter().position(|x| x.name == "duel") else { return };
+    let st = &islands[i].stages[stages[i]];
+    let rounds = (trials * 4).max(4 * st.lesson.duel_turn);
+    let kind = |rule: u64, evader_faced: bool| -> String {
+        let flip = if rule >> 20 & 1 == 1 { " flipped" } else { "" };
+        if evader_faced {
+            if rule >> 16 & 1 == 0 { format!("pattern {}", 2 + (rule & 3)) } else { format!("reacts to lag {}{flip}", 1 + (rule >> 17 & 1)) }
+        } else {
+            format!("{}{flip}", ["copies lag 1", "copies lag 2", "majority of 3"][((rule >> 8) % 3) as usize])
+        }
+    };
+    println!("duel probe, rung {} (turn {}), {n} drawn rules, {rounds} rounds a lifetime", st.name, st.lesson.duel_turn);
+    for (k, g) in start[i].iter().take(top.max(1)).enumerate() {
+        for frozen in [false, true] {
+            neurocomp::program::neurocomp::set_frozen(frozen);
+            // (kind faced, role) -> (rounds, won, early rounds, early won, late rounds, late won)
+            let mut by: std::collections::BTreeMap<(bool, String), [i64; 6]> = Default::default();
+            let mut moves = [[0i64; 4]; 2];
+            for s in 0..n {
+                let seed = 90_000 + s;
+                let rule = (seed ^ 0xC2B2_AE3D_27D4_EB4F).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7;
+                let (ev, _) = live_duel(g, &Opponent::Script(rule), Physics::Varied, seed ^ 0xD0E1, &st.lesson, rounds);
+                let d: Vec<(usize, bool, bool, bool)> = ev.iter().filter_map(|e| e.duel).collect();
+                for (t, &(r, evader, mine, theirs)) in d.iter().enumerate() {
+                    let won = if evader { mine != theirs } else { mine == theirs };
+                    let e = by.entry((evader, kind(rule, !evader))).or_default();
+                    let late = r % st.lesson.duel_turn.max(1) >= st.lesson.duel_turn / 2;
+                    e[0] += 1;
+                    e[1] += won as i64;
+                    e[2 + 2 * late as usize] += 1;
+                    e[3 + 2 * late as usize] += won as i64;
+                    let m = &mut moves[evader as usize];
+                    m[0] += 1;
+                    m[1] += mine as i64;
+                    if t > 0 {
+                        m[2] += (mine == d[t - 1].2) as i64;
+                        m[3] += (mine == d[t - 1].3) as i64;
+                    }
+                }
+            }
+            let per = |w: i64, n: i64| if n == 0 { 0 } else { (2 * w - n) * 1024 / n };
+            println!("duel#{k} {}:", if frozen { "frozen" } else { "learning" });
+            for ((evader, what), e) in &by {
+                println!("  as {:<9} against {:<26} {:>5}   first half {:>5}, second {:>5}   ({} rounds)", if *evader { "evader" } else { "predictor" }, what, per(e[1], e[0]), per(e[3], e[2]), per(e[5], e[4]), e[0]);
+            }
+            for (role, m) in moves.iter().enumerate() {
+                let r = |x: i64| x * 100 / m[0].max(1);
+                println!("  moves as {:<9}: LEFT {}%, same as its own last {}%, same as the partner's last {}%", if role == 1 { "evader" } else { "predictor" }, r(m[1]), r(m[2]), r(m[3]));
+            }
+        }
+        neurocomp::program::neurocomp::set_frozen(false);
+    }
+}
+
 fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: usize, gap: usize, top: usize) {
     use neurocomp::evolve::{live_lesson, Task};
     use neurocomp::world::{observe, Conditioning, Event};
@@ -1544,6 +1611,13 @@ fn main() {
     }
     // (`ISL_LEARN_BATTERY=n`, with `ISL_RESUME`: nothing evolves; the learning battery, see
     // `learn_battery`, on n fresh worlds, then it stops)
+    // (`ISL_DUEL_PROBE=n`, with `ISL_RESUME`: nothing evolves; what the duel island's genomes do,
+    // see `duel_probe`)
+    let dprobe: u64 = env("ISL_DUEL_PROBE", 0);
+    if dprobe > 0 {
+        duel_probe(&islands, &start, dprobe, env("ISL_LEARN_TOP", 1usize), &stages, trials);
+        return;
+    }
     let battery: u64 = env("ISL_LEARN_BATTERY", 0);
     if battery > 0 {
         learn_battery(&islands, &start, battery, env("ISL_LEARN_TRIALS", trials), gap, env("ISL_LEARN_TOP", 1usize));

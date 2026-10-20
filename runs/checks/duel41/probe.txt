@@ -1,0 +1,35 @@
+duel probe, rung duel64 (turn 64), 240 drawn rules, 800 rounds a lifetime
+duel#0 learning:
+  as predictor against pattern 2                    128   first half   109, second   148   (11744 rounds)
+  as predictor against pattern 3                    -57   first half   -68, second   -47   (10720 rounds)
+  as predictor against pattern 4                     73   first half    91, second    54   (12256 rounds)
+  as predictor against pattern 5                     26   first half    19, second    34   (12416 rounds)
+  as predictor against reacts to lag 1              638   first half   569, second   712   (11520 rounds)
+  as predictor against reacts to lag 1 flipped     -326   first half  -327, second  -324   (12896 rounds)
+  as predictor against reacts to lag 2              469   first half   344, second   602   (11552 rounds)
+  as predictor against reacts to lag 2 flipped     -172   first half  -190, second  -153   (12896 rounds)
+  as evader    against copies lag 1                -318   first half  -332, second  -302   (14784 rounds)
+  as evader    against copies lag 1 flipped         551   first half   489, second   618   (17184 rounds)
+  as evader    against copies lag 2                -191   first half  -203, second  -178   (15136 rounds)
+  as evader    against copies lag 2 flipped         378   first half   293, second   471   (19232 rounds)
+  as evader    against majority of 3               -234   first half  -249, second  -217   (15264 rounds)
+  as evader    against majority of 3 flipped        553   first half   433, second   682   (14400 rounds)
+  moves as predictor: LEFT 34%, same as its own last 71%, same as the partner's last 54%
+  moves as evader   : LEFT 32%, same as its own last 72%, same as the partner's last 41%
+duel#0 frozen:
+  as predictor against pattern 2                     96   first half    79, second   115   (11744 rounds)
+  as predictor against pattern 3                    -62   first half   -51, second   -73   (10720 rounds)
+  as predictor against pattern 4                     89   first half    89, second    89   (12256 rounds)
+  as predictor against pattern 5                     34   first half    29, second    39   (12416 rounds)
+  as predictor against reacts to lag 1              590   first half   534, second   650   (11520 rounds)
+  as predictor against reacts to lag 1 flipped     -342   first half  -348, second  -335   (12896 rounds)
+  as predictor against reacts to lag 2              475   first half   311, second   651   (11552 rounds)
+  as predictor against reacts to lag 2 flipped     -152   first half  -159, second  -146   (12896 rounds)
+  as evader    against copies lag 1                -314   first half  -326, second  -302   (14784 rounds)
+  as evader    against copies lag 1 flipped         543   first half   488, second   602   (17184 rounds)
+  as evader    against copies lag 2                -177   first half  -184, second  -169   (15136 rounds)
+  as evader    against copies lag 2 flipped         340   first half   261, second   426   (19232 rounds)
+  as evader    against majority of 3               -242   first half  -263, second  -218   (15264 rounds)
+  as evader    against majority of 3 flipped        547   first half   446, second   656   (14400 rounds)
+  moves as predictor: LEFT 34%, same as its own last 71%, same as the partner's last 54%
+  moves as evader   : LEFT 33%, same as its own last 72%, same as the partner's last 42%

@@ -1410,4 +1410,6 @@ the word is typed; Backspace after a wrong letter) and how near the voice came t
 less the other lines on in its word, 0 to 12; a trial in which nothing was typed scores -256 plus
 its mean reach over 12 times 256 (up to 0). Writing 5 of the right key's 12 lines each step scores
 -178, 2 of them -224, nothing -256; a typed key scores as before (on one letter a wrong key 0, the
-right one 1024).
+right one 1024). Run 44's genomes still scored -256 with it: they write nothing near the keyboard. Reach then
+counted the other lines in the key's word at the code's share (12/52 each), so lines written at
+random net about 0 and any write leaning to the code's lines counts.

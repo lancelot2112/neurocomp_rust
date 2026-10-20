@@ -213,14 +213,16 @@ impl Keyboard {
     }
 
     /// How near a voice channel comes to typing key `k`: its lines on less the other lines on in
-    /// its word, 0 to `KEY_LINES`.
+    /// its word weighted by the code's share of the word (12 of 64: each other line counts 12/52),
+    /// so lines written at random net about 0; 0 to `KEY_LINES`.
     pub fn reach(&self, m: &BitVector, k: usize) -> u8 {
         let cw = self.codes[k].as_words();
         let Some(w) = cw.iter().position(|&x| x != 0) else { return 0 };
         let mw = m.as_words().get(w).copied().unwrap_or(0);
         let on = (mw & cw[w]).count_ones() as i32;
         let other = (mw & !cw[w]).count_ones() as i32;
-        (on - other).clamp(0, KEY_LINES as i32) as u8
+        let k = KEY_LINES as i32;
+        ((on * (64 - k) - other * k) / (64 - k)).clamp(0, k) as u8
     }
 
     /// The key a voice channel types, if any.

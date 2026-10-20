@@ -1,0 +1,76 @@
+learning battery on 12 fresh worlds, 200 trials a lifetime: full (frozen), slope late-early (se), gap on-off (se)
+switching respond (respond):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0           -640 ( -888)   slope    290 (   9)   gap    248 (  11)
+  maze#1           -512 ( -707)   slope      0 (   0)   gap    195 (  40)
+  maze#2           -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+switching tell (tell):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  maze#0              0 (   54)   slope      0 (   0)   gap    -54 (  29)
+  maze#1              0 (  -36)   slope      0 (   0)   gap     36 (  18)
+  maze#2              0 (    0)   slope      0 (   0)   gap      0 (   0)
+maze feel (feel-maze):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  maze#0            235 (   13)   slope   -358 ( 130)   gap    222 ( 113)
+  maze#1            212 (  -14)   slope    -81 (  27)   gap    225 ( 100)
+  maze#2            192 (   85)   slope   -115 (  47)   gap    106 (  64)
+reading babble (babble):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  maze#0            683 (  512)   slope   -683 (  73)   gap    171 (  73)
+  maze#1              0 (    0)   slope      0 (   0)   gap      0 (   0)
+  maze#2              0 (    0)   slope      0 (   0)   gap      0 (   0)
+selection cued (select):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0             -3 (  -34)   slope   -400 (  67)   gap     30 (  13)
+  maze#1           -397 (  -85)   slope    -98 (  66)   gap   -312 (  85)
+  maze#2           -393 ( -512)   slope    -73 (  49)   gap    119 (  80)
+switching discrim (discriminate):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0           -633 ( -878)   slope    280 (   7)   gap    246 (  12)
+  maze#1           -542 ( -693)   slope     97 (  23)   gap    151 (  41)
+  maze#2           -535 ( -521)   slope     72 (  26)   gap    -14 (  11)
+switching winstay (win-stay):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  maze#0           -179 (    2)   slope    179 ( 212)   gap   -181 ( 198)
+  maze#1              0 (    6)   slope      0 (   0)   gap     -6 (  24)
+  maze#2            -85 (   43)   slope     85 (  58)   gap   -128 (  67)
+switching swap1 (reverse):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0           -627 ( -878)   slope    272 (   6)   gap    251 (  13)
+  maze#1           -545 ( -703)   slope    106 (  16)   gap    158 (  39)
+  maze#2           -542 ( -521)   slope     97 (  17)   gap    -22 (   8)
+recall flag2 (flag):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0           -583 ( -606)   slope    162 (  16)   gap     23 (  21)
+  maze#1           -515 ( -513)   slope     10 (   7)   gap     -2 (  12)
+  maze#2           -512 ( -514)   slope     -4 (   2)   gap      2 (   1)
+reading pairs8 (copy):
+  nothing             0 (    0)   slope      0 (   0)   gap      0 (   0)
+  maze#0            -18 (    2)   slope     34 (  15)   gap    -21 (  13)
+  maze#1             -4 (    0)   slope    -17 (  19)   gap     -4 (   4)
+  maze#2              0 (    0)   slope      0 (   0)   gap      0 (   0)
+maze turn (maze):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0            -70 (    8)   slope    -33 (  42)   gap    -78 (  31)
+  maze#1            -78 (  -20)   slope    203 (  38)   gap    -58 (  13)
+  maze#2           -100 ( -106)   slope    225 (  75)   gap      6 (  19)
+maze symbol (maze):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0            -70 (  -19)   slope    -29 (  38)   gap    -51 (  40)
+  maze#1            -78 (  -20)   slope    203 (  38)   gap    -58 (  13)
+  maze#2           -100 (  -93)   slope    214 (  69)   gap     -7 (   9)
+screen pick (screen):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0           -532 ( -720)   slope     74 (   6)   gap    188 (  49)
+  maze#1           -517 ( -601)   slope     18 (  12)   gap     84 (  27)
+  maze#2           -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+shapes paying (discriminate):
+  nothing          -512 ( -512)   slope      0 (   0)   gap      0 (   0)
+  maze#0           -624 ( -890)   slope    268 (  10)   gap    266 (   9)
+  maze#1           -539 ( -700)   slope     90 (  19)   gap    162 (  46)
+  maze#2           -542 ( -523)   slope     99 (  16)   gap    -18 (   5)
+duel duel64 (duel-bench):
+  nothing           -99 (  -99)   slope      1 (   1)   gap      0 (   0)
+  maze#0             10 (  -68)   slope     10 (   9)   gap     78 (  64)
+  maze#1             11 (    1)   slope      6 (  12)   gap     10 (  31)
+  maze#2              8 (   11)   slope     16 (  15)   gap     -3 (   2)

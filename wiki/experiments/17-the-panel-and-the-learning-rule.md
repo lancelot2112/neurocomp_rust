@@ -1377,3 +1377,15 @@ a point; too much and too little both cost): `type~` is three quarters letters (
 each word's length too many or too few, at least -1); a timed-out trial halves a score above 0 and
 keeps one below. For "cat": "xyz" 226, "xyzx" and "x" between that and nothing, "xyzxyz" -286,
 nothing -256; on one letter a wrong key 0 and nothing -256.
+
+## Run 43's maze: learning on its own feel rung, and nowhere else (`runs/checks/maze43/`)
+
+The maze's best's gain rose to 282 to 426 from generation 160 with its feel score (feel-maze, clicks
+after strokes that come at random while it waits at the junction). The battery at 195 (12 worlds,
+the top 3, with the maze's feel added): on feel-maze 235, 212 and 192 learning against 13, -14 and
+85 frozen (gaps 222, 225, 106, each with an error near 100): learning that a network acting frozen
+needs, not development. Elsewhere its learning only calms wild acting (respond -640 against -888,
+below doing nothing) or hurts (the maze's turn -70 against 8). The learning lesion (64 populations)
+finds no population whose learning carries it: freezing any one of nine populations' learning raises
+feel-maze (to 247 to 419, a self-loop on the self channel, #301, most), so what helps is learning
+spread over the network and several populations' learning works against it.

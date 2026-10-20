@@ -815,8 +815,8 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
     // (island, rung, probe)
     // (recall's flag2 and the duel's duel64, `ISL_RECALL_FLAG` and `ISL_DUEL`, against the
     // yardstick's drawn rules)
-    let tasks: [(&str, &str, usize); 15] = [
-        ("switching", "respond", 0), ("switching", "tell", 1),
+    let tasks: [(&str, &str, usize); 16] = [
+        ("switching", "respond", 0), ("switching", "tell", 1), ("maze", "feel", 34),
         ("reading", "babble", 8), ("selection", "cued", 13),
         ("switching", "discrim", 2), ("switching", "winstay", 5), ("switching", "swap1", 3),
         ("recall", "two", 4), ("recall", "flag2", 32), ("reading", "pairs8", 6), ("maze", "turn", 10), ("maze", "symbol", 10),
@@ -826,6 +826,7 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
         let e: &[Event] = &[];
         let row = match p {
             32 => return observe::flag(ev),
+            34 => return observe::feel_in_maze(ev),
             13 => return observe::select(ev),
             8 => observe::probes(e, 1, e, ev, e, e, e),
             41 => return observe::duel(ev),
@@ -849,7 +850,7 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
             }
             4 => live_lesson(g, Task::Conditioning(Conditioning::Delayed, trials), Physics::Varied, seed ^ 0xDE1A, gap, l.clone()).0,
             6 => live_lesson(g, Task::Reading(trials), Physics::Varied, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..l.clone() }).0,
-            10 => live_lesson(g, Task::Maze(trials), Physics::Varied, seed ^ 0x3A2E, gap, l.clone()).0,
+            10 | 34 => live_lesson(g, Task::Maze(trials), Physics::Varied, seed ^ 0x3A2E, gap, l.clone()).0,
             11 => live_lesson(g, Task::Screen(trials), Physics::Varied, seed ^ 0x5C2E, gap, l.clone()).0,
             _ => live_lesson(g, Task::Reversal { trials, period, worst_phase: false }, Physics::Varied, seed, gap, l.clone()).0,
         };

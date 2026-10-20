@@ -5,3 +5,12 @@
 /target-u8
 /target-ev
 /target-dev
+
+# local files the runs and tools leave behind (kept on disk, not tracked)
+/.playwright-mcp/
+/plasmids.txt
+/runs/build-run*.txt
+/runs/islands3/checkpoint-*.txt
+# the paired tests' checkpoints and plasmids (experiment data kept locally)
+/runs/pairs-*/**/checkpoint.txt
+/runs/pairs-*/**/plasmids.txt

@@ -803,7 +803,8 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
     // (island, rung, probe)
     // (recall's flag2 and the duel's duel64, `ISL_RECALL_FLAG` and `ISL_DUEL`, against the
     // yardstick's drawn rules)
-    let tasks: [(&str, &str, usize); 11] = [
+    let tasks: [(&str, &str, usize); 13] = [
+        ("reading", "babble", 8), ("selection", "cued", 13),
         ("switching", "discrim", 2), ("switching", "winstay", 5), ("switching", "swap1", 3),
         ("recall", "two", 4), ("recall", "flag2", 32), ("reading", "pairs8", 6), ("maze", "turn", 10), ("maze", "symbol", 10),
         ("screen", "pick", 11), ("shapes", "paying", 2), ("duel", "duel64", 41),
@@ -812,6 +813,8 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
         let e: &[Event] = &[];
         let row = match p {
             32 => return observe::flag(ev),
+            13 => return observe::select(ev),
+            8 => observe::probes(e, 1, e, ev, e, e, e),
             41 => return observe::duel(ev),
             4 => observe::probes(e, 1, ev, e, e, e, e),
             6 => observe::probes(e, 1, e, ev, e, e, e),
@@ -825,6 +828,8 @@ fn learn_battery(islands: &[Island], start: &[Vec<TagGenome>], n: u64, trials: u
         let period = (trials / (l.swaps + 1)).max(1);
         let ev = match p {
             32 => live_lesson(g, Task::Flag(trials * 4), Physics::Varied, seed ^ 0xF1A6, gap, l.clone()).0,
+            8 => live_lesson(g, Task::Reading(trials), Physics::Varied, seed ^ 0x5E0, 0, Lesson { period: 0, noise: 0, ..l.clone() }).0,
+            13 => live_lesson(g, Task::Mixed((trials / l.mixed_block.max(1)).max(2)), Physics::Varied, seed ^ 0x313C, gap, l.clone()).0,
             41 => {
                 let rule = (seed ^ 0xC2B2_AE3D_27D4_EB4F).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 7;
                 neurocomp::evolve::live_duel(g, &neurocomp::evolve::Opponent::Script(rule), Physics::Varied, seed ^ 0xD0E1, l, (trials * 4).max(4 * l.duel_turn)).0

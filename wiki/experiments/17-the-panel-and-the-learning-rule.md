@@ -1245,3 +1245,12 @@ no fixed policy beats, carries each rung's goal (duel64 to duel8, 100 to 400). T
 scores 912 against an alternating copier (-912), a constant against a constant 0, a reader against
 a constant 512; a network doing nothing -300 on the yardstick. Smoke test (3 generations,
 population 8): the duel island's best at -297 on duel64.
+
+## Run 40's end (stopped at 93 for run 41)
+
+8 rung moves in 93 generations: reading to echo2q (4), selection cued to held (26, 32, 33, 53;
+run 39: 24 to 100), switching respond, tell and feel-300 (56, 65; run 39: 99, 100), recall respond
+(76; run 39: 85). With partial credit everywhere stuck, the early rungs came sooner; at 93 recall
+on flag2 (-625), selection on held (-3), switching on feel-300 (0) and the screen (-512) had not
+yet moved: too short to judge the graded scores there. Run 41 (started 8:17 PM ET) adds the duel
+island.

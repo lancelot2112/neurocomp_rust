@@ -1328,3 +1328,12 @@ lesion finds no single population's learning carrying it (a self-loop on C1, #11
 respond's; nothing else over 10 points): the gain is births spread over its 57 populations, a
 network that grows a responder each lifetime. That is what `ISL_LEARN_GAIN=2` (run 43) stops
 paying for: a task whose frozen twin does exactly nothing gains nothing.
+
+## Run 42's end (stopped at 210 for run 43)
+
+9 rung moves in 210 generations: reading to pairs8 (5, 32), selection cued to held (16, 93 to 95),
+switching to tell (66), recall to flag2 (70), the maze to feel (133). With the learning gain
+selected, best genomes' gains rose to 580 to 760 on switching and the generalist and about 450 on
+reading, but switching's is development (above); selection's gain fell to about 10 once on held.
+Generations grew from about 20 seconds to 236 as networks grew and every lifetime was lived twice.
+Run 43 (started 7:53 AM ET) stops paying for development.

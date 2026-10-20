@@ -860,20 +860,39 @@ pub fn typing(events: &[Event]) -> i32 {
 }
 
 /// Typing with partial credit: each trial, three quarters for the letters and a quarter for the
-/// line's length. Letters: right in place +1, a wrong letter -1/(letters - 1) (so letters at random
+/// line's length; a trial in which nothing was typed scores between -256 and 0 by how near, on
+/// average over its steps, the voice came to the key the line needed (`Event::key_reach`), so
+/// reaching toward the right key pays before typing it does. Letters: right in place +1, a wrong letter -1/(letters - 1) (so letters at random
 /// net about 0), over the word's length. Length: +1 when the line is as long as the word, 2 less
 /// for each word's length of letters too many or too few, at least -1. A trial that timed out halves
 /// a score above 0 and keeps one below. Typing nothing scores -256, a wrong letter in a one-letter
 /// word 0, letters at random of the right length about 256, the word 1024; typing too much or too
 /// little costs in proportion.
 pub fn typing_graded(events: &[Event]) -> i32 {
+    // each trial's mean reach (its typing steps up to and including its post)
+    let mut reach: Vec<i64> = Vec::new();
+    let (mut r, mut steps) = (0i64, 0i64);
+    for e in events.iter().filter(|e| e.scene == SceneKind::Typing) {
+        r += e.key_reach as i64;
+        steps += 1;
+        if e.posted.is_some() {
+            reach.push(if steps == 0 { 0 } else { r * 256 / (steps * super::KEY_LINES as i64) });
+            r = 0;
+            steps = 0;
+        }
+    }
     let posts: Vec<&(Vec<u8>, Vec<u8>, bool, u8)> = events.iter().filter_map(|e| e.posted.as_ref()).collect();
     if posts.is_empty() {
         return 0;
     }
     let sum: i64 = posts
         .iter()
-        .map(|(word, line, by, letters)| {
+        .enumerate()
+        .map(|(i, (word, line, by, letters))| {
+            if line.is_empty() {
+                // nothing typed: -256, less as the voice came near the key needed
+                return -256 + reach.get(i).copied().unwrap_or(0).min(256);
+            }
             let w = word.len().max(1) as i64;
             let a = (*letters as i64).max(2);
             let right = word.iter().zip(line).filter(|(x, y)| x == y).count() as i64;
@@ -2237,6 +2256,38 @@ mod tests {
         assert!(typist.0 > 900 && typist.1 > 900 && random.0 < 50 && random.1 < 0 && idle == (0, -256) && flood == (0, -256), "{typist:?} {random:?} {idle:?} {flood:?}");
         // (doing nothing -256, a wrong key 0, the right one 1024: typing is better than not)
         assert!(typist4.1 > 900 && random4.1 > 0 && random4.1 < 200 && idle4 == (0, -256), "{typist4:?} {random4:?} {idle4:?}");
+        // reaching toward the right key without typing it beats nothing: half the right key's lines
+        // less one (5 of 12, below the 6 that type it) every step
+        let reach_run = |lines: usize, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.type_len = 1;
+            w.type_keys = 4;
+            w.typing(20);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let eye = channel(&senses, EYE);
+                let b = eye.as_words()[0] as u8;
+                let a = if b >= b'a' {
+                    let full = channel(&w.key_act((b - b'a') as usize), VOICE);
+                    let mut v = full.as_words().to_vec();
+                    let wi = v.iter().position(|&x| x != 0).unwrap();
+                    let on: Vec<u32> = (0..64).filter(|x| v[wi] >> x & 1 == 1).collect();
+                    for &x in on.iter().skip(lines) {
+                        v[wi] &= !(1u64 << x);
+                    }
+                    let mut act = BitVector::new(ACT_BITS, Some(0));
+                    put(&mut act, VOICE, &BitVector::from_words(v));
+                    act
+                } else {
+                    w.act(None, None)
+                };
+                senses = w.step(&a);
+            }
+            typing_graded(&w.events)
+        };
+        let (near5, near2) = ((0..6).map(|s| reach_run(5, 400 + s)).sum::<i32>() / 6, (0..6).map(|s| reach_run(2, 400 + s)).sum::<i32>() / 6);
+        eprintln!("type~ reaching: 5 of the right key's 12 lines {near5}, 2 of them {near2}, nothing -256");
+        assert!(near5 > near2 && near2 > -256 && near5 < 0, "{near5} {near2}");
         // too long and too short both cost: a line of the right length of wrong letters beats one
         // twice as long or empty
         let ev = |line: &[u8]| vec![Event { posted: Some((b"cat".to_vec(), line.to_vec(), true, 26)), ..w_event() }];

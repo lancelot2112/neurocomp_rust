@@ -1,0 +1,6 @@
+typing key4 (type~):
+  nothing          -256 ( -256)   slope      0 (   0)   gap      0 (   0)
+  typing#0         -256 ( -256)   slope      0 (   0)   gap      0 (   0)
+  typing#1         -256 ( -256)   slope      0 (   0)   gap      0 (   0)
+  typing#2         -256 ( -256)   slope      0 (   0)   gap      0 (   0)
+  typing#3         -256 ( -256)   slope      0 (   0)   gap      0 (   0)

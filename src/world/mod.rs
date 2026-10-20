@@ -157,6 +157,10 @@ pub struct Event {
     /// or the line full without Enter) rather than timed out, and how many letters the words are
     /// drawn from
     pub posted: Option<(Vec<u8>, Vec<u8>, bool, u8)>,
+    /// (`World::typing`, for the observer's partial credit) how near the voice came to the key the
+    /// line needed next (the next letter; Enter when the word is typed; Backspace after a wrong
+    /// letter): that key's lines on less the other lines on in its word, 0 to `KEY_LINES`
+    pub key_reach: u8,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -206,6 +210,17 @@ impl Keyboard {
     /// The code that types key `k`.
     pub fn code(&self, k: usize) -> &BitVector {
         &self.codes[k]
+    }
+
+    /// How near a voice channel comes to typing key `k`: its lines on less the other lines on in
+    /// its word, 0 to `KEY_LINES`.
+    pub fn reach(&self, m: &BitVector, k: usize) -> u8 {
+        let cw = self.codes[k].as_words();
+        let Some(w) = cw.iter().position(|&x| x != 0) else { return 0 };
+        let mw = m.as_words().get(w).copied().unwrap_or(0);
+        let on = (mw & cw[w]).count_ones() as i32;
+        let other = (mw & !cw[w]).count_ones() as i32;
+        (on - other).clamp(0, KEY_LINES as i32) as u8
     }
 
     /// The key a voice channel types, if any.
@@ -1146,7 +1161,7 @@ impl World {
         let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
         let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, free_stroke: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None, duel: None, key: None, posted: None };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, free_stroke: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None, duel: None, key: None, posted: None, key_reach: 0 };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if self.sentence {
@@ -1457,8 +1472,17 @@ impl World {
             }
             Scene::Typing(left, t) => {
                 ev.scene = SceneKind::Typing;
-                let key = self.keys.read(&channel(act, VOICE));
+                let voice = channel(act, VOICE);
+                let key = self.keys.read(&voice);
                 ev.key = key;
+                // (the observer's partial credit) the key the line needs next, and how near
+                let n = self.type_line.len();
+                let wanted = if self.type_target.starts_with(&self.type_line) {
+                    if n < self.type_target.len() { (self.type_target[n] - b'a') as usize } else { KEY_ENTER }
+                } else {
+                    KEY_BACK
+                };
+                ev.key_reach = self.keys.reach(&voice, wanted);
                 let mut post = None;
                 match key {
                     Some(k) if k < 26 && self.type_line.len() < 8 => self.type_line.push(b'a' + k as u8),

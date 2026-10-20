@@ -1398,3 +1398,16 @@ With development not counted, best genomes' gains held at 400 to 500 on switchin
 generalist and 190 to 350 on reading; the maze's rose to 426 with its feel score and fell back. No
 rung after 113. Run 44 (started 4:11 PM ET) is run 43 with the muscle's response and the typing
 island together (the run that would have had the muscle's response alone was skipped).
+
+## Run 44's keyboard: nothing typed in 50 generations, and credit for reaching toward a key
+
+At generation 50 the typing island's top 4 scored -256 on type~ (what typing nothing scores),
+learning and frozen alike: no genome typed a key. A key needs 6 of its 12 lines, in one of voice
+words 1 to 7, outnumbering the other lines in its word; writing at random almost never does that,
+so every genome scored alike and selection had no slope. Partial credit: the world records each
+typing step's reach (`Event::key_reach`), the key the line needs next (the next letter; Enter when
+the word is typed; Backspace after a wrong letter) and how near the voice came to it, its lines on
+less the other lines on in its word, 0 to 12; a trial in which nothing was typed scores -256 plus
+its mean reach over 12 times 256 (up to 0). Writing 5 of the right key's 12 lines each step scores
+-178, 2 of them -224, nothing -256; a typed key scores as before (on one letter a wrong key 0, the
+right one 1024).

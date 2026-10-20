@@ -324,6 +324,10 @@
 //! (lags 5 to 8 at half, per token shown) and tell~ (a click late in the trial at half); and with
 //! selection by contrast, select~ averaged with each block's first two trials
 //! (`observe::set_select_early`), so holding the task a while scores part.
+//! `ISL_TYPING=1`: a typing island (`World::typing`): the word shown on the eye as raw bytes, typed
+//! key by key on a keyboard of 35 sparse codes in the voice's words 1 to 7 (12 lines each, five a
+//! word, no line shared; a flooded word types nothing), posted with Enter; the line typed shown back
+//! on the eye. Goals on `type` (exact posts), selection on `type~` (letters right less wrong).
 //! `ISL_DUEL=1`: a duel island, predict or evade against other agents (`World::duel`): each step a
 //! round, the predictor winning when the two agents' moves match, the evader when they differ,
 //! the roles flipping every `turn` rounds so each agent learns both; partners this generation's
@@ -953,6 +957,9 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "two" => stage.lesson.two_lights = v == "1",
                 "fgap" => stage.lesson.flag_gap = v.parse().expect("fgap"),
                 "turn" => stage.lesson.duel_turn = v.parse().expect("turn"),
+                "tlen" => stage.lesson.type_len = v.parse().expect("tlen"),
+                "tkeys" => stage.lesson.type_keys = v.parse().expect("tkeys"),
+                "tenter" => stage.lesson.type_enter = v == "1",
                 "go" => stage.lesson.go_tone = v == "1",
                 "period" => stage.lesson.period = v.parse().expect("period"),
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
@@ -1033,6 +1040,17 @@ const DUEL_LADDER: &str = "duel64 probes=duel+duel-bench turn=64 goal=duel-bench
     duel16 probes=duel+duel-bench turn=16 goal=duel-bench@500; \
     duel8 probes=duel+duel-bench turn=8 goal=duel-bench@650; \
     open probes=duel+duel-bench turn=8";
+
+/// (`ISL_TYPING=1`) typing the word shown, key by key: one letter of four, of 26, then posted with
+/// Enter, then words of 2, 3, 5 and 8 letters; goals on `type` (exact posts), selection on `type~`
+/// (letters right less wrong) with `ISL_PARTIAL`.
+const TYPING_LADDER: &str = "key4 probes=type tlen=1 tkeys=4 tenter=0 goal=type@500; \
+    key26 probes=type tlen=1 tkeys=26 tenter=0 goal=type@500; \
+    enter probes=type tlen=1 tkeys=26 tenter=1 goal=type@500; \
+    word2 probes=type tlen=2 tkeys=26 tenter=1 goal=type@400; \
+    word3 probes=type tlen=3 tkeys=26 tenter=1 goal=type@400; \
+    word5 probes=type tlen=5 tkeys=26 tenter=1 goal=type@300; \
+    word8 probes=type tlen=8 tkeys=26 tenter=1 goal=type@300";
 
 const RECALL_FLAG_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
     flag2 probes=flag fgap=2 goal=flag@300; \
@@ -1328,6 +1346,10 @@ fn main() {
         }
         islands.push(Island { name: "selection".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![13], lesson, goal: vec![], hold: 0 }] });
     }
+    // (`ISL_TYPING=1`: typing the word shown on a keyboard of sparse codes)
+    if env("ISL_TYPING", 0u8) == 1 {
+        islands.push(Island { name: "typing".into(), frontier: false, stages: vec![Stage { name: "open".into(), probes: vec![43], lesson: Lesson { type_len: 1, type_keys: 4, ..Lesson::default() }, goal: vec![], hold: 0 }] });
+    }
     // (`ISL_DUEL=1`: predict or evade, an island whose world is other agents)
     if env("ISL_DUEL", 0u8) == 1 {
         islands.push(Island { name: "duel".into(), frontier: false, stages: vec![Stage { name: "open".into(), probes: vec![40, 41], lesson: Lesson::default(), goal: vec![], hold: 0 }] });
@@ -1347,6 +1369,7 @@ fn main() {
                 "maze" => isl.stages = ladder(MAZE_LADDER),
                 "screen" => isl.stages = ladder(SCREEN_LADDER),
                 "duel" => isl.stages = ladder(DUEL_LADDER),
+                "typing" => isl.stages = ladder(TYPING_LADDER),
                 "selection" => {
                     let base = if env("ISL_SELECT_MORE", 0u8) == 1 { SELECTION_MORE } else { SELECTION_LADDER };
                     isl.stages = ladder(&if env("ISL_SELECT_STEP", 0u8) == 1 { format!("{SELECT_STEP} {base}") } else { base.to_string() })

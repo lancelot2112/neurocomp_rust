@@ -97,6 +97,8 @@ pub enum SceneKind {
     Flag,
     /// predict or evade, two agents (`World::duel`)
     Duel,
+    /// typing a word shown, key by key (`World::typing`)
+    Typing,
 }
 
 /// A record of one step, for the observer (never sent to the program).
@@ -149,6 +151,12 @@ pub struct Event {
     /// (`World::duel`) the round, this agent the evader (else the predictor), its move LEFT, the
     /// partner's move LEFT
     pub duel: Option<(usize, bool, bool, bool)>,
+    /// (`World::typing`) the key typed this step
+    pub key: Option<usize>,
+    /// (`World::typing`) a trial's end: the word shown, the line typed, posted by the typist (Enter,
+    /// or the line full without Enter) rather than timed out, and how many letters the words are
+    /// drawn from
+    pub posted: Option<(Vec<u8>, Vec<u8>, bool, u8)>,
 }
 
 /// An effector's motor primitives: random sparse codes, one per move or token.
@@ -157,6 +165,63 @@ pub struct Effector {
     /// a place code (`fix_place`): primitive i owns word i of the channel, and a command is the
     /// primitive whose word has the most lines on
     place: bool,
+}
+
+/// The keyboard (`World::typing`): `KEYS` keys, each a sparse code of `KEY_LINES` lines in one of the
+/// voice channel's words 1 to 7 (word 0 is the one-word voice's), five keys a word, no line shared
+/// by two keys. A key is typed when at least half its lines are on and its lines on outnumber the
+/// other lines on in its word, the most covered such key winning: a flooded word types nothing, a
+/// code with a few lines missing or a few stray lines still types its key.
+pub struct Keyboard {
+    codes: Vec<BitVector>,
+}
+
+/// Keys: the 26 letters, space, Enter, Backspace, and spares.
+pub const KEYS: usize = 35;
+pub const KEY_SPACE: usize = 26;
+pub const KEY_ENTER: usize = 27;
+pub const KEY_BACK: usize = 28;
+/// Lines in a key's code.
+pub const KEY_LINES: usize = 12;
+
+impl Keyboard {
+    fn new(rng: &mut StdRng) -> Self {
+        let words = CH_BITS / 64;
+        let mut codes = Vec::with_capacity(KEYS);
+        for w in 1..words {
+            let mut lines: Vec<usize> = (0..64).collect();
+            lines.shuffle(rng);
+            for k in 0..5 {
+                let mut v = vec![0u64; words];
+                for &b in &lines[k * KEY_LINES..(k + 1) * KEY_LINES] {
+                    v[w] |= 1 << b;
+                }
+                codes.push(BitVector::from_words(v));
+            }
+        }
+        codes.truncate(KEYS);
+        Keyboard { codes }
+    }
+
+    /// The code that types key `k`.
+    pub fn code(&self, k: usize) -> &BitVector {
+        &self.codes[k]
+    }
+
+    /// The key a voice channel types, if any.
+    pub fn read(&self, m: &BitVector) -> Option<usize> {
+        let mw = m.as_words();
+        (0..self.codes.len())
+            .filter_map(|k| {
+                let cw = self.codes[k].as_words();
+                let w = cw.iter().position(|&x| x != 0)?;
+                let on = (mw.get(w).copied().unwrap_or(0) & cw[w]).count_ones() as usize;
+                let other = (mw.get(w).copied().unwrap_or(0) & !cw[w]).count_ones() as usize;
+                (2 * on >= KEY_LINES && on > other).then_some((on, k))
+            })
+            .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+            .map(|x| x.1)
+    }
 }
 
 /// The lines of a place code inside its word (16, one in four).
@@ -260,6 +325,10 @@ enum Scene {
     Flag(std::collections::VecDeque<u8>),
     /// predict or evade: rounds left
     Duel(usize),
+    /// typing: (trials left, steps in the trial)
+    Typing(usize, usize),
+    /// between typing trials: (trials left after it, steps left)
+    TypingGap(usize, usize),
 }
 
 /// The world.
@@ -400,6 +469,16 @@ pub struct World {
     pub gap_strokes: bool,
     /// (`duel`) the other agent's move this step, set by the harness before the step
     pub partner_move: Option<usize>,
+    /// (`typing`) the keyboard: sparse codes in the voice's words 1 to 7
+    pub keys: Keyboard,
+    /// (`typing`) the word's length, how many letters it is drawn from, and whether Enter posts
+    /// it (else it is posted when the line is as long as the word)
+    pub type_len: usize,
+    pub type_keys: usize,
+    pub type_enter: bool,
+    type_alphabet: Vec<u8>,
+    type_target: Vec<u8>,
+    type_line: Vec<u8>,
     duel_turn: usize,
     duel_first_evader: bool,
     duel_round: usize,
@@ -608,6 +687,7 @@ impl World {
         let n = self.sounds.len();
         self.sounds = codes(n, &mut r(0x50D5));
         self.felt = codes(MOVES, &mut r(0xFE17));
+        self.keys = Keyboard::new(&mut r(0x7E75));
         self.voice = Effector::new(n, &mut r(0x7AC7));
         self.hand = Effector::new(MOVES, &mut r(0x40B5));
         self.body = Some(body);
@@ -691,6 +771,13 @@ impl World {
             wrong_signal: false,
             wrong_next: false,
             partner_move: None,
+            keys: Keyboard::new(&mut r(0x7E75)),
+            type_len: 1,
+            type_keys: 4,
+            type_enter: false,
+            type_alphabet: Vec::new(),
+            type_target: Vec::new(),
+            type_line: Vec::new(),
             duel_turn: 32,
             duel_first_evader: false,
             duel_round: 0,
@@ -744,6 +831,48 @@ impl World {
         self.duel_first_evader = first_evader;
         self.duel_round = 0;
         self.scene = Scene::Duel(rounds.max(1));
+    }
+
+    /// Typing (`type_len`, `type_keys`, `type_enter`): `trials` trials. Each shows on the eye a word
+    /// of `type_len` letters drawn from `type_keys` letters (drawn for the lifetime), as raw bytes
+    /// (lower-case ASCII) in the eye's first word, and the line typed so far in its second. A key
+    /// typed on the keyboard (`Keyboard`, in the voice's words 1 to 7) adds its letter or a space,
+    /// Backspace takes the last one off, Enter posts the line (without `type_enter`, the line is
+    /// posted when it is as long as the word). A posted line that is the word is stroked; any other
+    /// post feels the wrong signal (with `wrong_signal`). A trial not posted in 3 steps a letter and
+    /// 6 more times out. The line holds at most 8 bytes.
+    pub fn typing(&mut self, trials: usize) {
+        self.present = false;
+        let mut letters: Vec<u8> = (b'a'..=b'z').collect();
+        letters.shuffle(&mut self.rng);
+        letters.truncate(self.type_keys.clamp(1, 26));
+        self.type_alphabet = letters;
+        self.type_trial();
+        self.scene = Scene::Typing(trials.max(1), 0);
+    }
+
+    fn type_trial(&mut self) {
+        let n = self.type_len.clamp(1, 8);
+        self.type_target = (0..n).map(|_| self.type_alphabet[self.rng.gen_range(0..self.type_alphabet.len())]).collect();
+        self.type_line.clear();
+    }
+
+    /// The voice channel that types key `k`, as an act.
+    pub fn key_act(&self, k: usize) -> BitVector {
+        let mut a = BitVector::new(ACT_BITS, Some(0));
+        put(&mut a, VOICE, &self.keys.code(k).clone());
+        a
+    }
+
+    /// What the body did on the last step, as an act (the muscle's response): the code of the
+    /// token said or the key typed, and of the move made.
+    pub fn act_done(&self) -> BitVector {
+        let Some(e) = self.events.last() else { return BitVector::new(ACT_BITS, Some(0)) };
+        let mut a = self.act(e.said.filter(|_| e.key.is_none()), e.moved);
+        if let Some(k) = e.key {
+            put(&mut a, VOICE, &self.keys.code(k).clone());
+        }
+        a
     }
 
     /// (`duel`) this agent the evader in round `r`.
@@ -1017,7 +1146,7 @@ impl World {
         let words: Vec<(usize, usize)> = if self.sentence { self.sentence_of(&channel(act, VOICE)) } else { Vec::new() };
         let said = if self.sentence { words.first().map(|x| x.1) } else { self.voice.articulate(&channel(act, VOICE)) };
         let moved = self.hand.articulate(&channel(act, HAND));
-        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, free_stroke: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None, duel: None };
+        let mut ev = Event { scene: SceneKind::Idle, trial: None, moved, said, sentence: words.iter().map(|x| x.1).collect(), shown: None, echoed: false, stroked: false, free_stroke: false, present: self.present, taught: false, odd: false, maze: None, chose: None, screen: None, window: false, task: self.task, on_target: false, question: None, duel: None, key: None, posted: None };
         let mut senses = BitVector::new(SENSE_BITS, Some(0));
         // the body: one's own voice is heard, one's own move felt
         if self.sentence {
@@ -1325,6 +1454,53 @@ impl World {
                     _ => {}
                 }
                 if s.is_empty() { Scene::Idle } else { Scene::Flag(s) }
+            }
+            Scene::Typing(left, t) => {
+                ev.scene = SceneKind::Typing;
+                let key = self.keys.read(&channel(act, VOICE));
+                ev.key = key;
+                let mut post = None;
+                match key {
+                    Some(k) if k < 26 && self.type_line.len() < 8 => self.type_line.push(b'a' + k as u8),
+                    Some(KEY_SPACE) if self.type_line.len() < 8 => self.type_line.push(b' '),
+                    Some(KEY_BACK) => {
+                        self.type_line.pop();
+                    }
+                    Some(KEY_ENTER) if self.type_enter => post = Some(true),
+                    _ => {}
+                }
+                if !self.type_enter && self.type_line.len() >= self.type_target.len() {
+                    post = Some(true);
+                }
+                if post.is_none() && t + 1 >= 3 * self.type_target.len() + 6 {
+                    post = Some(false);
+                }
+                let show = |v: &[u8]| v.iter().take(8).enumerate().fold(0u64, |w, (i, &b)| w | (b as u64) << (8 * i));
+                let mut eye = vec![0u64; CH_BITS / 64];
+                eye[0] = show(&self.type_target);
+                eye[1] = show(&self.type_line);
+                put(&mut senses, EYE, &BitVector::from_words(eye));
+                if let Some(by) = post {
+                    let right = by && self.type_line == self.type_target;
+                    if right {
+                        self.stroke_next = true;
+                    } else if self.wrong_signal {
+                        self.wrong_next = true;
+                    }
+                    ev.posted = Some((self.type_target.clone(), self.type_line.clone(), by, self.type_alphabet.len() as u8));
+                    if left > 1 { Scene::TypingGap(left - 1, 2) } else { Scene::Idle }
+                } else {
+                    Scene::Typing(left, t + 1)
+                }
+            }
+            Scene::TypingGap(left, g) => {
+                ev.scene = SceneKind::Typing;
+                if g > 1 {
+                    Scene::TypingGap(left, g - 1)
+                } else {
+                    self.type_trial();
+                    Scene::Typing(left, 0)
+                }
             }
             Scene::Duel(left) => {
                 ev.scene = SceneKind::Duel;

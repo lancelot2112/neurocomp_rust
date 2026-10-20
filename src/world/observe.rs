@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~", "feel-gap~", "feel-maze~", "copy~", "tell~", "duel", "duel-bench", "gain"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~", "feel-gap~", "feel-maze~", "copy~", "tell~", "duel", "duel-bench", "gain", "type", "type~"];
 /// How many probes there are.
-pub const NPROBES: usize = 43;
+pub const NPROBES: usize = 45;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -200,7 +200,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0, feel_in_gaps_graded(reversal), feel_in_maze_graded(maze_events), copy_graded(sequence), tell_graded(reversal), 0, 0, 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0, feel_in_gaps_graded(reversal), feel_in_maze_graded(maze_events), copy_graded(sequence), tell_graded(reversal), 0, 0, 0, 0, 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -847,6 +847,47 @@ pub fn flag(events: &[Event]) -> i32 {
         score -= missed((armed - armed_hit) * 1024 / armed);
     }
     floor(score)
+}
+
+/// Typing (`World::typing`): the share of trials whose posted line is the word shown, in parts per
+/// 1024. Typing nothing or at random scores about 0.
+pub fn typing(events: &[Event]) -> i32 {
+    let posts: Vec<&(Vec<u8>, Vec<u8>, bool, u8)> = events.iter().filter_map(|e| e.posted.as_ref()).collect();
+    if posts.is_empty() {
+        return 0;
+    }
+    (posts.iter().filter(|p| p.2 && p.1 == p.0).count() * 1024 / posts.len()) as i32
+}
+
+/// Typing with partial credit: each trial, a quarter for typing anything, three quarters for the
+/// letters: right in place +1, a wrong letter -1/(letters - 1) (so keys at random net about 0), a
+/// place missing or one too many -1, over the longer of the word and the line; a trial that timed
+/// out counts half. On one letter, a wrong key scores what nothing scores (0) and the right one
+/// 1024, so typing at all is never worse than silence; letters at random from the word's letters
+/// average 256, the word 1024; a line too long costs its extra letters.
+pub fn typing_graded(events: &[Event]) -> i32 {
+    let posts: Vec<&(Vec<u8>, Vec<u8>, bool, u8)> = events.iter().filter_map(|e| e.posted.as_ref()).collect();
+    if posts.is_empty() {
+        return 0;
+    }
+    let sum: i64 = posts
+        .iter()
+        .map(|(word, line, by, letters)| {
+            if line.is_empty() {
+                return 0;
+            }
+            let n = word.len().max(line.len()) as i64;
+            let a = (*letters as i64).max(2);
+            let both = word.len().min(line.len());
+            let right = word.iter().zip(line).filter(|(x, y)| x == y).count() as i64;
+            let wrong = both as i64 - right;
+            let missing = n - both as i64;
+            let letters_part = (right * (a - 1) - wrong - missing * (a - 1)) * 1024 / (n * (a - 1));
+            let v = (3 * letters_part + 1024) / 4;
+            if *by { v } else { v / 2 }
+        })
+        .sum();
+    (sum / posts.len() as i64) as i32
 }
 
 /// Predict or evade (`World::duel`): in each role, rounds won less rounds lost, per round, in parts
@@ -2149,6 +2190,62 @@ mod tests {
         eprintln!("duel: reader {r_vs_c} against an alternating copier {c_vs_r}; constant against constant {k_vs_k}; reader against constant {r_vs_k}; evader rounds {evader_rounds} of 128, strokes {strokes}, eye showing the partner {seen}");
         // half the rounds in each role; zero-sum; reading wins both roles against fixed rules
         assert!(evader_rounds == 64 && r_vs_c > 800 && c_vs_r < -800 && k_vs_k == 0 && r_vs_k > 400 && seen > 100 && strokes > 100, "{r_vs_c} {c_vs_r} {k_vs_k} {r_vs_k} {seen}");
+    }
+
+    #[test]
+    fn typing_pays_the_word_typed_and_reads_keys_robustly() {
+        // a typist reading the eye's bytes types the word then Enter; one at random; one that does
+        // nothing; one that floods the voice; and the keyboard read through noise
+        let run = |kind: u8, seed: u64, len: usize, keys: usize, enter: bool| -> (i32, i32) {
+            let mut w = World::new(seed, 2);
+            w.type_len = len;
+            w.type_keys = keys;
+            w.type_enter = enter;
+            w.typing(30);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let eye = channel(&senses, EYE);
+                let (word, line) = (eye.as_words()[0], eye.as_words()[1]);
+                let bytes = |x: u64| (0..8).map(|i| (x >> (8 * i)) as u8).take_while(|&b| b != 0).collect::<Vec<u8>>();
+                let (word, line) = (bytes(word), bytes(line));
+                let a = match kind {
+                    0 if !word.is_empty() => {
+                        let k = if line.len() < word.len() { (word[line.len()] - b'a') as usize } else { KEY_ENTER };
+                        w.key_act(k)
+                    }
+                    1 => w.key_act(rand::Rng::gen_range(&mut rng, 0..29)),
+                    3 => BitVector::new(ACT_BITS, Some(u64::MAX)),
+                    _ => w.act(None, None),
+                };
+                senses = w.step(&a);
+            }
+            (typing(&w.events), typing_graded(&w.events))
+        };
+        let mean = |k: u8, len: usize, keys: usize, enter: bool| { let v: Vec<(i32, i32)> = (0..8).map(|s| run(k, 300 + s, len, keys, enter)).collect(); (v.iter().map(|x| x.0).sum::<i32>() / 8, v.iter().map(|x| x.1).sum::<i32>() / 8) };
+        let (typist, random, idle, flood) = (mean(0, 3, 26, true), mean(1, 3, 26, true), mean(2, 3, 26, true), mean(3, 3, 26, true));
+        // key4 (one letter of four, posted when typed): any key at all pays a quarter
+        let (typist4, random4, idle4) = (mean(0, 1, 4, false), mean(1, 1, 4, false), mean(2, 1, 4, false));
+        eprintln!("(type, type~) on word3: typist {typist:?}, random keys {random:?}, nothing {idle:?}, flooding the voice {flood:?}; on key4: typist {typist4:?}, random {random4:?}, nothing {idle4:?}");
+        assert!(typist.0 > 900 && typist.1 > 900 && random.0 < 50 && random.1 < 0 && idle == (0, 0) && flood == (0, 0), "{typist:?} {random:?} {idle:?} {flood:?}");
+        // (a wrong key there scores what nothing does, a right one 1024: typing at all is never worse)
+        assert!(typist4.1 > 900 && random4.1 > idle4.1 && random4.1 < 200 && idle4 == (0, 0), "{typist4:?} {random4:?} {idle4:?}");
+        // each key read back from its own code, with 3 of its 12 lines missing and 3 stray lines
+        let w = World::new(1, 2);
+        let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(5);
+        for k in 0..KEYS {
+            let mut v = channel(&w.key_act(k), VOICE).as_words().to_vec();
+            let wi = v.iter().position(|&x| x != 0).unwrap();
+            let on: Vec<u32> = (0..64).filter(|b| v[wi] >> b & 1 == 1).collect();
+            for &b in on.iter().take(3) {
+                v[wi] &= !(1u64 << b);
+            }
+            let off: Vec<u32> = (0..64).filter(|b| v[wi] >> b & 1 == 0).collect();
+            for _ in 0..3 {
+                v[wi] |= 1u64 << off[rand::Rng::gen_range(&mut rng, 0..off.len())];
+            }
+            assert_eq!(w.keys.read(&BitVector::from_words(v)), Some(k), "key {k}");
+        }
     }
 
     #[test]

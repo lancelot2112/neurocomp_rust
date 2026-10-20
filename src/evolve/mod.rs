@@ -219,6 +219,8 @@ pub enum Task {
     Mixed(usize),
     /// feeling: this many steps with strokes at random, nothing to see or earn
     Feel(usize),
+    /// typing: this many words to type (`World::typing`)
+    Type(usize),
 }
 
 /// Where a lifetime's world physics comes from.
@@ -277,6 +279,10 @@ pub struct Lesson {
     pub gap_strokes: bool,
     /// (predict or evade, `World::duel`) rounds between the roles' flips
     pub duel_turn: usize,
+    /// (typing, `World::typing`) the word's length, the letters it is drawn from, Enter to post
+    pub type_len: usize,
+    pub type_keys: usize,
+    pub type_enter: bool,
     /// (delayed conditioning) a tone as the window opens (`World::go_tone`)
     pub go_tone: bool,
     pub blur: u32,
@@ -373,7 +379,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, flag_gap: 2, duel_turn: 32, gap_strokes: false, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, flag_gap: 2, duel_turn: 32, type_len: 1, type_keys: 4, type_enter: false, gap_strokes: false, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -534,6 +540,12 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         Task::Mixed(_) => mixed_block(&mut w, 0, &lesson, tokens, seed),
         Task::Feel(n) => w.feel(n),
         Task::Flag(n) => w.flag(n, lesson.flag_gap, lesson.distract, lesson.two_lights),
+        Task::Type(n) => {
+            w.type_len = lesson.type_len;
+            w.type_keys = lesson.type_keys;
+            w.type_enter = lesson.type_enter;
+            w.typing(n)
+        }
     }
     let mut blk = 0usize;
     // (`set_mixed_codes`) a mixed lifetime's lights the same kind of code as its glyphs
@@ -568,8 +580,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
         let senses = w.step(&act);
         // (the muscle's response) the act shows what the body did
         if muscle() {
-            let (said, moved) = w.events.last().map_or((None, None), |e| (e.said, e.moved));
-            net.set_output(&w.act(said, moved));
+            net.set_output(&w.act_done());
         }
         if ration > 0 {
             // it eats what it scores: the last block of steps, by its task's probes
@@ -597,6 +608,12 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
                         let mut r = [0; observe::NPROBES];
                         r[32] = observe::flag(b);
                         r[35] = observe::flag_graded(b);
+                        r
+                    }
+                    Task::Type(_) => {
+                        let mut r = [0; observe::NPROBES];
+                        r[43] = observe::typing(b);
+                        r[44] = observe::typing_graded(b);
                         r
                     }
                 };
@@ -919,6 +936,8 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     let (fel, w8) = if want(&[14, 17]) { live_lesson(g, Task::Feel(trials * 5), physics, seed ^ 0xFEE1, gap, lesson) } else { (vec![], 0) };
     // (cues and questions, `World::flag`) about four steps a trial
     let (flg, w9) = if want(&[32]) { live_lesson(g, Task::Flag(trials * 4), physics, seed ^ 0xF1A6, gap, lesson) } else { (vec![], 0) };
+    // (typing) a word to type for every trial
+    let (typ, w12) = if want(&[43]) && !beh { live_lesson(g, Task::Type(trials), physics, seed ^ 0x7E7E, gap, lesson) } else { (vec![], 0) };
     // (predict or evade) against this generation's partner for the seed, and the yardstick
     let rounds = (trials * 4).max(4 * lesson.duel_turn);
     let (duel_ev, w10) = if wanted.contains(&40) {
@@ -930,7 +949,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
         (vec![], 0)
     };
     let (bench, w11, bench_steps) = if wanted.contains(&41) { duel_bench(g, physics, seed ^ 0xBE4C, &lesson, rounds) } else { (0, 0, 0) };
-    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len() + flg.len() + duel_ev.len() + bench_steps).max(1) as u64;
+    let steps = (rev.len() + del.len() + seq.len() + pat.len() + maz.len() + scr.len() + mix.len() + fel.len() + flg.len() + duel_ev.len() + bench_steps + typ.len()).max(1) as u64;
     let mut row = observe::probes(&rev, period, &del, &seq, &pat, &maz, &scr);
     row[13] = observe::select(&mix);
     row[19] = observe::select_graded(&mix);
@@ -946,6 +965,8 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     row[35] = observe::flag_graded(&flg);
     row[40] = observe::duel(&duel_ev);
     row[41] = bench;
+    row[43] = observe::typing(&typ);
+    row[44] = observe::typing_graded(&typ);
     for (p, x) in row.iter_mut().enumerate() {
         if !wanted.contains(&p) && !wanted.iter().any(|&w| graded(w) == p && w != p) {
             *x = 0;
@@ -972,7 +993,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
             row[42] = (task.iter().map(|&p| { let idle = observe::idle_score(p); if strict && off[p] == idle { 0 } else { (row[p].max(idle) - off[p].max(idle)) as i64 } }).sum::<i64>() / task.len() as i64) as i32;
         }
     }
-    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9 + w10 + w11 * 4) / steps)
+    (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9 + w10 + w11 * 4 + w12) / steps)
 }
 
 /// All the probes.
@@ -995,7 +1016,7 @@ pub fn partial() -> bool {
 
 /// The probe selection uses for probe `p`: its graded version with `set_partial`, else itself.
 pub fn graded(p: usize) -> usize {
-    if partial() { match p { 7 => 15, 9 if partial_surprise() => 31, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, 32 if partial_flag() => 35, 33 if partial_more() => 36, 34 if partial_more() => 37, 6 if partial_more() => 38, 1 if partial_more() => 39, _ => p } } else { p }
+    if partial() { match p { 7 => 15, 9 if partial_surprise() => 31, 9 => 16, 14 => 17, 4 if partial_remember() => 18, 13 if partial_select() => 19, 11 if partial_screen() => 30, 32 if partial_flag() => 35, 43 => 44, 33 if partial_more() => 36, 34 if partial_more() => 37, 6 if partial_more() => 38, 1 if partial_more() => 39, _ => p } } else { p }
 }
 
 /// Surprise shaped from clicking at all (`set_partial_surprise`, with `set_partial`): selection uses

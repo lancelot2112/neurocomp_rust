@@ -1349,3 +1349,24 @@ replaces the act after each step with what the body did: the clean code of the m
 token said, every other line cleared. Then the act read back is the action taken, and a population
 that wrote the act sees on its own lines whether it drove the body. `live_duel` now applies it to
 both agents. Run 44 queued: run 43 with it.
+
+## A typing world (`ISL_TYPING=1`, run 45)
+
+Toward operating a computer: output letter by letter, as a keyboard, not a token a word. The
+voice's word 0 keeps the one-word voice's tokens; its words 1 to 7 hold a keyboard of 35 keys (the
+26 letters, space, Enter, Backspace, spares), each a code of 12 lines, five a word, no line shared,
+drawn with the fixed body (the same every lifetime). A key is typed when at least half its lines
+are on and they outnumber the other lines on in its word, the most covered winning, so a code with
+3 lines missing and 3 stray still types its key and a flooded word types nothing. The world
+(`World::typing`) shows the word on the eye as raw bytes (lower-case ASCII, input raw as always) in
+the eye's first word and the line typed so far in its second; a letter or space key adds to the line
+(at most 8), Backspace takes one off, Enter posts (on the first rungs the line posts itself when as
+long as the word); a right post is stroked, a wrong one feels the wrong signal; a trial times out
+after 3 steps a letter and 6. The muscle's response (run 44) shows the key typed on the act.
+Probes: `type`, exact posts per trial; `type~` (selection, partial credit), a quarter for typing
+anything and three quarters for letters right in place, a wrong letter -1/(letters - 1) so random
+letters net 0, a missing or extra place -1. Test `typing_pays_the_word_typed_and_reads_keys_robustly`:
+a typist reading the eye's bytes 1024 and 1024 on word3; random keys 0 and -101 (overfilling); doing
+nothing and flooding the voice 0; on key4 a wrong key scores what nothing does and a right one 1024.
+Ladder (`TYPING_LADDER`): key4 (one letter of four), key26, enter, word2, word3, word5, word8. Run 45
+queued: run 44 with it.

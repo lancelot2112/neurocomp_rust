@@ -942,6 +942,23 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
             *x = 0;
         }
     }
+    // (`set_learn_gain`) what learning buys: the same lifetimes with learning frozen, and for each
+    // task probe its score learning, cut at what doing nothing scores (`observe::idle_score`), less
+    // the same frozen, averaged. Only learning that lifts a task above doing nothing counts: a
+    // network that acts wildly frozen and is calmed by learning, still no better than idle, gains
+    // nothing. (The duel against the pool is left out: its partner would be
+    // frozen too.) What the frozen twin found is not kept.
+    if wanted.contains(&42) {
+        let task: Vec<usize> = wanted.iter().copied().filter(|&p| p != 42 && p != 40 && !(21..=29).contains(&p)).collect();
+        if !task.is_empty() {
+            let saved = NOTES.with(|n| n.borrow_mut().take());
+            crate::program::neurocomp::set_frozen_here(true);
+            let (off, _) = probe_scores_in(g, trials, physics, seed, gap, &task, lesson);
+            crate::program::neurocomp::set_frozen_here(false);
+            NOTES.with(|n| *n.borrow_mut() = saved);
+            row[42] = (task.iter().map(|&p| { let idle = observe::idle_score(p); (row[p].max(idle) - off[p].max(idle)) as i64 }).sum::<i64>() / task.len() as i64) as i32;
+        }
+    }
     (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9 + w10 + w11 * 4) / steps)
 }
 
@@ -2586,6 +2603,19 @@ mod tests {
         let (row, _) = probe_scores_in(&g, 32, Physics::Varied, 7, 0, &[40, 41], lesson);
         eprintln!("duel-bench of a network doing nothing {bench} (16 seeds); probes duel {} bench {}", row[40], row[41]);
         assert!(bench.abs() < 150 && runs[0].2 == 4 * 128, "{bench} {}", row[41]);
+    }
+
+    #[test]
+    fn the_learning_gain_is_scored_frozen_on_this_thread_only() {
+        // a network that does nothing gains 0; a random one's gain is what its learning lifts above
+        // 0; after it, nothing is left frozen
+        let empty = Genome { code: vec![] };
+        let (row, _) = probe_scores_in(&empty, 20, Physics::Varied, 3, 4, &[0, 42], Lesson::default());
+        assert_eq!(row[42], 0);
+        let mut rng = StdRng::seed_from_u64(9);
+        let gains: Vec<i32> = (0..6).map(|_| probe_scores_in(&Genome::random(&mut rng), 20, Physics::Varied, 3, 4, &[0, 1, 42], Lesson::default()).0[42]).collect();
+        eprintln!("learning gain of random genomes {gains:?}");
+        assert!(!crate::program::neurocomp::frozen() && gains.iter().all(|g| g.abs() <= 1024), "{gains:?}");
     }
 
     #[test]

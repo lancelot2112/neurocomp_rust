@@ -101,7 +101,21 @@ pub fn set_frozen(on: bool) {
     FROZEN.store(on, std::sync::atomic::Ordering::Relaxed);
 }
 
+thread_local! {
+    /// (`set_frozen_here`) learning frozen for this thread's lifetimes only
+    static FROZEN_HERE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Learning frozen for this thread only (`evolve::set_learn_gain`: the frozen twin of a lifetime,
+/// scored beside it while other threads score other genomes).
+pub fn set_frozen_here(on: bool) {
+    FROZEN_HERE.with(|c| c.set(on));
+}
+
 pub fn frozen() -> bool {
+    if FROZEN_HERE.with(|c| c.get()) {
+        return true;
+    }
     FROZEN.load(std::sync::atomic::Ordering::Relaxed)
 }
 

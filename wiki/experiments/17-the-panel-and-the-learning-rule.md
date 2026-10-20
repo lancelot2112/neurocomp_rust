@@ -1257,3 +1257,28 @@ island. The first yardstick (four fixed rules) leaked: a wired copy-last and alt
 and run 41's first start passed duel64 and duel32 by generation 6; it was stopped and restarted
 with rules drawn per lifetime, each as likely as its opposite, on which every fixed policy measured
 scores within 100 of 0 and a reader 918, and goals 200, 350, 500 and 650.
+
+## Do we have learners? Run 41 at 142, and learning as a selection case (`ISL_LEARN_GAIN=1`, run 42)
+
+The learning battery (now with recall's flag2 and the duel's duel64 against the yardstick's drawn
+rules; `runs/checks/learn-battery/run41-g142.txt`, 12 worlds, the top 3 of each island): learning
+on less frozen at least 50 and twice its error in 46 of 330 genome-task pairs (hurting in 6).
+Switching's best on discrim and swap1: about -140 learning, -690 frozen. But no task scored above
+0 learning (reading's pairs8 by prediction#1, 7, the one exception): frozen networks act wildly
+(stray and wrong clicks under the stray and miss costs) and learning calms them. That is learning
+in the lifetime, of a sort, not of the task. No duel genome learns (gaps 2 to 11).
+
+What "learning" means here: what `program::neurocomp::set_frozen` turns off, every change to the
+network's wiring in the lifetime: mask moves (Hebbian and anti-Hebbian), births, replication, the
+three-factor output moves, the teacher, accidents, exploration and the shadow trials. Activity
+(loops, histories, latches) runs frozen too, so memory held in activity is not counted.
+
+`ISL_LEARN_GAIN=1`: probe 42, `gain`, a lexicase case on every rung but the novelty island's:
+each lifetime scored again with the genome's learning frozen on that thread
+(`set_frozen_here`), and each task probe's score learning, cut at what doing nothing scores
+(`observe::idle_score`: -512 under misses at half on the probes misses are charged on, else 0),
+less the same frozen, averaged. Cut at 0 nearly nothing in run 41 would gain; cut at doing
+nothing, a network calmed by learning but no better than idle gains nothing, and one that learning
+makes better than idle and than its frozen self does. Resumed from run 41's checkpoint at 141:
+shapes' best gains 274 held out, switching's 18, the generalist's population 29; generations took
+about 160 seconds beside run 41 (about doubling). Run 42 is run 41 with it.

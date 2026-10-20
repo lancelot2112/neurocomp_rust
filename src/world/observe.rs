@@ -94,9 +94,9 @@ pub fn worst_phase(events: &[Event], period: usize) -> i32 {
 
 /// The graded probes: small capacities, each scored on a smooth scale in parts per 1024, so
 /// evolution can climb them one at a time (none is fed to the program).
-pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~", "feel-gap~", "feel-maze~", "copy~", "tell~", "duel", "duel-bench"];
+pub const PROBES: [&str; NPROBES] = ["respond", "tell", "discriminate", "reverse", "remember", "win-stay", "copy", "echo", "babble", "surprise", "maze", "screen", "repeat", "select", "feel", "echo~", "surprise~", "feel~", "remember~", "select~", "mixclick", "b-click-cond", "b-click-seq", "b-voice-seq", "b-voice-cond", "b-stroke", "b-moves", "b-tokens", "b-odd", "novelty", "screen~", "surprise+", "flag", "feel-gap", "feel-maze", "flag~", "feel-gap~", "feel-maze~", "copy~", "tell~", "duel", "duel-bench", "gain"];
 /// How many probes there are.
-pub const NPROBES: usize = 42;
+pub const NPROBES: usize = 43;
 /// One lifetime pair's probes, in the order of `PROBES`.
 pub type ProbeRow = [i32; NPROBES];
 
@@ -200,7 +200,7 @@ pub fn probes(reversal: &[Event], period: usize, delayed: &[Event], sequence: &[
     // spread of about 300 in a 12-world mean. A learner has both sides: it clicks the light that
     // did not pay once, and stops)
     let win_stay = win_stay_of(&tr, fair_win_stay());
-    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0, feel_in_gaps_graded(reversal), feel_in_maze_graded(maze_events), copy_graded(sequence), tell_graded(reversal), 0, 0]
+    [respond, tell, discriminate, reverse, remember, win_stay, copy(sequence), echo(sequence), babble(sequence), surprise(pattern), maze(maze_events), screen(screen_events), repeat(maze_events), 0, 0, echo_graded(sequence), surprise_graded(pattern), 0, remember_graded(delayed), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, screen_graded(screen_events), surprise_shaped(pattern), 0, feel_in_gaps(reversal), feel_in_maze(maze_events), 0, feel_in_gaps_graded(reversal), feel_in_maze_graded(maze_events), copy_graded(sequence), tell_graded(reversal), 0, 0, 0]
 }
 
 /// The farthest lag copy and echo compare against: both count only steps with that many steps
@@ -459,6 +459,13 @@ pub fn soft_floor() -> bool {
 /// (tests) `set_miss_scale` and `set_soft_floor` for this thread only.
 pub fn set_miss_here(m: Option<(i64, bool)>) {
     MISS_HERE.with(|c| c.set(m));
+}
+
+/// What a network that never acts scores on probe `p`: with the miss cost (`set_miss_cost`), a full
+/// miss at its scale on the probes misses are charged on (respond, discriminate, reverse,
+/// remember, maze, screen, select, flag), otherwise 0.
+pub fn idle_score(p: usize) -> i32 {
+    if miss_cost() && [0, 2, 3, 4, 10, 11, 13, 32].contains(&p) { floor(-missed(1024)) } else { 0 }
 }
 
 /// A miss's share (parts per 1024 of the prompts) at the miss cost's scale.

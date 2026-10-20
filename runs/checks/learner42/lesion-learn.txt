@@ -1,0 +1,20 @@
+learning lesion of selection's best (24 populations) on 16 fresh worlds: each rung's score learning, frozen, and with each population's learning alone frozen; a population's share is what its learning buys over what all learning buys
+reading babble (babble): learning 768, frozen 576, all learning buys 192
+    #19    eye->hand add:3                    its learning frozen    704   buys     64 (  33% of all)
+    #60    eye->hand add:3                    its learning frozen    704   buys     64 (  33% of all)
+selection cued (select): learning 90, frozen -126, all learning buys 216
+    #19    eye->hand add:3                    its learning frozen    -14   buys    104 (  48% of all)
+    #9     hand->eye rotl:10                  its learning frozen    -55   buys    146 (  67% of all)
+    #59    eye->hand add:3                    its learning frozen    -11   buys    102 (  47% of all)
+    #45    eye->hand add:3                    its learning frozen    -64   buys    155 (  72% of all)
+    #48    eye->hand add:3                    its learning frozen    -30   buys    120 (  56% of all)
+    #60    eye->hand add:3                    its learning frozen    -61   buys    152 (  70% of all)
+maze turn (maze): learning -24, frozen -153, all learning buys 129
+    #19    eye->hand add:3                    its learning frozen   -148   buys    124 (  96% of all)
+    #59    eye->hand add:3                    its learning frozen    -35   buys     11 (   9% of all)
+    #45    eye->hand add:3                    its learning frozen    -88   buys     64 (  50% of all)
+    #48    eye->hand add:3                    its learning frozen    -35   buys     11 (   9% of all)
+duel duel64 (duel-bench): learning -10, frozen 31, all learning buys -41
+    #19    eye->hand add:3                    its learning frozen    -39   buys     28 ( -69% of all)
+    #45    eye->hand add:3                    its learning frozen     38   buys    -48 ( 116% of all)
+    #48    eye->hand add:3                    its learning frozen     21   buys    -32 (  77% of all)

@@ -956,7 +956,11 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
             let (off, _) = probe_scores_in(g, trials, physics, seed, gap, &task, lesson);
             crate::program::neurocomp::set_frozen_here(false);
             NOTES.with(|n| *n.borrow_mut() = saved);
-            row[42] = (task.iter().map(|&p| { let idle = observe::idle_score(p); (row[p].max(idle) - off[p].max(idle)) as i64 }).sum::<i64>() / task.len() as i64) as i32;
+            // (`set_learn_gain_strict`: a task where the frozen twin does exactly what doing nothing
+            // does gains nothing: there learning only grew a network that could not act frozen,
+            // development, not learning from the world)
+            let strict = learn_gain_strict();
+            row[42] = (task.iter().map(|&p| { let idle = observe::idle_score(p); if strict && off[p] == idle { 0 } else { (row[p].max(idle) - off[p].max(idle)) as i64 } }).sum::<i64>() / task.len() as i64) as i32;
         }
     }
     (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9 + w10 + w11 * 4) / steps)
@@ -996,6 +1000,19 @@ pub fn set_partial_surprise(on: bool) {
 
 pub fn partial_surprise() -> bool {
     PARTIAL_SURPRISE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The learning gain strict (`set_learn_gain_strict`, `ISL_LEARN_GAIN=2`): a task whose frozen twin
+/// scores exactly what doing nothing scores gains nothing (development, not learning). Off by
+/// default.
+static LEARN_GAIN_STRICT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_learn_gain_strict(on: bool) {
+    LEARN_GAIN_STRICT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn learn_gain_strict() -> bool {
+    LEARN_GAIN_STRICT.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Partial credit on the stacked feel rungs, copy and tell too (`set_partial_more`, with

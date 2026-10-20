@@ -96,6 +96,42 @@ the task. Removing the self-NOR wire costs 2.3 goals.
 
 Files: `runs/checks/selection-dive/` (genomes, lesion maps, a trace excerpt); experiment 17.
 
+### The tuned eye: kernels that learn whatever lights the world shows (run 42, selection, generation 60)
+
+The first genome selected for what learning buys (run 42 selects on the gain of every lifetime
+learning over the same lifetime frozen) whose learning carries over to tasks it never met.
+24 populations over three private channels of 128 bits:
+
+- **eye to hand, five copies** of one kernel population writing `add:3` (byte-lane add) into the
+  hand, each paused while the eye is empty. Each kernel reads a tile of the eye and, firing, adds
+  into the hand at the same place; the hand's decoder makes the move whose word holds the most
+  lines. Learning here is Hebbian mask moves: a firing kernel's mask moves toward the lines that
+  were on, so within a lifetime the kernels settle on the lights this world draws (codes are drawn
+  fresh each lifetime) and fire on them reliably.
+- **hand to eye** (`rotl:10` kernels, and `sub:4` wires): the network's own act, rotated, written
+  into the eye, so the eye-to-hand kernels see what the hand just did beside what the world shows.
+  Its learning matters most of all.
+- **touch to voice**, eight copies of a `shl:36` wire: the task cue felt on the touch channel
+  shifted into the voice, so it speaks while a cue is felt; and touch wires into its three channels,
+  which pause or gate the rest (21 of its 27 modulatory inputs are pauses on C1, C2, C3 or the eye).
+
+Learning on less frozen (`ISL_LEARN_BATTERY=8`, `runs/checks/learn-battery/run42-g60.txt`): on its
+own rung, selection's cued, 134 learning against 3 frozen, rising through the lifetime (late less
+early +86); on the maze's turn 21 against -258 and symbol 12 against -258; on reading's babble 896
+against 640; on the duel's yardstick -41 against -190 (16 worlds: -10 against 31, noise). It learns
+nothing that tells lights apart (switching's discrim -511 against -512) and learning hurts it on
+swap1, flag2, the screen and shapes' paying (-81 to -154): its learning makes it respond to what it
+sees, whatever it is, and helps where responding is the task.
+
+A learning lesion (`ISL_LEARN_LESION=selection`, 16 worlds, `runs/checks/learner42/`): freezing one
+population's learning at a time. On cued (learning buys 216), each eye-to-hand copy's learning alone
+frozen costs 47 to 72% of all and the hand-to-eye population's 67%; on the maze turn (129), one copy
+(#19) 96%; on babble (192), two copies 33% each. The shares sum past 100%: the copies learn
+together (their kernels hold each other down where their masks overlap, so one frozen changes what
+the others learn). A plain lesion (8 worlds) finds 5 of 24 populations matter: the hand-to-eye loop
+(0.29 of a goal on the gain) and the eye-to-hand copies; each of the eight touch-to-voice wires
+alone matters little, being one of eight. Experiment 17.
+
 ### The sticky hand: a move carried from step to step (run 41, duel, generation 171)
 
 The duel island's best: 185 populations over 21 channels, the largest network a run has kept, but

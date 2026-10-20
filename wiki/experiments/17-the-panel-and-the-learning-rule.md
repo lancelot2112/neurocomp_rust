@@ -1301,3 +1301,18 @@ duel probe (`ISL_DUEL_PROBE=240`, new: by role and kind of drawn rule, learning 
 beating straight copying and reacting rules and losing less to their flipped versions, about 0
 against patterns, better late in each turn but the same frozen: it adapts in activity, not by
 learning. Saved in `wiki/mechanisms.md` as an evolved design.
+
+## Run 42's learner, and development not counted (`ISL_LEARN_GAIN=2`, run 43)
+
+The battery at 60 (8 worlds, each island's best, now with reading's babble and selection's cued):
+learning clearly helps in 20 of 132 genome-task pairs; in 3 the frozen twin does exactly what doing
+nothing does (development: it cannot act without growing first), in 7 it acts frozen and learning
+makes it better than idle. Selection's best is the learner (`wiki/mechanisms.md`, the tuned eye):
+eye-to-hand kernels whose Hebbian mask moves settle on this world's lights, and a hand-to-eye
+efference copy; learning lifts it on cued (134 against 3), the maze's turn and symbol (21 and 12
+against -258) and babble (896 against 640), and hurts it where telling lights apart matters. The
+learning lesion (`ISL_LEARN_LESION`, new: one population's learning frozen at a time with
+`set_frozen_pop_here`) puts what its learning buys in the eye-to-hand copies and the hand-to-eye
+loop, which learn together. `ISL_LEARN_GAIN=2` (`set_learn_gain_strict`): a task whose frozen twin
+scores exactly what doing nothing scores gains nothing, so development is not paid; run 43 queued
+with it. A gain chart is on the dashboard.

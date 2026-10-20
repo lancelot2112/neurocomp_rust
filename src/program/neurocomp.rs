@@ -112,6 +112,17 @@ pub fn set_frozen_here(on: bool) {
     FROZEN_HERE.with(|c| c.set(on));
 }
 
+thread_local! {
+    /// (`set_frozen_pop_here`) one population's learning frozen, by its genome id
+    static FROZEN_POP_HERE: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+/// One population's learning frozen, by its genome id (`spec.salt`), on this thread only: what that
+/// population's learning buys (`ISL_LEARN_LESION`, a learning lesion). Measurement only.
+pub fn set_frozen_pop_here(id: Option<u32>) {
+    FROZEN_POP_HERE.with(|c| c.set(id));
+}
+
 pub fn frozen() -> bool {
     if FROZEN_HERE.with(|c| c.get()) {
         return true;
@@ -596,10 +607,13 @@ impl RuntimeNetwork {
     pub fn tick(&mut self, mode: AdvanceMode, adj_temperature: i16) {
         // (`set_frozen`, measurement only) no learning in the lifetime: kernels keep their masks and
         // outputs, and nothing is born, copied or explored
-        if frozen() {
-            self.explore = false;
-            self.shadow = false;
-            for eg in self.edges.iter_mut() {
+        let one = FROZEN_POP_HERE.with(|c| c.get());
+        if frozen() || one.is_some() {
+            if frozen() {
+                self.explore = false;
+                self.shadow = false;
+            }
+            for eg in self.edges.iter_mut().filter(|eg| frozen() || Some(eg.spec.salt) == one) {
                 eg.spec.grow = false;
                 eg.grow = false;
                 eg.spec.replicate = 0;

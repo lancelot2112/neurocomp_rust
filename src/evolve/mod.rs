@@ -978,7 +978,11 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
     // network that acts wildly frozen and is calmed by learning, still no better than idle, gains
     // nothing. (The duel against the pool is left out: its partner would be
     // frozen too.) What the frozen twin found is not kept.
-    if wanted.contains(&42) {
+    // (`set_learn_gain_every`) the frozen twin on one world in that many, drawn from the seed, its
+    // gain counted that many times over (so means keep their scale); 0 on the others
+    let every = learn_gain_every().max(1) as u64;
+    let measured = every == 1 || (seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 32) % every == 0;
+    if wanted.contains(&42) && measured {
         let task: Vec<usize> = wanted.iter().copied().filter(|&p| p != 42 && p != 40 && !(21..=29).contains(&p)).collect();
         if !task.is_empty() {
             let saved = NOTES.with(|n| n.borrow_mut().take());
@@ -990,7 +994,7 @@ pub fn probe_scores_in<G: Evolvable>(g: &G, trials: usize, physics: Physics, see
             // does gains nothing: there learning only grew a network that could not act frozen,
             // development, not learning from the world)
             let strict = learn_gain_strict();
-            row[42] = (task.iter().map(|&p| { let idle = observe::idle_score(p); if strict && off[p] == idle { 0 } else { (row[p].max(idle) - off[p].max(idle)) as i64 } }).sum::<i64>() / task.len() as i64) as i32;
+            row[42] = (task.iter().map(|&p| { let idle = observe::idle_score(p); if strict && off[p] == idle { 0 } else { (row[p].max(idle) - off[p].max(idle)) as i64 } }).sum::<i64>() * every as i64 / task.len() as i64) as i32;
         }
     }
     (row, (w1 + w2 + w3 + w4 + w5 + w6 + w7 + w8 + w9 + w10 + w11 * 4 + w12) / steps)
@@ -1030,6 +1034,19 @@ pub fn set_partial_surprise(on: bool) {
 
 pub fn partial_surprise() -> bool {
     PARTIAL_SURPRISE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The learning gain on one world in this many (`set_learn_gain_every`, `ISL_LEARN_GAIN_EVERY`): the
+/// frozen twin lived on those worlds only (drawn from each world's seed), its gain counted that many
+/// times over so means keep their scale. 1, every world, the default.
+static LEARN_GAIN_EVERY: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+
+pub fn set_learn_gain_every(n: u32) {
+    LEARN_GAIN_EVERY.store(n.max(1), std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn learn_gain_every() -> u32 {
+    LEARN_GAIN_EVERY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The learning gain strict (`set_learn_gain_strict`, `ISL_LEARN_GAIN=2`): a task whose frozen twin

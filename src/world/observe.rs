@@ -2219,6 +2219,41 @@ mod tests {
     }
 
     #[test]
+    fn typing_by_search_finds_the_letter_with_time_to_try() {
+        // a searcher that knows no key: presses keys at random, compares the line with the word
+        // on the eye, takes a wrong letter off and posts on a match; with 60 steps a letter it types
+        // most words, with 3 few
+        let run = |time: usize, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.type_len = 1;
+            w.type_keys = 26;
+            w.type_enter = true;
+            w.type_time = time;
+            w.typing(30);
+            let mut rng = <rand::rngs::StdRng as rand::SeedableRng>::seed_from_u64(seed);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let eye = channel(&senses, EYE);
+                let (word, line) = (eye.as_words()[0], eye.as_words()[1]);
+                let a = if word == 0 {
+                    w.act(None, None)
+                } else if line == 0 {
+                    w.key_act(rand::Rng::gen_range(&mut rng, 0..26))
+                } else if line == word {
+                    w.key_act(KEY_ENTER)
+                } else {
+                    w.key_act(KEY_BACK)
+                };
+                senses = w.step(&a);
+            }
+            typing(&w.events)
+        };
+        let (long, short) = ((0..6).map(|s| run(60, 500 + s)).sum::<i32>() / 6, (0..6).map(|s| run(3, 500 + s)).sum::<i32>() / 6);
+        eprintln!("type by search: 60 steps a letter {long}, 3 steps a letter {short}");
+        assert!(long > 600 && short < 300, "{long} {short}");
+    }
+
+    #[test]
     fn typing_pays_the_word_typed_and_reads_keys_robustly() {
         // a typist reading the eye's bytes types the word then Enter; one at random; one that does
         // nothing; one that floods the voice; and the keyboard read through noise

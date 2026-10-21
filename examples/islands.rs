@@ -335,6 +335,9 @@
 //! key by key on a keyboard of 35 sparse codes in the voice's words 1 to 7 (12 lines each, five a
 //! word, no line shared; a flooded word types nothing), posted with Enter; the line typed shown back
 //! on the eye. Goals on `type` (exact posts), selection on `type~` (letters right less wrong).
+//! `ISL_TYPING=2`: the typing island on the search ladder (`TYPING_SEARCH_LADDER`): every rung posts
+//! with Enter; search4 and search26 give 60 steps a letter (press, compare the line with the word,
+//! Backspace a wrong letter, post on a match), then less time a letter up the ladder.
 //! `ISL_DUEL=1`: a duel island, predict or evade against other agents (`World::duel`): each step a
 //! round, the predictor winning when the two agents' moves match, the evader when they differ,
 //! the roles flipping every `turn` rounds so each agent learns both; partners this generation's
@@ -972,6 +975,7 @@ fn ladder(text: &str) -> Vec<Stage> {
                 "tlen" => stage.lesson.type_len = v.parse().expect("tlen"),
                 "tkeys" => stage.lesson.type_keys = v.parse().expect("tkeys"),
                 "tenter" => stage.lesson.type_enter = v == "1",
+                "ttime" => stage.lesson.type_time = v.parse().expect("ttime"),
                 "go" => stage.lesson.go_tone = v == "1",
                 "period" => stage.lesson.period = v.parse().expect("period"),
                 "noise" => stage.lesson.noise = v.parse().expect("noise"),
@@ -1063,6 +1067,18 @@ const TYPING_LADDER: &str = "key4 probes=type tlen=1 tkeys=4 tenter=0 goal=type@
     word3 probes=type tlen=3 tkeys=26 tenter=1 goal=type@400; \
     word5 probes=type tlen=5 tkeys=26 tenter=1 goal=type@300; \
     word8 probes=type tlen=8 tkeys=26 tenter=1 goal=type@300";
+
+/// (`ISL_TYPING=2`) typing by search first: every rung posts with Enter, the first two with 60 steps
+/// a letter, time to press a key, compare the line with the word on the eye, take a wrong letter
+/// off with Backspace and try another, and post when they match; then less time a letter, so
+/// knowing the key replaces searching for it.
+const TYPING_SEARCH_LADDER: &str = "search4 probes=type tlen=1 tkeys=4 tenter=1 ttime=60 goal=type@500; \
+    search26 probes=type tlen=1 tkeys=26 tenter=1 ttime=60 goal=type@500; \
+    key26 probes=type tlen=1 tkeys=26 tenter=1 ttime=12 goal=type@500; \
+    word2 probes=type tlen=2 tkeys=26 tenter=1 ttime=20 goal=type@400; \
+    word3 probes=type tlen=3 tkeys=26 tenter=1 ttime=12 goal=type@400; \
+    word5 probes=type tlen=5 tkeys=26 tenter=1 ttime=8 goal=type@300; \
+    word8 probes=type tlen=8 tkeys=26 tenter=1 ttime=6 goal=type@300";
 
 const RECALL_FLAG_LADDER: &str = "respond probes=respond swaps=0 goal=respond@100; \
     flag2 probes=flag fgap=2 goal=flag@300; \
@@ -1361,7 +1377,7 @@ fn main() {
         islands.push(Island { name: "selection".into(), frontier: false, stages: vec![Stage { name: "all".into(), probes: vec![13], lesson, goal: vec![], hold: 0 }] });
     }
     // (`ISL_TYPING=1`: typing the word shown on a keyboard of sparse codes)
-    if env("ISL_TYPING", 0u8) == 1 {
+    if env("ISL_TYPING", 0u8) >= 1 {
         islands.push(Island { name: "typing".into(), frontier: false, stages: vec![Stage { name: "open".into(), probes: vec![43], lesson: Lesson { type_len: 1, type_keys: 4, ..Lesson::default() }, goal: vec![], hold: 0 }] });
     }
     // (`ISL_DUEL=1`: predict or evade, an island whose world is other agents)
@@ -1383,7 +1399,7 @@ fn main() {
                 "maze" => isl.stages = ladder(MAZE_LADDER),
                 "screen" => isl.stages = ladder(SCREEN_LADDER),
                 "duel" => isl.stages = ladder(DUEL_LADDER),
-                "typing" => isl.stages = ladder(TYPING_LADDER),
+                "typing" => isl.stages = ladder(if env("ISL_TYPING", 0u8) == 2 { TYPING_SEARCH_LADDER } else { TYPING_LADDER }),
                 "selection" => {
                     let base = if env("ISL_SELECT_MORE", 0u8) == 1 { SELECTION_MORE } else { SELECTION_LADDER };
                     isl.stages = ladder(&if env("ISL_SELECT_STEP", 0u8) == 1 { format!("{SELECT_STEP} {base}") } else { base.to_string() })

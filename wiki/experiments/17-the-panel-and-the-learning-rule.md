@@ -1475,3 +1475,24 @@ posts on key4 22 to 58 per 1024 (best held out 46; goal 500). Generations grew t
 Run 45 (`ISL_ATTRACT_OUT=2`, `ISL_LEARN_GAIN_EVERY=4`, the duel island paused) timed on the same
 checkpoint (run 44's at 25) with the same load: one generation 199 seconds against 563 for run
 44's settings, about 2.8 times faster.
+
+## Why typing stuck at key4, and typing by search (`ISL_TYPING=2`, run 46)
+
+By run 45's 826 the typing island posted the right letter 27 to 42 times per 1024 on key4, about
+what pressing one key always scores (the shown letter is that key's 1 time in 26: 39), and its
+learning gained nothing. The letter-to-key mapping cannot be inherited: starting kernels are drawn
+fresh each lifetime (the genome sets the kind of cell, not the cell), so a population's input masks
+and the key code each starting kernel writes are random every lifetime. Other islands output one
+move, which any kernel firing on the right input can write; typing needs 26 outputs each tied to
+its input, learned in the lifetime from a stroke for a right post. It can see what it typed (the
+line typed is shown beside the word on the eye, and the muscle's response shows the key's code),
+but on the first rungs the line posted itself on the step its letter first showed, too late to act
+on. Typing by search: every rung of `TYPING_SEARCH_LADDER` posts with Enter, the first two
+(search4, search26) with 60 steps a letter (`World::type_time`, the timeout `type_time` steps a
+letter and 6), so a network can press a key, compare the line with the word (one XOR of the eye's
+two words is 0 on a match), take a wrong letter off with Backspace and post on a match: a search
+evolution can wire with fixed circuits, no learned mapping. Later rungs give less time a letter
+(12, 20, 12, 8, 6), so knowing the key replaces searching for it. Test
+`typing_by_search_finds_the_letter_with_time_to_try`: a searcher pressing keys at random, taking
+wrong letters off and posting on a match, 722 per 1024 with 60 steps a letter, 141 with 3. Run 44's
+fingerprint unchanged. Run 46 queued: run 45 with it.

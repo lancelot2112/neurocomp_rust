@@ -283,6 +283,8 @@ pub struct Lesson {
     pub type_len: usize,
     pub type_keys: usize,
     pub type_enter: bool,
+    /// (typing) steps a letter before a trial times out
+    pub type_time: usize,
     /// (delayed conditioning) a tone as the window opens (`World::go_tone`)
     pub go_tone: bool,
     pub blur: u32,
@@ -379,7 +381,7 @@ pub fn energy() -> (u64, u64) {
 
 impl Default for Lesson {
     fn default() -> Self {
-        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, flag_gap: 2, duel_turn: 32, type_len: 1, type_keys: 4, type_enter: false, gap_strokes: false, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
+        Self { tokens: 8, teach: 4, swaps: 3, delay: 3, vary_delay: 0, flag_gap: 2, duel_turn: 32, type_len: 1, type_keys: 4, type_enter: false, type_time: 3, gap_strokes: false, distract: false, two_lights: false, go_tone: false, period: 0, noise: 0, blur: 0, shift: 0, maze_len: 2, cue_gone: false, symbol: false, maze_fixed: false, maze_nocue: false, mirror: 0, quiet: false, motor_place: false, babble: 0, sentence: false, one_word: false, code_lines: 0, sense_place: false, mixed_block: 40, mixed_cue: false, mixed_cue_steps: 0, mixed_random: false, mixed_three: false, mixed_same: false, screen_w: 2, screen_h: 2, screen_lit: 1, screen_cell: 64, screen_walls: 0, screen_torch: false, screen_dark: false, ration: energy().0, food: energy().1 }
     }
 }
 
@@ -544,6 +546,7 @@ pub fn live_lesson<G: Evolvable>(g: &G, task: Task, physics: Physics, seed: u64,
             w.type_len = lesson.type_len;
             w.type_keys = lesson.type_keys;
             w.type_enter = lesson.type_enter;
+            w.type_time = lesson.type_time;
             w.typing(n)
         }
     }

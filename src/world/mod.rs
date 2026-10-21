@@ -551,6 +551,8 @@ pub struct World {
     pub type_len: usize,
     pub type_keys: usize,
     pub type_enter: bool,
+    /// steps a letter before a trial times out (3; it also has 6 more)
+    pub type_time: usize,
     type_alphabet: Vec<u8>,
     type_target: Vec<u8>,
     type_line: Vec<u8>,
@@ -850,6 +852,7 @@ impl World {
             type_len: 1,
             type_keys: 4,
             type_enter: false,
+            type_time: 3,
             type_alphabet: Vec::new(),
             type_target: Vec::new(),
             type_line: Vec::new(),
@@ -914,8 +917,8 @@ impl World {
     /// typed on the keyboard (`Keyboard`, in the voice's words 1 to 7) adds its letter or a space,
     /// Backspace takes the last one off, Enter posts the line (without `type_enter`, the line is
     /// posted when it is as long as the word). A posted line that is the word is stroked; any other
-    /// post feels the wrong signal (with `wrong_signal`). A trial not posted in 3 steps a letter and
-    /// 6 more times out. The line holds at most 8 bytes.
+    /// post feels the wrong signal (with `wrong_signal`). A trial not posted in `type_time` steps a
+    /// letter (3) and 6 more times out. The line holds at most 8 bytes.
     pub fn typing(&mut self, trials: usize) {
         self.present = false;
         let mut letters: Vec<u8> = (b'a'..=b'z').collect();
@@ -1606,7 +1609,7 @@ impl World {
                 if !self.type_enter && self.type_line.len() >= self.type_target.len() {
                     post = Some(true);
                 }
-                if post.is_none() && t + 1 >= 3 * self.type_target.len() + 6 {
+                if post.is_none() && t + 1 >= self.type_time * self.type_target.len() + 6 {
                     post = Some(false);
                 }
                 let show = |v: &[u8]| v.iter().take(8).enumerate().fold(0u64, |w, (i, &b)| w | (b as u64) << (8 * i));

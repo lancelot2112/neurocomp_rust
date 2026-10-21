@@ -62,10 +62,32 @@ pub fn attract() -> bool {
 /// trial is kept by the genome (`tags::take_notes`, kinds 13 voice, 14 hand) if, in the lifetime,
 /// its word of the act held a code the body made (with the muscle's response, what was done). An
 /// unused muscle asks for a nerve. Off by default.
+/// (`set_attract_out_unattached`, mode 2) only words of the act nothing in the network is attached
+/// to (no population's or branch's destination covers them) attract, not every word left unwritten
+/// for a while.
 static ATTRACT_OUT: AtomicBool = AtomicBool::new(false);
+static ATTRACT_OUT_UNATTACHED: AtomicBool = AtomicBool::new(false);
 
 pub fn set_attract_out(on: bool) {
     ATTRACT_OUT.store(on, Ordering::Relaxed);
+}
+
+pub fn set_attract_out_unattached(on: bool) {
+    ATTRACT_OUT_UNATTACHED.store(on, Ordering::Relaxed);
+}
+
+thread_local! {
+    /// (tests) `set_attract_out_unattached` for this thread only
+    static ATTRACT_OUT_UNATTACHED_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn attract_out_unattached() -> bool {
+    ATTRACT_OUT_UNATTACHED_HERE.with(|c| c.get()).unwrap_or_else(|| ATTRACT_OUT_UNATTACHED.load(Ordering::Relaxed))
+}
+
+/// (tests) `set_attract_out_unattached` for this thread only.
+pub fn set_attract_out_unattached_here(on: Option<bool>) {
+    ATTRACT_OUT_UNATTACHED_HERE.with(|c| c.set(on));
 }
 
 thread_local! {
@@ -1555,7 +1577,16 @@ impl RuntimeNetwork {
             if !self.motor.iter().any(|m| m.0 == w) {
                 continue;
             }
-            if out[w] != 0 || self.edges.iter().any(|e| e.out_word.is_some_and(|o| o.0 == w)) {
+            // (mode 2) anything attached to the word: a population or a branch whose destination
+            // covers it, or a trial into it
+            let o = self.output;
+            let covers = |win: Option<(usize, usize)>| win.is_none_or(|(at, len)| (at..at + len).contains(&w));
+            let attached = attract_out_unattached() && self.edges.iter().any(|e| {
+                (e.dst == o && (e.spec.dst_len == 0 || (e.spec.dst_word..e.spec.dst_word + e.spec.dst_len).contains(&w)))
+                    || e.spec.branch.is_some_and(|(n, win)| n == o && covers(win))
+                    || e.spec.more.iter().any(|m| m.0 == o && covers(m.1))
+            });
+            if attached || out[w] != 0 || self.edges.iter().any(|e| e.out_word.is_some_and(|o| o.0 == w)) {
                 self.attracted_out[w] = 0;
                 continue;
             }

@@ -2943,6 +2943,43 @@ mod tests {
     }
 
     #[test]
+    fn only_an_unattached_word_of_the_act_attracts_in_mode_two() {
+        use crate::bitvec::bithistory::AdvanceMode;
+        // mode 2: a network with nothing writing the voice grows a trial into the keyboard's words;
+        // one with a population writing the voice port grows none into the voice
+        crate::program::neurocomp::set_attract_out_here(Some(true));
+        crate::program::neurocomp::set_attract_out_unattached_here(Some(true));
+        let c = 0x3C;
+        let p = Pop { count: 2, cover: true, from_port: true, accident: 12, ..Pop::new(1, EYE, c) };
+        let speaker = Pop { count: 2, cover: true, from_port: true, to_port: true, accident: 12, ..Pop::new(2, EYE, VOICE) };
+        let trials = |pops: Vec<Pop>| -> Vec<usize> {
+            let mut tokens = vec![Token::Channel { tag: c, width: 0, hold: false }];
+            tokens.extend(pops.into_iter().map(Token::Pop));
+            let g = TagGenome { tokens, next_id: 3 };
+            let mut w = World::new(3, 2);
+            w.type_len = 1;
+            w.type_keys = 4;
+            w.typing(30);
+            let mut net = g.build(&w, 3);
+            let mut act = BitVector::new(world::ACT_BITS, Some(0));
+            while !w.done() {
+                let senses = w.step(&act);
+                net.set_output(&w.act_done());
+                net.tick(AdvanceMode::Clear, 0);
+                net.write_input(&senses, 0);
+                act = net.read_output().clone();
+            }
+            net.edges.iter().filter_map(|e| e.out_word.map(|o| o.0)).collect()
+        };
+        let (alone, with_voice) = (trials(vec![p.clone()]), trials(vec![p, speaker]));
+        crate::program::neurocomp::set_attract_out_unattached_here(None);
+        crate::program::neurocomp::set_attract_out_here(None);
+        let cw = world::CH_BITS / 64;
+        eprintln!("output trials into words: nothing on the voice {alone:?}; a population writing the voice {with_voice:?}");
+        assert!(alone.iter().any(|&w| w < cw) && with_voice.iter().all(|&w| w >= cw), "{alone:?} {with_voice:?}");
+    }
+
+    #[test]
     fn a_stuck_population_grows_a_trial_connection_and_a_kept_one_joins_the_genome() {
         use crate::bitvec::bithistory::AdvanceMode;
         let c = 0x3C;

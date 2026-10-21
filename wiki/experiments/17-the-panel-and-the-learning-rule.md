@@ -1449,3 +1449,19 @@ a port too many does not collide. Behaviour unchanged: a fingerprint (`ISL_FINGE
 every probe in every kind of lifetime, work, finds and wiring hashed for each island's first two
 genomes) is identical before and after under run 44's settings on its checkpoint and run 33's on
 its (`runs/checks/body-registry/`).
+
+## The output attractant only where nothing is attached (`ISL_ATTRACT_OUT=2`)
+
+Why generations slowed in run 44 (194 seconds at 50, against 109 in run 43 and 46 in run 41): the
+frozen twin (run 42 on, about twice the lifetimes), the duel island (nine 800-round lifetimes a
+world, the largest genomes, about 48 populations), networks growing through a run, and the output
+attractant: on in every lifetime of every island, it grew trials into any word of the act left
+unwritten a while, and by 50 genomes carried about 4.5 kept output trials each (a fifth of their
+populations), most kept in worlds other than typing's. At the user's call the attractant should
+answer only an output nothing is attached to: mode 2 counts a word of the act only if no
+population's or branch's destination covers it (the whole act, its port, or that word) and no trial
+is in it. Since what writes the voice is born with the keys' codes in typing lifetimes, anything
+attached to the voice can already reach the keyboard. Test
+`only_an_unattached_word_of_the_act_attracts_in_mode_two`: with nothing on the voice a trial grows
+into the keyboard's first word; with a population writing the voice none grows into the voice
+(only into hand words nothing covers). Mode 1 unchanged (run 44's fingerprint identical).

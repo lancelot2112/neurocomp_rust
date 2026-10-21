@@ -1465,3 +1465,13 @@ attached to the voice can already reach the keyboard. Test
 `only_an_unattached_word_of_the_act_attracts_in_mode_two`: with nothing on the voice a trial grows
 into the keyboard's first word; with a population writing the voice none grows into the voice
 (only into hand words nothing covers). Mode 1 unchanged (run 44's fingerprint identical).
+
+## Run 44's end (stopped at 83 for run 45), and run 45 made faster
+
+12 rung moves in 83 generations of the second start: selection cued to held (11 to 32), switching,
+recall and the maze past respond and feel (41), the maze to learn (43), reading to pairs8 (43),
+switching to feel-300 (50), shapes to blur1 (78). The typing island typed from the restart: exact
+posts on key4 22 to 58 per 1024 (best held out 46; goal 500). Generations grew to 448 seconds.
+Run 45 (`ISL_ATTRACT_OUT=2`, `ISL_LEARN_GAIN_EVERY=4`, the duel island paused) timed on the same
+checkpoint (run 44's at 25) with the same load: one generation 199 seconds against 563 for run
+44's settings, about 2.8 times faster.

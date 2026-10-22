@@ -296,7 +296,37 @@ pub fn feel_in_maze(events: &[Event]) -> i32 {
 /// Clicks after a stroke in tiers, as `feel_graded` scores them: steps 1 to 3 after the last stroke
 /// that counts (`counts`) in full, 4 to 6 at half, 7 to 9 at a quarter, each against the click rate
 /// at the steps `baseline` admits with no stroke of any kind in the 9 before.
+/// Fixes to the graded cases (`set_partial_fix`), found by measuring run 45's selection cases:
+/// feel-gap~ counts only gap steps after a stroke (it counted the light trial that follows, so
+/// clicking at lights scored as feeling the stroke), and screen~ gives a quarter for reaching the
+/// target and half a hit for a click within two steps of it (half for reaching alone was a top no
+/// click could beat). Off by default.
+static PARTIAL_FIX: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+thread_local! {
+    /// (tests) `set_partial_fix` for this thread only
+    static PARTIAL_FIX_HERE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn set_partial_fix(on: bool) {
+    PARTIAL_FIX.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn partial_fix() -> bool {
+    PARTIAL_FIX_HERE.with(|c| c.get()).unwrap_or_else(|| PARTIAL_FIX.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// (tests) `set_partial_fix` for this thread only.
+pub fn set_partial_fix_here(on: Option<bool>) {
+    PARTIAL_FIX_HERE.with(|c| c.set(on));
+}
+
 fn stroke_tiers(ev: &[&Event], counts: impl Fn(&Event) -> bool, baseline: impl Fn(&Event) -> bool) -> i32 {
+    stroke_tiers_on(ev, counts, baseline, |_| true)
+}
+
+/// As `stroke_tiers`, the tiers counting only the steps `tiered` admits.
+fn stroke_tiers_on(ev: &[&Event], counts: impl Fn(&Event) -> bool, baseline: impl Fn(&Event) -> bool, tiered: impl Fn(&Event) -> bool) -> i32 {
     let mut n = [0i64; 4];
     let mut c = [0i64; 4];
     let (mut since, mut since_any) = (usize::MAX, usize::MAX);
@@ -312,9 +342,10 @@ fn stroke_tiers(ev: &[&Event], counts: impl Fn(&Event) -> bool, baseline: impl F
             since_any += 1;
         }
         let b = match since {
-            1..=3 => 0,
-            4..=6 => 1,
-            7..=9 => 2,
+            1..=3 if tiered(ev[t]) => 0,
+            4..=6 if tiered(ev[t]) => 1,
+            7..=9 if tiered(ev[t]) => 2,
+            1..=9 => continue,
             _ if since_any > 9 && baseline(ev[t]) => 3,
             _ => continue,
         };
@@ -333,6 +364,10 @@ fn stroke_tiers(ev: &[&Event], counts: impl Fn(&Event) -> bool, baseline: impl F
 /// `feel_graded`'s tiers, a late click after a gap stroke counting half or a quarter.
 pub fn feel_in_gaps_graded(events: &[Event]) -> i32 {
     let ev: Vec<&Event> = events.iter().filter(|e| matches!(e.scene, SceneKind::Conditioning(_))).collect();
+    // (`set_partial_fix`) only gap steps after a stroke count, not the light trial that follows
+    if partial_fix() {
+        return stroke_tiers_on(&ev, |e| e.stroked && e.trial.is_none(), |e| e.trial.is_none(), |e| e.trial.is_none());
+    }
     stroke_tiers(&ev, |e| e.stroked && e.trial.is_none(), |e| e.trial.is_none())
 }
 
@@ -1267,6 +1302,24 @@ pub fn screen_graded(events: &[Event]) -> i32 {
     }
     if trials.is_empty() {
         return 0;
+    }
+    // (`set_partial_fix`) a click within two steps of the cursor on the target counts half a hit and
+    // costs nothing; reaching the target alone, a quarter
+    if partial_fix() {
+        let sc: Vec<&Event> = events.iter().filter(|e| e.scene == SceneKind::Screen).collect();
+        let mut near_trials = std::collections::BTreeSet::new();
+        let mut near = 0i64;
+        for (i, e) in sc.iter().enumerate() {
+            if e.chose == Some(false) && (i.saturating_sub(2)..(i + 3).min(sc.len())).any(|u| sc[u].on_target) {
+                near += 1;
+                if let Some((t, _)) = e.screen {
+                    near_trials.insert(t);
+                }
+            }
+        }
+        let reached = trials.iter().filter(|(t, r)| r.0 && !r.1 && !near_trials.contains(t)).count() as i64;
+        let n = trials.len() as i64;
+        return floor(((hits * cells - (clicks - near)) * 1024 + near * (cells - 1) * 512 + reached * (cells - 1) * 256) / (n * (cells - 1)));
     }
     let reached = trials.values().filter(|r| r.0 && !r.1).count() as i64;
     // (a hit is worth cells - 1 here: its click less; a trial that only reached the target, half that)
@@ -2216,6 +2269,51 @@ mod tests {
         let mut e = w.events[0].clone();
         e.posted = None;
         e
+    }
+
+    #[test]
+    fn the_fixed_graded_cases_pay_the_right_thing() {
+        // feel-gap~: a network clicking only at lights scored on it before the fix, not after; one
+        // clicking after gap strokes scores both ways
+        let lights = |kind: u8, seed: u64| -> i32 {
+            let mut w = World::new(seed, 2);
+            w.gap_max = 6;
+            w.gap_strokes = true;
+            w.conditioning(Conditioning::Reversal, 60);
+            let mut senses = BitVector::new(SENSE_BITS, Some(0));
+            while !w.done() {
+                let seen = channel(&senses, EYE).count_ones() > 0;
+                let stroked = channel(&senses, AFFECT).count_ones() > 0;
+                let click = if kind == 0 { seen } else { stroked };
+                let a = w.act(None, click.then_some(CLICK));
+                senses = w.step(&a);
+            }
+            feel_in_gaps_graded(&w.events)
+        };
+        let mean = |k: u8| (0..8).map(|s| lights(k, 600 + s)).sum::<i32>() / 8;
+        set_partial_fix_here(Some(false));
+        let (light_old, stroke_old) = (mean(0), mean(1));
+        set_partial_fix_here(Some(true));
+        let (light_new, stroke_new) = (mean(0), mean(1));
+        // screen~: trials that only reach the target, that click two steps after leaving it, that hit
+        let trials = |kind: u8| -> Vec<Event> {
+            let mut ev = Vec::new();
+            for t in 0..10 {
+                for step in 0..4 {
+                    let on = step == 1;
+                    let chose = match (kind, step) { (1, 3) => Some(false), (2, 1) => Some(true), _ => None };
+                    ev.push(Event { scene: SceneKind::Screen, screen: Some((t, 4)), on_target: on, chose, ..w_event() });
+                }
+            }
+            ev
+        };
+        let (reach, near, hit) = (screen_graded(&trials(0)), screen_graded(&trials(1)), screen_graded(&trials(2)));
+        set_partial_fix_here(Some(false));
+        let reach_old = screen_graded(&trials(0));
+        set_partial_fix_here(None);
+        eprintln!("feel-gap~: light clicker {light_old} -> {light_new}, stroke follower {stroke_old} -> {stroke_new}; screen~ fixed: reach only {reach} (was {reach_old}), click near {near}, hit {hit}");
+        assert!(light_new.abs() < 60 && light_old > light_new + 100 && stroke_new > 200, "{light_old} {light_new} {stroke_old} {stroke_new}");
+        assert!(reach < reach_old && reach < near && near < hit, "{reach} {near} {hit} {reach_old}");
     }
 
     #[test]

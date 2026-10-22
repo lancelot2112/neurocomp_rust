@@ -1522,3 +1522,10 @@ recall's flag best 400 (goal 300), the maze's repeat best 546 (300), prediction'
 enough. Kept rungs mostly agree with the rung (selection's 0.5 to 0.7) or are unrelated (recall's
 respond -0.02); the one mild pull apart is reading, where kept echo and babble run against copy
 (-0.10 to -0.25). The learning gain is about constant on most islands (0 on recall and the screen).
+
+Fixed (`ISL_PARTIAL_FIX=1`, `observe::set_partial_fix`, in run 46): feel-gap~ counts only gap steps
+after a stroke, and screen~ gives a quarter for reaching the target and half a hit for a click
+within two steps of the cursor being on it (that click costs nothing). Test
+`the_fixed_graded_cases_pay_the_right_thing`: on feel-gap~ a light clicker 398 before, 0 after; a
+stroke follower 367, then 588; on screen~ reaching alone 256 (was 512), a click near the target 512,
+a hit 1024. Run 44's fingerprint unchanged with the switch off.

@@ -1529,3 +1529,14 @@ within two steps of the cursor being on it (that click costs nothing). Test
 `the_fixed_graded_cases_pay_the_right_thing`: on feel-gap~ a light clicker 398 before, 0 after; a
 stroke follower 367, then 588; on screen~ reaching alone 256 (was 512), a click near the target 512,
 a hit 1024. Run 44's fingerprint unchanged with the switch off.
+
+## Run 45's end (stopped at 1142 for run 46)
+
+17 rung moves in 1142 generations, none after 834: reading to pairs8 (4, 40), selection cued to held
+(20, 170 to 175), shapes to blur1, blur2 and shift8 (86, 567, 571), switching to tell and feel-300
+(99, 834), recall to flag2 (100), the maze to feel and learn (284, 495), the screen to glow, torch
+and two (705, 706, 787; its first since run 35). Generations took 40 to 90 seconds, a quarter of run
+44's. Recall's flag2 reached -168, its best; typing stayed at chance on key4. The plateau after 834
+was measured (above): a graded case rewarding clicking at lights, one with a ceiling no click could
+beat, no gradient where the lifetime must tell things apart. Run 46 (started 10:17 PM ET) adds typing
+by search and the two fixes.

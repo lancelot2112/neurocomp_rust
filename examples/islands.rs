@@ -1749,6 +1749,54 @@ fn main() {
         println!("fingerprint all: {:016x}", total.finish());
         return;
     }
+    // (`ISL_CASES=n`, with `ISL_RESUME`: nothing evolves; for each island its whole population as
+    // resumed, scored on n fresh worlds on every case its selection uses on its rung (the rung's
+    // probes as selection sees them, graded) and on each rung passed below it (kept rungs): each
+    // case's mean and spread over the genomes, how many genomes score differently, and its
+    // correlation with the rung's goal probe (graded): a gradient to climb, and cases pulling apart)
+    let cases_n: u64 = env("ISL_CASES", 0);
+    if cases_n > 0 {
+        let worlds: Vec<u64> = (91_000..91_000 + cases_n).collect();
+        let per = |rows: &[neurocomp::world::observe::ProbeRow], p: usize| -> f64 { rows.iter().map(|r| r[p] as f64).sum::<f64>() / rows.len().max(1) as f64 };
+        for (i, isl) in islands.iter().enumerate() {
+            if isl.frontier || isl.is_novelty() || start[i].is_empty() {
+                continue;
+            }
+            let st = &isl.stages[stages[i]];
+            let goal = st.goal.first().map(|g| g.0).or(st.probes.first().copied()).unwrap_or(0);
+            let pop: Vec<TagGenome> = start[i].clone();
+            let now = probe_all_in(pop.clone(), trials, Physics::Varied, &worlds, gap, &st.probes, st.lesson.clone());
+            let gvals: Vec<f64> = now.iter().map(|s| per(&s.probes, neurocomp::evolve::graded(goal))).collect();
+            let mut cases: Vec<(String, Vec<f64>)> = Vec::new();
+            for &p in &st.probes {
+                cases.push((format!("{} {}", st.name, PROBES[neurocomp::evolve::graded(p)]), now.iter().map(|s| per(&s.probes, neurocomp::evolve::graded(p))).collect()));
+                if neurocomp::evolve::graded(p) != p {
+                    cases.push((format!("{} {} (goal)", st.name, PROBES[p]), now.iter().map(|s| per(&s.probes, p)).collect()));
+                }
+            }
+            for j in 0..stages[i] {
+                let e = &isl.stages[j];
+                let again = probe_all_in(pop.clone(), trials, Physics::Varied, &worlds, gap, &e.probes, e.lesson.clone());
+                for &p in &e.probes {
+                    if p == 42 {
+                        continue;
+                    }
+                    cases.push((format!("kept {} {}", e.name, PROBES[neurocomp::evolve::graded(p)]), again.iter().map(|s| per(&s.probes, neurocomp::evolve::graded(p))).collect()));
+                }
+            }
+            let mean = |v: &[f64]| v.iter().sum::<f64>() / v.len().max(1) as f64;
+            let sd = |v: &[f64]| { let m = mean(v); (v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len().max(1) as f64).sqrt() };
+            let corr = |a: &[f64], b: &[f64]| { let (ma, mb) = (mean(a), mean(b)); let c: f64 = a.iter().zip(b).map(|(x, y)| (x - ma) * (y - mb)).sum(); let d = (a.iter().map(|x| (x - ma).powi(2)).sum::<f64>() * b.iter().map(|y| (y - mb).powi(2)).sum::<f64>()).sqrt(); if d == 0.0 { f64::NAN } else { c / d } };
+            println!("{} on {} ({} genomes, {cases_n} worlds), goal {} {}:", isl.name, st.name, pop.len(), PROBES[goal], st.goal.first().map_or(0, |g| g.1));
+            for (name, v) in &cases {
+                let mut d: Vec<i64> = v.iter().map(|x| x.round() as i64).collect();
+                d.sort();
+                d.dedup();
+                println!("  {:<34} mean {:>6.0}  sd {:>5.0}  min {:>6.0}  max {:>6.0}  distinct {:>2}  corr with goal~ {:>5.2}", name, mean(v), sd(v), v.iter().cloned().fold(f64::MAX, f64::min), v.iter().cloned().fold(f64::MIN, f64::max), d.len(), corr(v, &gvals));
+            }
+        }
+        return;
+    }
     let dprobe: u64 = env("ISL_DUEL_PROBE", 0);
     if dprobe > 0 {
         duel_probe(&islands, &start, dprobe, env("ISL_LEARN_TOP", 1usize), &stages, trials);

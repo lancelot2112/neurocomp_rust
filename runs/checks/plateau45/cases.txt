@@ -1,0 +1,66 @@
+switching on feel-300 (32 genomes, 6 worlds), goal feel-gap 300:
+  feel-300 respond                   mean     79  sd   580  min   -672  max   1024  distinct 14  corr with goal~  0.82
+  feel-300 tell~                     mean      4  sd    13  min    -13  max     46  distinct  8  corr with goal~ -0.26
+  feel-300 tell (goal)               mean      4  sd    15  min    -12  max     62  distinct  7  corr with goal~ -0.17
+  feel-300 feel-gap~                 mean    151  sd   135  min     -6  max    302  distinct 12  corr with goal~  1.00
+  feel-300 feel-gap (goal)           mean     -0  sd     2  min     -7  max      4  distinct  5  corr with goal~  0.24
+  feel-300 gain                      mean     21  sd    79  min    -22  max    324  distinct  8  corr with goal~  0.02
+  kept respond respond               mean     77  sd   586  min   -710  max   1024  distinct 14  corr with goal~  0.82
+  kept tell respond                  mean     77  sd   586  min   -710  max   1024  distinct 14  corr with goal~  0.82
+  kept tell tell~                    mean      0  sd     7  min    -30  max     21  distinct  7  corr with goal~ -0.15
+recall on flag2 (32 genomes, 6 worlds), goal flag 300:
+  flag2 flag~                        mean    -55  sd   396  min   -512  max    622  distinct 20  corr with goal~  1.00
+  flag2 flag (goal)                  mean   -308  sd   354  min   -626  max    400  distinct 20  corr with goal~  0.84
+  flag2 gain                         mean      0  sd     0  min      0  max      0  distinct  1  corr with goal~   NaN
+  kept respond respond               mean   -197  sd   470  min   -885  max    511  distinct 21  corr with goal~ -0.02
+reading on pairs8 (32 genomes, 6 worlds), goal copy 100:
+  pairs8 echo~                       mean    579  sd   465  min    -36  max   1097  distinct 20  corr with goal~ -0.16
+  pairs8 echo (goal)                 mean    433  sd   371  min    -18  max    912  distinct 22  corr with goal~ -0.08
+  pairs8 copy~                       mean    -71  sd    61  min   -227  max     80  distinct 21  corr with goal~  1.00
+  pairs8 copy (goal)                 mean    -27  sd    25  min    -70  max     69  distinct 19  corr with goal~  0.85
+  pairs8 gain                        mean      3  sd    11  min    -23  max     29  distinct 14  corr with goal~ -0.34
+  kept babble babble                 mean    571  sd   381  min      0  max   1024  distinct  7  corr with goal~ -0.13
+  kept echo2q babble                 mean    901  sd   227  min      0  max   1024  distinct  5  corr with goal~ -0.25
+  kept echo2q echo~                  mean    185  sd   162  min    -50  max    346  distinct 13  corr with goal~ -0.10
+prediction on cycle1-100 (32 genomes, 6 worlds), goal surprise 100:
+  cycle1-100 surprise+               mean    168  sd    84  min    -39  max    325  distinct 29  corr with goal~  1.00
+  cycle1-100 surprise (goal)         mean      2  sd    46  min   -103  max    107  distinct 28  corr with goal~  0.56
+  cycle1-100 gain                    mean     10  sd    51  min   -145  max    145  distinct 13  corr with goal~  0.29
+maze on learn (32 genomes, 6 worlds), goal repeat 300:
+  learn repeat                       mean    200  sd   251  min   -337  max    546  distinct 23  corr with goal~  1.00
+  learn maze                         mean    137  sd   428  min   -512  max    988  distinct 25  corr with goal~  0.61
+  learn feel-maze~                   mean     71  sd   115  min   -113  max    363  distinct 21  corr with goal~  0.28
+  learn feel-maze (goal)             mean     30  sd    42  min    -22  max    136  distinct 19  corr with goal~  0.16
+  learn gain                         mean     15  sd    67  min   -202  max    214  distinct  8  corr with goal~  0.24
+  kept feel-300 feel-maze~           mean     71  sd   115  min   -113  max    363  distinct 21  corr with goal~  0.28
+  kept feel feel-maze~               mean     71  sd   115  min   -113  max    363  distinct 21  corr with goal~  0.28
+screen on two (32 genomes, 6 worlds), goal screen 300:
+  two screen~                        mean    233  sd   377  min   -667  max    512  distinct  8  corr with goal~  1.00
+  two screen (goal)                  mean   -548  sd    99  min   -861  max   -505  distinct  6  corr with goal~  0.80
+  two gain                           mean     -0  sd     1  min     -7  max      0  distinct  3  corr with goal~  0.00
+  kept glow-150 screen~              mean    231  sd   400  min   -863  max    512  distinct  8  corr with goal~  0.98
+  kept glow screen~                  mean    231  sd   400  min   -863  max    512  distinct  8  corr with goal~  0.98
+  kept torch screen~                 mean    237  sd   369  min   -665  max    512  distinct  8  corr with goal~  1.00
+shapes on shift8 (32 genomes, 6 worlds), goal tell 120:
+  shift8 respond                     mean   -379  sd   561  min   -921  max    514  distinct 23  corr with goal~ -0.06
+  shift8 tell~                       mean      1  sd    15  min    -32  max     40  distinct 17  corr with goal~  1.00
+  shift8 tell (goal)                 mean      1  sd    27  min    -68  max     60  distinct 20  corr with goal~  0.67
+  shift8 gain                        mean    -34  sd    90  min   -338  max      7  distinct  8  corr with goal~  0.53
+  kept clean respond                 mean   -381  sd   565  min   -920  max    518  distinct 23  corr with goal~ -0.07
+  kept clean tell~                   mean      7  sd    31  min    -44  max     93  distinct 18  corr with goal~ -0.42
+  kept blur1 respond                 mean   -388  sd   546  min   -920  max    480  distinct 24  corr with goal~ -0.06
+  kept blur1 tell~                   mean     -0  sd    17  min    -38  max     38  distinct 20  corr with goal~  0.21
+  kept blur2 respond                 mean   -387  sd   546  min   -918  max    482  distinct 22  corr with goal~ -0.07
+  kept blur2 tell~                   mean      7  sd    30  min    -78  max     81  distinct 19  corr with goal~  0.12
+selection on held (32 genomes, 6 worlds), goal select 600:
+  held select~                       mean    -15  sd   204  min   -512  max    219  distinct 16  corr with goal~  1.00
+  held select (goal)                 mean    -14  sd   206  min   -512  max    234  distinct 16  corr with goal~  1.00
+  held gain                          mean      9  sd    56  min    -89  max    227  distinct 12  corr with goal~  0.10
+  kept mixclick mixclick             mean    124  sd   162  min   -155  max    347  distinct 13  corr with goal~  0.48
+  kept cued select~                  mean     54  sd   152  min   -256  max    278  distinct 18  corr with goal~  0.68
+  kept uncued select~                mean     58  sd   153  min   -256  max    278  distinct 17  corr with goal~  0.71
+  kept short select~                 mean     58  sd   150  min   -256  max    270  distinct 18  corr with goal~  0.72
+typing on key4 (32 genomes, 6 worlds), goal type 500:
+  key4 type~                         mean    -12  sd    86  min   -256  max     68  distinct 19  corr with goal~  1.00
+  key4 type (goal)                   mean     28  sd    18  min      0  max     80  distinct 19  corr with goal~  0.71
+  key4 gain                          mean    -32  sd    71  min   -201  max     14  distinct 10  corr with goal~  0.16

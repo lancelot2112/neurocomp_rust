@@ -1496,3 +1496,29 @@ evolution can wire with fixed circuits, no learned mapping. Later rungs give les
 `typing_by_search_finds_the_letter_with_time_to_try`: a searcher pressing keys at random, taking
 wrong letters off and posting on a match, 722 per 1024 with 60 steps a letter, 141 with 3. Run 44's
 fingerprint unchanged. Run 46 queued: run 45 with it.
+
+## Why run 45 plateaued: the selection cases measured (`ISL_CASES`, `runs/checks/plateau45/`)
+
+No rung after 834 of 1106. `ISL_CASES=6` (new, measure only) scores each island's whole population
+on every case its selection uses on its rung (the probes as selection sees them, graded), and on
+each rung kept below it: mean, spread over genomes, how many score differently, and correlation
+with the rung's goal probe as graded. Three kinds of stall, not one:
+
+- A graded case that rewards the wrong thing. Switching on feel-300: feel-gap~ spreads well (mean
+  151, best 302) but strict feel-gap is 0 for every genome (best 4), and feel-gap~ correlates 0.82
+  with respond. `stroke_tiers` counts the 9 steps after a gap stroke including the light trial that
+  follows, against a baseline of gap steps alone, so clicking at lights scores as feeling the stroke.
+- A graded case with a ceiling short of the goal. The screen on two: screen~ best 512, reached by
+  many genomes (half credit for reaching the target each trial), strict screen at most -505: the
+  population reaches and never clicks, and a click risks the wrong-click cost, so 512 is a local
+  top.
+- No gradient where the rung needs telling things apart in the lifetime. Shapes' tell (spread 15,
+  mean 1), switching's kept tell (mean 0), typing (at chance): these need learning which light pays
+  or which key a letter is, from codes drawn fresh each lifetime.
+
+Where there is a gradient, single genomes reach the goal on 6 worlds while the island does not move:
+recall's flag best 400 (goal 300), the maze's repeat best 546 (300), prediction's surprise best 107
+(100): the goal is judged on the elite's mean and then on held-out worlds, so a rare passer is not
+enough. Kept rungs mostly agree with the rung (selection's 0.5 to 0.7) or are unrelated (recall's
+respond -0.02); the one mild pull apart is reading, where kept echo and babble run against copy
+(-0.10 to -0.25). The learning gain is about constant on most islands (0 on recall and the screen).
